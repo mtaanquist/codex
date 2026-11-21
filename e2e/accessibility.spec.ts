@@ -50,6 +50,8 @@ test.describe.configure({ mode: 'serial' });
 
 let storyPath = '';
 let universePlanPath = '';
+let suggestionsPath = '';
+let consentPath = '';
 let readingPath = '';
 let draftPath = '';
 
@@ -63,6 +65,22 @@ test.beforeAll(async ({ browser }) => {
 	await page.getByRole('button', { name: 'Create universe' }).click();
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(`${universeName} - settings`);
 	universePlanPath = `${new URL(page.url()).pathname}/plan`;
+	suggestionsPath = `${new URL(page.url()).pathname}/suggestions`;
+	// The page an outside app sends the writer to.
+	const registered = await page.request.post('/oauth/register', {
+		data: { client_name: 'Axe Desk', redirect_uris: ['https://axe.example/callback'] }
+	});
+	const { client_id: clientId } = await registered.json();
+	consentPath =
+		'/oauth/authorize?' +
+		new URLSearchParams({
+			response_type: 'code',
+			client_id: clientId,
+			redirect_uri: 'https://axe.example/callback',
+			code_challenge: 'x'.repeat(43),
+			code_challenge_method: 'S256',
+			scope: 'read suggest'
+		});
 	await gotoReady(page, universePlanPath);
 	await addEntity(page, 'Add character', 'Maren');
 	await expect(page).toHaveURL(/entity=/);
@@ -116,6 +134,9 @@ const signedIn = () => [
 	['saved draft', draftPath],
 	['saved draft compare', `${draftPath}?tab=compare`],
 	['account', '/account'],
+	['connected apps', '/account/apps'],
+	['universe suggestions', suggestionsPath],
+	['connect an app', consentPath],
 	['help article', '/docs/editor'],
 	['not found', '/does-not-exist']
 ];

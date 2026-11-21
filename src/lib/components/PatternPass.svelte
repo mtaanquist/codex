@@ -254,7 +254,11 @@
 											? result.data.message
 											: 'That change could not be accepted.';
 									// The edit may have been revised; show it as it is now.
+									// The refusal is said in the card, so it is not handed to
+									// the page as well, which would show it a second time.
 									await invalidateAll();
+									await refocus(id);
+									return;
 								}
 								await update();
 								if (result.type !== 'success') await refocus(id);
