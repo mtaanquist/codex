@@ -838,7 +838,7 @@ export async function createSuggestion(
 		// own copy of the scene: refused when the scene no longer has it there.
 		original?: string;
 	}
-): Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string }> {
+): Promise<{ ok: true; suggestionId: string } | { ok: false; reason: string; gone?: true }> {
 	if (input.replacement.length > MAX_REPLACEMENT_LENGTH) {
 		return { ok: false, reason: 'That suggestion is too long.' };
 	}
@@ -864,7 +864,7 @@ export async function createSuggestion(
 		.where(
 			and(eq(scenes.id, input.sceneId), eq(scenes.storyId, input.storyId), isNull(scenes.deletedAt))
 		);
-	if (!scene) return { ok: false, reason: 'That scene does not exist.' };
+	if (!scene) return { ok: false, gone: true, reason: 'That scene does not exist.' };
 	const { start, end } = input.range;
 	if (!Number.isInteger(start) || !Number.isInteger(end)) {
 		return { ok: false, reason: 'That selection no longer matches the text.' };
@@ -910,17 +910,19 @@ export async function createSuggestion(
 		}
 	}
 
-	let rows: { id: string }[];
+	let rows: { id: string }[] | null;
 	try {
 		rows = await db.transaction(async (tx) => {
 			await sceneRevisionLock(tx, scene.id);
 			// A save between the read above and the lock moves the text under the
 			// range, so the range is pinned only to the body it was checked on.
+			// A trash in that time means there is no scene to suggest on.
 			const [current] = await tx
-				.select({ bodyMd: scenes.bodyMd })
+				.select({ bodyMd: scenes.bodyMd, deletedAt: scenes.deletedAt })
 				.from(scenes)
 				.where(eq(scenes.id, scene.id));
-			if (current?.bodyMd !== scene.bodyMd) return [];
+			if (!current || current.deletedAt) return null;
+			if (current.bodyMd !== scene.bodyMd) return [];
 			const baseRevisionId = await ensureBaseRevision(tx, scene.id, scene.bodyMd);
 			return await tx
 				.insert(reviewSuggestions)
@@ -946,6 +948,7 @@ export async function createSuggestion(
 		}
 		throw err;
 	}
+	if (!rows) return { ok: false, gone: true, reason: 'That scene does not exist.' };
 	const [row] = rows;
 	if (!row) {
 		return {

@@ -56,6 +56,7 @@ const {
 	revokeGrant,
 	revokeToken
 } = await import('#lib/server/mcp/oauth');
+const { MAX_PERSONAL_TOKENS } = await import('#lib/server/mcp/constants');
 const { mcpInstanceEnabled, saveMcpInstanceEnabled, setMcpAccountEnabled } =
 	await import('#lib/server/mcp/settings');
 const { checkAuthorizeRequest } = await import('#lib/server/mcp/authorize');
@@ -577,6 +578,29 @@ describe('disconnecting', () => {
 		expect(await resolveBearer(db, tokens.accessToken)).toBeNull();
 	});
 
+	it('does not wait behind a row that only points at the writer', async () => {
+		const tokens = await connect(alice);
+		const [grant] = await listGrants(db, alice);
+		// What an insert of a row that references the writer holds.
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from users where id = $1 for key share', [alice]);
+			const revoking = revokeGrant(db, alice, grant.id);
+			const first = await Promise.race([
+				revoking,
+				new Promise<'waited'>((resolve) => setTimeout(() => resolve('waited'), 1500))
+			]);
+			await holder.query('rollback');
+			await revoking;
+			expect(first).toBe(true);
+		} finally {
+			await holder.query('rollback');
+			holder.release();
+		}
+		expect(await resolveBearer(db, tokens.accessToken)).toBeNull();
+	});
+
 	it('leaves no live token when a token is handed back while it is being refreshed', async () => {
 		for (let round = 0; round < 30; round++) {
 			const tokens = await connect(alice);
@@ -638,6 +662,16 @@ describe('disconnecting', () => {
 		const local = await connectVia('http://localhost:4321/cb');
 		expect(await listGrants(db, alice)).toMatchObject([{ clientName: 'Desk', host: 'localhost' }]);
 		expect((await resolveBearer(db, local.accessToken))?.client.host).toBe('localhost');
+		// The tokens that went to the other address ended with the change, so
+		// the list never names a host other than where the live ones went.
+		expect(await resolveBearer(db, remote.accessToken)).toBeNull();
+		expect(
+			await refreshTokens(db, { refreshToken: remote.refreshToken, clientId: mixed.clientId })
+		).toEqual({ ok: false });
+		// Connecting again from the same address ends nothing.
+		const second = await connectVia('http://localhost:9999/cb');
+		expect((await resolveBearer(db, local.accessToken))?.userId).toBe(alice);
+		expect((await resolveBearer(db, second.accessToken))?.userId).toBe(alice);
 		// A connection from before the host was recorded falls back to the client's.
 		await db.update(oauthGrants).set({ redirectHost: null }).where(eq(oauthGrants.userId, alice));
 		expect((await listGrants(db, alice))[0].host).toBe('localhost');
@@ -1430,6 +1464,18 @@ describe('personal access tokens', () => {
 		expect(await revokeGrant(db, alice, id)).toBe(true);
 		expect(await resolveBearer(db, token)).toBeNull();
 		expect(await listPersonalTokens(db, alice)).toEqual([]);
+	});
+
+	it('keeps one name and the limit when tokens are made at the same moment', async () => {
+		const same = await Promise.all(Array.from({ length: 6 }, () => make(alice)));
+		expect(same.filter((result) => result.ok)).toHaveLength(1);
+		expect(await listPersonalTokens(db, alice)).toHaveLength(1);
+		for (let n = 1; n < MAX_PERSONAL_TOKENS - 1; n++) await made(alice, { name: `Script ${n}` });
+		const last = await Promise.all(
+			Array.from({ length: 5 }, (_, n) => make(alice, { name: `Late ${n}` }))
+		);
+		expect(last.filter((result) => result.ok)).toHaveLength(1);
+		expect(await listPersonalTokens(db, alice)).toHaveLength(MAX_PERSONAL_TOKENS);
 	});
 
 	it('is gone from the list when the tool hands the token back', async () => {

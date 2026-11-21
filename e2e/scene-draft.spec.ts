@@ -165,6 +165,18 @@ test('a scene draft is costed first, waits for the writer, and fills the empty s
 	await expect(text).toHaveValue(edited);
 	await expect(page).not.toHaveURL(/draft=/);
 	await expect(page).toHaveURL(new RegExp(`scene=${sceneId}`));
+	// On a phone one pane shows at a time: the link shows the one with the
+	// draft in it, and the keyboard is there too.
+	const desk = page.viewportSize()!;
+	await page.setViewportSize({ width: 390, height: 800 });
+	await gotoReady(page, `/stories/crossing-${stamp}?scene=${sceneId}&draft=show`);
+	await expect(text).toBeVisible();
+	await expect(text).toBeInViewport();
+	await expect(page).not.toHaveURL(/draft=/);
+	await expect(
+		page.getByRole('complementary', { name: 'Side panel' }).locator(':focus')
+	).toHaveCount(1);
+	await page.setViewportSize(desk);
 
 	// An edit is not lost to a reload that comes before the save was due.
 	const hurried = `${edited}\n\nNot once.`;

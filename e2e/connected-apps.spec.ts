@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import pg from 'pg';
+import { e2eDatabaseUrl } from './database';
 import { gotoReady, waitForHydration } from './navigate';
 
 // Connecting an outside app: the app sends a signed-out writer to the consent
@@ -43,7 +45,8 @@ test('a writer connects an app, disconnects it, then makes and revokes a token',
 	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 	await expect(page).toHaveURL(/\/oauth\/authorize\?/);
 	await expect(page.getByRole('heading', { name: 'Connect an app' })).toBeVisible();
-	await expect(page.getByText('E2E Desk (localhost) wants to connect')).toBeVisible();
+	await expect(page.getByText('An app calling itself "E2E Desk" wants to connect')).toBeVisible();
+	await expect(page.getByText('The app runs on this computer.')).toBeVisible();
 
 	// A faulty request is shown here with a link back. The browser is not
 	// sent on to the app's address by itself.
@@ -89,6 +92,26 @@ test('a writer connects an app, disconnects it, then makes and revokes a token',
 	await accessForm.getByRole('button', { name: 'Turn on access for apps' }).click();
 	await expect(page.getByLabel('Address to give the app')).toHaveValue(/\/api\/mcp$/);
 	await expect(page.getByText('No app is connected. Paste the address above')).toBeVisible();
+
+	// An Allow that is refused says why. Access is turned off elsewhere while
+	// the consent page is open.
+	await gotoReady(page, authorize);
+	const setAccess = async (on: boolean) => {
+		const pool = new pg.Pool({ connectionString: e2eDatabaseUrl() });
+		try {
+			await pool.query(`update users set mcp_enabled = $1 where email = 'apps-e2e@example.com'`, [
+				on
+			]);
+		} finally {
+			await pool.end();
+		}
+	};
+	await setAccess(false);
+	await page.getByRole('button', { name: 'Allow', exact: true }).click();
+	await expect(page.getByRole('heading', { name: 'The app was not connected' })).toBeVisible();
+	await expect(page.getByRole('alert')).toContainText('Access for other apps is turned off');
+	await expect(page.getByRole('heading', { name: 'This link does not work' })).toHaveCount(0);
+	await setAccess(true);
 
 	// Back at the consent page: allow reading only.
 	await gotoReady(page, authorize);

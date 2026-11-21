@@ -179,6 +179,9 @@ test('an edit revised while the writer rewords it shows the new wording', async 
 	await step.getByRole('button', { name: 'Accept my wording' }).click();
 	const refusal = step.getByRole('alert');
 	await expect(refusal).toHaveText('This suggestion changed. Read it again.');
+	// Said once, in the card, and not again in a banner over the page.
+	await expect(page.getByText('This suggestion changed. Read it again.')).toHaveCount(1);
+	await expect(page.locator('.review-error')).toHaveCount(0);
 	await expect(step.locator('.pp-revised')).toContainText('The ranger');
 	await expect(step.getByLabel('Your wording')).toHaveValue('Kara of the ford');
 	await expect(step).toBeFocused();

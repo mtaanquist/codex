@@ -126,7 +126,7 @@
 								name="decision"
 								value="confirm"
 								class="btn btn-primary btn-sm"
-								aria-label="Split {sceneName} here">Split here</button
+								aria-label="Split here: {sceneName}">Split here</button
 							>
 							<button
 								type="submit"

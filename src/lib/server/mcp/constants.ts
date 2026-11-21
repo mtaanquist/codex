@@ -60,12 +60,22 @@ export const MAX_NOTES_WAITING_PER_SCENE = 100;
 // The most undecided drafts from apps a universe holds at once. A draft is a
 // whole scene for the writer to read, so the number is small.
 export const MAX_APP_DRAFTS_WAITING = 20;
-// An app's staging calls for one universe run one at a time. This many may
-// wait behind the one that is running; a call past that is told to try again.
+// The staging calls for one writer's universe run one at a time, whichever
+// of their apps they come from. This many may wait behind the one that is
+// running; a call past that is told to try again.
 export const MAX_STAGING_CALLS_WAITING = 8;
+// Staging calls that may run at once in the whole process, each holding one
+// connection of a pool of ten. The rest wait their turn in memory.
+export const MAX_STAGING_TRANSACTIONS = 3;
+// The longest a staging call waits for its turn before it is told to try
+// again.
+export const STAGING_WAIT_TIMEOUT_MS = 20_000;
 // The longest a staging call waits inside the database for any one lock (the
 // writer's save of the same scene, say) before it gives up.
 export const STAGING_LOCK_TIMEOUT_MS = 2000;
+// The longest a staging call's transaction may last. Postgres ends it past
+// this, so nothing a call holds can outlast it.
+export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
 

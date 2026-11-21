@@ -87,7 +87,12 @@ function buildServer(connection: Connection): McpServer {
 // credential itself.
 const handler = createMcpHandler(
 	(context) => buildServer(context.authInfo!.extra!.connection as Connection),
-	{ onerror: (error) => logEvent('warn', 'mcp.protocol_error', { message: error.message }) }
+	{
+		onerror: (error) => logEvent('warn', 'mcp.protocol_error', { message: error.message }),
+		// Nothing here publishes change events, so a stream that waits for them
+		// would only stay open, past the end of the token that opened it.
+		maxSubscriptions: 0
+	}
 );
 
 export function serveMcp(request: Request, connection: Connection): Promise<Response> {

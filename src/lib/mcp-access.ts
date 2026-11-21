@@ -20,7 +20,7 @@ export const PERMISSION_TEXT: Record<McpPermission, { label: string; description
 	suggest: {
 		label: 'Leave suggestions and comments',
 		description:
-			'Add suggested edits and comments for you to accept or reject in Review. It cannot change your text.'
+			'Add suggested edits, comments, suggested entries, scene split proposals and scene drafts for you to accept or turn down. It cannot change your text.'
 	},
 	apply: {
 		label: 'Show you its suggestions to accept',

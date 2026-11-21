@@ -354,7 +354,9 @@ export async function stageAppDraft(
 				eq(assistantDrafts.userId, input.userId),
 				eq(assistantDrafts.status, 'ready'),
 				isNull(assistantDrafts.jobId),
-				sql`${assistantDrafts.storyId} in (select ${stories.id} from ${stories} where ${stories.universeId} = (select ${stories.universeId} from ${stories} where ${stories.id} = ${input.storyId}))`
+				sql`${assistantDrafts.storyId} in (select ${stories.id} from ${stories} where ${stories.universeId} = (select ${stories.universeId} from ${stories} where ${stories.id} = ${input.storyId}) and ${stories.deletedAt} is null)`,
+				// A draft on a scene in the trash is not waiting for anyone.
+				sql`exists (select 1 from ${scenes} where ${scenes.id} = ${assistantDrafts.sceneId} and ${scenes.deletedAt} is null)`
 			)
 		);
 	if (n >= MAX_APP_DRAFTS_WAITING) {

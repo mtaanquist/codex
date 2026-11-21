@@ -28,8 +28,8 @@ import { toLf } from '#lib/line-endings';
 import { clientDisplayName } from '#lib/mcp-access';
 import { PROPOSAL_KIND_LABEL, stageEntityProposal, stageSplitProposal } from '../../proposals.ts';
 import { stageAppDraft } from '../../scene-drafts.ts';
-import { MAX_STAGING_CALLS_WAITING, STAGING_LOCK_TIMEOUT_MS } from '../../mcp/constants.ts';
-import { inStagingTurn, StagingBusyError } from '../../mcp/staging-queue.ts';
+import { STAGING_LOCK_TIMEOUT_MS, STAGING_TRANSACTION_TIMEOUT_MS } from '../../mcp/constants.ts';
+import { inStagingTurn, StagingBusyError, stagingKey } from '../../mcp/staging-queue.ts';
 import { isUuid } from '#lib/slug';
 import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
@@ -104,6 +104,10 @@ export type ToolContext = {
 		maxNotesPerScene: number;
 		// Where this Codex is reached, for a link the app can hand the writer.
 		origin: string;
+		// Asked inside a staging call's transaction, after any wait for its
+		// turn: whether the connection and the universe are still good. False
+		// ends the call with `refused` and nothing staged.
+		stillAllowed?: (tx: Database) => Promise<boolean>;
 	};
 };
 
@@ -116,6 +120,8 @@ function stagingAuthor(ctx: ToolContext): MachineAuthor {
 // The refusal for an app that already has its fill of notes waiting on a
 // scene, or null when it may stage another. The Assistant has no such ceiling:
 // its runs are bounded by the writer's own tool budget.
+const NO_SCENE = 'No scene with that id in this story.';
+
 async function overCeiling(ctx: ToolContext, sceneId: string): Promise<string | null> {
 	if (!ctx.external) return null;
 	const waiting = await clientNotesWaiting(ctx.db, sceneId, ctx.external.client.id);
@@ -135,6 +141,8 @@ export type ToolOutcome = {
 	// How many notes the call staged, when one call stages several (a pattern
 	// note with its edits); counts in place of note.
 	noteCount?: number;
+	// The call was turned away by `external.stillAllowed`.
+	refused?: true;
 	// True when the handler threw. The result says only that it failed, unless
 	// the error was one of the app's own with a message meant to be read.
 	failed?: boolean;
@@ -226,19 +234,29 @@ export async function dispatchToolCall(
 	try {
 		const { external } = ctx;
 		if (!external || tool.kind !== 'write') return await runTool(ctx, call.name, args);
-		// An app's staging calls for one universe run one at a time. Each of them
-		// checks before it writes (a repeat, a ceiling, whose turn it is), and
-		// calls sent together would otherwise all pass the check. They queue in
-		// memory, so a waiting call holds no connection. The advisory lock inside
-		// is the same rule kept by the database, should two processes ever serve
-		// one app; it is taken first, so it orders nothing against the locks the
-		// handlers take. No lock in the call is waited on for long: a call that
-		// cannot get one gives up and is asked to try again.
-		const key = `mcp-staging:${external.client.id}:${ctx.universeId}`;
-		return await inStagingTurn(key, MAX_STAGING_CALLS_WAITING, () =>
+		// The staging calls for one writer's universe run one at a time,
+		// whichever of the writer's apps sent them. Each checks before it writes
+		// (a repeat, a ceiling, whose turn it is), and calls sent together would
+		// otherwise all pass the check; and each holds the lock a save of the
+		// scene waits on, so calls side by side would keep the writer waiting.
+		// They queue in memory, so a waiting call holds no connection. The
+		// advisory lock inside is the same rule kept by the database, should two
+		// processes ever serve one writer; it is taken first, so it orders
+		// nothing against the locks the handlers take. No lock in the call is
+		// waited on for long, and the transaction itself has an end: a call that
+		// cannot get a lock gives up and is asked to try again.
+		const key = stagingKey(ctx.userId, ctx.universeId);
+		return await inStagingTurn(key, () =>
 			ctx.db.transaction(async (tx) => {
 				await tx.execute(sql.raw(`set local lock_timeout = ${STAGING_LOCK_TIMEOUT_MS}`));
+				await tx.execute(
+					sql.raw(`set local transaction_timeout = ${STAGING_TRANSACTION_TIMEOUT_MS}`)
+				);
 				await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
+				// What the endpoint checked before the wait may no longer hold.
+				if (external.stillAllowed && !(await external.stillAllowed(tx))) {
+					return { result: '', staged: false, refused: true };
+				}
 				return await runTool({ ...ctx, db: tx }, call.name, args);
 			})
 		);
@@ -260,7 +278,19 @@ function hasNullCharacter(value: unknown): boolean {
 
 // What a throw inside a handler becomes. A database error is never quoted:
 // its message is the statement with its parameters.
+// Thrown by a handler to end the call with an answer and stage nothing: on
+// the MCP surface the call is one transaction, so what it staged so far is
+// undone.
+class ToolAbort extends Error {
+	answer: string;
+	constructor(answer: string) {
+		super(answer);
+		this.answer = answer;
+	}
+}
+
 function toolFailure(err: unknown): ToolOutcome {
+	if (err instanceof ToolAbort) return { result: err.answer, staged: false };
 	const cause = (err as { cause?: { code?: unknown } } | null)?.cause;
 	const code = typeof cause?.code === 'string' ? cause.code : undefined;
 	// Nothing went wrong; the call came at a busy moment and staged nothing.
@@ -1051,7 +1081,7 @@ async function leavePatternNote(
 		};
 	}
 	const scene = await loadScene(ctx, input.sceneId);
-	if (!scene) return { result: 'No scene with that id in this story.', staged: false };
+	if (!scene) return { result: NO_SCENE, staged: false };
 	const full = await overCeiling(ctx, scene.id);
 	if (full) return { result: full, staged: false };
 
@@ -1117,6 +1147,9 @@ async function leavePatternNote(
 			reason: edit.reason,
 			patternThreadId: threadId
 		});
+		// The scene went to the trash while the note was being staged: an app's
+		// call stages none of it.
+		if (!result.ok && result.gone && ctx.external) throw new ToolAbort(NO_SCENE);
 		if (result.ok) edits += 1;
 		else missed.push(`- "${quote}": ${result.reason}`);
 	}
