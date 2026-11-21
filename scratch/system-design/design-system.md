@@ -603,7 +603,8 @@ The remaining scoped spellings (`.role-tag`, `.nav-badge`, `.tfa-badge`,
   container query and `data-label` cells (the admin accounts table) rather
   than scrolling, since a scroll wrapper clips the row menus.
 - Icon-led row lists: `.list-row` with `.list-ic`, `.list-main`,
-  `.list-title`, `.list-sub`, `.list-actions`.
+  `.list-title`, `.list-sub`, `.list-actions`. A long title (a web address,
+  say) wraps anywhere, so its end is always shown.
 - Destructive settings rows: `.danger-group`/`.danger-row`.
 - Outline rows (chapters, scenes, entities) share the row CSS in
   `theme.css` (`.chapter-row`, `.scene-row`, `.ent-row`) at `--row-h`.

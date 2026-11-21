@@ -12,16 +12,24 @@
 		if (continueTo) window.location.replace(continueTo);
 	});
 
-	// The name is the app's own word for itself, so it is shown as a claim.
-	// What Codex does know, where the answer goes, has a line to itself.
-	const claim = $derived(
-		data.status === 'ok' ? `An app calling itself "${data.client.clientName}"` : ''
-	);
 	// A refused Allow or Deny. The form was posted to the action's address,
 	// which no longer carries the app's request, so it is shown on its own
 	// and not under what the load made of that address.
 	const refusal = $derived(form && 'message' in form && form.message ? form.message : null);
 </script>
+
+<!-- The name is the app's own word for itself, so it is shown as a claim, on
+     a line and in a style of its own: whatever the name says, it cannot read
+     as part of what Codex says around it. What Codex does know, where the
+     answer goes, has a line to itself too. -->
+{#snippet claim(account: string)}
+	{#if data.status === 'ok'}
+		<p class="auth-sub consent-claim">
+			An app wants to connect to your Codex account{account}. It calls itself:
+			<span class="consent-name">{data.client.clientName || data.client.host}</span>
+		</p>
+	{/if}
+{/snippet}
 
 {#snippet answerGoesTo()}
 	{#if data.status === 'ok'}
@@ -72,12 +80,13 @@
 		</p>
 		<div class="auth-links">
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the app's own address, outside this site -->
-			<a href={data.returnTo} rel="noreferrer">Return to {data.host}</a>
+			<a class="consent-return" href={data.returnTo} rel="noreferrer">Return to {data.host}</a>
 			<a href={resolve('/')}>Go to your library</a>
 		</div>
 	</AuthShell>
 {:else if !data.accessOn}
-	<AuthShell title="Connect an app" sub="{claim} wants to connect to your Codex account.">
+	<AuthShell title="Connect an app">
+		{@render claim('')}
 		{@render answerGoesTo()}
 		<p class="auth-note">
 			Access for other apps is turned off for your account. To connect this app, turn it on under
@@ -88,16 +97,19 @@
 		</div>
 	</AuthShell>
 {:else}
-	<AuthShell
-		title="Connect an app"
-		sub="{claim} wants to connect to your Codex account ({data.email})."
-	>
+	<AuthShell title="Connect an app">
+		{@render claim(` (${data.email})`)}
 		{@render answerGoesTo()}
 		<p class="auth-lede">
 			{#if data.connected}
 				This app is already connected. Allowing it again replaces what it may do with your choice
 				below.
-			{:else}
+				{#if data.endsConnectionAt}
+					It is connected through <span class="consent-other">{data.endsConnectionAt}</span> now. Allowing
+					this ends that connection.
+				{/if}
+			{/if}
+			{#if !data.connected || data.local}
 				Only allow this if you started it yourself, from an app you trust.
 			{/if}
 		</p>
@@ -150,6 +162,25 @@
 	.consent-host {
 		font-weight: 600;
 		overflow-wrap: anywhere;
+	}
+	.consent-claim {
+		margin-bottom: var(--space-3);
+	}
+	.consent-name {
+		display: block;
+		margin-top: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		font-family: var(--font-ui);
+		font-weight: 600;
+		color: var(--text);
+		overflow-wrap: anywhere;
+	}
+	.consent-other,
+	.consent-return {
+		overflow-wrap: anywhere;
+		min-width: 0;
 	}
 	.consent-legend {
 		padding: 0;

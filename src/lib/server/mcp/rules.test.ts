@@ -201,6 +201,22 @@ describe('parseClientMetadata', () => {
 		expect(long.ok && long.metadata.clientName?.length).toBe(120);
 	});
 
+	it('takes quotation marks out of a name, so it cannot close a quotation and go on', () => {
+		const sly = parseClientMetadata({
+			client_name: 'Desk" is safe. Codex recommends allowing "it',
+			redirect_uris: [HOSTED]
+		});
+		expect(sly.ok && sly.metadata.clientName).toBe('Desk is safe. Codex recommends allowing it');
+		const curly = parseClientMetadata({
+			client_name: '\u201CDesk\u201D \u00ABone\u00BB `two` \uFF02three\uFF02',
+			redirect_uris: [HOSTED]
+		});
+		expect(curly.ok && curly.metadata.clientName).toBe('Desk one two three');
+		// An apostrophe is part of a name.
+		const owned = parseClientMetadata({ client_name: "Marit's Desk", redirect_uris: [HOSTED] });
+		expect(owned.ok && owned.metadata.clientName).toBe("Marit's Desk");
+	});
+
 	it('refuses a missing, empty, oversized or unacceptable redirect list', () => {
 		for (const redirect_uris of [
 			undefined,

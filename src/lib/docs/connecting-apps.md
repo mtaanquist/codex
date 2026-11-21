@@ -18,7 +18,7 @@ You need two things:
 3. Select Copy next to "Address to give the app".
 4. In your app, open its settings and find where connectors are added. Choose to add a custom connector, give it a name such as Codex, and paste the address. In Claude this is under Settings, then Connectors. The names of these menus differ between apps and change over time.
 5. The app opens a Codex page in your browser. Sign in if you are asked to.
-6. Check the name and the web address of the app shown on the page. If you did not start this yourself, select "Do not allow".
+6. Check the name and the web address of the app shown on the page. For an app on your own computer, the page says that the app runs on this computer and shows no address. If you did not start this yourself, select "Do not allow".
 7. Choose what the app may do, then select Allow.
 
 The app is now connected. You are sent back to it, and it appears under "Apps with access" in Codex.

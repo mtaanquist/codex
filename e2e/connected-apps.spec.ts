@@ -45,7 +45,9 @@ test('a writer connects an app, disconnects it, then makes and revokes a token',
 	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 	await expect(page).toHaveURL(/\/oauth\/authorize\?/);
 	await expect(page.getByRole('heading', { name: 'Connect an app' })).toBeVisible();
-	await expect(page.getByText('An app calling itself "E2E Desk" wants to connect')).toBeVisible();
+	await expect(page.getByText('An app wants to connect to your Codex account')).toBeVisible();
+	// The app's own name for itself stands apart from what Codex says.
+	await expect(page.locator('.consent-name')).toHaveText('E2E Desk');
 	await expect(page.getByText('The app runs on this computer.')).toBeVisible();
 
 	// A faulty request is shown here with a link back. The browser is not
@@ -113,8 +115,20 @@ test('a writer connects an app, disconnects it, then makes and revokes a token',
 	await expect(page.getByRole('heading', { name: 'This link does not work' })).toHaveCount(0);
 	await setAccess(true);
 
-	// Back at the consent page: allow reading only.
+	// A sign-in that ended while the consent page was open: the answer is not
+	// lost. After signing in again the writer is back at the same request.
 	await gotoReady(page, authorize);
+	await page.context().clearCookies({ name: 'session' });
+	await page.getByRole('button', { name: 'Allow', exact: true }).click();
+	await expect(page).toHaveURL(/\/login/);
+	await page.getByLabel('Email').fill('apps-e2e@example.com');
+	await page.getByLabel('Password').fill('e2e-password');
+	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+	await expect(page).toHaveURL(/\/oauth\/authorize\?.*state=e2e-state/);
+	await expect(page.locator('.consent-name')).toHaveText('E2E Desk');
+	await waitForHydration(page);
+
+	// Allow reading only.
 	await expect(page.getByLabel('Read your writing')).toBeDisabled();
 	await page.getByLabel('Leave suggestions and comments').uncheck();
 	await page.route(`${CALLBACK}**`, (route) =>
@@ -181,6 +195,74 @@ test('a writer connects an app, disconnects it, then makes and revokes a token',
 	expect(refreshed.status()).toBe(400);
 	expect((await refreshed.json()).error).toBe('invalid_grant');
 	expect((await mcp(callTool, bearer)).status()).toBe(401);
+
+	// An app at a long web address, on a phone: the whole address can be read,
+	// on the page for a faulty request and in the list once connected.
+	const longHost = `${'averylongnameforawritingdeskthatgoeson.'.repeat(3)}example.com`;
+	const longCallback = `https://${longHost}/cb`;
+	const long = await request.post('/oauth/register', {
+		data: { client_name: 'Long Desk', redirect_uris: [longCallback] }
+	});
+	expect(long.status()).toBe(201);
+	const { client_id: longId } = await long.json();
+	const longAuthorize =
+		'/oauth/authorize?' +
+		new URLSearchParams({
+			response_type: 'code',
+			client_id: longId,
+			redirect_uri: longCallback,
+			code_challenge: CHALLENGE,
+			code_challenge_method: 'S256',
+			state: 'long',
+			scope: 'read'
+		});
+	const phone = { width: 390, height: 700 };
+	// Where the text itself is drawn, not the box around it: text that does
+	// not wrap runs out of a box that still fits.
+	const fitsThePhone = async (text: string) => {
+		const edges = await page
+			.getByText(text)
+			.first()
+			.evaluate((element) => {
+				const range = document.createRange();
+				range.selectNodeContents(element);
+				const rects = [...range.getClientRects()];
+				return {
+					left: Math.min(...rects.map((rect) => rect.left)),
+					right: Math.max(...rects.map((rect) => rect.right))
+				};
+			});
+		expect(edges.left).toBeGreaterThanOrEqual(0);
+		expect(edges.right).toBeLessThanOrEqual(phone.width);
+	};
+	await page.setViewportSize(phone);
+	await gotoReady(page, longAuthorize.replace('response_type=code', 'response_type=token'));
+	await expect(page.getByRole('link', { name: `Return to ${longHost}` })).toBeVisible();
+	await fitsThePhone(`Return to ${longHost}`);
+	await gotoReady(page, longAuthorize);
+	await fitsThePhone(`It will send you back to ${longHost}.`);
+	await page.route(`${longCallback}**`, (route) =>
+		route.fulfill({ contentType: 'text/html', body: '<p>Back in the app</p>' })
+	);
+	await page.getByRole('button', { name: 'Allow', exact: true }).click();
+	await page.waitForURL(`${longCallback}**`);
+	const longToken = await request.post('/oauth/token', {
+		form: {
+			grant_type: 'authorization_code',
+			code: new URL(page.url()).searchParams.get('code')!,
+			client_id: longId,
+			redirect_uri: longCallback,
+			code_verifier: VERIFIER
+		}
+	});
+	expect(longToken.status()).toBe(200);
+	await gotoReady(page, '/account/apps');
+	const longRow = page.locator('.list-row', { hasText: 'Long Desk' });
+	await expect(longRow).toContainText(longHost);
+	await fitsThePhone(`Long Desk (${longHost})`);
+	await longRow.getByRole('button', { name: `Disconnect Long Desk (${longHost})` }).click();
+	await expect(longRow).toHaveCount(0);
+	await page.setViewportSize(desk);
 
 	// A personal access token, for a tool that cannot open the consent page.
 	// A wrong password makes none.

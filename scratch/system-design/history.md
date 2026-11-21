@@ -1023,6 +1023,50 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 4: sign-in and app side (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No
+migration.
+
+- Connecting from an app's other address ends the tokens that went to the
+  first (round 3), but the exchange held the user row shared like any
+  issuer, so it ran beside a refresh or another exchange: the refresh's new
+  pair was issued after the exchange had looked and stayed live, two
+  exchanges each missed the other's tokens, and an exchange and a refresh
+  could wait on each other's token rows (a deadlock, a 500 at the token
+  endpoint). `exchangeCode` now takes the exclusive user lock
+  (`lockUserForRevocation`, then `accountUsable` without a lock, as
+  `createPersonalToken` does). Three tests, thirty rounds each, that failed
+  first: a refresh against the new-host exchange, two exchanges together,
+  and all three at once.
+- The consent page showed the app's name inside quotation marks in a
+  sentence of Codex's own, so a name with a quotation mark in it could go
+  on in Codex's voice. The name now stands in a box of its own under "It
+  calls itself:", and `parseClientMetadata` takes quotation marks out of a
+  name (apostrophes stay).
+- "This app is already connected" no longer drops "Only allow this if you
+  started it yourself" for an app on this computer, and says which
+  connection ends when the request comes from the app's other address.
+- A writer whose sign-in ended before they pressed Allow was sent to sign
+  in and landed in the library, the app's request lost. The hook now
+  remembers the consent page's address from the posted form's own fields
+  (`returnToForForm`, the named OAuth fields only), so after signing in
+  they are back at the same request, which the page checks again as it
+  loads.
+- A long host wraps in the Connected apps list (`.list-title`) and in
+  "Return to ..." on the faulty-request page; the e2e reads where the text
+  is drawn at 390 px, with a host that has nowhere to break.
+- With the Assistant off for the account, the panel introduced any waiting
+  draft as one "it wrote before". A draft row does not record who wrote it
+  (an app's draft differs only in its note), so the line now covers both:
+  "Drafts waiting for you, from the Assistant or from a connected app".
+- Help: step 6 of connecting an app says what the page shows for an app on
+  the writer's own computer.
+- Not from this work: the right pane's resize handle is not hidden at narrow
+  widths (computed `display: flex` at 390 px, though theme.css means to hide
+  it at 960 px and below). `theme.css` and `PaneResizer.svelte` are the same
+  as on main, so it is left for its own issue.
+
 ## MCP endpoint, review round 4: endpoint and tools (2026-11-21)
 
 Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No

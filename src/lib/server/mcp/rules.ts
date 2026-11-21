@@ -21,6 +21,11 @@ export function isLoopbackRedirect(uri: string): boolean {
 	return url !== null && url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname);
 }
 
+// Double quotation marks of every script, the angle ones, and the backtick.
+// The apostrophe stays: names have them.
+const QUOTATION_MARKS =
+	/["`\u00AB\u00BB\u201C-\u201F\u2039\u203A\u2E42\u300C-\u300F\u301D-\u301F\uFF02]/g;
+
 // A redirect URI is where the browser is sent with the code, so only two
 // shapes are accepted: https anywhere, and plain http on this computer (a
 // desktop app listening on a local port). No fragment and no credentials.
@@ -157,11 +162,14 @@ export function parseClientMetadata(input: unknown): MetadataResult {
 		metadata: {
 			// Control characters would let a name break out of the line it is
 			// shown on; format characters (direction overrides, zero-width marks)
-			// would let it read as something it is not.
+			// would let it read as something it is not; a quotation mark would
+			// let it close a quotation it is shown in and go on in Codex's voice.
 			clientName:
 				name
 					.replace(/\p{Cc}/gu, ' ')
 					.replace(/\p{Cf}/gu, '')
+					.replace(QUOTATION_MARKS, '')
+					.replace(/\s+/g, ' ')
 					.trim()
 					.slice(0, MAX_CLIENT_NAME) || null,
 			redirectUris: [...new Set(uris as string[])]

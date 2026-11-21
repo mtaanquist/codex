@@ -38,6 +38,13 @@ export const load: PageServerLoad = async ({ url, locals, setHeaders }) => {
 	const user = locals.user!;
 	const { client } = check;
 	const connected = await existingGrant(db, user.id, client.id);
+	// Allowing a self-registered app from its other address ends the tokens
+	// that went to the first one (see exchangeCode), so the page says so.
+	const connectedAt = connected ? (connected.redirectHost ?? client.host) : null;
+	const endsConnectionAt =
+		client.kind === 'dcr' && connectedAt !== null && connectedAt !== redirectHost(check.redirectUri)
+			? connectedAt
+			: null;
 	return {
 		status: 'ok' as const,
 		accessOn: await mcpAccountEnabled(db, user.id),
@@ -53,6 +60,7 @@ export const load: PageServerLoad = async ({ url, locals, setHeaders }) => {
 		redirectHost: redirectHost(check.redirectUri),
 		local: isLoopbackRedirect(check.redirectUri),
 		connected: connected !== null,
+		endsConnectionAt,
 		permissions: check.offered.map((id) => ({
 			id,
 			...PERMISSION_TEXT[id],

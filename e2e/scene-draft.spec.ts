@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import pg from 'pg';
 import { e2eDatabaseUrl } from './database';
-import { gotoReady } from './navigate';
+import { gotoReady, waitForHydration } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 import { openRowMenu } from './context-menu';
 
@@ -182,6 +182,7 @@ test('a scene draft is costed first, waits for the writer, and fills the empty s
 	const hurried = `${edited}\n\nNot once.`;
 	await text.fill(hurried);
 	await page.reload();
+	await waitForHydration(page);
 	await page.getByRole('tab', { name: 'Assistant' }).click();
 	await expect(text).toHaveValue(hurried);
 	await text.fill(edited);
