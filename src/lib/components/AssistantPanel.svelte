@@ -1640,8 +1640,8 @@
 		{#if off}
 			<p>The Assistant is off for your account.</p>
 			<p class="muted-hint">
-				Drafts it wrote before are still here to keep or discard. To use the Assistant again, turn
-				it on under Account, Assistant.
+				Drafts waiting for you, from the Assistant or from a connected app, are still here to keep
+				or discard. To use the Assistant, turn it on under Account, Assistant.
 			</p>
 		{:else}
 			<p>The Assistant is off for this story.</p>

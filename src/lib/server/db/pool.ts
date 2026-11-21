@@ -28,5 +28,16 @@ export function createPool(
 	pool.on('error', (error: Error & { code?: string }) => {
 		logEvent('error', 'db.pool_error', { message: error.message, code: error.code });
 	});
+	// A client that is checked out when its connection ends (Postgres closing
+	// a session past transaction_timeout, an administrator ending it, a
+	// restart) emits 'error' on the client itself, which the handler above
+	// does not hear. Unhandled, that too crashes the process. The query that
+	// was using the client fails in its own right; this only keeps the event
+	// from being fatal.
+	pool.on('connect', (client) => {
+		client.on('error', (error: Error & { code?: string }) => {
+			logEvent('error', 'db.client_error', { message: error.message, code: error.code });
+		});
+	});
 	return pool;
 }

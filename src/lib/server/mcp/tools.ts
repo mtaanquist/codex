@@ -2,7 +2,7 @@ import { isUuid } from '../../slug.ts';
 import type { McpPermission } from '../../mcp-access.ts';
 import type { Database } from '../auth.ts';
 import { logEvent } from '../log.ts';
-import { rateLimit } from '../rate-limit.ts';
+import { slidingRateLimit } from '../rate-limit.ts';
 import { dispatchToolCall, ownsUniverse } from '../llm/tools/dispatch.ts';
 import { TOOLS, type ToolDef } from '../llm/tools/registry.ts';
 import {
@@ -14,7 +14,9 @@ import {
 	STAGING_CALLS_PER_MINUTE_PER_USER,
 	TOOL_RESULT_MAX_CHARS
 } from './constants.ts';
+import { GateBusyError, readGate } from './call-gate.ts';
 import { credentialLive, type BearerIdentity } from './oauth.ts';
+import { mcpInstanceEnabled } from './settings.ts';
 
 // The shared toolbox as an outside app sees it. The catalogue and the handlers
 // are the Assistant's own (llm/tools); this module only decides which of them
@@ -165,8 +167,8 @@ export async function callMcpTool(
 	const perGrant = staging ? STAGING_CALLS_PER_MINUTE : READ_CALLS_PER_MINUTE;
 	const perUser = staging ? STAGING_CALLS_PER_MINUTE_PER_USER : READ_CALLS_PER_MINUTE_PER_USER;
 	const limits = [
-		rateLimit(`mcp:${tool.kind}:grant:${identity.grantId}`, perGrant, windowMs),
-		rateLimit(`mcp:${tool.kind}:user:${identity.userId}`, perUser, windowMs)
+		slidingRateLimit(`mcp:${tool.kind}:grant:${identity.grantId}`, perGrant, windowMs),
+		slidingRateLimit(`mcp:${tool.kind}:user:${identity.userId}`, perUser, windowMs)
 	];
 	const blocked = limits.find((limit) => !limit.allowed);
 	if (blocked) {
@@ -185,7 +187,7 @@ export async function callMcpTool(
 		return { text: 'The tool failed. Try again.', isError: true };
 	};
 
-	try {
+	const run = async (): Promise<McpToolResult> => {
 		const { universeId: universeArgument, ...rest } = args;
 		let universeId = '';
 		if (!NO_UNIVERSE.has(name)) {
@@ -214,9 +216,11 @@ export async function callMcpTool(
 					},
 					maxNotesPerScene: MAX_NOTES_WAITING_PER_SCENE,
 					origin,
-					// A staging call may wait its turn; the app may be disconnected
-					// or the universe trashed meanwhile.
+					// A staging call may wait its turn; the app may be disconnected,
+					// the universe trashed or access for outside apps turned off
+					// meanwhile.
 					stillAllowed: async (tx) =>
+						(await mcpInstanceEnabled(tx)) &&
 						(await credentialLive(tx, identity)) &&
 						(universeId === '' || (await ownsUniverse(tx, identity.userId, universeId)))
 				}
@@ -228,7 +232,14 @@ export async function callMcpTool(
 		if (outcome.failed) return failed(outcome.errorCode);
 		log(outcome.staged ? 'staged' : 'ok');
 		return { text: capped(outcome.result), isError: false };
+	};
+
+	try {
+		// Reading calls take a place before they touch the database; staging
+		// calls take theirs in the dispatcher, around the transaction.
+		return staging ? await run() : await readGate.run(identity.userId, run);
 	} catch (err) {
+		if (err instanceof GateBusyError) return refuse('busy', 'Too many calls at once. Try again.');
 		// The dispatcher catches what its handlers throw; this is for anything
 		// outside it, so no error's own text ever reaches the app.
 		const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;

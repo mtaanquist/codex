@@ -1023,6 +1023,123 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 4: sign-in and app side (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No
+migration.
+
+- Connecting from an app's other address ends the tokens that went to the
+  first (round 3), but the exchange held the user row shared like any
+  issuer, so it ran beside a refresh or another exchange: the refresh's new
+  pair was issued after the exchange had looked and stayed live, two
+  exchanges each missed the other's tokens, and an exchange and a refresh
+  could wait on each other's token rows (a deadlock, a 500 at the token
+  endpoint). `exchangeCode` now takes the exclusive user lock
+  (`lockUserForRevocation`, then `accountUsable` without a lock, as
+  `createPersonalToken` does). Three tests, thirty rounds each, that failed
+  first: a refresh against the new-host exchange, two exchanges together,
+  and all three at once.
+- The consent page showed the app's name inside quotation marks in a
+  sentence of Codex's own, so a name with a quotation mark in it could go
+  on in Codex's voice. The name now stands in a box of its own under "It
+  calls itself:", and `parseClientMetadata` takes quotation marks out of a
+  name (apostrophes stay).
+- "This app is already connected" no longer drops "Only allow this if you
+  started it yourself" for an app on this computer, and says which
+  connection ends when the request comes from the app's other address.
+- A writer whose sign-in ended before they pressed Allow was sent to sign
+  in and landed in the library, the app's request lost. The hook now
+  remembers the consent page's address from the posted form's own fields
+  (`returnToForForm`, the named OAuth fields only), so after signing in
+  they are back at the same request, which the page checks again as it
+  loads.
+- A long host wraps in the Connected apps list (`.list-title`) and in
+  "Return to ..." on the faulty-request page; the e2e reads where the text
+  is drawn at 390 px, with a host that has nowhere to break.
+- With the Assistant off for the account, the panel introduced any waiting
+  draft as one "it wrote before". A draft row does not record who wrote it
+  (an app's draft differs only in its note), so the line now covers both:
+  "Drafts waiting for you, from the Assistant or from a connected app".
+- Help: step 6 of connecting an app says what the page shows for an app on
+  the writer's own computer.
+- Not from this work: the right pane's resize handle is not hidden at narrow
+  widths (computed `display: flex` at 390 px, though theme.css means to hide
+  it at 960 px and below). `theme.css` and `PaneResizer.svelte` are the same
+  as on main, so it is left for its own issue.
+
+## MCP endpoint, review round 4: endpoint and tools (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No
+migration.
+
+- A connection the database ended while it was checked out took the whole
+  process down. When `transaction_timeout` passes, Postgres ends the session
+  (FATAL 25P04); node-pg then emits `error` on the client, and a checked-out
+  client had no listener (`pool.on('error')` covers idle clients only), so
+  Node exited on the unhandled event. `createPool` now puts a listener on
+  every client as it connects, which logs `db.client_error` and nothing
+  more; the query in flight, or the next one on that client, fails as an
+  ordinary error and the pool replaces the connection. The worker makes its
+  pool with the same function, so it is covered. Other paths that end a
+  session had the same exposure and are covered by the same listener: an
+  administrator's `pg_terminate_backend`, a Postgres restart or failover
+  while a client is checked out (every open transaction and every
+  `pool.connect()` user: staging calls, the sign-in transactions, the
+  worker's jobs), `idle_in_transaction_session_timeout` or
+  `idle_session_timeout` should an operator set them, and a network drop.
+  `statement_timeout` (30 s, set by the pool) only cancels the statement and
+  never had it. Tests that failed first (`tests/integration/db-pool.test.ts`,
+  and one in `mcp-endpoint.test.ts` that lets the timeout fire inside a
+  staging call): an unhandled "terminating connection due to transaction
+  timeout" and "Connection terminated unexpectedly" respectively.
+- Read tools ran with no limit on how many at once, and `search_text` took
+  seven connections for one call. With the production pool (ten connections,
+  five seconds to get one), one writer's two apps spending a minute's
+  reading in one burst on a universe of about 3 MB made another writer's
+  longest save 2.2 s and ran the pool dry ("timeout exceeded when trying to
+  connect"). Now: reading calls go through a gate in memory (two at once
+  per writer, three in the process, twenty waiting for ten seconds at most,
+  then "Too many calls at once. Try again."); `search_text` runs its queries
+  one after another on this surface; `get_review_note` selects only the
+  requested note's edits before placing them in the scene, where it used to
+  place every suggestion of the story and filter after. The same tests now
+  pass with the other writer's longest save under 0.7 s (the bound in the
+  test), also while a 40-edit
+  pattern note is staged and the writer saves the same scene.
+- The staging queue became the same gate (`mcp/call-gate.ts` replaces
+  `staging-queue.ts`), keyed on the writer alone: it was first come first
+  served per writer and universe, so a writer with many universes could
+  take every running place. A free place now goes to the writer who has
+  waited longest for a turn, and a writer has one staging call running
+  whatever the universe. The staging total went from three to two so that
+  staging and reading together hold at most half the pool.
+- The per-minute budgets for MCP calls and requests used the fixed-window
+  limiter, which lets through twice the limit across a window boundary.
+  `slidingRateLimit` (rate-limit.ts) keeps the times of the allowed calls
+  and counts those of the last minute; the MCP keys use it, everything else
+  keeps the fixed window.
+- The check a staging call makes after its wait also asks whether access for
+  outside apps is still on for the instance.
+- `suggest_entity` over MCP answers "That name cannot be suggested." for a
+  name that is taken, already waiting or was turned down, so an app cannot
+  tell which; the in-app Assistant keeps the detailed answers.
+- `get_review_note` ran a character diff of the scene as it was against the
+  scene as it is, in the server's own thread, with no limit. For a 20 KB
+  scene rewritten from top to bottom one diff took about nine seconds here
+  (half a second when part of it was kept), during which the server answered
+  nobody, and an app could ask many times a minute. Over MCP the diff is now
+  stopped once the texts differ by more than 500 characters added and
+  removed (jsdiff's `maxEditLength`; `REVIEW_NOTE_DIFF_MAX_EDITS`), which
+  costs about 25 ms; the cost grows with the square of the limit (a second
+  at 4000). Past the limit an edit is placed without a diff when it sits in
+  the start or end the two texts share, or its text stands exactly once in
+  the scene; otherwise the answer carries "The text has changed since; the
+  edit may no longer apply." in place of the paragraph. The test that failed
+  first: four calls on such a scene took 35 s; they now answer in under
+  0.4 s with the server's thread never held for 0.1 s. The review page and
+  the in-app Assistant are unchanged, and the review page's own diff cost
+  is for a separate issue.
+
 ## MCP endpoint, review round 3: endpoint, tools and sign-in fixes (2026-11-21)
 
 Part of #1175, branch `fix/mcp-review-3` on `staging/mcp-endpoint`. No

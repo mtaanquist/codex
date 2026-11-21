@@ -6,7 +6,14 @@ import { errorFields, logEvent } from '#lib/server/log';
 import { assertOriginConfigured, publicOrigin } from '#lib/server/origin';
 import { dev } from '$app/env';
 import { isForbiddenCrossSiteForm } from '#lib/server/csrf';
-import { rememberReturnTo } from '#lib/server/return-to';
+import {
+	RETURN_TO_COOKIE,
+	RETURN_TO_COOKIE_OPTIONS,
+	isReturnablePath,
+	rememberReturnTo,
+	returnToForForm
+} from '#lib/server/return-to';
+import { AUTHORIZE_FIELDS } from '#lib/server/mcp/authorize';
 
 export const init: ServerInit = () => {
 	assertOriginConfigured();
@@ -82,13 +89,34 @@ function setSecurityHeaders(headers: Headers, url: URL) {
 	}
 }
 
+async function postedReturnTo(event: RequestEvent): Promise<string | null> {
+	try {
+		const form = await event.request.clone().formData();
+		return returnToForForm(event.url.pathname, form, AUTHORIZE_FIELDS);
+	} catch {
+		// Not a form.
+		return null;
+	}
+}
+
 // A redirect thrown from handle bypasses resolve, so it would leave without
 // the headers above. A page navigation gets a plain 303 built here instead.
 // Data, remote and form-action requests still throw: SvelteKit answers those
 // with JSON its client reads, which a plain 303 would break.
-function redirectFromHook(event: RequestEvent, location: string, staleCookie: boolean): Response {
+async function redirectFromHook(
+	event: RequestEvent,
+	location: string,
+	staleCookie: boolean
+): Promise<Response> {
 	const method = event.request.method;
 	if (event.isDataRequest || event.isRemoteRequest || (method !== 'GET' && method !== 'HEAD')) {
+		// An answer on the consent page from a writer whose sign-in has ended:
+		// the app's request is in the form, so it is remembered from there and
+		// the writer comes back to the page after signing in.
+		if (location === '/login' && method === 'POST' && isReturnablePath(event.url.pathname)) {
+			const target = await postedReturnTo(event);
+			if (target) event.cookies.set(RETURN_TO_COOKIE, target, RETURN_TO_COOKIE_OPTIONS);
+		}
 		redirect(303, location);
 	}
 	const headers = new Headers({ location });

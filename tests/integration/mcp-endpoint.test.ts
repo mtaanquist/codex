@@ -30,12 +30,14 @@ import { ensureTestDatabase } from './test-db';
 
 process.env.APP_SECRET = process.env.APP_SECRET || 'mcp-endpoint-test-secret';
 
+// The pool the app itself makes (ten connections, a five second wait for
+// one), so what a burst of calls does to it here is what it does in production.
 vi.mock('#lib/server/db', async () => {
-	const { default: pgModule } = await import('pg');
 	const { drizzle } = await import('drizzle-orm/node-postgres');
 	const schemaModule = await import('../../src/lib/server/db/schema');
+	const { createPool } = await import('../../src/lib/server/db/pool');
 	const { TEST_DATABASE_URL } = await import('./test-db');
-	const testPool = new pgModule.Pool({ connectionString: TEST_DATABASE_URL });
+	const testPool = createPool(TEST_DATABASE_URL);
 	return { db: drizzle(testPool, { schema: schemaModule }), pool: testPool };
 });
 
@@ -79,7 +81,7 @@ const {
 } = await import('#lib/server/proposals');
 const { discardSceneDraft, sceneDraftFor } = await import('#lib/server/scene-drafts');
 const { saveSceneBody } = await import('#lib/server/scene-save');
-const { inStagingTurn, stagingKey } = await import('#lib/server/mcp/staging-queue');
+const { stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
 const { createAnchorMapper } = await import('#lib/review-anchor');
 const { MAX_APP_DRAFTS_WAITING, MAX_STAGING_CALLS_WAITING, TOOL_RESULT_MAX_CHARS } =
 	await import('#lib/server/mcp/constants');
@@ -302,6 +304,27 @@ async function call(
 	if (!result) return { text: error?.message ?? '', isError: true };
 	const content = result.content as { type: string; text: string }[];
 	return { text: content.map((part) => part.text).join(''), isError: result.isError === true };
+}
+
+// Saves a scene over and over, as an open editor does, until told to stop.
+// The longest of them is what the writer would have waited.
+async function savingUntil(stopped: () => boolean, who: World, text: () => string) {
+	let longest = 0;
+	let saves = 0;
+	while (!stopped()) {
+		const began = Date.now();
+		const saved = await saveSceneBody(db, who.sceneId, {
+			title: null,
+			bodyMd: text(),
+			anchors: null,
+			baseHashes: null
+		} as never);
+		expect(saved.ok).toBe(true);
+		longest = Math.max(longest, Date.now() - began);
+		saves += 1;
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+	return { longest, saves };
 }
 
 async function stagedRows(): Promise<number> {
@@ -1151,9 +1174,7 @@ describe('the same call sent several times at once', () => {
 		const holder = await pool.connect();
 		try {
 			await holder.query('begin');
-			await holder.query('select pg_advisory_xact_lock(hashtext($1))', [
-				stagingKey(alice.userId, alice.universeId)
-			]);
+			await holder.query('select pg_advisory_xact_lock(hashtext($1))', [stagingKey(alice.userId)]);
 			const began = Date.now();
 			const outcome = await leave(ctx, 1);
 			expect(outcome).toMatchObject({ staged: false, result: BUSY });
@@ -1237,7 +1258,7 @@ describe('the same call sent several times at once', () => {
 	it('stages nothing for a call that was waiting when the app was disconnected', async () => {
 		let open!: () => void;
 		const gate = new Promise<void>((resolve) => (open = resolve));
-		const ahead = inStagingTurn(stagingKey(alice.userId, alice.universeId), () => gate);
+		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = comment(alice);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 		const [grant] = await db
@@ -1251,10 +1272,69 @@ describe('the same call sent several times at once', () => {
 		expect(await stagedRows()).toBe(0);
 	});
 
+	it('stages nothing for a call that was waiting when access for apps was turned off', async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		const waiting = comment(alice);
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		await saveMcpInstanceEnabled(db, false);
+		open();
+		await ahead;
+		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
+		expect(await stagedRows()).toBe(0);
+	});
+
+	// Postgres ends the whole session when a transaction outlives its limit.
+	// That must fail the one call and nothing else.
+	it('fails only the call when the database ends a staging call that ran too long', async () => {
+		const ctx = await appContext(alice);
+		const short = {
+			...ctx,
+			external: { ...ctx.external, timeouts: { lockMs: 10_000, transactionMs: 300 } }
+		};
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from scenes where id = $1 for update', [alice.sceneId]);
+			const outcome = await leave(short, 1);
+			expect(outcome.staged).toBe(false);
+			expect(outcome.failed).toBe(true);
+			expect(outcome.result).toBe('Tool error: the request could not be completed.');
+		} finally {
+			await holder.query('rollback');
+			holder.release();
+		}
+		// Time for anything the dead connection still has to say.
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(await stagedRows()).toBe(0);
+		expect((await pool.query('select 1 as n')).rows).toEqual([{ n: 1 }]);
+		expect((await leave(ctx, 1)).staged).toBe(true);
+	});
+
+	it('runs one writers staging calls one at a time across their universes', async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		let answered = false;
+		const elsewhere = call(alice, 'suggest_entity', {
+			universeId: alice.otherUniverseId,
+			kind: 'character',
+			name: 'Old Marit'
+		}).finally(() => (answered = true));
+		// Another writer is not kept waiting by it.
+		expect((await comment(bob)).text).toContain('Staged a review comment');
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		expect(answered).toBe(false);
+		open();
+		await ahead;
+		expect((await elsewhere).text).toContain('Suggested');
+	});
+
 	it('stages nothing for a call that was waiting when the universe was trashed', async () => {
 		let open!: () => void;
 		const gate = new Promise<void>((resolve) => (open = resolve));
-		const ahead = inStagingTurn(stagingKey(alice.userId, alice.universeId), () => gate);
+		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = comment(alice);
 		await new Promise((resolve) => setTimeout(resolve, 150));
 		await db
@@ -1265,6 +1345,182 @@ describe('the same call sent several times at once', () => {
 		await ahead;
 		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
 		expect(await stagedRows()).toBe(0);
+	});
+});
+
+describe('one writers burst of reading', () => {
+	const FAILED = 'The tool failed. Try again.';
+	const words = Array.from({ length: 40 }, (_, n) => `word${n}x`);
+	const quoted = words.map((word) => `A line with ${word} in it.`).join('\n\n');
+	const filler = 'The harbour lay quiet under a low grey sky. '.repeat(450);
+	let noteId: string;
+	let second: string;
+
+	// A universe of about three megabytes, and a story with some hundreds of
+	// suggested edits on a scene that has changed since they were made.
+	beforeEach(async () => {
+		await db.insert(scenes).values(
+			Array.from({ length: 150 }, (_, n) => ({
+				storyId: alice.storyId,
+				globalPosition: n + 10,
+				title: `Scene ${n}`,
+				bodyMd: `${filler}Scene ${n} ends.`
+			}))
+		);
+		await setBody(alice, `${filler}\n\n${quoted}`);
+		noteId = idIn((await edit(alice, { original: 'word0x', replacement: 'first' })).text);
+		await pool.query(
+			`insert into review_suggestions
+			   (story_id, scene_id, client_id, client_name, client_host, base_revision_id,
+			    range_start, range_end, replacement)
+			 select story_id, scene_id, client_id, client_name, client_host, base_revision_id,
+			        range_start + g, range_end + g, replacement || g
+			 from review_suggestions, generate_series(1, 400) g where id = $1`,
+			[noteId]
+		);
+		await setBody(alice, `Typed since. ${filler}\n\n${quoted}`);
+		second = await connect(alice.userId, 'Second Desk');
+		resetRateLimits();
+	});
+
+	// Both apps of the writer spend a whole minute's reading at once.
+	const burst = () =>
+		[alice.token, second].flatMap((token) =>
+			Array.from({ length: 120 }, (_, n) =>
+				n % 2
+					? call(token, 'search_text', { universeId: alice.universeId, query: 'harbour' })
+					: call(token, 'get_review_note', { universeId: alice.universeId, noteId })
+			)
+		);
+
+	it('does not keep another writer waiting to save', async () => {
+		let done = false;
+		const reading = Promise.all(burst()).finally(() => (done = true));
+		const [his, answers] = await Promise.all([
+			savingUntil(
+				() => done,
+				bob,
+				() => `Bob typed ${Date.now()}.`
+			),
+			reading
+		]);
+		expect(answers.filter((entry) => entry.text === FAILED)).toEqual([]);
+		// Some were answered, and the rest were told to come back.
+		expect(answers.some((entry) => !entry.isError && entry.text.includes('harbour'))).toBe(true);
+		expect(his.saves).toBeGreaterThan(1);
+		expect(his.longest).toBeLessThan(700);
+	}, 60_000);
+
+	it('does not keep the writer waiting to save while a long note is staged too', async () => {
+		let done = false;
+		// From the second app, which has no notes waiting on the scene yet.
+		const noting = call(second, 'leave_pattern_note', {
+			universeId: alice.universeId,
+			sceneId: alice.sceneId,
+			comment: PATTERN,
+			edits: words.map((word) => ({ original: word, replacement: `${word}y` }))
+		});
+		const reading = Promise.all([noting, ...burst()]).finally(() => (done = true));
+		let typed = '';
+		const [hers, his, answers] = await Promise.all([
+			savingUntil(
+				() => done,
+				alice,
+				() => `${(typed += 'x')} Typed since. ${filler}\n\n${quoted}`
+			),
+			savingUntil(
+				() => done,
+				bob,
+				() => `Bob typed ${Date.now()}.`
+			),
+			reading
+		]);
+		expect(answers.filter((entry) => entry.text === FAILED)).toEqual([]);
+		// Staged; how many of its edits were, depends on what she typed meanwhile.
+		expect(answers[0].text).toContain('Staged the pattern note');
+		expect(hers.saves).toBeGreaterThan(1);
+		expect(hers.longest).toBeLessThan(2000);
+		expect(his.longest).toBeLessThan(700);
+	}, 60_000);
+});
+
+// Placing an edit in a scene that has changed is a character diff, which
+// runs in the server's own thread: while it runs, nobody else is answered.
+describe('get_review_note on a large scene that was mostly rewritten', () => {
+	const before = 'The harbour lay quiet under a low grey sky. '.repeat(450);
+	const after = 'Rain came in from the west before noon and stayed on. '.repeat(380);
+	const read = (id: string) =>
+		call(alice, 'get_review_note', { universeId: alice.universeId, noteId: id });
+	// The longest the server's thread was held while `work` ran.
+	async function longestStall<T>(work: () => Promise<T>) {
+		let stall = 0;
+		let last = performance.now();
+		const watch = setInterval(() => {
+			stall = Math.max(stall, performance.now() - last - 5);
+			last = performance.now();
+		}, 5);
+		const began = performance.now();
+		const result = await work();
+		clearInterval(watch);
+		return { result, stall, took: performance.now() - began };
+	}
+
+	it('answers quickly, holds nobody up, and says the edit may no longer apply', async () => {
+		await setBody(alice, `${before}\n\nShe held the lantern high.`);
+		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		await setBody(
+			alice,
+			`${after}\n\nThe lantern was gone, and the lantern she found was not hers.`
+		);
+		const { result, stall, took } = await longestStall(() =>
+			Promise.all([read(id), read(id), read(id), read(id)])
+		);
+		expect(stall).toBeLessThan(100);
+		expect(took).toBeLessThan(400);
+		const [shown] = JSON.parse(result[0].text).edits;
+		expect(shown).toMatchObject({
+			status: 'pending',
+			paragraphNow: null,
+			notice: 'The text has changed since; the edit may no longer apply.'
+		});
+	});
+
+	it('still places an edit whose words are untouched, or stand once in the new text', async () => {
+		await setBody(
+			alice,
+			`She held the lantern high.\n\n${before}\n\nA heron stood there.\n\n${before}\n\nThe gull watched her go.`
+		);
+		const first = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		const last = idIn((await edit(alice, { original: 'gull', replacement: 'heron' })).text);
+		const middle = idIn((await edit(alice, { original: 'stood', replacement: 'waited' })).text);
+		// Everything between the first and last paragraph is new.
+		await setBody(alice, `She held the lantern high.\n\n${after}\n\nThe gull watched her go.`);
+		const { result, stall } = await longestStall(() =>
+			Promise.all([read(first), read(last), read(middle)])
+		);
+		expect(stall).toBeLessThan(100);
+		const [atStart, atEnd, gone] = result.map((entry) => JSON.parse(entry.text).edits[0]);
+		expect(atStart.paragraphNow).toBe('She held the lantern high.');
+		expect(atStart.notice).toBeUndefined();
+		expect(atEnd.paragraphNow).toBe('The gull watched her go.');
+		expect(gone).toMatchObject({ paragraphNow: null, notice: expect.any(String) });
+
+		// A word that moved, and is in the new text once, is found there.
+		await setBody(alice, `${after}\n\nNo gull that day.\n\nShe held it high.`);
+		const moved = JSON.parse((await read(last)).text).edits[0];
+		expect(moved.paragraphNow).toBe('No gull that day.');
+	});
+
+	it('places an edit as before when the change is small', async () => {
+		await setBody(alice, `${before}\n\nShe held the lantern high.`);
+		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		await setBody(
+			alice,
+			`${before.slice(0, 9000)}A new line. ${before.slice(9000)}\n\nShe held the old lantern high, and the lantern shook.`
+		);
+		const shown = JSON.parse((await read(id)).text).edits[0];
+		expect(shown.paragraphNow).toBe('She held the old lantern high, and the lantern shook.');
+		expect(shown.notice).toBeUndefined();
 	});
 });
 
@@ -2152,6 +2408,10 @@ describe('suggest_entity', () => {
 		expect(await stagedRows()).toBe(0);
 	});
 
+	// One answer for a name that is taken, waiting or turned down, so an app
+	// cannot tell which.
+	const NAME_REFUSED = 'That name cannot be suggested.';
+
 	it('refuses a name or another name the universe already has', async () => {
 		await db
 			.update(characters)
@@ -2162,7 +2422,7 @@ describe('suggest_entity', () => {
 			.values({ universeId: alice.universeId, ownerId: alice.userId, name: 'Saltmere' });
 		for (const name of ['alices hero bram', 'the quiet one', '  Saltmere ']) {
 			const refused = await suggest(alice, { name });
-			expect(refused.text).toContain('already has an entry named');
+			expect(refused.text).toBe(NAME_REFUSED);
 		}
 		// A name only another universe has is free here.
 		expect((await suggest(alice, { name: 'Alices outsider' })).text).toContain('Suggested');
@@ -2174,9 +2434,9 @@ describe('suggest_entity', () => {
 
 	it('does not stage a name twice, or again once the writer dismissed it', async () => {
 		expect((await suggest(alice)).text).toContain('Suggested');
-		expect((await suggest(alice, { name: 'old marit' })).text).toContain('already suggested');
+		expect((await suggest(alice, { name: 'old marit' })).text).toBe(NAME_REFUSED);
 		const second = await connect(alice.userId, 'Second');
-		expect((await suggest(second, { kind: 'place' })).text).toContain('already suggested');
+		expect((await suggest(second, { kind: 'place' })).text).toBe(NAME_REFUSED);
 		const [waiting] = (await listProposals(db, alice.userId, alice.universeId)).entities;
 		expect(
 			await decideEntityProposal(db, alice.userId, alice.universeId, waiting.id, 'dismiss')
@@ -2184,7 +2444,7 @@ describe('suggest_entity', () => {
 			ok: true,
 			entityId: null
 		});
-		expect((await suggest(alice)).text).toContain('turned down "Old Marit" before');
+		expect((await suggest(alice)).text).toBe(NAME_REFUSED);
 		expect((await listProposals(db, alice.userId, alice.universeId)).entities).toEqual([]);
 	});
 

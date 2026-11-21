@@ -921,25 +921,50 @@ suggestion. On top of those:
   (`review_suggestions.revised_at`): a second revision would refuse the
   accept of what the writer just read. A suggestion that is not the app's own pending one gives
   the same "No suggestion with that id." as one that does not exist.
-- The staging calls for one writer's universe run one at a time, whichever
-  of the writer's apps and tokens send them, so the checks that come before a
-  write (a repeat, a ceiling, whose turn it is) hold for calls sent together
-  and the writer's save of a scene never waits behind more than one call.
-  They wait in an in-process queue keyed on writer and universe
-  (`mcp/staging-queue.ts`), before taking a database connection; eight may
-  wait, and a call past that, or one whose turn has not come in 20 seconds,
-  is answered "Another call is still running. Try again." Over the whole
-  process three staging calls run at once (`MAX_STAGING_TRANSACTIONS`, of a
-  pool of ten). The call then runs in one transaction that takes an advisory
-  lock on the same key (the rule kept by the database, should more than one
+- Calls from outside apps wait for a place in memory, before they take a
+  database connection (`mcp/call-gate.ts`). A gate gives each writer so many
+  running calls, over all their apps, tokens and universes, and the whole
+  process so many; a free place goes to the writer who has waited longest
+  for a turn, so one writer's line does not hold up another's call. Staging
+  and reading have a gate each, so neither keeps the other waiting, and
+  together they hold at most five of the pool's ten connections.
+  - Staging: one call at a time per writer, two in the process
+    (`MAX_STAGING_TRANSACTIONS`), so the checks that come before a write (a
+    repeat, a ceiling, whose turn it is) hold for calls sent together and
+    the writer's save of a scene never waits behind more than one call.
+    Eight may wait, and a call past that, or one whose turn has not come in
+    20 seconds, is answered "Another call is still running. Try again."
+  - Reading: two calls at a time per writer, three in the process; twenty
+    may wait, for ten seconds at most, and a call past either is answered
+    "Too many calls at once. Try again." `search_text` runs its queries one
+    after another here (the command palette runs them side by side), and
+    `get_review_note` places only the requested note's edits in the scene,
+    and on this surface with a bounded mapper (`createBoundedAnchorMapper`):
+    the character diff runs in the server's one thread, so it is stopped
+    once the scene is known to have changed by more than 500 characters
+    (`REVIEW_NOTE_DIFF_MAX_EDITS`, about 25 ms). Past that an edit is placed
+    only where that is cheap (in the start or end the two texts share, or
+    its text stands exactly once in the scene), and is otherwise reported
+    with `notice`: "The text has changed since; the edit may no longer
+    apply." The review page and the in-app Assistant keep the full diff.
+  - The per-minute budgets (per connection, per writer, and for requests of
+    any kind) count the calls of the last sixty seconds
+    (`slidingRateLimit`), so a burst across a minute boundary gets no more
+    than a burst inside one.
+
+  A staging call then runs in one transaction that takes an advisory lock
+  keyed on the writer (the rule kept by the database, should more than one
   process ever serve a writer) with `lock_timeout` set to two seconds and
   `transaction_timeout` to thirty, so a call that cannot get a lock, the
   writer's save of the same scene included, gives up with the same answer
   instead of holding a connection, and nothing a call holds outlasts it.
-  Inside the transaction, after the wait, the endpoint checks again that the
-  token and its grant are live, the account usable and the universe still
-  the writer's; if not the call answers as for a universe that is not theirs
-  and stages nothing. A staging call holds the scene's revision lock from its
+  Postgres ends the session when `transaction_timeout` passes; the pool
+  listens for errors on checked-out connections (`createPool`), so that
+  fails the one call and nothing else. Inside the transaction, after the
+  wait, the endpoint checks again that access for outside apps is still on
+  for the instance, the token and its grant are live, the account usable and
+  the universe still the writer's; if not the call answers as for a universe
+  that is not theirs and stages nothing. A staging call holds the scene's revision lock from its
   first edit to its end, which is what a save of that scene waits on: about
   0.4 s for the largest pattern note (40 edits), measured, and a few
   milliseconds for a single edit. A pattern note whose scene goes to the

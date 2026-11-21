@@ -678,6 +678,105 @@ describe('disconnecting', () => {
 		expect((await resolveBearer(db, local.accessToken))?.client.host).toBe('localhost');
 	});
 
+	// A client with a remote and a local address, and the calls that overlap
+	// when it connects from the other one. Whatever the order, every live
+	// token went to the host the connection names, and nothing fails.
+	describe('connecting from the other address while tokens are in use', () => {
+		const REMOTE = 'https://desk.example/cb';
+		const LOCAL = 'http://localhost:4321/cb';
+		const ROUNDS = 30;
+		let mixed: Client;
+
+		beforeEach(async () => {
+			mixed = await newClient([REMOTE, 'http://localhost/cb'], 'Desk');
+		});
+
+		const via = async (redirectUri: string) =>
+			exchangeCode(db, {
+				code: await codeFor(alice, ['read'], { client: mixed, redirectUri }),
+				clientId: mixed.clientId,
+				redirectUri,
+				codeVerifier: VERIFIER
+			});
+		const tokensOf = (result: Awaited<ReturnType<typeof via>>) => {
+			if (!result.ok) throw new Error('refused');
+			return result.tokens;
+		};
+		const refresh = (refreshToken: string) =>
+			refreshTokens(db, { refreshToken, clientId: mixed.clientId });
+		const live = async (accessToken: string) =>
+			(await resolveBearer(db, accessToken))?.client.host ?? null;
+		const settled = (outcomes: PromiseSettledResult<unknown>[]) =>
+			outcomes.map((outcome) => outcome.status);
+
+		it('ends the pair a refresh issued for the first address', async () => {
+			for (let round = 0; round < ROUNDS; round++) {
+				const remote = tokensOf(await via(REMOTE));
+				const outcomes = await Promise.allSettled([refresh(remote.refreshToken), via(LOCAL)]);
+				expect(settled(outcomes)).toEqual(['fulfilled', 'fulfilled']);
+				const [refreshed, local] = outcomes.map(
+					(outcome) => (outcome as PromiseFulfilledResult<Awaited<ReturnType<typeof via>>>).value
+				);
+				expect(await live(tokensOf(local).accessToken)).toBe('localhost');
+				expect(await live(remote.accessToken)).toBeNull();
+				if (refreshed.ok) {
+					expect(await live(refreshed.tokens.accessToken)).toBeNull();
+					expect(await refresh(refreshed.tokens.refreshToken)).toEqual({ ok: false });
+				}
+				expect(await refresh(remote.refreshToken)).toEqual({ ok: false });
+				expect(await live(tokensOf(local).accessToken)).toBe('localhost');
+			}
+		});
+
+		// The addresses whose tokens still work, each token named by where
+		// it was sent.
+		const working = async (sent: { accessToken: string; host: string }[]) => {
+			const alive = await Promise.all(sent.map((entry) => live(entry.accessToken)));
+			return sent.filter((_, n) => alive[n] !== null).map((entry) => entry.host);
+		};
+		type Exchanged = PromiseFulfilledResult<Awaited<ReturnType<typeof via>>>;
+
+		it('leaves one address connected when both are connected at once', async () => {
+			for (let round = 0; round < ROUNDS; round++) {
+				const outcomes = await Promise.allSettled([via(REMOTE), via(LOCAL)]);
+				expect(settled(outcomes)).toEqual(['fulfilled', 'fulfilled']);
+				const [remote, local] = outcomes.map((outcome) => tokensOf((outcome as Exchanged).value));
+				const [shown] = await listGrants(db, alice);
+				expect(
+					await working([
+						{ accessToken: remote.accessToken, host: 'desk.example' },
+						{ accessToken: local.accessToken, host: 'localhost' }
+					])
+				).toEqual([shown.host]);
+			}
+		});
+
+		it('holds with a refresh and both addresses at once', async () => {
+			for (let round = 0; round < ROUNDS; round++) {
+				const first = round % 2 ? 'desk.example' : 'localhost';
+				const before = tokensOf(await via(round % 2 ? REMOTE : LOCAL));
+				const outcomes = await Promise.allSettled([
+					refresh(before.refreshToken),
+					via(REMOTE),
+					via(LOCAL)
+				]);
+				expect(settled(outcomes)).toEqual(['fulfilled', 'fulfilled', 'fulfilled']);
+				const [refreshed, remote, local] = outcomes.map((outcome) => (outcome as Exchanged).value);
+				const [shown] = await listGrants(db, alice);
+				const hosts = await working([
+					{ accessToken: before.accessToken, host: first },
+					...(refreshed.ok ? [{ accessToken: refreshed.tokens.accessToken, host: first }] : []),
+					{ accessToken: tokensOf(remote).accessToken, host: 'desk.example' },
+					{ accessToken: tokensOf(local).accessToken, host: 'localhost' }
+				]);
+				// Every token that works went to the address the connection names,
+				// and the last to connect is among them.
+				expect(hosts.length).toBeGreaterThan(0);
+				expect(hosts.filter((host) => host !== shown.host)).toEqual([]);
+			}
+		});
+	});
+
 	it('disconnects every app when an admin suspends the account', async () => {
 		const tokens = await connect(alice);
 		const bobs = await connect(bob);
@@ -1194,6 +1293,44 @@ describe('the consent page', () => {
 			['read', true, true],
 			['suggest', false, true]
 		]);
+	});
+
+	it('says which connection ends when a connected app asks from its other address', async () => {
+		const mixed = await newClient(['https://desk.example/cb', 'http://localhost/cb'], 'Desk');
+		const ask = (redirectUri: string) =>
+			load(alice, authorizeQuery({ client_id: mixed.clientId, redirect_uri: redirectUri }));
+		expect(await ask('https://desk.example/cb')).toMatchObject({
+			connected: false,
+			endsConnectionAt: null
+		});
+		const connected = await exchangeCode(db, {
+			code: await codeFor(alice, ['read'], {
+				client: mixed,
+				redirectUri: 'https://desk.example/cb'
+			}),
+			clientId: mixed.clientId,
+			redirectUri: 'https://desk.example/cb',
+			codeVerifier: VERIFIER
+		});
+		expect(connected.ok).toBe(true);
+		// From the same address nothing ends; from this computer the remote one does.
+		expect(await ask('https://desk.example/cb')).toMatchObject({
+			connected: true,
+			local: false,
+			endsConnectionAt: null
+		});
+		expect(await ask('http://localhost:4321/cb')).toMatchObject({
+			connected: true,
+			local: true,
+			endsConnectionAt: 'desk.example'
+		});
+		// Another writer has no connection to end.
+		expect(
+			await load(
+				bob,
+				authorizeQuery({ client_id: mixed.clientId, redirect_uri: 'http://localhost:4321/cb' })
+			)
+		).toMatchObject({ connected: false, endsConnectionAt: null });
 	});
 
 	it('shows an error and no form for an unknown client or address', async () => {

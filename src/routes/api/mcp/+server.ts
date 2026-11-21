@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { publicOrigin } from '#lib/server/origin';
-import { rateLimit } from '#lib/server/rate-limit';
+import { slidingRateLimit } from '#lib/server/rate-limit';
 import { GRANTABLE_PERMISSIONS, scopeFromPermissions } from '#lib/mcp-access';
 import { REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
 import { notFound } from '#lib/server/mcp/http';
@@ -57,7 +57,7 @@ const handle: RequestHandler = async ({ request, url }) => {
 	const identity = await resolveBearer(db, token);
 	if (!identity) return unauthorized(origin, token !== '');
 
-	const limit = rateLimit(`mcp:requests:${identity.userId}`, REQUESTS_PER_MINUTE, 60 * 1000);
+	const limit = slidingRateLimit(`mcp:requests:${identity.userId}`, REQUESTS_PER_MINUTE, 60 * 1000);
 	if (!limit.allowed) {
 		return json(
 			429,

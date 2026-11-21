@@ -48,7 +48,8 @@ function newSecret(prefix: string): string {
 // Issuing a credential and revoking every credential of an account must not
 // overlap, or the one issued while the other runs survives it. Both take a
 // lock on the user's row first: whoever issues takes it shared (`holdUser`),
-// whoever revokes takes it for update (`lockUserForRevocation`), so a
+// whoever revokes takes it for update (`lockUserForRevocation`; a code
+// exchange is among these, since it may end the tokens of another address), so a
 // revocation waits for an issue in flight and the next issue sees its result.
 // The user lock always comes before any lock on a code, token or grant row,
 // which is why the issuers look the user up by hash before locking the row
@@ -209,7 +210,12 @@ export async function exchangeCode(
 			.from(oauthCodes)
 			.where(eq(oauthCodes.codeHash, codeHash));
 		if (!owner) return { ok: false };
-		const usable = await accountUsable(tx, owner.userId, true);
+		// The exclusive lock, not the issuers' shared one: connecting from the
+		// app's other address ends the tokens that went to the first, so an
+		// exchange is a revocation too, and must not run beside a refresh or
+		// another exchange of the same account.
+		await lockUserForRevocation(tx, owner.userId);
+		const usable = await accountUsable(tx, owner.userId);
 		const [row] = await tx
 			.select({ code: oauthCodes, client: oauthClients })
 			.from(oauthCodes)
@@ -627,9 +633,9 @@ export async function existingGrant(
 	db: Database,
 	userId: string,
 	clientRowId: string
-): Promise<{ permissions: McpPermission[] } | null> {
+): Promise<{ permissions: McpPermission[]; redirectHost: string | null } | null> {
 	const [row] = await db
-		.select({ permissions: oauthGrants.permissions })
+		.select({ permissions: oauthGrants.permissions, redirectHost: oauthGrants.redirectHost })
 		.from(oauthGrants)
 		.where(
 			and(
@@ -638,7 +644,9 @@ export async function existingGrant(
 				isNull(oauthGrants.revokedAt)
 			)
 		);
-	return row ? { permissions: parsePermissions(row.permissions) } : null;
+	return row
+		? { permissions: parsePermissions(row.permissions), redirectHost: row.redirectHost }
+		: null;
 }
 
 async function revokeGrantTokens(db: Database, grantId: string): Promise<void> {

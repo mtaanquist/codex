@@ -30,6 +30,32 @@ export function safeReturnTo(value: string | null | undefined): string | null {
 	return url.pathname + url.search;
 }
 
+// The same, for a form posted to a returnable page: the page's address with
+// the named fields of the form as its query. For a writer whose sign-in ended
+// between opening the page and answering it, so that after signing in they
+// are back at the page and not at the app's mercy to start again. Only the
+// named fields are kept, and the page checks them again when it loads.
+export function returnToForForm(
+	pathname: string,
+	form: FormData,
+	names: readonly string[]
+): string | null {
+	if (!RETURNABLE_PATHS.has(pathname)) return null;
+	const query = new URLSearchParams();
+	for (const name of names) {
+		const value = form.get(name);
+		if (typeof value === 'string') query.set(name, value);
+	}
+	return safeReturnTo(`${pathname}?${query}`);
+}
+
+export const RETURN_TO_COOKIE_OPTIONS = {
+	path: '/',
+	httpOnly: true,
+	sameSite: 'lax',
+	maxAge: MAX_AGE_SECONDS
+} as const;
+
 export function isReturnablePath(pathname: string): boolean {
 	return RETURNABLE_PATHS.has(pathname);
 }
@@ -38,12 +64,7 @@ export function isReturnablePath(pathname: string): boolean {
 export function rememberReturnTo(cookies: Cookies, url: URL): string | null {
 	const target = safeReturnTo(url.pathname + url.search);
 	if (!target) return null;
-	return cookies.serialize(RETURN_TO_COOKIE, target, {
-		path: '/',
-		httpOnly: true,
-		sameSite: 'lax',
-		maxAge: MAX_AGE_SECONDS
-	});
+	return cookies.serialize(RETURN_TO_COOKIE, target, RETURN_TO_COOKIE_OPTIONS);
 }
 
 // Call when a session has just been created. Returns where to go, and forgets

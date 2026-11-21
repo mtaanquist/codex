@@ -35,7 +35,11 @@ import { storyIsLive } from './universe-scope.ts';
 import { signToken, verifyToken } from './crypto.ts';
 import { recordRevision } from './revisions.ts';
 import { remapMarkerAnchors } from './markers.ts';
-import { createAnchorMapper, type AnchorMapper } from '../review-anchor.ts';
+import {
+	createAnchorMapper,
+	createBoundedAnchorMapper,
+	type AnchorMapper
+} from '../review-anchor.ts';
 import { wordCount } from '../word-count.ts';
 import { paragraphWindow } from '../paragraphs.ts';
 import { normaliseAssistantName } from './llm/prompts/persona.ts';
@@ -983,6 +987,9 @@ export type SuggestionView = {
 	// been rewritten, which also blocks accepting it.
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Set by a bounded mapper only: the scene changed too much to look for the
+	// passage, so a missing anchor does not mean the passage is gone.
+	anchorNotSought?: true;
 	// The Assistant pattern note this edit belongs to, if any.
 	patternThreadId: string | null;
 	// The edit whose re-read after an accept staged this one, if any.
@@ -1054,7 +1061,11 @@ export async function listSuggestions(
 	db: Database,
 	storyId: string,
 	viewer?: ReviewViewer,
-	mapper: AnchorMapper = createAnchorMapper()
+	mapper: AnchorMapper = createAnchorMapper(),
+	// Only this suggestion, or only the edits of this pattern note. Placing a
+	// suggestion in the scene as it now reads is the costly part, so a caller
+	// that wants a few should not pay for the whole story's.
+	only?: { id: string } | { patternThreadId: string }
 ): Promise<SuggestionView[]> {
 	const rows = await db
 		.select({
@@ -1069,7 +1080,15 @@ export async function listSuggestions(
 		.innerJoin(revisions, eq(reviewSuggestions.baseRevisionId, revisions.id))
 		.leftJoin(reviewers, eq(reviewSuggestions.reviewerId, reviewers.id))
 		.leftJoin(users, eq(reviewSuggestions.authorUserId, users.id))
-		.where(eq(reviewSuggestions.storyId, storyId))
+		.where(
+			and(
+				eq(reviewSuggestions.storyId, storyId),
+				only &&
+					('id' in only
+						? eq(reviewSuggestions.id, only.id)
+						: eq(reviewSuggestions.patternThreadId, only.patternThreadId))
+			)
+		)
 		.orderBy(asc(reviewSuggestions.createdAt));
 	const assistantName = rows.some((r) => r.suggestion.assistant)
 		? await assistantDisplayName(db, storyId)
@@ -1115,6 +1134,11 @@ export async function listSuggestions(
 			status: row.suggestion.status,
 			anchor,
 			anchorLost: row.suggestion.status === 'pending' && anchor === null,
+			...(row.suggestion.status === 'pending' &&
+			anchor === null &&
+			mapper.gaveUp?.(row.baseBody, row.currentBody)
+				? { anchorNotSought: true as const }
+				: {}),
 			patternThreadId: row.suggestion.patternThreadId,
 			followsId: row.suggestion.followsSuggestionId,
 			reason: row.suggestion.reason,
@@ -1462,6 +1486,9 @@ export type OwnEditView = {
 	// The paragraph around the edit as the scene has it now; null when the spot
 	// can no longer be found.
 	paragraphNow: string | null;
+	// Present when the scene has changed too much to look for the spot (see
+	// getOwnNote's diffBudget).
+	notice?: string;
 	// The discussion under the edit, once someone has replied there.
 	threadId: string | null;
 	replies: OwnNoteReply[];
@@ -1486,7 +1513,11 @@ export async function getOwnNote(
 	db: Database,
 	storyId: string,
 	author: MachineAuthor,
-	id: string
+	id: string,
+	// diffBudget: how far the scene may have changed for an edit to be placed
+	// by comparing the texts (see createBoundedAnchorMapper). Without it the
+	// comparison has no limit.
+	opts?: { diffBudget?: number }
 ): Promise<OwnNoteView | null> {
 	const [thread] = await db
 		.select({
@@ -1524,8 +1555,12 @@ export async function getOwnNote(
 	);
 	if (!thread && own.size === 0) return null;
 
-	const wanted = (await listSuggestions(db, storyId)).filter((suggestion) =>
-		thread ? suggestion.patternThreadId === id : suggestion.id === id
+	const wanted = await listSuggestions(
+		db,
+		storyId,
+		undefined,
+		opts?.diffBudget === undefined ? undefined : createBoundedAnchorMapper(opts.diffBudget),
+		thread ? { patternThreadId: id } : { id }
 	);
 	const sceneIds = [...new Set(wanted.map((suggestion) => suggestion.sceneId))];
 	const sceneRows = sceneIds.length
@@ -1583,6 +1618,9 @@ export async function getOwnNote(
 				followsId: suggestion.followsId,
 				decidedAt: suggestion.decidedAt,
 				paragraphNow: span ? clipped(body.slice(span.start, span.end), PARAGRAPH_NOW_MAX) : null,
+				...(suggestion.anchorNotSought
+					? { notice: 'The text has changed since; the edit may no longer apply.' }
+					: {}),
 				threadId,
 				replies: threadId ? (replies.get(threadId) ?? []) : []
 			};

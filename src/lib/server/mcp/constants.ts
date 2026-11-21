@@ -60,13 +60,23 @@ export const MAX_NOTES_WAITING_PER_SCENE = 100;
 // The most undecided drafts from apps a universe holds at once. A draft is a
 // whole scene for the writer to read, so the number is small.
 export const MAX_APP_DRAFTS_WAITING = 20;
-// The staging calls for one writer's universe run one at a time, whichever
-// of their apps they come from. This many may wait behind the one that is
-// running; a call past that is told to try again.
+// One writer's staging calls run one at a time, whichever of their apps and
+// universes they are for. This many may wait behind the one that is running;
+// a call past that is told to try again.
 export const MAX_STAGING_CALLS_WAITING = 8;
 // Staging calls that may run at once in the whole process, each holding one
-// connection of a pool of ten. The rest wait their turn in memory.
-export const MAX_STAGING_TRANSACTIONS = 3;
+// connection. The rest wait their turn in memory. With the reading calls
+// below, outside apps hold at most half of the pool of ten; the rest is for
+// the writers' own pages and saves.
+export const MAX_STAGING_TRANSACTIONS = 2;
+// Reading calls one writer may have running at once, over all their apps,
+// and in the whole process. Each holds one connection at a time.
+export const MAX_READ_CALLS_PER_WRITER = 2;
+export const MAX_READ_CALLS_RUNNING = 3;
+// Reading calls of one writer that may wait for a place, and for how long. A
+// call past either is told to try again.
+export const MAX_READ_CALLS_WAITING = 20;
+export const READ_WAIT_TIMEOUT_MS = 10_000;
 // The longest a staging call waits for its turn before it is told to try
 // again.
 export const STAGING_WAIT_TIMEOUT_MS = 20_000;
@@ -76,6 +86,13 @@ export const STAGING_LOCK_TIMEOUT_MS = 2000;
 // The longest a staging call's transaction may last. Postgres ends it past
 // this, so nothing a call holds can outlast it.
 export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
+// How far a scene may have changed since an edit was suggested (characters
+// added and removed) for get_review_note to still work out where the edit
+// now sits by comparing the two texts. The comparison holds the server's one
+// thread and its cost grows with the square of this: about 25 ms at 500, a
+// second at 4000. Past it the edit is placed only if that is cheap, and is
+// otherwise reported as possibly no longer applying.
+export const REVIEW_NOTE_DIFF_MAX_EDITS = 500;
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
 

@@ -638,6 +638,9 @@ a.nav-item {
 	align-items: center;
 	gap: 8px;
 	flex-wrap: wrap;
+	/* A long name or web address wraps, so its end is never cut off. */
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 .list-sub {
 	font-size: 12px;
