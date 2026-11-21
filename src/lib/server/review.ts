@@ -1054,7 +1054,11 @@ export async function listSuggestions(
 	db: Database,
 	storyId: string,
 	viewer?: ReviewViewer,
-	mapper: AnchorMapper = createAnchorMapper()
+	mapper: AnchorMapper = createAnchorMapper(),
+	// Only this suggestion, or only the edits of this pattern note. Placing a
+	// suggestion in the scene as it now reads is the costly part, so a caller
+	// that wants a few should not pay for the whole story's.
+	only?: { id: string } | { patternThreadId: string }
 ): Promise<SuggestionView[]> {
 	const rows = await db
 		.select({
@@ -1069,7 +1073,15 @@ export async function listSuggestions(
 		.innerJoin(revisions, eq(reviewSuggestions.baseRevisionId, revisions.id))
 		.leftJoin(reviewers, eq(reviewSuggestions.reviewerId, reviewers.id))
 		.leftJoin(users, eq(reviewSuggestions.authorUserId, users.id))
-		.where(eq(reviewSuggestions.storyId, storyId))
+		.where(
+			and(
+				eq(reviewSuggestions.storyId, storyId),
+				only &&
+					('id' in only
+						? eq(reviewSuggestions.id, only.id)
+						: eq(reviewSuggestions.patternThreadId, only.patternThreadId))
+			)
+		)
 		.orderBy(asc(reviewSuggestions.createdAt));
 	const assistantName = rows.some((r) => r.suggestion.assistant)
 		? await assistantDisplayName(db, storyId)
@@ -1524,8 +1536,12 @@ export async function getOwnNote(
 	);
 	if (!thread && own.size === 0) return null;
 
-	const wanted = (await listSuggestions(db, storyId)).filter((suggestion) =>
-		thread ? suggestion.patternThreadId === id : suggestion.id === id
+	const wanted = await listSuggestions(
+		db,
+		storyId,
+		undefined,
+		undefined,
+		thread ? { patternThreadId: id } : { id }
 	);
 	const sceneIds = [...new Set(wanted.map((suggestion) => suggestion.sceneId))];
 	const sceneRows = sceneIds.length

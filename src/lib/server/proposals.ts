@@ -47,7 +47,9 @@ const BEFORE_MAX = 2000;
 export const MAX_ENTITY_PROPOSALS_WAITING = 50;
 export const MAX_SPLIT_PROPOSALS_WAITING = 5;
 
-type Staged = { ok: true; id: string } | { ok: false; reason: string };
+// nameRefused: the refusal is about the name itself (taken, waiting, or
+// turned down before), which an outside app is not told apart.
+type Staged = { ok: true; id: string } | { ok: false; reason: string; nameRefused?: true };
 
 type AppAuthor = { client: ClientAuthor };
 
@@ -118,6 +120,7 @@ export async function stageEntityProposal(
 	if (await nameTaken(db, input.universeId, name)) {
 		return {
 			ok: false,
+			nameRefused: true,
 			reason: `This universe already has an entry named "${name}", or one that lists it as another name. Do not suggest it again.`
 		};
 	}
@@ -132,12 +135,14 @@ export async function stageEntityProposal(
 		);
 	const waitingAlready = {
 		ok: false as const,
+		nameRefused: true as const,
 		reason: `"${name}" is already suggested and waiting for the writer.`
 	};
 	if (earlier.some((row) => row.status === 'pending')) return waitingAlready;
 	if (earlier.some((row) => row.status === 'dismissed')) {
 		return {
 			ok: false,
+			nameRefused: true,
 			reason: `The writer has turned down "${name}" before. Do not suggest it again.`
 		};
 	}

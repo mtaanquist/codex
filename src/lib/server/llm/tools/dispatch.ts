@@ -29,7 +29,7 @@ import { clientDisplayName } from '#lib/mcp-access';
 import { PROPOSAL_KIND_LABEL, stageEntityProposal, stageSplitProposal } from '../../proposals.ts';
 import { stageAppDraft } from '../../scene-drafts.ts';
 import { STAGING_LOCK_TIMEOUT_MS, STAGING_TRANSACTION_TIMEOUT_MS } from '../../mcp/constants.ts';
-import { inStagingTurn, StagingBusyError, stagingKey } from '../../mcp/staging-queue.ts';
+import { GateBusyError, stagingGate, stagingKey } from '../../mcp/call-gate.ts';
 import { isUuid } from '#lib/slug';
 import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
@@ -108,6 +108,9 @@ export type ToolContext = {
 		// turn: whether the connection and the universe are still good. False
 		// ends the call with `refused` and nothing staged.
 		stillAllowed?: (tx: Database) => Promise<boolean>;
+		// Shorter limits for a staging call's transaction, in place of the
+		// constants. For tests.
+		timeouts?: { lockMs?: number; transactionMs?: number };
 	};
 };
 
@@ -234,24 +237,24 @@ export async function dispatchToolCall(
 	try {
 		const { external } = ctx;
 		if (!external || tool.kind !== 'write') return await runTool(ctx, call.name, args);
-		// The staging calls for one writer's universe run one at a time,
-		// whichever of the writer's apps sent them. Each checks before it writes
-		// (a repeat, a ceiling, whose turn it is), and calls sent together would
-		// otherwise all pass the check; and each holds the lock a save of the
-		// scene waits on, so calls side by side would keep the writer waiting.
-		// They queue in memory, so a waiting call holds no connection. The
-		// advisory lock inside is the same rule kept by the database, should two
-		// processes ever serve one writer; it is taken first, so it orders
-		// nothing against the locks the handlers take. No lock in the call is
-		// waited on for long, and the transaction itself has an end: a call that
-		// cannot get a lock gives up and is asked to try again.
-		const key = stagingKey(ctx.userId, ctx.universeId);
-		return await inStagingTurn(key, () =>
+		// One writer's staging calls run one at a time, whichever of their apps
+		// sent them (see the staging gate). They wait in memory, so a waiting
+		// call holds no connection. The advisory lock inside is the same rule
+		// kept by the database, should two processes ever serve one writer; it
+		// is taken first, so it orders nothing against the locks the handlers
+		// take. No lock in the call is waited on for long, and the transaction
+		// itself has an end: a call that cannot get a lock gives up and is asked
+		// to try again. Postgres ends the whole session at that end, which the
+		// pool survives (see createPool).
+		const key = stagingKey(ctx.userId);
+		const lockMs = Number(external.timeouts?.lockMs ?? STAGING_LOCK_TIMEOUT_MS);
+		const transactionMs = Number(
+			external.timeouts?.transactionMs ?? STAGING_TRANSACTION_TIMEOUT_MS
+		);
+		return await stagingGate.run(ctx.userId, () =>
 			ctx.db.transaction(async (tx) => {
-				await tx.execute(sql.raw(`set local lock_timeout = ${STAGING_LOCK_TIMEOUT_MS}`));
-				await tx.execute(
-					sql.raw(`set local transaction_timeout = ${STAGING_TRANSACTION_TIMEOUT_MS}`)
-				);
+				await tx.execute(sql.raw(`set local lock_timeout = ${lockMs}`));
+				await tx.execute(sql.raw(`set local transaction_timeout = ${transactionMs}`));
 				await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
 				// What the endpoint checked before the wait may no longer hold.
 				if (external.stillAllowed && !(await external.stillAllowed(tx))) {
@@ -294,7 +297,7 @@ function toolFailure(err: unknown): ToolOutcome {
 	const cause = (err as { cause?: { code?: unknown } } | null)?.cause;
 	const code = typeof cause?.code === 'string' ? cause.code : undefined;
 	// Nothing went wrong; the call came at a busy moment and staged nothing.
-	if (err instanceof StagingBusyError || code === LOCK_NOT_AVAILABLE) {
+	if (err instanceof GateBusyError || code === LOCK_NOT_AVAILABLE) {
 		return { result: STAGING_BUSY, staged: false };
 	}
 	const fromDatabase =
@@ -603,7 +606,8 @@ async function searchText(ctx: ToolContext, query: string): Promise<string> {
 	if (!query.trim()) return 'Provide a search query.';
 	const results = await searchAll(ctx.db, ctx.userId, query, {
 		universeId: ctx.universeId,
-		assistant: true
+		assistant: true,
+		oneAtATime: ctx.external !== undefined
 	});
 	return JSON.stringify(
 		results.map((r) => ({ type: r.type, label: r.label, detail: r.sublabel, href: r.href }))
@@ -805,7 +809,14 @@ async function suggestEntity(
 		...input,
 		author: stagingAuthor(ctx)
 	});
-	if (!staged.ok) return { result: staged.reason, staged: false };
+	if (!staged.ok) {
+		// An app is not told why a name is refused: that an entry of that name
+		// exists (it may be in the trash) or was turned down is the writer's to
+		// know.
+		const result =
+			ctx.external && staged.nameRefused ? 'That name cannot be suggested.' : staged.reason;
+		return { result, staged: false };
+	}
 	const label = PROPOSAL_KIND_LABEL[input.kind as keyof typeof PROPOSAL_KIND_LABEL];
 	return {
 		result: ctx.external

@@ -60,13 +60,23 @@ export const MAX_NOTES_WAITING_PER_SCENE = 100;
 // The most undecided drafts from apps a universe holds at once. A draft is a
 // whole scene for the writer to read, so the number is small.
 export const MAX_APP_DRAFTS_WAITING = 20;
-// The staging calls for one writer's universe run one at a time, whichever
-// of their apps they come from. This many may wait behind the one that is
-// running; a call past that is told to try again.
+// One writer's staging calls run one at a time, whichever of their apps and
+// universes they are for. This many may wait behind the one that is running;
+// a call past that is told to try again.
 export const MAX_STAGING_CALLS_WAITING = 8;
 // Staging calls that may run at once in the whole process, each holding one
-// connection of a pool of ten. The rest wait their turn in memory.
-export const MAX_STAGING_TRANSACTIONS = 3;
+// connection. The rest wait their turn in memory. With the reading calls
+// below, outside apps hold at most half of the pool of ten; the rest is for
+// the writers' own pages and saves.
+export const MAX_STAGING_TRANSACTIONS = 2;
+// Reading calls one writer may have running at once, over all their apps,
+// and in the whole process. Each holds one connection at a time.
+export const MAX_READ_CALLS_PER_WRITER = 2;
+export const MAX_READ_CALLS_RUNNING = 3;
+// Reading calls of one writer that may wait for a place, and for how long. A
+// call past either is told to try again.
+export const MAX_READ_CALLS_WAITING = 20;
+export const READ_WAIT_TIMEOUT_MS = 10_000;
 // The longest a staging call waits for its turn before it is told to try
 // again.
 export const STAGING_WAIT_TIMEOUT_MS = 20_000;
