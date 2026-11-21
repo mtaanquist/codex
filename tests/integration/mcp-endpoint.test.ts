@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type pg from 'pg';
 import {
 	assistantDrafts,
@@ -78,6 +78,8 @@ const {
 	MAX_SPLIT_PROPOSALS_WAITING
 } = await import('#lib/server/proposals');
 const { discardSceneDraft, sceneDraftFor } = await import('#lib/server/scene-drafts');
+const { saveSceneBody } = await import('#lib/server/scene-save');
+const { inStagingTurn, stagingKey } = await import('#lib/server/mcp/staging-queue');
 const { createAnchorMapper } = await import('#lib/review-anchor');
 const { MAX_APP_DRAFTS_WAITING, MAX_STAGING_CALLS_WAITING, TOOL_RESULT_MAX_CHARS } =
 	await import('#lib/server/mcp/constants');
@@ -399,6 +401,57 @@ describe('who may call the endpoint', () => {
 });
 
 describe('the protocol', () => {
+	// A request as a client of the newer, sessionless generation sends it.
+	const MODERN = '2026-07-28';
+	function modern(token: string, method: string, params: Record<string, unknown> = {}) {
+		return send(
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method,
+				params: {
+					...params,
+					_meta: {
+						'io.modelcontextprotocol/protocolVersion': MODERN,
+						'io.modelcontextprotocol/clientCapabilities': {}
+					}
+				}
+			},
+			{
+				token,
+				headers: {
+					'mcp-protocol-version': MODERN,
+					'mcp-method': method,
+					...(typeof params.name === 'string' ? { 'mcp-name': params.name } : {})
+				}
+			}
+		);
+	}
+
+	it('opens no stream that waits for change events', async () => {
+		// Nothing would ever be sent on one, and it would outlive its token.
+		const listening = await modern(alice.token, 'subscriptions/listen', {
+			notifications: { toolsListChanged: true }
+		});
+		expect(listening.headers.get('content-type')).not.toContain('text/event-stream');
+		expect((await answer(listening)).error?.message).toBe('Subscription limit reached');
+		const stream = await send(null, {
+			token: alice.token,
+			method: 'GET',
+			headers: { accept: 'text/event-stream' }
+		});
+		expect(stream.status).toBe(405);
+
+		// Ordinary calls still work for a client of either generation.
+		const listed = await answer(await modern(alice.token, 'tools/list'));
+		expect(listed.result?.tools).toHaveLength(17);
+		const called = await answer(
+			await modern(alice.token, 'tools/call', { name: 'list_universes', arguments: {} })
+		);
+		expect(JSON.stringify(called.result?.content)).toContain('Alice Main');
+		expect((await rpc(alice.token, 'tools/list')).result?.tools).toHaveLength(17);
+		expect((await call(alice, 'list_universes')).text).toContain('Alice Main');
+	});
 	it('answers the opening handshake', async () => {
 		const { result } = await rpc(alice.token, 'initialize', {
 			protocolVersion: '2025-06-18',
@@ -903,12 +956,14 @@ async function discussionOf(who: World, suggestionId: string): Promise<string> {
 }
 
 // The app the writer's first connection is, as the author of a row.
-async function appOf(who: World) {
+async function appOf(who: World, name?: string) {
 	const [row] = await db
 		.select({ client: oauthClients })
 		.from(oauthGrants)
 		.innerJoin(oauthClients, eq(oauthGrants.clientId, oauthClients.id))
-		.where(eq(oauthGrants.userId, who.userId))
+		.where(
+			and(eq(oauthGrants.userId, who.userId), name ? eq(oauthClients.clientName, name) : undefined)
+		)
 		.orderBy(asc(oauthGrants.createdAt))
 		.limit(1);
 	return { client: { id: row.client.id, name: row.client.clientName, host: row.client.host } };
@@ -916,12 +971,12 @@ async function appOf(who: World) {
 
 // The context a call from the writer's app runs in, for a call made past the
 // endpoint.
-async function appContext(who: World, maxNotesPerScene = 100) {
+async function appContext(who: World, maxNotesPerScene = 100, name?: string) {
 	return {
 		db,
 		userId: who.userId,
 		universeId: who.universeId,
-		external: { sceneBodyCap: 1000, ...(await appOf(who)), maxNotesPerScene, origin: ORIGIN }
+		external: { sceneBodyCap: 1000, ...(await appOf(who, name)), maxNotesPerScene, origin: ORIGIN }
 	};
 }
 
@@ -1097,7 +1152,7 @@ describe('the same call sent several times at once', () => {
 		try {
 			await holder.query('begin');
 			await holder.query('select pg_advisory_xact_lock(hashtext($1))', [
-				`mcp-staging:${ctx.external.client.id}:${alice.universeId}`
+				stagingKey(alice.userId, alice.universeId)
 			]);
 			const began = Date.now();
 			const outcome = await leave(ctx, 1);
@@ -1111,40 +1166,105 @@ describe('the same call sent several times at once', () => {
 		expect((await leave(ctx, 1)).staged).toBe(true);
 	});
 
-	it('keeps the writers save of the scene waiting only briefly behind a long note', async () => {
+	// Six apps of one writer each stage the largest pattern note on one big
+	// scene, twice over, while the writer keeps saving that scene and another
+	// writer saves theirs. The apps take turns, so neither save waits long and
+	// the pool is never emptied.
+	it('keeps the writers saves quick while several of their apps stage long notes', async () => {
 		const words = Array.from({ length: 40 }, (_, n) => `word${n}x`);
-		await setBody(alice, words.map((word) => `A line with ${word} in it.`).join('\n\n'));
-		const ctx = await appContext(alice);
-		const saver = await pool.connect();
-		try {
-			const noting = dispatchToolCall(ctx, {
-				id: 'call',
-				name: 'leave_pattern_note',
-				arguments: JSON.stringify({
-					sceneId: alice.sceneId,
-					comment: PATTERN,
-					edits: words.map((word) => ({ original: word, replacement: `${word}y` }))
+		const filler = 'The harbour lay quiet under a low grey sky. '.repeat(400);
+		const body = `${filler}\n\n${words.map((word) => `A line with ${word} in it.`).join('\n\n')}`;
+		await setBody(alice, body);
+		const contexts = [await appContext(alice)];
+		for (let n = 1; n < 6; n++) {
+			await connect(alice.userId, `Desk ${n}`);
+			contexts.push(await appContext(alice, 100, `Desk ${n}`));
+		}
+		let busiest = 0;
+		const watch = setInterval(() => {
+			busiest = Math.max(busiest, pool.totalCount - pool.idleCount);
+		}, 1);
+		const notes = contexts.flatMap((ctx) =>
+			[1, 2].map((round) =>
+				dispatchToolCall(ctx, {
+					id: 'call',
+					name: 'leave_pattern_note',
+					arguments: JSON.stringify({
+						sceneId: alice.sceneId,
+						comment: `Pattern note (round ${round}): the same word again.`,
+						edits: words.map((word) => ({ original: word, replacement: `${word}${round}` }))
+					})
 				})
-			});
-			// What a save takes: the scene's revision lock. Asked for again and
-			// again while the note is staged; the longest wait is what a save
-			// would have seen.
+			)
+		);
+		let done = false;
+		const all = Promise.all(notes).finally(() => (done = true));
+		// A save as the editor sends it: the same text with a little more typed
+		// at the top each time, which leaves the words the notes quote in place.
+		const saving = async (who: World, text: () => string) => {
 			let longest = 0;
-			let done = false;
-			void noting.then(() => (done = true));
+			let saves = 0;
 			while (!done) {
 				const began = Date.now();
-				await saver.query('begin');
-				await saver.query('select pg_advisory_xact_lock(hashtext($1))', [`scene:${alice.sceneId}`]);
-				await saver.query('commit');
+				const saved = await saveSceneBody(db, who.sceneId, {
+					title: null,
+					bodyMd: text(),
+					anchors: null,
+					baseHashes: null
+				} as never);
+				expect(saved.ok).toBe(true);
 				longest = Math.max(longest, Date.now() - began);
-				await new Promise((resolve) => setTimeout(resolve, 2));
+				saves += 1;
+				await new Promise((resolve) => setTimeout(resolve, 5));
 			}
-			expect((await noting).result).toContain('with 40 linked edits');
-			expect(longest).toBeLessThan(2000);
-		} finally {
-			saver.release();
-		}
+			return { longest, saves };
+		};
+		let typed = '';
+		const [hers, his, outcomes] = await Promise.all([
+			saving(alice, () => `${(typed += 'x')}\n\n${body}`),
+			saving(bob, () => `Bob typed ${Date.now()}.`),
+			all
+		]);
+		clearInterval(watch);
+		expect(outcomes.some((outcome) => outcome.staged)).toBe(true);
+		expect(hers.saves).toBeGreaterThan(1);
+		expect(hers.longest).toBeLessThan(2000);
+		expect(his.longest).toBeLessThan(500);
+		// One note at a time, the two saves, and one to spare.
+		expect(busiest).toBeLessThanOrEqual(4);
+	});
+
+	it('stages nothing for a call that was waiting when the app was disconnected', async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const ahead = inStagingTurn(stagingKey(alice.userId, alice.universeId), () => gate);
+		const waiting = comment(alice);
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const [grant] = await db
+			.select({ id: oauthGrants.id })
+			.from(oauthGrants)
+			.where(eq(oauthGrants.userId, alice.userId));
+		expect(await revokeGrant(db, alice.userId, grant.id)).toBe(true);
+		open();
+		await ahead;
+		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
+		expect(await stagedRows()).toBe(0);
+	});
+
+	it('stages nothing for a call that was waiting when the universe was trashed', async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const ahead = inStagingTurn(stagingKey(alice.userId, alice.universeId), () => gate);
+		const waiting = comment(alice);
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		await db
+			.update(universes)
+			.set({ deletedAt: new Date() })
+			.where(eq(universes.id, alice.universeId));
+		open();
+		await ahead;
+		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
+		expect(await stagedRows()).toBe(0);
 	});
 });
 
@@ -1193,6 +1313,25 @@ describe('leave_pattern_note', () => {
 		await note(alice);
 		const threads = await listThreads(db, alice.storyId, mapRange);
 		expect(threads.map((thread) => thread.comments[0].isApp)).toEqual([false, true]);
+	});
+
+	it('stages none of a note when the scene goes to the trash under it', async () => {
+		// The call is held at its first edit, by the lock a save of the scene
+		// takes, while the scene is trashed.
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select pg_advisory_xact_lock(hashtext($1))', [`scene:${alice.sceneId}`]);
+			const noting = note(alice);
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			await trash(alice.sceneId);
+			await holder.query('commit');
+			expect(await noting).toEqual({ text: NO_SCENE, isError: false });
+		} finally {
+			await holder.query('rollback');
+			holder.release();
+		}
+		expect(await stagedRows()).toBe(0);
 	});
 
 	it('stages nothing outside the writers own open stories', async () => {
@@ -2507,6 +2646,18 @@ describe('stage_scene_draft', () => {
 		// Bob's universe is not held back by Alice's.
 		expect((await stage(bob, { universeId: bob.universeId, sceneId: bob.sceneId })).text).toContain(
 			'Staged the draft'
+		);
+		// A draft on a scene in the trash is not waiting for anyone.
+		await trash(sceneIds[0]);
+		expect((await stage(alice, { sceneId: sceneIds[MAX_APP_DRAFTS_WAITING] })).text).toContain(
+			'Staged the draft'
+		);
+		await pool.query('delete from assistant_drafts where scene_id = $1', [
+			sceneIds[MAX_APP_DRAFTS_WAITING]
+		]);
+		await db.update(scenes).set({ deletedAt: null }).where(eq(scenes.id, sceneIds[0]));
+		expect((await stage(alice, { sceneId: sceneIds[MAX_APP_DRAFTS_WAITING] })).text).toContain(
+			'drafts from apps waiting'
 		);
 		// Once the writer has decided on one, there is room again.
 		const [draft] = await draftsOf(alice.userId);

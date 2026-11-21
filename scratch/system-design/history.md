@@ -1023,6 +1023,56 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 3: endpoint, tools and sign-in fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-3` on `staging/mcp-endpoint`. No
+migration.
+
+- The staging queue was keyed on client and universe, so a writer with
+  several apps (or tokens) still had several staging transactions at once,
+  each holding the lock a save of the scene waits on, and enough of them
+  emptied the pool. The key is now writer and universe, for the queue and
+  for the advisory lock inside, and three staging transactions at most run
+  in the whole process (`MAX_STAGING_TRANSACTIONS`), the rest waiting in
+  memory. The test that failed first: six apps of one writer staging two
+  40-edit notes each on a large scene while `saveSceneBody` runs on it and a
+  second writer saves; the writer's longest save was 3.0 s before, and is
+  0.15 to 0.17 s now, the other writer's 25 to 71 ms, with three connections
+  busy at most.
+- A waiting call had no deadline. It gives up after 20 seconds with the same
+  "try again" answer, and passes its turn on only when the calls ahead have
+  finished, so the next never runs beside them. The transaction itself has
+  `transaction_timeout` of 30 seconds (Postgres 17 and later; the project
+  runs 18), so a call that hangs cannot hold its key or its locks for good.
+- Checks made before the wait were not repeated after it: a queued call
+  still staged after the app was disconnected or the universe trashed. The
+  dispatcher asks the endpoint again inside the transaction
+  (`external.stillAllowed`: token and grant live, account usable, universe
+  still the writer's), and a no answers as for a universe that is not
+  theirs.
+- `subscriptions/listen` is refused (`maxSubscriptions: 0` on the SDK
+  handler). Checked that `tools/list` and `tools/call` still answer for the
+  2025 handshake and for the 2026-07-28 sessionless requests.
+- A pattern note on a scene trashed mid-call kept the note and the edits
+  staged before the trash. `createSuggestion` reads `deleted_at` under the
+  scene revision lock and says the scene is gone; for an app the handler
+  throws, which rolls the call's transaction back. For the Assistant in the
+  app, which has no outer transaction, the edit is refused as before.
+- The drafts ceiling counted drafts on trashed scenes and stories.
+- Sign-in. An exchange that changes a grant's `redirect_host` revokes the
+  grant's other tokens. `createPersonalToken` takes the exclusive user lock
+  (six at once made five before). `lockUserForRevocation` is FOR NO KEY
+  UPDATE, which still conflicts with the issuers' FOR SHARE but not with the
+  FOR KEY SHARE of an insert that references the user; the race tests were
+  rerun and a new test holds a key-share lock and checks a revoke does not
+  wait. A refused Allow showed "This link does not work", because the form
+  posts to the action's address, which no longer carries the request; the
+  page shows the refusal first. The consent page says 'An app calling itself
+  "Name"' and puts where the answer goes on its own line.
+- The text for the suggest permission now lists everything it allows
+  (entries, split proposals and drafts as well), on the consent page, the
+  token form and in the help.
+
 ## MCP endpoint, review round 2: app side fixes (2026-11-21)
 
 Part of #1175, branch `fix/mcp-app-side-review-2` on `staging/mcp-endpoint`.

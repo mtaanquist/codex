@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import AuthShell from '#lib/components/AuthShell.svelte';
-	import { clientDisplayName } from '#lib/mcp-access';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -13,8 +12,28 @@
 		if (continueTo) window.location.replace(continueTo);
 	});
 
-	const appName = $derived(data.status === 'ok' ? clientDisplayName(data.client) : '');
+	// The name is the app's own word for itself, so it is shown as a claim.
+	// What Codex does know, where the answer goes, has a line to itself.
+	const claim = $derived(
+		data.status === 'ok' ? `An app calling itself "${data.client.clientName}"` : ''
+	);
+	// A refused Allow or Deny. The form was posted to the action's address,
+	// which no longer carries the app's request, so it is shown on its own
+	// and not under what the load made of that address.
+	const refusal = $derived(form && 'message' in form && form.message ? form.message : null);
 </script>
+
+{#snippet answerGoesTo()}
+	{#if data.status === 'ok'}
+		<p class="auth-note consent-host">
+			{#if data.local}
+				The app runs on this computer.
+			{:else}
+				It will send you back to {data.redirectHost}.
+			{/if}
+		</p>
+	{/if}
+{/snippet}
 
 <svelte:head>
 	<title>Connect an app - Codex</title>
@@ -28,6 +47,14 @@
 		<div class="auth-links">
 			<!-- eslint-disable-next-line svelte/no-navigation-without-resolve -- the app's own address, outside this site -->
 			<a href={continueTo} rel="noreferrer">Continue</a>
+		</div>
+	</AuthShell>
+{:else if refusal}
+	<AuthShell title="The app was not connected">
+		<p class="form-error auth-note" role="alert">{refusal}</p>
+		<div class="auth-links">
+			<a href={resolve('/account/[[section]]', { section: 'apps' })}>Open Connected apps</a>
+			<a href={resolve('/')}>Go to your library</a>
 		</div>
 	</AuthShell>
 {:else if data.status === 'invalid'}
@@ -50,7 +77,8 @@
 		</div>
 	</AuthShell>
 {:else if !data.accessOn}
-	<AuthShell title="Connect an app" sub="{appName} wants to connect to your Codex account.">
+	<AuthShell title="Connect an app" sub="{claim} wants to connect to your Codex account.">
+		{@render answerGoesTo()}
 		<p class="auth-note">
 			Access for other apps is turned off for your account. To connect this app, turn it on under
 			Account, Connected apps, then go back to the app and connect again.
@@ -62,22 +90,15 @@
 {:else}
 	<AuthShell
 		title="Connect an app"
-		sub="{appName} wants to connect to your Codex account ({data.email})."
+		sub="{claim} wants to connect to your Codex account ({data.email})."
 	>
-		{#if form && 'message' in form && form.message}
-			<p class="form-error auth-note" role="alert">{form.message}</p>
-		{/if}
+		{@render answerGoesTo()}
 		<p class="auth-lede">
 			{#if data.connected}
 				This app is already connected. Allowing it again replaces what it may do with your choice
 				below.
 			{:else}
 				Only allow this if you started it yourself, from an app you trust.
-			{/if}
-			{#if data.local}
-				The app runs on this computer.
-			{:else if data.redirectHost !== data.client.host}
-				After you answer, you are sent back to {data.redirectHost}.
 			{/if}
 		</p>
 		<form method="POST" action="?/allow">
@@ -125,6 +146,10 @@
 		margin: 0;
 		padding: 0;
 		min-width: 0;
+	}
+	.consent-host {
+		font-weight: 600;
+		overflow-wrap: anywhere;
 	}
 	.consent-legend {
 		padding: 0;

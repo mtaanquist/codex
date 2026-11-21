@@ -14,7 +14,7 @@ import {
 	STAGING_CALLS_PER_MINUTE_PER_USER,
 	TOOL_RESULT_MAX_CHARS
 } from './constants.ts';
-import type { BearerIdentity } from './oauth.ts';
+import { credentialLive, type BearerIdentity } from './oauth.ts';
 
 // The shared toolbox as an outside app sees it. The catalogue and the handlers
 // are the Assistant's own (llm/tools); this module only decides which of them
@@ -213,11 +213,18 @@ export async function callMcpTool(
 						host: identity.client.host
 					},
 					maxNotesPerScene: MAX_NOTES_WAITING_PER_SCENE,
-					origin
+					origin,
+					// A staging call may wait its turn; the app may be disconnected
+					// or the universe trashed meanwhile.
+					stillAllowed: async (tx) =>
+						(await credentialLive(tx, identity)) &&
+						(universeId === '' || (await ownsUniverse(tx, identity.userId, universeId)))
 				}
 			},
 			{ id: 'mcp', name, arguments: JSON.stringify(rest) }
 		);
+		// The same answer as for a universe that was never the writer's.
+		if (outcome.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);
 		if (outcome.failed) return failed(outcome.errorCode);
 		log(outcome.staged ? 'staged' : 'ok');
 		return { text: capped(outcome.result), isError: false };

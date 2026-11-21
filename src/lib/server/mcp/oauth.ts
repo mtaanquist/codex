@@ -59,8 +59,11 @@ function newSecret(prefix: string): string {
 // user lock and any code row, before any token row): a refresh and a
 // revocation of the same family then run one after the other, and neither
 // can hold a token row the other is waiting for.
+// FOR NO KEY UPDATE shuts out the issuers' FOR SHARE all the same, without
+// waiting behind every insert that points at the user's row (those take the
+// row FOR KEY SHARE, which only a full FOR UPDATE conflicts with).
 async function lockUserForRevocation(tx: Database, userId: string): Promise<void> {
-	await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('update');
+	await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('no key update');
 }
 
 // Whether the account may use external access at all right now. With
@@ -242,6 +245,25 @@ export async function exchangeCode(
 			// Only a self-registered client is vouched for by where its code goes.
 			redirectHost: client.kind === 'dcr' ? redirectHost(code.redirectUri) : null
 		};
+		// Connecting from the app's other address: the tokens that went to
+		// the first one end, so the host the grant shows is where every live
+		// token of it was sent.
+		const [earlier] = await tx
+			.select({ id: oauthGrants.id, redirectHost: oauthGrants.redirectHost })
+			.from(oauthGrants)
+			.where(
+				and(
+					eq(oauthGrants.userId, code.userId),
+					eq(oauthGrants.clientId, client.id),
+					isNull(oauthGrants.revokedAt)
+				)
+			);
+		if (
+			earlier &&
+			(earlier.redirectHost ?? client.host) !== (granted.redirectHost ?? client.host)
+		) {
+			await revokeGrantTokens(tx, earlier.id);
+		}
 		const [grant] = await tx
 			.insert(oauthGrants)
 			.values({ userId: code.userId, clientId: client.id, ...granted })
@@ -412,6 +434,30 @@ export async function resolveBearer(db: Database, token: string): Promise<Bearer
 	};
 }
 
+// Whether a connection a request was let in on is still good: its token and
+// grant live, and the account usable. For a call that waited after
+// resolveBearer let it in.
+export async function credentialLive(
+	db: Database,
+	identity: Pick<BearerIdentity, 'tokenId' | 'grantId' | 'userId'>
+): Promise<boolean> {
+	const [row] = await db
+		.select({ id: apiTokens.id })
+		.from(apiTokens)
+		.innerJoin(oauthGrants, eq(apiTokens.grantId, oauthGrants.id))
+		.where(
+			and(
+				eq(apiTokens.id, identity.tokenId),
+				eq(oauthGrants.id, identity.grantId),
+				eq(oauthGrants.userId, identity.userId),
+				isNull(apiTokens.revokedAt),
+				isNull(oauthGrants.revokedAt),
+				gt(apiTokens.expiresAt, sql`now()`)
+			)
+		);
+	return Boolean(row) && (await accountUsable(db, identity.userId));
+}
+
 // ============ Grants (the Account page) ============
 
 export type GrantView = {
@@ -526,7 +572,11 @@ export async function createPersonalToken(
 		)
 	]);
 	return db.transaction(async (tx) => {
-		if (!(await accountUsable(tx, input.userId, true))) {
+		// The exclusive lock, not the issuers' shared one: the name and the
+		// count are checked before the insert, and two calls side by side would
+		// both pass.
+		await lockUserForRevocation(tx, input.userId);
+		if (!(await accountUsable(tx, input.userId))) {
 			return { ok: false, reason: 'Turn on "Allow other apps to connect" first.' };
 		}
 		const existing = await tx
