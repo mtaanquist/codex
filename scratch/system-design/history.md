@@ -1123,13 +1123,22 @@ migration.
 - `suggest_entity` over MCP answers "That name cannot be suggested." for a
   name that is taken, already waiting or was turned down, so an app cannot
   tell which; the in-app Assistant keeps the detailed answers.
-- Left as it is, and worth knowing: `get_review_note` (like the review page)
-  runs a character diff of the scene as it was against the scene as it is,
-  in the server's own thread. For a 20 KB scene that was mostly rewritten
-  since the note, one such diff took about half a second here, during which
-  the server answers nobody. The gate bounds how many run at once, not this.
-  Moving the diff off the main thread, or giving up on a diff past a size,
-  is its own piece of work.
+- `get_review_note` ran a character diff of the scene as it was against the
+  scene as it is, in the server's own thread, with no limit. For a 20 KB
+  scene rewritten from top to bottom one diff took about nine seconds here
+  (half a second when part of it was kept), during which the server answered
+  nobody, and an app could ask many times a minute. Over MCP the diff is now
+  stopped once the texts differ by more than 500 characters added and
+  removed (jsdiff's `maxEditLength`; `REVIEW_NOTE_DIFF_MAX_EDITS`), which
+  costs about 25 ms; the cost grows with the square of the limit (a second
+  at 4000). Past the limit an edit is placed without a diff when it sits in
+  the start or end the two texts share, or its text stands exactly once in
+  the scene; otherwise the answer carries "The text has changed since; the
+  edit may no longer apply." in place of the paragraph. The test that failed
+  first: four calls on such a scene took 35 s; they now answer in under
+  0.4 s with the server's thread never held for 0.1 s. The review page and
+  the in-app Assistant are unchanged, and the review page's own diff cost
+  is for a separate issue.
 
 ## MCP endpoint, review round 3: endpoint, tools and sign-in fixes (2026-11-21)
 

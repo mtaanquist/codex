@@ -100,6 +100,9 @@ export type AnchorMapper = {
 		end: number
 	): { start: number; end: number } | null;
 	point(baseText: string, currentText: string, position: number): number | null;
+	// Only on a bounded mapper: whether these two texts differ by more than
+	// it will diff, so a null from it may mean "not looked for", not "gone".
+	gaveUp?(baseText: string, currentText: string): boolean;
 };
 
 export function createAnchorMapper(): AnchorMapper {
@@ -129,6 +132,81 @@ export function createAnchorMapper(): AnchorMapper {
 			if (position < 0 || position > baseText.length) return null;
 			if (baseText === currentText) return position;
 			return mapPoint(diff(baseText, currentText), position);
+		}
+	};
+}
+
+// A mapper that never does more than a set amount of work. The character
+// diff runs in the caller's thread and its cost grows with the square of what
+// changed: twenty thousand rewritten characters hold a server for seconds.
+// This one stops the diff once the texts are known to differ by more than
+// `maxEdits` characters added and removed. Past that it places what it can
+// without a diff: an anchor in the start or the end the two texts share, and
+// a range whose text stands exactly once in the current text. Anything else
+// is null, and `gaveUp` says the diff was stopped.
+export function createBoundedAnchorMapper(maxEdits: number): AnchorMapper {
+	type Pair = { prefix: number; suffix: number; parts: Change[] | null };
+	const cache = new Map<string, Map<string, Pair>>();
+	const compare = (baseText: string, currentText: string): Pair => {
+		let byCurrent = cache.get(baseText);
+		if (!byCurrent) {
+			byCurrent = new Map();
+			cache.set(baseText, byCurrent);
+		}
+		let pair = byCurrent.get(currentText);
+		if (!pair) {
+			const parts = diffChars(baseText, currentText, { maxEditLength: maxEdits }) ?? null;
+			let prefix = 0;
+			let suffix = 0;
+			if (!parts) {
+				const shortest = Math.min(baseText.length, currentText.length);
+				while (prefix < shortest && baseText[prefix] === currentText[prefix]) prefix++;
+				while (
+					suffix < shortest - prefix &&
+					baseText[baseText.length - 1 - suffix] === currentText[currentText.length - 1 - suffix]
+				) {
+					suffix++;
+				}
+			}
+			pair = { prefix, suffix, parts };
+			byCurrent.set(currentText, pair);
+		}
+		return pair;
+	};
+	// A position in the start or the end the texts share, moved to where it
+	// is now; null for one in between.
+	const shared = (pair: Pair, baseText: string, currentText: string, position: number) => {
+		if (position <= pair.prefix) return position;
+		if (position >= baseText.length - pair.suffix) {
+			return position + currentText.length - baseText.length;
+		}
+		return null;
+	};
+	return {
+		range(baseText, currentText, start, end) {
+			if (start < 0 || end > baseText.length || start >= end) return null;
+			if (baseText === currentText) return { start, end };
+			const pair = compare(baseText, currentText);
+			if (pair.parts) return mapRange(pair.parts, start, end);
+			if (end <= pair.prefix) return { start, end };
+			if (start >= baseText.length - pair.suffix) {
+				const shift = currentText.length - baseText.length;
+				return { start: start + shift, end: end + shift };
+			}
+			const original = baseText.slice(start, end);
+			const at = currentText.indexOf(original);
+			if (at === -1 || currentText.indexOf(original, at + 1) !== -1) return null;
+			return { start: at, end: at + original.length };
+		},
+		point(baseText, currentText, position) {
+			if (position < 0 || position > baseText.length) return null;
+			if (baseText === currentText) return position;
+			const pair = compare(baseText, currentText);
+			if (pair.parts) return mapPoint(pair.parts, position);
+			return shared(pair, baseText, currentText, position);
+		},
+		gaveUp(baseText, currentText) {
+			return baseText !== currentText && compare(baseText, currentText).parts === null;
 		}
 	};
 }

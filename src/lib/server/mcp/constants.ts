@@ -86,6 +86,13 @@ export const STAGING_LOCK_TIMEOUT_MS = 2000;
 // The longest a staging call's transaction may last. Postgres ends it past
 // this, so nothing a call holds can outlast it.
 export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
+// How far a scene may have changed since an edit was suggested (characters
+// added and removed) for get_review_note to still work out where the edit
+// now sits by comparing the two texts. The comparison holds the server's one
+// thread and its cost grows with the square of this: about 25 ms at 500, a
+// second at 4000. Past it the edit is placed only if that is cheap, and is
+// otherwise reported as possibly no longer applying.
+export const REVIEW_NOTE_DIFF_MAX_EDITS = 500;
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
 

@@ -938,7 +938,15 @@ suggestion. On top of those:
     may wait, for ten seconds at most, and a call past either is answered
     "Too many calls at once. Try again." `search_text` runs its queries one
     after another here (the command palette runs them side by side), and
-    `get_review_note` places only the requested note's edits in the scene.
+    `get_review_note` places only the requested note's edits in the scene,
+    and on this surface with a bounded mapper (`createBoundedAnchorMapper`):
+    the character diff runs in the server's one thread, so it is stopped
+    once the scene is known to have changed by more than 500 characters
+    (`REVIEW_NOTE_DIFF_MAX_EDITS`, about 25 ms). Past that an edit is placed
+    only where that is cheap (in the start or end the two texts share, or
+    its text stands exactly once in the scene), and is otherwise reported
+    with `notice`: "The text has changed since; the edit may no longer
+    apply." The review page and the in-app Assistant keep the full diff.
   - The per-minute budgets (per connection, per writer, and for requests of
     any kind) count the calls of the last sixty seconds
     (`slidingRateLimit`), so a burst across a minute boundary gets no more

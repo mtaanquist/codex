@@ -28,7 +28,11 @@ import { toLf } from '#lib/line-endings';
 import { clientDisplayName } from '#lib/mcp-access';
 import { PROPOSAL_KIND_LABEL, stageEntityProposal, stageSplitProposal } from '../../proposals.ts';
 import { stageAppDraft } from '../../scene-drafts.ts';
-import { STAGING_LOCK_TIMEOUT_MS, STAGING_TRANSACTION_TIMEOUT_MS } from '../../mcp/constants.ts';
+import {
+	REVIEW_NOTE_DIFF_MAX_EDITS,
+	STAGING_LOCK_TIMEOUT_MS,
+	STAGING_TRANSACTION_TIMEOUT_MS
+} from '../../mcp/constants.ts';
 import { GateBusyError, stagingGate, stagingKey } from '../../mcp/call-gate.ts';
 import { isUuid } from '#lib/slug';
 import { paragraphWindow } from '#lib/paragraphs';
@@ -931,7 +935,16 @@ async function getReviewNote(ctx: ToolContext, noteId: string): Promise<string> 
 	const storyId =
 		(await reachableStory(ctx, reviewThreads, noteId)) ??
 		(await reachableStory(ctx, reviewSuggestions, noteId));
-	const view = storyId ? await getOwnNote(ctx.db, storyId, stagingAuthor(ctx), noteId) : null;
+	// An app can ask many times a minute, so what one call may cost is bounded.
+	const view = storyId
+		? await getOwnNote(
+				ctx.db,
+				storyId,
+				stagingAuthor(ctx),
+				noteId,
+				ctx.external ? { diffBudget: REVIEW_NOTE_DIFF_MAX_EDITS } : undefined
+			)
+		: null;
 	if (!storyId || !view) return NO_REVIEW_NOTE;
 	const pending = view.edits.some((edit) => edit.status === 'pending');
 	const link =

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { diffChars } from 'diff';
-import { createAnchorMapper, reanchorPoint, reanchorRange } from './review-anchor';
+import {
+	createAnchorMapper,
+	createBoundedAnchorMapper,
+	reanchorPoint,
+	reanchorRange
+} from './review-anchor';
 
 // Wrapped so a test can count the diffs a mapper runs.
 vi.mock('diff', async (importOriginal) => {
@@ -147,5 +152,51 @@ describe('createAnchorMapper', () => {
 		expect(mapper.point(BASE, current, START)).toBe(START);
 		expect(mapper.range(BASE, current, START, END)).toEqual(first);
 		expect(diffChars).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('createBoundedAnchorMapper', () => {
+	const old = 'The harbour lay quiet under a low grey sky. '.repeat(200);
+	const rewritten = 'Rain came in from the west before noon and stayed on. '.repeat(170);
+
+	it('places anchors as the plain mapper does while the change is within its limit', () => {
+		const base = `She held the lantern high.\n\n${old}`;
+		const current = `She held the old lantern high.\n\nA new line. ${old}`;
+		const bounded = createBoundedAnchorMapper(500);
+		const plain = createAnchorMapper();
+		expect(bounded.range(base, current, 13, 20)).toEqual(plain.range(base, current, 13, 20));
+		expect(bounded.range(base, current, 100, 140)).toEqual(plain.range(base, current, 100, 140));
+		expect(bounded.point(base, current, 60)).toBe(plain.point(base, current, 60));
+		expect(bounded.gaveUp!(base, current)).toBe(false);
+		expect(bounded.gaveUp!(base, base)).toBe(false);
+	});
+
+	it('past its limit, places only what is in the shared start or end, or stands once', () => {
+		const base = `She held the lantern high.\n\n${old}\n\nA heron stood there.\n\nThe gull watched.`;
+		const current = `She held the lantern high.\n\n${rewritten}\n\nNo heron today.\n\nThe gull watched.`;
+		const bounded = createBoundedAnchorMapper(500);
+		const began = performance.now();
+		expect(bounded.gaveUp!(base, current)).toBe(true);
+		// In the shared start: where it was.
+		expect(bounded.range(base, current, 13, 20)).toEqual({ start: 13, end: 20 });
+		expect(bounded.point(base, current, 4)).toBe(4);
+		// In the shared end: moved by the change in length.
+		const gull = base.indexOf('gull');
+		const nowAt = current.indexOf('gull');
+		expect(bounded.range(base, current, gull, gull + 4)).toEqual({ start: nowAt, end: nowAt + 4 });
+		expect(bounded.point(base, current, gull)).toBe(nowAt);
+		// In between: found only if the text stands exactly once.
+		const heron = base.indexOf('heron');
+		const heronNow = current.indexOf('heron');
+		expect(bounded.range(base, current, heron, heron + 5)).toEqual({
+			start: heronNow,
+			end: heronNow + 5
+		});
+		const quiet = base.indexOf('quiet');
+		expect(bounded.range(base, current, quiet, quiet + 5)).toBeNull();
+		const stood = base.indexOf('stood');
+		expect(bounded.range(base, current, stood, stood + 5)).toBeNull();
+		expect(bounded.point(base, current, quiet)).toBeNull();
+		expect(performance.now() - began).toBeLessThan(250);
 	});
 });

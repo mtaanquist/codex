@@ -1444,6 +1444,86 @@ describe('one writers burst of reading', () => {
 	}, 60_000);
 });
 
+// Placing an edit in a scene that has changed is a character diff, which
+// runs in the server's own thread: while it runs, nobody else is answered.
+describe('get_review_note on a large scene that was mostly rewritten', () => {
+	const before = 'The harbour lay quiet under a low grey sky. '.repeat(450);
+	const after = 'Rain came in from the west before noon and stayed on. '.repeat(380);
+	const read = (id: string) =>
+		call(alice, 'get_review_note', { universeId: alice.universeId, noteId: id });
+	// The longest the server's thread was held while `work` ran.
+	async function longestStall<T>(work: () => Promise<T>) {
+		let stall = 0;
+		let last = performance.now();
+		const watch = setInterval(() => {
+			stall = Math.max(stall, performance.now() - last - 5);
+			last = performance.now();
+		}, 5);
+		const began = performance.now();
+		const result = await work();
+		clearInterval(watch);
+		return { result, stall, took: performance.now() - began };
+	}
+
+	it('answers quickly, holds nobody up, and says the edit may no longer apply', async () => {
+		await setBody(alice, `${before}\n\nShe held the lantern high.`);
+		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		await setBody(
+			alice,
+			`${after}\n\nThe lantern was gone, and the lantern she found was not hers.`
+		);
+		const { result, stall, took } = await longestStall(() =>
+			Promise.all([read(id), read(id), read(id), read(id)])
+		);
+		expect(stall).toBeLessThan(100);
+		expect(took).toBeLessThan(400);
+		const [shown] = JSON.parse(result[0].text).edits;
+		expect(shown).toMatchObject({
+			status: 'pending',
+			paragraphNow: null,
+			notice: 'The text has changed since; the edit may no longer apply.'
+		});
+	});
+
+	it('still places an edit whose words are untouched, or stand once in the new text', async () => {
+		await setBody(
+			alice,
+			`She held the lantern high.\n\n${before}\n\nA heron stood there.\n\n${before}\n\nThe gull watched her go.`
+		);
+		const first = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		const last = idIn((await edit(alice, { original: 'gull', replacement: 'heron' })).text);
+		const middle = idIn((await edit(alice, { original: 'stood', replacement: 'waited' })).text);
+		// Everything between the first and last paragraph is new.
+		await setBody(alice, `She held the lantern high.\n\n${after}\n\nThe gull watched her go.`);
+		const { result, stall } = await longestStall(() =>
+			Promise.all([read(first), read(last), read(middle)])
+		);
+		expect(stall).toBeLessThan(100);
+		const [atStart, atEnd, gone] = result.map((entry) => JSON.parse(entry.text).edits[0]);
+		expect(atStart.paragraphNow).toBe('She held the lantern high.');
+		expect(atStart.notice).toBeUndefined();
+		expect(atEnd.paragraphNow).toBe('The gull watched her go.');
+		expect(gone).toMatchObject({ paragraphNow: null, notice: expect.any(String) });
+
+		// A word that moved, and is in the new text once, is found there.
+		await setBody(alice, `${after}\n\nNo gull that day.\n\nShe held it high.`);
+		const moved = JSON.parse((await read(last)).text).edits[0];
+		expect(moved.paragraphNow).toBe('No gull that day.');
+	});
+
+	it('places an edit as before when the change is small', async () => {
+		await setBody(alice, `${before}\n\nShe held the lantern high.`);
+		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		await setBody(
+			alice,
+			`${before.slice(0, 9000)}A new line. ${before.slice(9000)}\n\nShe held the old lantern high, and the lantern shook.`
+		);
+		const shown = JSON.parse((await read(id)).text).edits[0];
+		expect(shown.paragraphNow).toBe('She held the old lantern high, and the lantern shook.');
+		expect(shown.notice).toBeUndefined();
+	});
+});
+
 describe('leave_pattern_note', () => {
 	const note = (who: World, overrides: Record<string, unknown> = {}) =>
 		call(who, 'leave_pattern_note', {
