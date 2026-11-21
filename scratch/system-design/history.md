@@ -1072,6 +1072,21 @@ migration.
 - The text for the suggest permission now lists everything it allows
   (entries, split proposals and drafts as well), on the consent page, the
   token form and in the help.
+- App side. The draft link (`?scene=&draft=show`) on a narrow window showed
+  the writing pane with the draft out of sight: taking the marker off the
+  address is a navigation, and a navigation switches to the writing. That one
+  keeps the pane. "Split here" is named "Split here: scene" so the name
+  starts with the label. The review error banner sits on a solid surface, and
+  a refusal in the guided pass is no longer handed to the page as well, so it
+  is said once, in the card. The consent page, Connected apps and a
+  universe's Suggestions are in the accessibility pass.
+- Looked into, not changed: `e2e/author-review.spec.ts` "accepts several
+  suggestions together" fails now and then with the word typed after the
+  last accept missing after a reload, though the pill said saved. At three
+  workers it failed 6 of 96 runs on this branch and 4 of 96 on main, so the
+  branch is not the cause; the accept's success path in the client is the
+  same on both. It looks like the same fault as the test above it in that
+  file ("typing immediately after an accept"), which failed 2 of 24 on main.
 
 ## MCP endpoint, review round 2: app side fixes (2026-11-21)
 
