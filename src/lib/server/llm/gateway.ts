@@ -47,7 +47,7 @@ import {
 	type ToolSpec,
 	billedUsage
 } from './providers/types.ts';
-import type { SpendMeter } from './spend.ts';
+import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatModelSettings } from '../../assistant-chat.ts';
 
 // Adds one request's reported counts to a running total, so a caller can price
@@ -251,6 +251,7 @@ async function respondWithRetry(
 ): Promise<ProviderResponse & { failedUsage?: TokenUsage }> {
 	let failedUsage: TokenUsage | undefined;
 	for (let attempt = 0; ; attempt += 1) {
+		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(req);
 		try {
 			const response = await p.provider.respond(request, p.conn, p.http, req.signal);
 			return failedUsage ? { ...response, failedUsage } : response;
@@ -264,6 +265,7 @@ async function respondWithRetry(
 				throw err;
 			}
 			if (req.mayResend && !req.mayResend()) throw err;
+			if (wouldPassCap(p, req, request)) throw heldAtCap(req);
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -273,6 +275,36 @@ async function respondWithRetry(
 			await p.sleep(RETRY_DELAYS_MS[attempt]);
 		}
 	}
+}
+
+// Whether sending this request could take a metered run past its spend cap:
+// what the run has spent, plus this request with its reply at the limit. Asked
+// before every send (a first send, a resend after a failure the endpoint may
+// have billed, a resume, a tool round), so the rule lives here and not in each
+// job. The prompt is counted as written to Claude's cache, the dearest way it
+// can be billed. A caller with its own mayResend hook holds its own ceiling
+// (drafting, against the cap in force at each request).
+function wouldPassCap(
+	p: Prepared,
+	req: GatewayRequest,
+	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
+): boolean {
+	if (!req.meter || req.mayResend) return false;
+	const promptTokens =
+		conversationTokens(request.messages) +
+		(request.tools ? estimateTokens(JSON.stringify(request.tools)) : 0);
+	const written = p.claude ? promptTokens : 0;
+	return req.meter.wouldPassCap(p.model, {
+		promptTokens,
+		completionTokens: request.maxTokens,
+		cacheWriteTokens: written,
+		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
+	});
+}
+
+function heldAtCap(req: GatewayRequest): SpendCapError {
+	req.meter?.hold();
+	return new SpendCapError();
 }
 
 // Parameters that change how much a request can be billed for. A writer's
@@ -415,6 +447,8 @@ type Prepared = {
 	webSearch?: boolean;
 	// The account's prompt cache lifetime (see CompletionRequest.cacheTtl).
 	cacheTtl?: '5m' | '1h';
+	// The requests go to Claude, which bills a cache write above the prompt rate.
+	claude: boolean;
 	// The reply length for this turn: what the writer set for this role, else
 	// what the surface asked for, else the role's default.
 	maxTokens: number;
@@ -558,11 +592,15 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 				? claudeEffort(req.role, model, resolved.config.tuning[req.role])
 				: undefined
 		),
-		extraParams: req.boundedReply
-			? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
-			: roleExtraParams(resolved.config, req.role),
+		// A run held to a spend cap is checked at the reply limit (see
+		// wouldPassCap), so an extra parameter must not raise or multiply it.
+		extraParams:
+			req.boundedReply || req.meter?.capUsd !== undefined
+				? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
+				: roleExtraParams(resolved.config, req.role),
 		webSearch: await webSearchAllowed(db, resolved.config, req),
 		cacheTtl: resolved.config.cacheTtl,
+		claude: adapterKind(resolved.config.provider) === 'anthropic',
 		maxTokens: requestReplyLimit(
 			resolved.config,
 			req.role,

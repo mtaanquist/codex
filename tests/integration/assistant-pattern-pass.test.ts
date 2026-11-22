@@ -67,7 +67,9 @@ function patternProvider(
 		async respond(req): Promise<ProviderResponse> {
 			seen.push(req.messages);
 			await onRequest?.(req.messages);
-			const usage = { promptTokens: 1000, completionTokens: 0 };
+			// $1 a request at the tests' price, while what a request is held to
+			// before it is sent (its own size) stays a few cents.
+			const usage = { promptTokens: 100_000, completionTokens: 0 };
 			if (isSurvey(req.messages)) {
 				return {
 					content: JSON.stringify([
@@ -286,7 +288,7 @@ describe('the chapter pattern pass', () => {
 			toolCallBudget: 8,
 			spendCapUsd: 0.5
 		});
-		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		const { provider, seen } = patternProvider();
 		const result = await reviewStoryScenes(
 			db,
@@ -296,6 +298,31 @@ describe('the chapter pattern pass', () => {
 		expect(result.capped).toBe(true);
 		expect(seen).toHaveLength(1);
 		expect(isSurvey(seen[0])).toBe(true);
+	});
+
+	it('stops before an edit request that could pass the cap, as capped (#1331)', async () => {
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			endpoint: 'https://api.example.com/v1',
+			apiKey: 'sk',
+			models: { reviewer: MODEL },
+			toolCallBudget: 8,
+			// The survey's $1 leaves a tenth of a cent, less than any request.
+			spendCapUsd: 1.001
+		});
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
+		const { provider, seen } = patternProvider();
+		const result = await reviewStoryScenes(
+			db,
+			{ userId, storyId, patterns: 'chapter' },
+			{ provider }
+		);
+		expect(result.capped).toBe(true);
+		expect(seen).toHaveLength(1);
+		expect(isSurvey(seen[0])).toBe(true);
+		expect(result.failures).toHaveLength(0);
 	});
 
 	it('continues a capped run under a new job without surveying again', async () => {
@@ -310,7 +337,7 @@ describe('the chapter pattern pass', () => {
 				toolCallBudget: 8,
 				spendCapUsd
 			});
-			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		};
 		await capTo(0.5);
 		const first = patternProvider();
@@ -550,7 +577,7 @@ describe('the chapter pattern pass', () => {
 			toolCallBudget: 8,
 			spendCapUsd: 0.5
 		});
-		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		const first = patternProvider();
 		await reviewStoryScenes(
 			db,
@@ -620,7 +647,7 @@ describe('the whole-book pattern pass', () => {
 								: []
 						),
 						toolCalls: [],
-						usage: { promptTokens: 1000, completionTokens: 0 }
+						usage: { promptTokens: 100_000, completionTokens: 0 }
 					};
 				}
 				if (isApply(req.messages) && !req.messages.some((m) => m.role === 'tool')) {
@@ -840,7 +867,7 @@ describe('the whole-book pattern pass', () => {
 				modelContextManual: { [MODEL]: 20000 },
 				spendCapUsd
 			});
-			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		};
 		await configure(0.5);
 		const first = bookProvider();
@@ -883,7 +910,7 @@ describe('the whole-book pattern pass', () => {
 				modelContextManual: { [MODEL]: 20000 },
 				spendCapUsd
 			});
-			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		};
 		await configure(0.5);
 		const capped = await reviewStoryScenes(

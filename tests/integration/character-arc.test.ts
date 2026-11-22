@@ -482,6 +482,26 @@ describe('the arc job and the spend cap (#1105)', () => {
 		expect(calls).toBe(0);
 		expect((await readArc(bram.id)).arcSummaryMd).toBeNull();
 	});
+
+	it('asks nothing when the request could take a retried job past the ceiling (#1331)', async () => {
+		await capAt(2);
+		// The reply alone, at its 400-token limit, could cost $0.40.
+		await saveModelPricing(db, ownerId, { 'chat-model': { prompt: 0, completion: 0.001 } });
+		const bram = await makeCharacter();
+		await sceneMentioning(firstStoryId, bram.id, { position: 1, snippet: 'Bram' });
+		await pool.query(
+			`insert into assistant_job_spend (job_id, user_id, spent_usd) values ('arc-3', $1, 1.7)`,
+			[ownerId]
+		);
+		const result = await summariseCharacterArc(
+			db,
+			{ userId: ownerId, characterId: bram.id, jobId: 'arc-3' },
+			deps
+		);
+		expect(result).toEqual({ outcome: 'capped', spentUsd: 1.7 });
+		expect(calls).toBe(0);
+		expect((await readArc(bram.id)).arcSummaryMd).toBeNull();
+	});
 });
 
 describe('arc staleness', () => {

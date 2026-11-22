@@ -13,6 +13,30 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Spend cap held before every request (2026-11-22, `fix/assistant-retry-cap`,
+#1331): the background jobs checked `capReached` (spend at or over the cap)
+only between steps, and the gateway resent a failed attempt the endpoint had
+billed, so a job could end well past its cap, and a pg-boss retry of the job
+sent again from under it. The rule drafting already had now lives in the
+gateway for every metered request: before each send (first, resend, resume,
+tool round) it asks `SpendMeter.wouldPassCap` with the request's prompt
+(chars/4, tool specs included, as a Claude cache write) and its reply at the
+limit. A held request throws `SpendCapError` and marks the meter held, so
+`capReached` is true from then on and every existing boundary check stops the
+run there; each job maps the error to its own capped outcome instead of a
+failure. A caller with its own `mayResend` hook (drafting) keeps its own
+ceiling, which follows the cap in force at each request. A hold inside a
+review's tool loop can stop a scene after some of its notes were staged; the
+scene stays out of `completed`, so a continuation reads it again with those
+notes as prior. The cap tests now report $1 a request as many cheap tokens,
+so a request's own estimate stays a few cents. A request under a capped
+meter drops the writer's reply-size and reply-count extra parameters, as a
+bounded drafting request does, so the reply cannot outgrow the limit the
+check counted. The capped notices share one phrase (`capStopPhrase`): the job
+stopped before the next request could pass the cap, having spent about $X,
+which stays true below the cap. Left open: the chars/4 estimate with no
+safety factor.
+
 Small non-Assistant polish (2026-11-20, staging branch
 `staging/non-assistant-polish`, lanes #1278 to #1284): six backlog issues.
 `resolvePlanEntity` is one select with a left join per entity table instead

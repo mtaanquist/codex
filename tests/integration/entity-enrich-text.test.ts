@@ -467,6 +467,10 @@ describe('a text too long for one request', () => {
 			record() {
 				calls += 1;
 			},
+			wouldPassCap() {
+				return false;
+			},
+			hold() {},
 			async flush() {},
 			spentUsd: 1.5,
 			spentEstimated: false
@@ -483,6 +487,45 @@ describe('a text too long for one request', () => {
 			deps
 		);
 		expect(result.capped).toBe(true);
+		expect(result.requests).toBe(2);
+		expect(prompts).toHaveLength(2);
+	});
+
+	it('stops as capped, not partial, before a part that could pass the cap (#1331)', async () => {
+		const huge = (i: number) => `Bram ${i}. ${'word '.repeat(4000)}`;
+		await writeScenes(
+			storyId,
+			Array.from({ length: 4 }, (_, i) => huge(i))
+		);
+		prompts = [];
+		let calls = 0;
+		const meter = {
+			capReached: false,
+			// The third request could pass the cap.
+			wouldPassCap() {
+				return calls >= 2;
+			},
+			hold() {},
+			record() {
+				calls += 1;
+			},
+			async flush() {},
+			spentUsd: 1.5,
+			spentEstimated: false
+		};
+		const result = await enrichEntityFromText(
+			db,
+			{
+				userId: ownerId,
+				scope: { storyId },
+				entityId: bram,
+				mode: 'scenes',
+				meter: meter as never
+			},
+			deps
+		);
+		expect(result.capped).toBe(true);
+		expect(result.partial).toBeUndefined();
 		expect(result.requests).toBe(2);
 		expect(prompts).toHaveLength(2);
 	});
