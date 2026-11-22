@@ -5,7 +5,7 @@
 	import { tick, untrack } from 'svelte';
 	import type { ResolvedPathname } from '$app/types';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { refreshAll } from '$app/navigation';
+	import { goto, refreshAll } from '$app/navigation';
 	import {
 		dismissActivity,
 		flashActivity,
@@ -551,6 +551,12 @@
 		untrack(() => {
 			const note = liveThreads.find((thread) => thread.id === asked);
 			if (note && (patternCounts.get(asked) ?? 0) > 0) startPass(asked);
+			// Taken off the address, so a reload after the pass ends does not
+			// start it again.
+			const url = new URL(page.url.href);
+			url.searchParams.delete('pass');
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- this page's own address
+			void goto(url, { replace: true, shallow: true });
 		});
 	});
 

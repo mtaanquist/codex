@@ -124,11 +124,11 @@
 	cursor: col-resize;
 	touch-action: none;
 }
-.pane-resizer.left {
+.pane-resizer-left {
 	left: calc(var(--left-w) - 5px);
 }
 /* Kept off the centre's edge, where its scrollbar sits. */
-.pane-resizer.right {
+.pane-resizer-right {
 	right: calc(var(--right-w) - 8px);
 }
 .pane-resizer::after {
@@ -142,7 +142,7 @@
 	background: transparent;
 	transition: background 0.12s;
 }
-.pane-resizer.right::after {
+.pane-resizer-right::after {
 	left: 0;
 }
 .pane-resizer:hover::after,

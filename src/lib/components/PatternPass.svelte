@@ -110,6 +110,16 @@
 		await tick();
 		cardOf(id)?.focus({ preventScroll: true });
 	}
+	// Reading the page's data again after an accept can drop the focus that
+	// already moved on to the next step; it is put back there, or on the end
+	// of the pass, unless the writer has moved it somewhere else.
+	async function refocusIfLost() {
+		await tick();
+		const active = document.activeElement;
+		if (active && active !== document.body) return;
+		const card = stepId ? cardOf(stepId) : scroller?.querySelector<HTMLElement>('.pp-end');
+		card?.focus({ preventScroll: true });
+	}
 	// The button the writer pressed goes with the step, so focus moves to the
 	// new step rather than falling back to the page, unless the writer had
 	// already moved it somewhere outside the pass.
@@ -264,7 +274,8 @@
 									return;
 								}
 								await update();
-								if (result.type !== 'success') await refocus(id);
+								if (result.type === 'success') await refocusIfLost();
+								else await refocus(id);
 							};
 						}}
 					>
