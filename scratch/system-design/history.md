@@ -31,12 +31,26 @@ clustered ones. Lowering the length for every use first let markers grow
 over a typed word (+15). An end resting outside, the other end of such a
 marker, points and `placeSuggestion` (`range(..., exact)`) therefore keep
 12. The L1 test's first two cases now land where main's do instead of
-detaching. Left as decisions for the issue: a marker whose edge word or
-whole text was replaced (identical text can come from a word typed beside a
-deleted one), the identical copy beside an edited original taking the
-accept, a sentence moved past a lightly edited paragraph (the single
-sentence pair splits the gap, so the paragraph is unmatched on both sides
-and nothing marks the stretch), and the two budget limits.
+detaching. Mads kept three limits as accepted (recorded on the issue): a
+marker whose edge word or whole text was replaced follows the replacement
+(identical text can come from a word typed beside a deleted one), the
+identical copy beside an edited original takes the accept, and a sentence
+moved past a lightly edited paragraph can stretch a range over it (the
+single sentence pair splits the gap, so the paragraph is unmatched on both
+sides). For the save budget he chose a background remap: a marker the save
+cannot compare within `SAVE_DIFF_BUDGET` is detached as before, and a
+`marker_remaps` row (migration 0104) keeps the old text and its anchor. The
+worker's `remap-markers` sweep, every minute, maps it onto the scene's text
+as it then stands under `BACKGROUND_DIFF_BUDGET` (edit distance 10,000),
+outside any lock. It writes under the scene's row lock only if the text is
+still the one it mapped onto (otherwise the row waits for the next sweep),
+only to markers still detached and still in that scene, and deletes the row
+in the same transaction. A marker given a new anchor, or detached again by a
+later save, is dropped from older rows, so a stale base is never used. A
+sweep rather than a job sent from the save: the row is only visible once the
+save commits, and the save paths run inside transactions in modules the
+worker also loads. The line and sentence passes stay unbudgeted (at most
+about 0.8 s for a save at 2M here; 1.9 s was not reproduced).
 
 MCP endpoint low findings, second pass (2026-11-22,
 `fix/mcp-endpoint-lows-2` on `staging/bug-fixes`, #1360). A call turned

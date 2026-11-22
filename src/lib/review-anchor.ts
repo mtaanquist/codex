@@ -90,9 +90,19 @@ export const WRITER_DIFF_BUDGET: DiffBudget = {
 // 0.35 s to give up at D = 2500 when the texts have nothing in common.
 // Whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at the 2M cap;
 // only D squared is charged, so repetitive text can reach about 1.9 s at
-// 2M. Main is slower in every case. A marker in a stretch past it loses its
-// anchor.
+// 2M. Main is slower in every case. A marker in a stretch past it is
+// detached by the save and placed again by the worker afterwards.
 export const SAVE_DIFF_BUDGET: DiffBudget = { perPair: 6_250_000, total: 6_250_000, floor: 0 };
+
+// The worker's remap of markers a save detached past SAVE_DIFF_BUDGET (see
+// remapPendingMarkers): D = 10,000 a pair, about 6 s on prose, in the worker
+// process and outside any lock. A marker in a stretch past even this stays
+// detached.
+export const BACKGROUND_DIFF_BUDGET: DiffBudget = {
+	perPair: 100_000_000,
+	total: 100_000_000,
+	floor: 0
+};
 
 // A line or sentence is paired only if it has at least this many characters
 // that are not white space: about three or four words of prose. A shorter

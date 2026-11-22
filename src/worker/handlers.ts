@@ -72,6 +72,7 @@ import { chapterDraftHref, sceneDraftHref } from '../lib/scene-draft.ts';
 import { purgeJobSpend } from '../lib/server/llm/job-spend.ts';
 import { purgeReviewRuns, ReviewRunLoadError } from '../lib/server/review-runs.ts';
 import { purgeSessions } from '../lib/server/auth.ts';
+import { remapPendingMarkers } from '../lib/server/markers.ts';
 import { purgeExternalAccess } from '../lib/server/mcp/oauth.ts';
 import { insertNotifications } from '../lib/server/notify-core.ts';
 import { storyIsLive } from '../lib/server/universe-scope.ts';
@@ -1215,6 +1216,11 @@ export function createHandlers(deps: WorkerDeps) {
 			if (deleted > 0) logEvent('info', 'purge.review_runs', { deleted });
 			const spend = await purgeJobSpend(db);
 			if (spend > 0) logEvent('info', 'purge.job_spend', { removed: spend });
+		},
+
+		async remapMarkers() {
+			const placed = await remapPendingMarkers(db);
+			if (placed > 0) logEvent('info', 'markers.remapped', { rows: placed });
 		},
 
 		async purgeSessions() {

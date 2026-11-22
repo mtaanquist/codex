@@ -990,7 +990,9 @@ suggestion. On top of those:
     through `mapper.prepare`, which lets the server answer others between
     pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (6,250,000, edit
     distance 2,500), compared in one go, and a marker in a stretch past it
-    is detached. The diff alone takes about 0.35 s to give up at that budget
+    is detached by the save and placed again within a minute by the
+    worker's `remap-markers` sweep (`BACKGROUND_DIFF_BUDGET`, edit distance
+    10,000; see `remapPendingMarkers`). The diff alone takes about 0.35 s to give up at that budget
     on prose; whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at
     the 2M cap, and repetitive text can reach about 1.9 s at 2M, as only D
     squared is charged. Main is slower in every case. An edit that was not checked is reported with `notice`: "The
