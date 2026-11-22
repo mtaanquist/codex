@@ -1,7 +1,8 @@
-import { ChangeSet, StateField, StateEffect, type Extension, type Text } from '@codemirror/state';
+import { ChangeSet, StateField, StateEffect, Text, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import {
 	authorColor,
+	editSpan,
 	suggestionAuthor,
 	suggestionKind,
 	threadAuthor,
@@ -183,6 +184,12 @@ export function buildReviewMarks(
 // becomes the base later remaps build against.
 export const setReviewMarks = StateEffect.define<DecorationSet>();
 
+// Replaces the whole mark set with one built against base, the text the
+// anchors belong to, which becomes the base later remaps build against. When
+// the editor holds typing past base (a reload brought the saved text while
+// more was typed), the marks are mapped through that typing.
+export const setReviewMarksOn = StateEffect.define<{ base: string; marks: DecorationSet }>();
+
 // Replaces the whole mark set with one built against the base document (the
 // one the last setReviewMarks was built on), mapped through every edit since
 // and without the marks removeReviewMarks dropped since. Used for a focus or
@@ -244,6 +251,21 @@ const reviewMarksField = StateField.define<ReviewMarksState>({
 				marks = effect.value;
 				base = tr.state.doc;
 				changes = ChangeSet.empty(base.length);
+				removed = [];
+			}
+			if (effect.is(setReviewMarksOn)) {
+				const live = tr.state.doc.toString();
+				const { prefix, suffix } = editSpan(effect.value.base, live);
+				base = Text.of(effect.value.base.split('\n'));
+				changes = ChangeSet.of(
+					{
+						from: prefix,
+						to: base.length - suffix,
+						insert: live.slice(prefix, live.length - suffix)
+					},
+					base.length
+				);
+				marks = effect.value.marks.map(changes);
 				removed = [];
 			}
 			if (effect.is(remapReviewMarks)) {

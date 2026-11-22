@@ -12,6 +12,7 @@ import {
 	reviewProse,
 	suggestionKind,
 	insertionFits,
+	isServerChange,
 	suggestionSnippet,
 	suggestionInFilter,
 	threadInFilter,
@@ -462,5 +463,26 @@ describe('bulkDecisionNote', () => {
 
 	it('still counts a failure that came with no reason', () => {
 		expect(bulkDecisionNote(2, [''], true)).toBe('2 edits accepted. 1 edit could not be accepted.');
+	});
+});
+
+describe('isServerChange', () => {
+	// The editor saved B, then C. A reload whose read ran before C landed
+	// brings B after C's save has finished: it is older than the editor's
+	// text, not a change made elsewhere.
+	it('ignores an older text this editor saved, brought back by a stale reload', () => {
+		const held = new Set(['A', 'B', 'C']);
+		expect(isServerChange('B', 'A', 'C', (body) => held.has(body))).toBe(false);
+	});
+
+	it('takes a text it never held (an accept made on the server, another window)', () => {
+		const held = new Set(['A', 'C']);
+		expect(isServerChange('D', 'A', 'C', (body) => held.has(body))).toBe(true);
+	});
+
+	it('ignores the prop when it has not changed, or matches what was saved', () => {
+		const held = new Set(['A', 'C']);
+		expect(isServerChange('A', 'A', 'C', (body) => held.has(body))).toBe(false);
+		expect(isServerChange('C', 'A', 'C', (body) => held.has(body))).toBe(false);
 	});
 });

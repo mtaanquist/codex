@@ -71,6 +71,21 @@ export function suggestionKind(suggestion: {
 	return 'replace';
 }
 
+// The one span that turns base into live: the lengths of the text the two
+// share at the start and, after that, at the end.
+export function editSpan(base: string, live: string): { prefix: number; suffix: number } {
+	const most = Math.min(base.length, live.length);
+	let prefix = 0;
+	while (prefix < most && base[prefix] === live[prefix]) prefix++;
+	let suffix = 0;
+	while (
+		suffix < most - prefix &&
+		base[base.length - 1 - suffix] === live[live.length - 1 - suffix]
+	)
+		suffix++;
+	return { prefix, suffix };
+}
+
 // Whether an insertion the server made can be made at the point at in live,
 // the editor's text: base (the text the server inserted into) with the
 // writer's unsaved typing since. The typing must not touch the point, so the
@@ -85,20 +100,28 @@ export function insertionFits(
 ): boolean {
 	let place = at;
 	if (live !== base) {
-		const most = Math.min(base.length, live.length);
-		let prefix = 0;
-		while (prefix < most && base[prefix] === live[prefix]) prefix++;
-		let suffix = 0;
-		while (
-			suffix < most - prefix &&
-			base[base.length - 1 - suffix] === live[live.length - 1 - suffix]
-		)
-			suffix++;
+		const { prefix, suffix } = editSpan(base, live);
 		if (at < prefix) place = at;
 		else if (at > live.length - suffix) place = at - (live.length - base.length);
 		else return false;
 	}
 	return base.slice(0, place) + insert + base.slice(place) === stored;
+}
+
+// Whether a scene body from a page data reload is a change made elsewhere
+// that the review editor must take: a new value of the prop (seen is the one
+// it last saw) that is neither the text the editor last took from or saved to
+// the server (applied) nor an earlier one it held there (held). A reload
+// whose read ran before this editor's later save landed brings such an older
+// text back, and it must not replace the writer's newer words. Should the
+// server really hold that text again, the next save reports the difference.
+export function isServerChange(
+	incoming: string,
+	seen: string,
+	applied: string,
+	held: (body: string) => boolean
+): boolean {
+	return incoming !== seen && incoming !== applied && !held(incoming);
 }
 
 // The client shapes of a thread and a suggestion, matching what listThreads

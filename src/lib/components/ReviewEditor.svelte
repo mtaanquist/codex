@@ -21,7 +21,7 @@
 		remapReviewMarks,
 		removeReviewMarks,
 		reviewMarksExtension,
-		setReviewMarks,
+		setReviewMarksOn,
 		type ReviewMarksHandle
 	} from '#lib/editor-review-marks';
 	import { createAutosave, type SaveStatus } from '#lib/autosave';
@@ -35,6 +35,7 @@
 		nudgeMarkers,
 		isWholeSceneNote,
 		insertionFits,
+		isServerChange,
 		authorColor,
 		suggestionAuthor,
 		threadAuthor,
@@ -118,6 +119,17 @@
 	// stale text back.
 	// svelte-ignore state_referenced_locally
 	let seenBody = scene.bodyMd;
+	// The fingerprints of every text the editor has held as the server's this
+	// session, so a reload that read the scene before a later save landed
+	// does not put the older text back over the writer's.
+	// Plain bookkeeping, not rendered.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const heldBodies = new Set<string>();
+	function settle(body: string) {
+		appliedBody = body;
+		heldBodies.add(textHash(body));
+	}
+	settle(appliedBody);
 
 	// Set when a save was refused because the scene changed elsewhere.
 	let conflict = $state<SceneConflict | null>(null);
@@ -135,7 +147,7 @@
 			await saver.save({ keepalive, title: scene.title, bodyMd: body });
 			// What we just persisted is now the server's truth, so the external
 			// sync below does not mistake it for someone else's change.
-			appliedBody = body;
+			settle(body);
 		}
 	});
 
@@ -144,13 +156,14 @@
 		if (!view || !conflict || paused) return;
 		const newer = conflict.bodyMd;
 		saver.adopt(newer);
-		appliedBody = newer;
+		settle(newer);
 		view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newer } });
 		void autosave.flush();
 	}
 
 	function keepMine() {
 		if (!conflict || paused) return;
+		heldBodies.add(textHash(conflict.bodyMd));
 		saver.keepMine(conflict.bodyMd);
 		void autosave.flush();
 	}
@@ -292,13 +305,16 @@
 		}
 		// With unsaved typing and a change that could not be made here, the save
 		// check is left alone: the next save reports the difference.
-		if (applied) saver.rebase(accepted.bodyMd, accepted.baseHash);
+		if (applied && saver.knows(accepted.baseHash)) {
+			saver.rebase(accepted.bodyMd, accepted.baseHash);
+			settle(accepted.bodyMd);
+		}
 	}
 
 	// The scene body the marks were last built from. The anchors in the page
-	// data belong to scene.bodyMd, which an autosave does not refresh, so while
-	// the editor holds typing since then, the marks are built against the text
-	// they were last set on and mapped through that typing.
+	// data belong to scene.bodyMd, which an autosave does not refresh, so the
+	// marks are built against it and mapped through any typing the editor
+	// holds past it; until it changes, against the text they were last set on.
 	let markedBody: string | null = null;
 	function rebuildMarks() {
 		if (!view || !handle) return;
@@ -306,7 +322,9 @@
 		const build = (text: string) => buildReviewMarks(threads, suggestions, filter, text, focusedId);
 		if (doc === scene.bodyMd || scene.bodyMd !== markedBody) {
 			markedBody = scene.bodyMd;
-			view.dispatch({ effects: setReviewMarks.of(build(doc)) });
+			view.dispatch({
+				effects: setReviewMarksOn.of({ base: scene.bodyMd, marks: build(scene.bodyMd) })
+			});
 		} else {
 			view.dispatch({ effects: remapReviewMarks.of(build(handle.baseDoc(view))) });
 		}
@@ -403,9 +421,11 @@
 		void filter;
 		void focusedId;
 		if (!view) return;
-		const changed = incoming !== seenBody;
+		const changed = isServerChange(incoming, seenBody, appliedBody, (body) =>
+			heldBodies.has(textHash(body))
+		);
 		seenBody = incoming;
-		if (changed && incoming !== appliedBody) {
+		if (changed) {
 			if (!autosave.hasUnsaved()) {
 				if (view.state.doc.toString() !== incoming) {
 					// The server's own text, so it lands even while typing is paused,
@@ -427,7 +447,7 @@
 			}
 			// With unsaved edits, a save still on its way included (#1374), the
 			// save is refused as a conflict, and the banner lets the author choose.
-			appliedBody = incoming;
+			settle(incoming);
 		}
 		rebuildMarks();
 		recomputeGeometry();
