@@ -24,6 +24,7 @@ import {
 import { setSceneStatus } from '../../src/lib/server/scene-status';
 import { trashScene } from '../../src/lib/server/scene-lifecycle';
 import { applySceneOrder } from '../../src/lib/server/scene-order';
+import { recordEntityRevision } from '../../src/lib/server/revisions';
 
 // Storing the account API key encrypts it with APP_SECRET (needed for enrich).
 process.env.APP_SECRET = process.env.APP_SECRET || 'entity-enrich-test-secret';
@@ -623,6 +624,94 @@ describe('enrichUniverse', () => {
 		await rewrite(sceneId, 'Bram on the quay.');
 		expect((await pass()).entities).toBe(1);
 		expect(calls).toBe(2);
+	});
+
+	it('keeps a 3.21.4 read whose aliases or details were edited after it, from the entry history (#1322)', async () => {
+		const bram = await makeCharacter({
+			name: 'Bram',
+			aliases: ['The Grey'],
+			details: [{ label: 'Eyes', value: 'grey' }]
+		});
+		// The entry as it was when that release read it, kept in its history.
+		await recordEntityRevision(db, 'character', bram, 'checkpoint');
+		await sceneWithProse('Bram at the harbour.');
+		const pass = () => enrichUniverse(db, { userId: ownerId, universeId }, deps);
+		expect((await pass()).entities).toBe(1);
+		const asStoredThen = requestHash(JSON.parse(lastPrompt).slice(1));
+		const stored = async () =>
+			(
+				await db
+					.select({ input: characters.assistantEnrichedInput })
+					.from(characters)
+					.where(eq(characters.id, bram))
+			)[0].input;
+		const today = await stored();
+		const storedThen = () =>
+			db
+				.update(characters)
+				.set({ assistantEnrichedInput: asStoredThen })
+				.where(eq(characters.id, bram));
+
+		// Edited after the read: neither fingerprint formula matches the entry
+		// as it is now.
+		await db
+			.update(characters)
+			.set({ aliases: ['The Grey', 'Old Bram'], details: [] })
+			.where(eq(characters.id, bram));
+		await recordEntityRevision(db, 'character', bram);
+		await storedThen();
+		expect(await pass()).toMatchObject({ entities: 0, unchanged: 1 });
+		expect(await stored()).toBe(today);
+		expect(calls).toBe(1);
+
+		// A new name is a new request, whatever the history holds.
+		await storedThen();
+		await db.update(characters).set({ name: 'Bramwell' }).where(eq(characters.id, bram));
+		expect((await pass()).entities).toBe(1);
+		expect(calls).toBe(2);
+	});
+
+	it('does not send a request cut off at the reply limit again until it, the model or the limit changes (#1322)', async () => {
+		const bram = await makeCharacter({ name: 'Bram' });
+		const sceneId = await sceneWithProse('Bram at the harbour.');
+		const pass = () => enrichUniverse(db, { userId: ownerId, universeId }, deps);
+		finish = 'length';
+		const cut = { entities: 0, staged: 0, failed: 1, cutOffs: 1 };
+		expect(await pass()).toMatchObject(cut);
+		expect(calls).toBe(1);
+		// Still reported, so the notice keeps saying how to fix it, but not sent.
+		const again = await pass();
+		expect(again).toMatchObject(cut);
+		expect(again.cutOff).toContain('Longest reply');
+		expect(calls).toBe(1);
+		expect(await enrichedAt(bram)).toBeNull();
+
+		// A longer reply limit is worth a try.
+		await saveAccountLlmConfig(db, ownerId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			endpoint: 'https://api.example.com/v1',
+			apiKey: 'sk',
+			models: { chat: 'chat-model' },
+			toolCallBudget: 8,
+			tuning: { utility: { maxTokens: 4000 } }
+		});
+		expect(await pass()).toMatchObject(cut);
+		expect(calls).toBe(2);
+		// So is another model.
+		await saveUniverseModels(db, universeId, { utility: 'universe-model' });
+		expect(await pass()).toMatchObject(cut);
+		expect(calls).toBe(3);
+		expect(await pass()).toMatchObject(cut);
+		expect(calls).toBe(3);
+		// And so are new passages, which a reply that fits is stored for.
+		finish = undefined;
+		await rewrite(sceneId, 'Bram on the quay.');
+		expect(await pass()).toMatchObject({ entities: 1, failed: 0 });
+		expect(calls).toBe(4);
+		expect(await pass()).toMatchObject({ entities: 0, unchanged: 1 });
+		expect(calls).toBe(4);
 	});
 
 	it('does not read an entity again because its suggestions were accepted', async () => {
