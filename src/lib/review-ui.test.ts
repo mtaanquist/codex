@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	bulkDecisionNote,
 	nudgeMarkers,
 	authorColor,
 	appAuthorParts,
@@ -383,5 +384,27 @@ describe('the guided pass over a pattern note', () => {
 			'The narration leans on "seemed".'
 		);
 		expect(patternName('x'.repeat(80))).toBe(`${'x'.repeat(60)}...`);
+	});
+});
+
+describe('bulkDecisionNote', () => {
+	it('says how many went through when none failed', () => {
+		expect(bulkDecisionNote(3, [], true)).toBe('3 edits accepted.');
+		expect(bulkDecisionNote(1, [], false)).toBe('1 edit rejected.');
+	});
+
+	it("gives the server's reasons, each once", () => {
+		const decided = 'That suggestion was already decided.';
+		const changed = 'This suggestion changed. Read it again.';
+		expect(bulkDecisionNote(1, [decided, decided], true)).toBe(
+			`1 edit accepted. 2 edits could not be accepted. ${decided}`
+		);
+		expect(bulkDecisionNote(0, [decided, changed], false)).toBe(
+			`0 edits rejected. 2 edits could not be rejected. ${decided} ${changed}`
+		);
+	});
+
+	it('still counts a failure that came with no reason', () => {
+		expect(bulkDecisionNote(2, [''], true)).toBe('2 edits accepted. 1 edit could not be accepted.');
 	});
 });
