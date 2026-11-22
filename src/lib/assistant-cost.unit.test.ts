@@ -39,15 +39,34 @@ describe('usageCostUsd', () => {
 				cacheWriteTokens: 300,
 				cacheWrite1hTokens: 100
 			},
-			true
+			'anthropic'
 		);
 		expect(cost).toBeCloseTo((300 + 400 * 0.1 + 200 * 1.25 + 100 * 2) * 0.001 + 50 * 0.002, 10);
 	});
 
-	it('gives a cache read no discount unless the provider is Claude', () => {
+	it('prices a cache read at the rate its provider publishes', () => {
 		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 400 };
-		expect(usageCostUsd(price, usage, false)).toBeCloseTo(1000 * 0.001, 10);
-		expect(usageCostUsd(price, usage, true)).toBeCloseTo((600 + 400 * 0.1) * 0.001, 10);
-		expect(cacheReadRate(false)).toBeGreaterThanOrEqual(cacheReadRate(true));
+		const withRead = (rate: number) => (600 + 400 * rate) * 0.001;
+		expect(usageCostUsd(price, usage, 'anthropic')).toBeCloseTo(withRead(0.1), 10);
+		expect(usageCostUsd(price, usage, 'openai')).toBeCloseTo(withRead(0.5), 10);
+		expect(usageCostUsd(price, usage, 'gemini')).toBeCloseTo(withRead(0.25), 10);
+		expect(usageCostUsd(price, usage, 'deepseek')).toBeCloseTo(withRead(0.26), 10);
+	});
+
+	it('gives a cache read no discount on a provider with no known rate', () => {
+		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 400 };
+		for (const provider of [undefined, '', 'custom', 'openrouter', 'constructor']) {
+			expect(cacheReadRate(provider)).toBe(1);
+			expect(usageCostUsd(price, usage, provider)).toBeCloseTo(1000 * 0.001, 10);
+		}
+	});
+
+	it('prices a cache read at the price the endpoint reported, whatever the provider', () => {
+		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 400 };
+		const reported = { ...price, cacheRead: 0.0003 };
+		const cost = 600 * 0.001 + 400 * 0.0003;
+		expect(usageCostUsd(reported, usage, 'openrouter')).toBeCloseTo(cost, 10);
+		expect(usageCostUsd(reported, usage, 'openai')).toBeCloseTo(cost, 10);
+		expect(usageCostUsd({ ...price, cacheRead: 0 }, usage)).toBeCloseTo(600 * 0.001, 10);
 	});
 });

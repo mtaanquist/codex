@@ -320,6 +320,29 @@ describe('openaiProvider.respond', () => {
 		});
 	});
 
+	it("reads DeepSeek's cache hit count as the cached share", async () => {
+		const http: HttpRequest = async () =>
+			jsonResponse(200, {
+				choices: [{ message: { content: 'ok' } }],
+				usage: {
+					prompt_tokens: 1000,
+					completion_tokens: 20,
+					prompt_cache_hit_tokens: 600,
+					prompt_cache_miss_tokens: 400
+				}
+			});
+		const result = await openaiProvider.respond(
+			{ model: 'm', maxTokens: 16, messages: [] },
+			conn,
+			http
+		);
+		expect(result.usage).toEqual({
+			promptTokens: 1000,
+			completionTokens: 20,
+			cachedPromptTokens: 600
+		});
+	});
+
 	it('omits the cached share when the endpoint reports none', async () => {
 		const http: HttpRequest = async () =>
 			jsonResponse(200, {
@@ -655,6 +678,34 @@ describe('openaiProvider.listModels', () => {
 			{ id: 'free' },
 			{ id: 'paid', pricing: { prompt: 0.000003, completion: 0.000015 } },
 			{ id: 'unpriced' }
+		]);
+	});
+
+	it('carries a reported cache read price through, ignoring a blank or bad one', async () => {
+		const http: HttpRequest = async () =>
+			jsonResponse(200, {
+				data: [
+					{
+						id: 'cached',
+						pricing: { prompt: '0.000003', completion: '0.000015', input_cache_read: '0.0000003' }
+					},
+					{
+						id: 'free-read',
+						pricing: { prompt: '0.000003', completion: '0', input_cache_read: '0' }
+					},
+					{ id: 'blank', pricing: { prompt: '0.000003', completion: '0', input_cache_read: '' } },
+					{ id: 'bad', pricing: { prompt: '0.000003', completion: '0', input_cache_read: '-1' } }
+				]
+			});
+		const models = await openaiProvider.listModels({ endpoint: 'http://h/v1', apiKey: '' }, http);
+		expect(models).toEqual([
+			{ id: 'bad', pricing: { prompt: 0.000003, completion: 0 } },
+			{ id: 'blank', pricing: { prompt: 0.000003, completion: 0 } },
+			{
+				id: 'cached',
+				pricing: { prompt: 0.000003, completion: 0.000015, cacheRead: 0.0000003 }
+			},
+			{ id: 'free-read', pricing: { prompt: 0.000003, completion: 0, cacheRead: 0 } }
 		]);
 	});
 
