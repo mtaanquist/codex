@@ -152,11 +152,15 @@ async function forgetPendingRemaps(db: Database, sceneId: string, ids: string[])
 // marker is stored only where it rests on text both versions share (see
 // SUPPORT in review-anchor.ts); otherwise the marker loses its anchor, as one
 // whose words were deleted does.
+//
+// `except` names markers whose new anchors the caller writes itself (the
+// Write editor's own); every other anchored marker is mapped here.
 export async function remapMarkerAnchors(
 	db: Database,
 	sceneId: string,
 	storedOld: string,
-	storedNew: string
+	storedNew: string,
+	except: string[] = []
 ): Promise<void> {
 	const oldBody = toLf(storedOld);
 	const newBody = toLf(storedNew);
@@ -170,8 +174,9 @@ export async function remapMarkerAnchors(
 		.from(sceneMarkers)
 		.where(eq(sceneMarkers.sceneId, sceneId));
 	const mapper = createAnchorMapper(SAVE_DIFF_BUDGET);
+	const skip = new Set(except);
 	const anchored = markers.flatMap(({ id, anchorStart: start, anchorEnd: end }) =>
-		start === null || end === null ? [] : [{ id, start, end }]
+		start === null || end === null || skip.has(id) ? [] : [{ id, start, end }]
 	);
 	const moved: { id: string; anchorStart: number; anchorEnd: number }[] = [];
 	const lost: string[] = [];
