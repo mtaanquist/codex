@@ -13,6 +13,21 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Cache read rates per provider (2026-11-22, `fix/cache-read-rates` on
+`staging/bug-fixes`, #1372). Cached tokens on every provider but Claude were
+metered at the full price, so an OpenAI or Gemini figure read high and a cap
+stopped early. `cacheReadRate` is now keyed by the provider id: the preset
+providers whose adapters report cached tokens get their published rate, the
+dearest across their models so a figure still never reads low (OpenAI a half,
+since gpt-4o caches at a half and newer models lower; Gemini a quarter;
+DeepSeek a tenth, with `prompt_cache_hit_tokens` now read as the cached share
+where `prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
+no one rate fits; its discovery reports `input_cache_read` per model, which is
+carried as an optional `cacheRead` on the price itself and wins over any rate.
+A custom endpoint and a typed price keep the full-rate fallback. The rates
+were set from the providers' published price lists as known at the time; the
+build environment could not reach them to re-check.
+
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried
 the bare classes `left` and `right`, so the panes' own `.left` and `.right`

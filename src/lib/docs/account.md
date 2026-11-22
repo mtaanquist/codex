@@ -231,15 +231,19 @@ Your words are sent only to the endpoint you set here.
   notice marks the amount as estimated. If the endpoint leaves out the
   token counts for any request, that request cannot be priced, and the run says
   the cap could not be fully applied.
-- **Cached context**: with the Claude provider, repeated context (your world
-  details, earlier turns) is cached by the API and billed far cheaper on reuse.
-  Text sent for the first time is billed a little higher so it can be reused.
-  The cost in the list and the spend cap both count reused text at a tenth of
-  the price and first-time text at Claude's higher rate. With any other
-  provider, reused text is counted at the full price, because what an endpoint
-  charges for it is not known. If your provider gives a discount, the cost
-  shown can run well above what you were charged, and a spend cap can stop
-  well before the figure you set. Requests made before
+- **Cached context**: most providers cache repeated context (your world
+  details, earlier turns) and bill it far cheaper on reuse. With the Claude
+  provider, text sent for the first time is billed a little higher so it can
+  be reused. The cost in the list and the spend cap count reused text at the
+  rate the provider publishes: a tenth of the price on Claude and DeepSeek, a
+  quarter on Gemini, and half on ChatGPT. Some models charge less than that, so
+  the cost shown can run a little above what you were charged. With OpenRouter,
+  reused text is counted at the price OpenRouter lists for the model, when
+  you use the prices it reports. With a custom endpoint, or a price you typed
+  yourself on OpenRouter, reused text is counted at the full price, so the
+  cost shown can run well above what you were charged, and a spend cap can
+  stop well before the figure you set. First-time text is counted at Claude's
+  higher rate. Requests made before
   Codex kept those counts are priced with every token sent at the plain price.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
