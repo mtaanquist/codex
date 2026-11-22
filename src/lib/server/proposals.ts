@@ -289,14 +289,13 @@ export type AppDraftView = {
 	note: string | null;
 };
 
-// An app's draft is ready the moment it is staged and has no job; one of the
-// Assistant's always has one. Only drafts on live scenes of live stories wait
-// for anyone (the same rule as the ceiling in stageAppDraft).
+// Only drafts on live scenes of live stories wait for anyone (the same rule
+// as the ceiling in stageAppDraft).
 const appDraftWaiting = (ownerId: string) =>
 	and(
 		eq(assistantDrafts.userId, ownerId),
 		eq(assistantDrafts.status, 'ready'),
-		isNull(assistantDrafts.jobId),
+		eq(assistantDrafts.source, 'app'),
 		isNull(scenes.deletedAt),
 		eq(stories.ownerId, ownerId),
 		storyIsLive()

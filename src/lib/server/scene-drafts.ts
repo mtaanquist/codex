@@ -258,6 +258,7 @@ export async function requestSceneDraft(
 				storyId: input.storyId,
 				sceneId: input.sceneId,
 				jobId,
+				source: 'assistant',
 				brief: input.brief,
 				targetWords: input.targetWords,
 				pov: input.pov?.trim() || null
@@ -345,9 +346,7 @@ export async function stageAppDraft(
 		.where(and(mine, inArray(assistantDrafts.status, OPEN)))
 		.limit(1);
 	if (open) return waiting;
-	// A ceiling on what apps leave for the writer to read in one universe. A
-	// draft an app staged is ready at once and has no job; the Assistant's
-	// always has one.
+	// A ceiling on what apps leave for the writer to read in one universe.
 	const [{ n }] = await db
 		.select({ n: sql<number>`count(*)::int` })
 		.from(assistantDrafts)
@@ -355,7 +354,7 @@ export async function stageAppDraft(
 			and(
 				eq(assistantDrafts.userId, input.userId),
 				eq(assistantDrafts.status, 'ready'),
-				isNull(assistantDrafts.jobId),
+				eq(assistantDrafts.source, 'app'),
 				sql`${assistantDrafts.storyId} in (select ${stories.id} from ${stories} where ${stories.universeId} = (select ${stories.universeId} from ${stories} where ${stories.id} = ${input.storyId}) and ${stories.deletedAt} is null)`,
 				// A draft on a scene in the trash is not waiting for anyone.
 				sql`exists (select 1 from ${scenes} where ${scenes.id} = ${assistantDrafts.sceneId} and ${scenes.deletedAt} is null)`
@@ -381,6 +380,7 @@ export async function stageAppDraft(
 					targetWords: clampDraftWords(wordCount(text)),
 					textMd: text,
 					status: 'ready',
+					source: 'app',
 					note: `Drafted by ${input.from}.`
 				})
 				.returning({ id: assistantDrafts.id })
@@ -944,6 +944,7 @@ export async function requestChapterDraft(
 						chapterId: input.chapterId,
 						sceneId: scene.sceneId,
 						jobId,
+						source: 'assistant' as const,
 						position: index,
 						brief: scene.brief,
 						chapterBrief: input.brief.trim() || null,

@@ -726,7 +726,8 @@ async function waitingDraftDocs(
 			pov: assistantDrafts.pov,
 			note: assistantDrafts.note,
 			chapterBrief: assistantDrafts.chapterBrief,
-			textMd: assistantDrafts.textMd
+			textMd: assistantDrafts.textMd,
+			source: assistantDrafts.source
 		})
 		.from(assistantDrafts)
 		.where(
@@ -756,7 +757,8 @@ async function waitingDraftDocs(
 					words: String(row.targetWords),
 					pov: row.pov,
 					note: row.note,
-					'chapter-brief': row.chapterBrief
+					'chapter-brief': row.chapterBrief,
+					source: row.source
 				},
 				body: row.textMd
 			}

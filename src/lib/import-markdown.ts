@@ -39,6 +39,8 @@ export type ImportedWaitingDraft = {
 	pov: string | null;
 	note: string | null;
 	chapterBrief: string | null;
+	// Who wrote it; a file without the field is the Assistant's.
+	source: 'assistant' | 'app';
 	textMd: string;
 };
 export type ImportedAsset = { id: string; path: string; bytes: Uint8Array };
@@ -343,6 +345,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					pov: scalar(doc.fields, 'pov'),
 					note: scalar(doc.fields, 'note'),
 					chapterBrief: scalar(doc.fields, 'chapter-brief'),
+					source: scalar(doc.fields, 'source') === 'app' ? 'app' : 'assistant',
 					textMd: doc.body.trim()
 				}
 			];

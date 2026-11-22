@@ -3166,7 +3166,7 @@ describe('stage_scene_draft', () => {
 				)
 				.returning({ id: scenes.id })
 		).map((row) => row.id);
-		const waiting = (sceneId: string, jobId: string | null = null) => ({
+		const waiting = (sceneId: string, source: 'app' | 'assistant' = 'app') => ({
 			userId: alice.userId,
 			storyId: alice.storyId,
 			sceneId,
@@ -3174,15 +3174,15 @@ describe('stage_scene_draft', () => {
 			targetWords: 100,
 			textMd: 'Words.',
 			status: 'ready' as const,
-			jobId
+			source
 		});
 		// One short of the ceiling, and a draft the Assistant wrote, which does
-		// not count.
+		// not count though it has no job (as one brought back by an import).
 		await db
 			.insert(assistantDrafts)
 			.values([
 				...sceneIds.slice(0, MAX_APP_DRAFTS_WAITING - 1).map((sceneId) => waiting(sceneId)),
-				waiting(sceneIds[MAX_APP_DRAFTS_WAITING - 1], 'a-job')
+				waiting(sceneIds[MAX_APP_DRAFTS_WAITING - 1], 'assistant')
 			]);
 		expect((await stage(alice)).text).toContain('Staged the draft');
 		const full = await stage(alice, { sceneId: sceneIds[MAX_APP_DRAFTS_WAITING] });

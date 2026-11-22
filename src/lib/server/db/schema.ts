@@ -1670,6 +1670,9 @@ export const ASSISTANT_DRAFT_STATUSES = [
 	'failed'
 ] as const;
 
+// Who wrote a draft: the Assistant, or a connected app that staged it.
+export const ASSISTANT_DRAFT_SOURCES = ['assistant', 'app'] as const;
+
 // A scene the Assistant drafted from the writer's brief, staged for the writer
 // to keep or discard: the draft never reaches a scene until the writer accepts
 // it (see scene-drafts.ts). The background job writes text_md and moves the row
@@ -1705,8 +1708,11 @@ export const assistantDrafts = pgTable(
 		// What the writer said about the whole chapter, on each draft of a
 		// chapter run, so trying one scene again can start from it.
 		chapterBrief: text('chapter_brief'),
-		// The pg-boss job writing it, for the status poll and Stop.
+		// The pg-boss job writing it, for the status poll and Stop. An imported
+		// draft has none whoever wrote it, so this does not say who did: source
+		// does.
 		jobId: text('job_id'),
+		source: text('source', { enum: ASSISTANT_DRAFT_SOURCES }).notNull().default('assistant'),
 		// The panel copy that saved the writer's edits last, and its save's
 		// number (see save-order).
 		saveSource: text('save_source'),
