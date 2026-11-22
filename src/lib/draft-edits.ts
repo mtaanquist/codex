@@ -184,6 +184,9 @@ export function adoptStored(edit: DraftEdit, stored: { textMd: string }): void {
 	edit.saved = stored.textMd;
 	edit.conflict = false;
 	setError(edit, '');
+	// The refused save left the queue dirty; this run finds nothing to send
+	// and settles it, so leaving the page does not ask.
+	edit.autosave.flushSoon();
 }
 
 /** The card showing the draft went away: the edit saves on its own. */
