@@ -29,6 +29,7 @@
 		MAX_DRAFT_POV_CHARS,
 		MAX_DRAFT_WORDS,
 		MIN_DRAFT_WORDS,
+		retryBrief,
 		sceneCapAdvice,
 		type SceneDraftDefaults,
 		type SceneDraftEstimate,
@@ -356,7 +357,7 @@
 		error = '';
 		estimate = null;
 		if (from) {
-			brief = from.brief;
+			brief = retryBrief(from);
 			targetWords = from.targetWords;
 			pov = from.pov ?? '';
 			view = 'form';

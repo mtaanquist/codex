@@ -196,7 +196,8 @@ export async function sceneDraftFor(
 		sceneEmpty: scene.bodyMd.trim() === '',
 		sceneTitle: title?.title ?? null,
 		// position marks a draft of a chapter run; it outlives the chapter.
-		inChapterRun: draft.position !== null
+		inChapterRun: draft.position !== null,
+		chapterBrief: draft.chapterBrief
 	};
 }
 
@@ -572,8 +573,9 @@ export async function discardSceneDraft(
 	// Already accepted or discarded: nothing to do, and nothing to undo.
 	if (rows.length === 0) return notReady('discarded');
 	const unsettled = draft.status === 'pending' || draft.status === 'running';
-	// One scene of a chapter draft: its job has other scenes to write, and
-	// passes over this one now that it is discarded.
+	// One scene of a chapter draft: its job has other scenes to write. It
+	// passes over this one now that it is discarded, and drops its request
+	// if it is being written (see runChapterDraft).
 	return { ok: true, stopJobId: unsettled && draft.position === null ? draft.jobId : null };
 }
 
@@ -944,6 +946,7 @@ export async function requestChapterDraft(
 						jobId,
 						position: index,
 						brief: scene.brief,
+						chapterBrief: input.brief.trim() || null,
 						targetWords: input.targetWords,
 						pov: input.pov?.trim() || null
 					}))
