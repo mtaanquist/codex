@@ -294,10 +294,33 @@ const REPLY_LIMIT_PARAMS = [
 	'num_predict'
 ];
 // Names that ask for several replies at once. Short enough to mean something
-// else elsewhere (a property of a response_format schema), so they are left
-// out only at the top level and in the groups endpoints read options from.
-const REPLY_COUNT_PARAMS = ['n', 'best_of', 'candidate_count', 'num_return_sequences'];
-const OPTION_GROUPS = ['options', 'extra_body', 'parameters'];
+// else elsewhere, so they are left out only at the top level and in the
+// groups endpoints read options from.
+const REPLY_COUNT_PARAMS = [
+	'n',
+	'best_of',
+	'candidate_count',
+	'candidateCount',
+	'num_return_sequences'
+];
+const OPTION_GROUPS = [
+	'options',
+	'extra_body',
+	'parameters',
+	'generationConfig',
+	'generation_config'
+];
+// Keys that carry a schema for the reply (OpenAI response_format and
+// text.format, Ollama format, Gemini responseSchema): its property names are
+// the writer's own, so nothing inside one is left out.
+const REPLY_SCHEMA_KEYS = [
+	'response_format',
+	'format',
+	'responseSchema',
+	'response_schema',
+	'responseJsonSchema',
+	'response_json_schema'
+];
 export function withoutReplySizeParams<T extends Record<string, unknown> | undefined>(
 	params: T,
 	options = true
@@ -305,8 +328,7 @@ export function withoutReplySizeParams<T extends Record<string, unknown> | undef
 	if (!params) return params;
 	const kept: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(params)) {
-		// A schema for the reply: its property names are the writer's own.
-		if (key === 'response_format') {
+		if (REPLY_SCHEMA_KEYS.includes(key)) {
 			kept[key] = value;
 			continue;
 		}
