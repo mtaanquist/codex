@@ -40,9 +40,11 @@ export type GateLimits = {
 };
 
 export type CallGate = {
-	// Runs `work` when the writer has a place. Throws GateBusyError at once
-	// when the writer's line is full, and at the deadline when no place came.
-	run<T>(writer: string, work: () => Promise<T>): Promise<T>;
+	// Runs `work` when the writer has a place, telling it whether it had to
+	// wait for one (and so whether what it checked before may have changed).
+	// Throws GateBusyError at once when the writer's line is full, and at the
+	// deadline when no place came.
+	run<T>(writer: string, work: (waited: boolean) => Promise<T>): Promise<T>;
 };
 
 export function createCallGate(limits: GateLimits): CallGate {
@@ -80,7 +82,8 @@ export function createCallGate(limits: GateLimits): CallGate {
 	return {
 		async run(writer, work) {
 			const line = lines.get(writer);
-			if (!line && mayRun(writer) && running < limits.total) {
+			const waited = !(!line && mayRun(writer) && running < limits.total);
+			if (!waited) {
 				take(writer);
 			} else {
 				if ((line?.length ?? 0) >= limits.waiting) throw new GateBusyError();
@@ -103,7 +106,7 @@ export function createCallGate(limits: GateLimits): CallGate {
 				});
 			}
 			try {
-				return await work();
+				return await work(waited);
 			} finally {
 				running -= 1;
 				const left = (runningBy.get(writer) ?? 1) - 1;

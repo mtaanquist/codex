@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, asc, eq } from 'drizzle-orm';
@@ -81,8 +82,8 @@ const {
 } = await import('#lib/server/proposals');
 const { discardSceneDraft, sceneDraftFor } = await import('#lib/server/scene-drafts');
 const { saveSceneBody } = await import('#lib/server/scene-save');
-const { stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
-const { createAnchorMapper } = await import('#lib/review-anchor');
+const { readGate, stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
+const { reanchorRange } = await import('#lib/review-anchor');
 const { MAX_APP_DRAFTS_WAITING, MAX_STAGING_CALLS_WAITING, TOOL_RESULT_MAX_CHARS } =
 	await import('#lib/server/mcp/constants');
 const route = await import('../../src/routes/api/mcp/+server');
@@ -876,8 +877,7 @@ describe('search_text', () => {
 // ============ Staging ============
 
 const idIn = (text: string) => /id ([0-9a-f-]{36})/.exec(text)?.[1] ?? '';
-const mapRange = (base: string, current: string, start: number, end: number) =>
-	createAnchorMapper().range(base, current, start, end);
+const mapRange = reanchorRange;
 
 function edit(who: World, overrides: Record<string, unknown> = {}) {
 	return call(who, 'suggest_edit', {
@@ -1446,24 +1446,32 @@ describe('one writers burst of reading', () => {
 
 // Placing an edit in a scene that has changed is a character diff, which
 // runs in the server's own thread: while it runs, nobody else is answered.
+// The longest the server's thread was held while `work` ran, by a timer that
+// should fire every 5 ms and by Node's own measure of the event loop's delay.
+async function longestStall<T>(work: () => Promise<T>) {
+	let stall = 0;
+	let last = performance.now();
+	const watch = setInterval(() => {
+		stall = Math.max(stall, performance.now() - last - 5);
+		last = performance.now();
+	}, 5);
+	const delay = monitorEventLoopDelay({ resolution: 5 });
+	delay.enable();
+	const began = performance.now();
+	const result = await work();
+	const took = performance.now() - began;
+	// Work that ends by holding the thread is only seen by the next tick.
+	await new Promise((resolve) => setTimeout(resolve, 20));
+	clearInterval(watch);
+	delay.disable();
+	return { result, stall: Math.max(stall, delay.max / 1e6 - 5), took };
+}
+
 describe('get_review_note on a large scene that was mostly rewritten', () => {
 	const before = 'The harbour lay quiet under a low grey sky. '.repeat(450);
 	const after = 'Rain came in from the west before noon and stayed on. '.repeat(380);
 	const read = (id: string) =>
 		call(alice, 'get_review_note', { universeId: alice.universeId, noteId: id });
-	// The longest the server's thread was held while `work` ran.
-	async function longestStall<T>(work: () => Promise<T>) {
-		let stall = 0;
-		let last = performance.now();
-		const watch = setInterval(() => {
-			stall = Math.max(stall, performance.now() - last - 5);
-			last = performance.now();
-		}, 5);
-		const began = performance.now();
-		const result = await work();
-		clearInterval(watch);
-		return { result, stall, took: performance.now() - began };
-	}
 
 	it('answers quickly, holds nobody up, and says the edit may no longer apply', async () => {
 		await setBody(alice, `${before}\n\nShe held the lantern high.`);
@@ -1485,7 +1493,7 @@ describe('get_review_note on a large scene that was mostly rewritten', () => {
 		});
 	});
 
-	it('still places an edit whose words are untouched, or stand once in the new text', async () => {
+	it('still places an edit in the start or the end the texts share, and nothing else', async () => {
 		await setBody(
 			alice,
 			`She held the lantern high.\n\n${before}\n\nA heron stood there.\n\n${before}\n\nThe gull watched her go.`
@@ -1505,10 +1513,14 @@ describe('get_review_note on a large scene that was mostly rewritten', () => {
 		expect(atEnd.paragraphNow).toBe('The gull watched her go.');
 		expect(gone).toMatchObject({ paragraphNow: null, notice: expect.any(String) });
 
-		// A word that moved, and is in the new text once, is found there.
+		// A word that moved is not looked for, even when it is in the new text
+		// once: that it is there does not mean the edit still applies.
 		await setBody(alice, `${after}\n\nNo gull that day.\n\nShe held it high.`);
 		const moved = JSON.parse((await read(last)).text).edits[0];
-		expect(moved.paragraphNow).toBe('No gull that day.');
+		expect(moved).toMatchObject({
+			paragraphNow: null,
+			notice: 'The text has changed since; the edit may no longer apply.'
+		});
 	});
 
 	it('places an edit as before when the change is small', async () => {
@@ -1521,6 +1533,175 @@ describe('get_review_note on a large scene that was mostly rewritten', () => {
 		const shown = JSON.parse((await read(id)).text).edits[0];
 		expect(shown.paragraphNow).toBe('She held the old lantern high, and the lantern shook.');
 		expect(shown.notice).toBeUndefined();
+	});
+
+	// The writer's own review page compares on a larger budget, but a bounded
+	// one: past it the edit shows as changed, which can be read and rejected
+	// but not accepted.
+	it('shows the writer the edit as changed since, without holding the server', async () => {
+		const tide = 'The tide turned and the town slept on. '.repeat(1000);
+		await setBody(
+			alice,
+			`${tide}\n\n${before}\n\nShe held the lantern high.\n\n${before}\n\n${tide}`
+		);
+		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		const now = `${tide}\n\n${after}\n\nShe held the lantern high.\n\n${after}\n\n${tide}`;
+		await setBody(alice, now);
+		const { result, stall } = await longestStall(() => listSuggestions(db, alice.storyId));
+		expect(stall).toBeLessThan(1000);
+		expect(result.find((entry) => entry.id === id)).toMatchObject({
+			anchor: null,
+			anchorLost: true,
+			original: 'lantern'
+		});
+		const accepted = await longestStall(() =>
+			decideSuggestion(db, alice.userId, alice.storyId, id, true)
+		);
+		expect(accepted.stall).toBeLessThan(1000);
+		expect(accepted.result).toEqual({
+			ok: false,
+			reason: 'The text this suggestion applies to has changed; it can only be rejected.'
+		});
+		const [scene] = await db.select().from(scenes).where(eq(scenes.id, alice.sceneId));
+		expect(scene.bodyMd).toBe(now);
+		expect(await decideSuggestion(db, alice.userId, alice.storyId, id, false)).toMatchObject({
+			ok: true
+		});
+	});
+
+	// Each edit pinned to a version of its own, so each is a comparison of its
+	// own, and every one of them small: one call must still cost little.
+	it('answers quickly for a note whose edits were made on many versions of the scene', async () => {
+		const filler = 'The harbour lay quiet under a low grey sky. '.repeat(79);
+		// Thirty paragraphs, about 105,000 characters; version n has had the
+		// first n paragraphs touched.
+		const version = (touched: number) =>
+			Array.from(
+				{ length: 30 },
+				(_, n) => `Paragraph ${n} holds mark${n}x${n < touched ? ' and more' : ''}. ${filler}`
+			).join('\n\n');
+		await setBody(alice, version(0));
+		expect(version(0).length).toBeGreaterThan(105_000);
+		const noteId = await patternNote(alice, [{ original: 'mark0x', replacement: 'Mark0x' }]);
+		for (let n = 1; n < 30; n++) {
+			await setBody(alice, version(n));
+			resetRateLimits();
+			const added = await edit(alice, {
+				original: `mark${n}x`,
+				replacement: `Mark${n}x`,
+				patternNoteId: noteId
+			});
+			expect(added.text).toContain('Staged');
+		}
+		// And then one more small change.
+		await setBody(alice, version(30));
+		resetRateLimits();
+		const { result, stall, took } = await longestStall(() =>
+			Promise.all([read(noteId), read(noteId), read(noteId)])
+		);
+		expect(stall).toBeLessThan(100);
+		expect(took).toBeLessThan(1000);
+		const edits = JSON.parse(result[0].text).edits as {
+			original: string;
+			paragraphNow: string | null;
+			notice?: string;
+		}[];
+		expect(edits).toHaveLength(30);
+		// The edit made on the latest version is placed; any that are not say so.
+		const latest = edits.find((entry) => entry.original === 'mark29x')!;
+		expect(latest.paragraphNow).toContain('Paragraph 29 holds mark29x and more.');
+		for (const entry of edits) {
+			if (entry.paragraphNow === null) expect(entry.notice).toEqual(expect.any(String));
+			else expect(entry.paragraphNow).toContain(entry.original);
+		}
+	}, 60_000);
+});
+
+// A follow-up names an accepted edit, and finding where that edit's new text
+// now sits is the same comparison as above.
+describe('a follow-up to an accepted edit on a large scene that was mostly rewritten', () => {
+	const before = 'The harbour lay quiet under a low grey sky. '.repeat(450);
+	const after = 'Rain came in from the west before noon and stayed on. '.repeat(380);
+	const tide = 'The tide turned and the town slept on. '.repeat(1000);
+	const paragraph = 'She held the dark lantern high.';
+
+	// Leaves a pattern note on the scene, has the writer accept its one edit,
+	// and returns that edit's id.
+	async function acceptedEdit(body: string): Promise<string> {
+		await setBody(alice, body);
+		await patternNote(alice, [{ original: 'lantern', replacement: 'lamp' }]);
+		const [first] = await listSuggestions(db, alice.storyId);
+		expect(await decideSuggestion(db, alice.userId, alice.storyId, first.id, true)).toMatchObject({
+			ok: true
+		});
+		return first.id;
+	}
+	const followUp = (followsSuggestionId: string) =>
+		edit(alice, { original: 'dark', replacement: 'dim', followsSuggestionId });
+
+	it('answers quickly, holds nobody up, and stages nothing it cannot place', async () => {
+		const id = await acceptedEdit(`${tide}\n\n${before}\n\n${paragraph}\n\n${before}\n\n${tide}`);
+		// Both sides of the edit were rewritten; it is in what changed between them.
+		const now = `${tide}\n\n${after}\n\n${paragraph.replace('lantern', 'lamp')}\n\n${after}\n\n${tide}`;
+		await setBody(alice, now);
+		expect(now.length).toBeGreaterThan(118_000);
+		const staged = await stagedRows();
+		const { result, stall, took } = await longestStall(() => followUp(id));
+		expect(stall).toBeLessThan(100);
+		expect(took).toBeLessThan(400);
+		expect(result).toEqual({
+			text: 'That change can no longer be found in the scene; there is nothing to follow.',
+			isError: false
+		});
+		expect(await stagedRows()).toBe(staged);
+	});
+
+	it('still follows an edit in the start or the end the texts share', async () => {
+		const id = await acceptedEdit(`${tide}\n\n${before}\n\n${paragraph}\n\n${tide}`);
+		await setBody(
+			alice,
+			`${tide}\n\n${after}\n\n${paragraph.replace('lantern', 'lamp')}\n\n${tide}`
+		);
+		const { result, stall } = await longestStall(() => followUp(id));
+		expect(stall).toBeLessThan(100);
+		expect(result.text).toContain('Staged a suggested edit');
+	});
+});
+
+describe('a reading call that waited for its place', () => {
+	// Takes both of the writer's places at the reading gate until let go.
+	function holdReadingPlaces(userId: string) {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const ahead = Promise.all([readGate.run(userId, () => gate), readGate.run(userId, () => gate)]);
+		return async () => {
+			open();
+			await ahead;
+		};
+	}
+	const read = () => call(alice, 'list_stories', { universeId: alice.universeId });
+
+	it('reads nothing once the app was disconnected while it waited', async () => {
+		expect((await read()).text).toContain('Alice Open Book');
+		const letGo = holdReadingPlaces(alice.userId);
+		const waiting = read();
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const [grant] = await db
+			.select({ id: oauthGrants.id })
+			.from(oauthGrants)
+			.where(eq(oauthGrants.userId, alice.userId));
+		expect(await revokeGrant(db, alice.userId, grant.id)).toBe(true);
+		await letGo();
+		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
+	});
+
+	it('reads nothing once access for apps was turned off while it waited', async () => {
+		const letGo = holdReadingPlaces(alice.userId);
+		const waiting = read();
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		await saveMcpInstanceEnabled(db, false);
+		await letGo();
+		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
 	});
 });
 

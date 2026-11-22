@@ -8,6 +8,7 @@ import { searchAll } from '../../search.ts';
 import {
 	addComment,
 	acceptedPatternEdit,
+	placeAcceptedEdit,
 	clientNotesWaiting,
 	createSuggestion,
 	createThread,
@@ -29,7 +30,7 @@ import { clientDisplayName } from '#lib/mcp-access';
 import { PROPOSAL_KIND_LABEL, stageEntityProposal, stageSplitProposal } from '../../proposals.ts';
 import { stageAppDraft } from '../../scene-drafts.ts';
 import {
-	REVIEW_NOTE_DIFF_MAX_EDITS,
+	APP_DIFF_BUDGET,
 	STAGING_LOCK_TIMEOUT_MS,
 	STAGING_TRANSACTION_TIMEOUT_MS
 } from '../../mcp/constants.ts';
@@ -655,20 +656,18 @@ async function appEditLink(
 	if (followed.sceneId !== input.sceneId) {
 		return { refusal: 'A follow-up must be in the scene of the edit it follows.' };
 	}
-	if (!followed.spot) {
+	if (await followUpExists(ctx.db, input.followsSuggestionId, author)) {
+		return { refusal: FOLLOW_UP_EXISTS };
+	}
+	// Last, as it is the costly check: comparing the scene as it was with the
+	// scene as it is. Past the budget the change counts as not found.
+	const spot = placeAcceptedEdit(followed, APP_DIFF_BUDGET);
+	if (!spot) {
 		return {
 			refusal: 'That change can no longer be found in the scene; there is nothing to follow.'
 		};
 	}
-	if (await followUpExists(ctx.db, input.followsSuggestionId, author)) {
-		return { refusal: FOLLOW_UP_EXISTS };
-	}
-	const span = paragraphWindow(
-		followed.bodyMd,
-		followed.spot.start,
-		followed.spot.end,
-		FOLLOW_UP_NEIGHBOURS
-	);
+	const span = paragraphWindow(followed.bodyMd, spot.start, spot.end, FOLLOW_UP_NEIGHBOURS);
 	return {
 		patternThreadId: followed.patternThreadId,
 		followsSuggestionId: input.followsSuggestionId,
@@ -942,7 +941,7 @@ async function getReviewNote(ctx: ToolContext, noteId: string): Promise<string> 
 				storyId,
 				stagingAuthor(ctx),
 				noteId,
-				ctx.external ? { diffBudget: REVIEW_NOTE_DIFF_MAX_EDITS } : undefined
+				ctx.external ? { diffBudget: APP_DIFF_BUDGET } : undefined
 			)
 		: null;
 	if (!storyId || !view) return NO_REVIEW_NOTE;

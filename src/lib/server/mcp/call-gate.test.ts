@@ -24,6 +24,16 @@ describe('a call gate', () => {
 		expect(log).toEqual(['one in', 'one out', 'two in', 'two out', 'three in', 'three out']);
 	});
 
+	it('tells a call whether it had to wait for its place', async () => {
+		const gate = gateWith();
+		const waited = await Promise.all([
+			gate.run('a', async (w) => (await pause(5), w)),
+			gate.run('a', async (w) => w),
+			gate.run('b', async (w) => w)
+		]);
+		expect(waited).toEqual([false, true, false]);
+	});
+
 	it('lets a writer run as many at once as the gate allows, and no more', async () => {
 		const gate = gateWith({ perWriter: 2 });
 		let now = 0;

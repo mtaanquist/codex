@@ -44,14 +44,16 @@ export function rateLimit(
 // end of one window and the start of the next); this one never lets more than
 // `limit` through in any stretch of that length. It keeps one timestamp per
 // allowed call, so it is for limits in the hundreds, not the thousands. A
-// refused call is not counted.
+// refused call is not counted. The stamps come from a clock that never runs
+// backwards; should a caller's clock do so anyway, the stamps from its
+// "future" are dropped rather than holding the key shut until it catches up.
 const logs = new Map<string, number[]>();
 
 export function slidingRateLimit(
 	key: string,
 	limit: number,
 	windowMs: number,
-	now: number = Date.now()
+	now: number = performance.now()
 ): RateLimitResult {
 	if (logs.size > SWEEP_THRESHOLD) {
 		for (const [k, times] of logs) {
@@ -59,6 +61,7 @@ export function slidingRateLimit(
 		}
 	}
 	const times = logs.get(key) ?? [];
+	while (times.length > 0 && times[times.length - 1] > now) times.pop();
 	let stale = 0;
 	while (stale < times.length && now - times[stale] >= windowMs) stale++;
 	if (stale > 0) times.splice(0, stale);

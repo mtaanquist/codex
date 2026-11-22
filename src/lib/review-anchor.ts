@@ -7,6 +7,9 @@ import { diffChars, type Change } from 'diff';
 // edits elsewhere shift the range, insertions inside it stretch it, and
 // deletions inside it shrink it, but if an endpoint's own text is gone the
 // anchor is lost and the thread degrades to a whole-scene comment.
+//
+// These two have no limit on the work they do. The server maps through a
+// mapper with a budget instead (createAnchorMapper).
 export function reanchorRange(
 	baseText: string,
 	currentText: string,
@@ -15,7 +18,7 @@ export function reanchorRange(
 ): { start: number; end: number } | null {
 	if (start < 0 || end > baseText.length || start >= end) return null;
 	if (baseText === currentText) return { start, end };
-	return mapRange(diffChars(baseText, currentText), start, end);
+	return mapRange(compareTexts(baseText, currentText).spans!, start, end);
 }
 
 // Re-anchors a single position (a pure insertion point). The position
@@ -27,71 +30,177 @@ export function reanchorPoint(
 ): number | null {
 	if (position < 0 || position > baseText.length) return null;
 	if (baseText === currentText) return position;
-	return mapPoint(diffChars(baseText, currentText), position);
+	return mapPoint(compareTexts(baseText, currentText).spans!, position);
 }
 
-function mapRange(
-	parts: Change[],
-	start: number,
-	end: number
-): { start: number; end: number } | null {
-	let basePos = 0;
-	let currentPos = 0;
-	let newStart = -1;
-	let newEnd = -1;
+// A stretch of text both versions share: where it starts in each, and its
+// length.
+type Span = { base: number; current: number; length: number };
+
+type Comparison = {
+	// The start and the end the two texts share, in characters.
+	prefix: number;
+	suffix: number;
+	// Every shared stretch, in order; null when the middle was not diffed
+	// (see createAnchorMapper).
+	spans: Span[] | null;
+	// What the diff cost, in the units of DiffBudget.
+	cost: number;
+};
+
+const CHUNK = 256;
+const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+
+// The length of the start and of the end two texts share, found by plain
+// comparison (in chunks first, which the engine compares far faster than one
+// character at a time). Neither may cut a surrogate pair in two, since the
+// diff treats a pair as one character.
+function sharedEnds(a: string, b: string): { prefix: number; suffix: number } {
+	const shortest = Math.min(a.length, b.length);
+	let prefix = 0;
+	while (
+		prefix + CHUNK <= shortest &&
+		a.slice(prefix, prefix + CHUNK) === b.slice(prefix, prefix + CHUNK)
+	) {
+		prefix += CHUNK;
+	}
+	while (prefix < shortest && a.charCodeAt(prefix) === b.charCodeAt(prefix)) prefix++;
+	if (prefix > 0 && isHighSurrogate(a.charCodeAt(prefix - 1))) prefix--;
+	const room = shortest - prefix;
+	let suffix = 0;
+	while (
+		suffix + CHUNK <= room &&
+		a.slice(a.length - suffix - CHUNK, a.length - suffix) ===
+			b.slice(b.length - suffix - CHUNK, b.length - suffix)
+	) {
+		suffix += CHUNK;
+	}
+	while (
+		suffix < room &&
+		a.charCodeAt(a.length - 1 - suffix) === b.charCodeAt(b.length - 1 - suffix)
+	) {
+		suffix++;
+	}
+	if (suffix > 0 && isLowSurrogate(a.charCodeAt(a.length - suffix))) suffix--;
+	return { prefix, suffix };
+}
+
+// Compares two texts: the shared start and end are found by plain comparison
+// and only the middle between them is diffed, so a change costs what it
+// touches rather than what the whole scene holds. `maxEdits`, given the
+// middle's length, says how many characters added and removed the diff may
+// look through before it stops; 0 is not to diff at all.
+function compareTexts(
+	baseText: string,
+	currentText: string,
+	limits?: { maxEdits: (middle: number) => number }
+): Comparison {
+	const { prefix, suffix } = sharedEnds(baseText, currentText);
+	const baseMiddle = baseText.slice(prefix, baseText.length - suffix);
+	const currentMiddle = currentText.slice(prefix, currentText.length - suffix);
+	const middle = baseMiddle.length + currentMiddle.length;
+	const ends: Span[] = [];
+	if (prefix > 0) ends.push({ base: 0, current: 0, length: prefix });
+	const tail: Span = {
+		base: baseText.length - suffix,
+		current: currentText.length - suffix,
+		length: suffix
+	};
+	// A pure insertion or deletion: nothing in the middle is shared.
+	if (baseMiddle === '' || currentMiddle === '') {
+		return { prefix, suffix, spans: suffix > 0 ? [...ends, tail] : ends, cost: 0 };
+	}
+	const maxEdits = limits ? limits.maxEdits(middle) : undefined;
+	if (maxEdits !== undefined && maxEdits < 1) return { prefix, suffix, spans: null, cost: 0 };
+	const parts: Change[] | undefined =
+		maxEdits === undefined
+			? diffChars(baseMiddle, currentMiddle)
+			: diffChars(baseMiddle, currentMiddle, { maxEditLength: maxEdits });
+	if (!parts) {
+		return { prefix, suffix, spans: null, cost: middle + maxEdits! * maxEdits! };
+	}
+	const spans = ends;
+	let base = prefix;
+	let current = prefix;
+	let edits = 0;
 	for (const part of parts) {
 		const length = part.value.length;
 		if (part.added) {
-			currentPos += length;
-			continue;
+			current += length;
+			edits += part.count ?? length;
+		} else if (part.removed) {
+			base += length;
+			edits += part.count ?? length;
+		} else {
+			spans.push({ base, current, length });
+			base += length;
+			current += length;
 		}
-		if (part.removed) {
-			basePos += length;
-			continue;
-		}
+	}
+	if (suffix > 0) spans.push(tail);
+	return { prefix, suffix, spans, cost: middle + edits * edits };
+}
+
+function mapRange(
+	spans: Span[],
+	start: number,
+	end: number
+): { start: number; end: number } | null {
+	let newStart = -1;
+	let newEnd = -1;
+	for (const span of spans) {
 		// Unchanged text: offsets inside it map by the running shift. The end
-		// offset is exclusive, so it may land on this part's far boundary.
-		if (start >= basePos && start < basePos + length) {
-			newStart = currentPos + (start - basePos);
+		// offset is exclusive, so it may land on this span's far boundary.
+		if (start >= span.base && start < span.base + span.length) {
+			newStart = span.current + (start - span.base);
 		}
-		if (end > basePos && end <= basePos + length) {
-			newEnd = currentPos + (end - basePos);
+		if (end > span.base && end <= span.base + span.length) {
+			newEnd = span.current + (end - span.base);
 		}
-		basePos += length;
-		currentPos += length;
 	}
 	if (newStart === -1 || newEnd === -1 || newEnd <= newStart) return null;
 	return { start: newStart, end: newEnd };
 }
 
-function mapPoint(parts: Change[], position: number): number | null {
-	let basePos = 0;
-	let currentPos = 0;
-	for (const part of parts) {
-		const length = part.value.length;
-		if (part.added) {
-			currentPos += length;
-			continue;
+function mapPoint(spans: Span[], position: number): number | null {
+	for (const span of spans) {
+		if (position >= span.base && position <= span.base + span.length) {
+			return span.current + (position - span.base);
 		}
-		if (part.removed) {
-			basePos += length;
-			continue;
-		}
-		if (position >= basePos && position <= basePos + length) {
-			return currentPos + (position - basePos);
-		}
-		basePos += length;
-		currentPos += length;
 	}
 	return null;
 }
 
+// How much work one mapper may do. The character diff runs in the server's
+// one thread, so while it runs nobody else is answered. Its cost grows with
+// the length of the text that differs (after the shared start and end) and
+// with the square of the characters added and removed in it, and a mapper is
+// charged both: `middle + edits * edits`, which on a typical server is
+// roughly 50 nanoseconds a unit.
+export type DiffBudget = {
+	// The longest differing stretch, the two versions together, one pair of
+	// texts may have for it to be diffed at all.
+	maxMiddle: number;
+	// The most characters added and removed one diff looks through.
+	maxEdits: number;
+	// The total one mapper may spend over every pair of texts it compares.
+	maxWork: number;
+};
+
+// The writer's own pages and the Assistant working for them in the app.
+// Generous: about half a second of work at worst for a whole page.
+export const WRITER_DIFF_BUDGET: DiffBudget = {
+	maxMiddle: 1_000_000,
+	maxEdits: 2000,
+	maxWork: 10_000_000
+};
+
 // Every thread and suggestion anchored to the same scene revision re-anchors
-// against the same two texts, and a character diff of a long scene costs
-// hundreds of milliseconds. A mapper diffs each pair of texts once and maps
-// every anchor through that one result. Make one per request and hand it to
-// everything that re-anchors, so the cost is per revision rather than per
-// comment.
+// against the same two texts. A mapper compares each pair of texts once and
+// maps every anchor through that one result. Make one per request and hand it
+// to everything that re-anchors, so the cost is per revision rather than per
+// comment, and the budget is for the whole request.
 export type AnchorMapper = {
 	range(
 		baseText: string,
@@ -100,113 +209,68 @@ export type AnchorMapper = {
 		end: number
 	): { start: number; end: number } | null;
 	point(baseText: string, currentText: string, position: number): number | null;
-	// Only on a bounded mapper: whether these two texts differ by more than
-	// it will diff, so a null from it may mean "not looked for", not "gone".
-	gaveUp?(baseText: string, currentText: string): boolean;
+	// Whether the budget ran out before these two texts were diffed, so a null
+	// from the mapper may mean "not looked for", not "gone".
+	gaveUp(baseText: string, currentText: string): boolean;
 };
 
-export function createAnchorMapper(): AnchorMapper {
+// Past its budget a mapper places only what lies in the start or the end the
+// two texts share; anything else is null, and `gaveUp` says so.
+export function createAnchorMapper(budget: DiffBudget): AnchorMapper {
+	let spent = 0;
 	// Nested by base text then current text, so neither key has to be
 	// concatenated into a third copy of the scene.
-	const cache = new Map<string, Map<string, Change[]>>();
-	const diff = (baseText: string, currentText: string): Change[] => {
+	const cache = new Map<string, Map<string, Comparison>>();
+	const compare = (baseText: string, currentText: string): Comparison => {
 		let byCurrent = cache.get(baseText);
 		if (!byCurrent) {
 			byCurrent = new Map();
 			cache.set(baseText, byCurrent);
 		}
-		let parts = byCurrent.get(currentText);
-		if (!parts) {
-			parts = diffChars(baseText, currentText);
-			byCurrent.set(currentText, parts);
+		let found = byCurrent.get(currentText);
+		if (!found) {
+			found = compareTexts(baseText, currentText, {
+				// The most edits this diff may look through so that its cost
+				// cannot take the mapper past its budget.
+				maxEdits: (middle) =>
+					middle > budget.maxMiddle
+						? 0
+						: Math.min(
+								budget.maxEdits,
+								Math.floor(Math.sqrt(Math.max(0, budget.maxWork - spent - middle)))
+							)
+			});
+			spent += found.cost;
+			byCurrent.set(currentText, found);
 		}
-		return parts;
+		return found;
 	};
 	return {
 		range(baseText, currentText, start, end) {
 			if (start < 0 || end > baseText.length || start >= end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapRange(diff(baseText, currentText), start, end);
-		},
-		point(baseText, currentText, position) {
-			if (position < 0 || position > baseText.length) return null;
-			if (baseText === currentText) return position;
-			return mapPoint(diff(baseText, currentText), position);
-		}
-	};
-}
-
-// A mapper that never does more than a set amount of work. The character
-// diff runs in the caller's thread and its cost grows with the square of what
-// changed: twenty thousand rewritten characters hold a server for seconds.
-// This one stops the diff once the texts are known to differ by more than
-// `maxEdits` characters added and removed. Past that it places what it can
-// without a diff: an anchor in the start or the end the two texts share, and
-// a range whose text stands exactly once in the current text. Anything else
-// is null, and `gaveUp` says the diff was stopped.
-export function createBoundedAnchorMapper(maxEdits: number): AnchorMapper {
-	type Pair = { prefix: number; suffix: number; parts: Change[] | null };
-	const cache = new Map<string, Map<string, Pair>>();
-	const compare = (baseText: string, currentText: string): Pair => {
-		let byCurrent = cache.get(baseText);
-		if (!byCurrent) {
-			byCurrent = new Map();
-			cache.set(baseText, byCurrent);
-		}
-		let pair = byCurrent.get(currentText);
-		if (!pair) {
-			const parts = diffChars(baseText, currentText, { maxEditLength: maxEdits }) ?? null;
-			let prefix = 0;
-			let suffix = 0;
-			if (!parts) {
-				const shortest = Math.min(baseText.length, currentText.length);
-				while (prefix < shortest && baseText[prefix] === currentText[prefix]) prefix++;
-				while (
-					suffix < shortest - prefix &&
-					baseText[baseText.length - 1 - suffix] === currentText[currentText.length - 1 - suffix]
-				) {
-					suffix++;
-				}
-			}
-			pair = { prefix, suffix, parts };
-			byCurrent.set(currentText, pair);
-		}
-		return pair;
-	};
-	// A position in the start or the end the texts share, moved to where it
-	// is now; null for one in between.
-	const shared = (pair: Pair, baseText: string, currentText: string, position: number) => {
-		if (position <= pair.prefix) return position;
-		if (position >= baseText.length - pair.suffix) {
-			return position + currentText.length - baseText.length;
-		}
-		return null;
-	};
-	return {
-		range(baseText, currentText, start, end) {
-			if (start < 0 || end > baseText.length || start >= end) return null;
-			if (baseText === currentText) return { start, end };
-			const pair = compare(baseText, currentText);
-			if (pair.parts) return mapRange(pair.parts, start, end);
-			if (end <= pair.prefix) return { start, end };
-			if (start >= baseText.length - pair.suffix) {
+			const found = compare(baseText, currentText);
+			if (found.spans) return mapRange(found.spans, start, end);
+			if (end <= found.prefix) return { start, end };
+			if (start >= baseText.length - found.suffix) {
 				const shift = currentText.length - baseText.length;
 				return { start: start + shift, end: end + shift };
 			}
-			const original = baseText.slice(start, end);
-			const at = currentText.indexOf(original);
-			if (at === -1 || currentText.indexOf(original, at + 1) !== -1) return null;
-			return { start: at, end: at + original.length };
+			return null;
 		},
 		point(baseText, currentText, position) {
 			if (position < 0 || position > baseText.length) return null;
 			if (baseText === currentText) return position;
-			const pair = compare(baseText, currentText);
-			if (pair.parts) return mapPoint(pair.parts, position);
-			return shared(pair, baseText, currentText, position);
+			const found = compare(baseText, currentText);
+			if (found.spans) return mapPoint(found.spans, position);
+			if (position <= found.prefix) return position;
+			if (position >= baseText.length - found.suffix) {
+				return position + currentText.length - baseText.length;
+			}
+			return null;
 		},
 		gaveUp(baseText, currentText) {
-			return baseText !== currentText && compare(baseText, currentText).parts === null;
+			return baseText !== currentText && compare(baseText, currentText).spans === null;
 		}
 	};
 }
