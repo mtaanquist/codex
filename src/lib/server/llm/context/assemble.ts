@@ -114,6 +114,17 @@ export type AssembleOptions = {
 	// world (a review pass that checks no lore, the review survey) names the
 	// few tiers it wants; assembly only filters by name, the caller decides.
 	includeTiers?: readonly string[];
+	// Shared by the assemblies of one run over several scenes of the same
+	// story, for the same user and tiers (a chapter draft's estimate): the
+	// scope and the scene-independent tiers are read once for all of them.
+	cache?: StoryContextCache;
+};
+
+// See AssembleOptions.cache. Made empty with {} and filled by the first
+// assembly that uses it.
+export type StoryContextCache = {
+	scope?: Promise<StoryScope | null>;
+	stable?: Promise<Awaited<ReturnType<typeof gatherStableTiers>>>;
 };
 
 function tierWanted(includeTiers: readonly string[] | undefined, name: string): boolean {
@@ -227,11 +238,17 @@ async function assembleStoryContext(
 	options: AssembleOptions,
 	storyId: string
 ): Promise<AssembledContext | null> {
-	const scope = await loadStoryScope(db, options.userId, storyId);
+	const cache = options.cache ?? {};
+	const scope = await (cache.scope ??= loadStoryScope(db, options.userId, storyId));
 	if (!scope) return null;
 	const budgetTokens = options.budgetTokens ?? DEFAULT_BUDGET_TOKENS;
 
-	const stable = await gatherStableTiers(db, options.userId, scope, options.includeTiers);
+	const stable = await (cache.stable ??= gatherStableTiers(
+		db,
+		options.userId,
+		scope,
+		options.includeTiers
+	));
 	const scene = await gatherSceneTiers(
 		db,
 		scope,

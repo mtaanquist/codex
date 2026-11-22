@@ -20,7 +20,13 @@ import {
 	type SceneDraftEstimate
 } from '../../scene-draft.ts';
 import { wordCount } from '../../word-count.ts';
-import { assembleContext, bodyExcerpt, bodyTail, buildSystemMessage } from './context/assemble.ts';
+import {
+	assembleContext,
+	bodyExcerpt,
+	bodyTail,
+	buildSystemMessage,
+	type StoryContextCache
+} from './context/assemble.ts';
 import { contextBudgetTokens } from './context/budgets.ts';
 import {
 	assistantLayout,
@@ -43,7 +49,12 @@ import { jobSpendMeter } from './job-spend.ts';
 import type { SpendMeter } from './spend.ts';
 import { buildSceneDraftMessage } from './prompts/scene-draft.ts';
 import { adapterKind } from './providers/presets.ts';
-import { EndpointReplyError, stoppedByWriter, type ChatMessage } from './providers/types.ts';
+import {
+	EndpointReplyError,
+	stoppedByWriter,
+	WriterStopError,
+	type ChatMessage
+} from './providers/types.ts';
 
 // A scene draft: one whole scene written to the writer's brief, as a
 // background job. The job only ever writes the draft row (assistant_drafts);
@@ -235,13 +246,28 @@ export function emptyDraftCutOffNote(by: DraftLimitSetBy): string {
 export const EMPTY_DRAFT_NOTE =
 	'The model sent back an empty reply. Ask again, or choose another model for Write under Account, Assistant.';
 
+// What the requests of one chapter estimate share, read once for all its
+// scenes: the settings, and the scene-independent part of the context.
+type SharedReads = {
+	config?: ReturnType<typeof resolveLlmConfig>;
+	context: StoryContextCache;
+};
+
 // The request a draft would send as things stand, and what bounds its reply.
 // Null when the scene is not the user's. Throws NoModelError when no model is
 // chosen for the role.
-async function sceneDraftRequest(db: Database, input: SceneDraftInput, chapter?: ChapterContext) {
+async function sceneDraftRequest(
+	db: Database,
+	input: SceneDraftInput,
+	chapter?: ChapterContext,
+	shared?: SharedReads
+) {
 	const scene = await draftScene(db, input.userId, input.storyId, input.sceneId);
 	if (!scene) return null;
-	const { config } = await resolveLlmConfig(db, input.userId, input.storyId);
+	const resolving = shared
+		? (shared.config ??= resolveLlmConfig(db, input.userId, input.storyId))
+		: resolveLlmConfig(db, input.userId, input.storyId);
+	const { config } = await resolving;
 	// Drafting runs as the co-author, so its model and Tune settings apply.
 	const model = pickModel(config, 'coauthor');
 	if (!model) throw new NoModelError();
@@ -254,7 +280,8 @@ async function sceneDraftRequest(db: Database, input: SceneDraftInput, chapter?:
 		sceneId: input.sceneId,
 		focusText: input.brief || chapter?.chapterBrief || '',
 		precedingProse: true,
-		budgetTokens: contextBudgetTokens(contextWindow)
+		budgetTokens: contextBudgetTokens(contextWindow),
+		cache: shared?.context
 	});
 	const hasProse = scene.bodyMd.trim() !== '';
 	// "The scene before this one" is only said of the scene that is. With a
@@ -426,6 +453,10 @@ export async function estimateChapterDraft(
 	input: ChapterDraftInput
 ): Promise<Omit<ChapterDraftEstimate, 'skipped'> | null> {
 	const plans = new Map(input.scenes.map((scene) => [scene.sceneId, scene.brief]));
+	// Counted without sending anything, so one read of the settings and of the
+	// world serves every scene. The run itself reads them fresh for each
+	// scene, since the writer may change them while it is under way.
+	const shared: SharedReads = { context: {} };
 	let first: DraftRequest | null = null;
 	let before: string | null = null;
 	let estTokens = 0;
@@ -446,7 +477,8 @@ export async function estimateChapterDraft(
 				chapterBrief: input.brief,
 				previous: before && carried ? { sceneId: before, text: carried } : null,
 				plans
-			}
+			},
+			shared
 		);
 		if (!request) {
 			before = null;
@@ -642,6 +674,55 @@ function stoppedRow(row: { status: string; note: string | null } | undefined): b
 	return row?.status === 'discarded' && row.note === DRAFT_STOPPED_NOTE;
 }
 
+// How often a chapter run checks, while a scene's request is out, that the
+// writer still wants that scene's draft.
+const DRAFT_WATCH_MS = 5_000;
+
+// The signal one scene of a chapter run is written under: it aborts when the
+// job's does (with the same reason), and as a writer's stop when the scene's
+// draft is settled elsewhere meanwhile (the writer discarded it), so that one
+// request is not run to its limit for a draft that would be dropped.
+function watchDraft(
+	db: Database,
+	draftId: string,
+	jobSignal: AbortSignal | undefined,
+	everyMs: number
+): { signal: AbortSignal; dropped: () => boolean; stop: () => void } {
+	const controller = new AbortController();
+	let dropped = false;
+	let checking = false;
+	const onJobAbort = () => controller.abort(jobSignal!.reason);
+	if (jobSignal?.aborted) onJobAbort();
+	else jobSignal?.addEventListener('abort', onJobAbort, { once: true });
+	const timer = setInterval(async () => {
+		if (checking || controller.signal.aborted) return;
+		checking = true;
+		try {
+			const [row] = await db
+				.select({ status: assistantDrafts.status })
+				.from(assistantDrafts)
+				.where(eq(assistantDrafts.id, draftId));
+			if (!row || (row.status !== 'pending' && row.status !== 'running')) {
+				dropped = true;
+				controller.abort(new WriterStopError());
+			}
+		} catch {
+			// Asked again at the next tick; the reply is checked when it lands.
+		} finally {
+			checking = false;
+		}
+	}, everyMs);
+	timer.unref?.();
+	return {
+		signal: controller.signal,
+		dropped: () => dropped,
+		stop: () => {
+			clearInterval(timer);
+			jobSignal?.removeEventListener('abort', onJobAbort);
+		}
+	};
+}
+
 export type ChapterDraftResult =
 	// None of the drafts is there to write any more; nothing was asked.
 	| { outcome: 'missing' }
@@ -722,6 +803,8 @@ export async function runChapterDraft(
 		draftIds: string[];
 		jobId?: string;
 		signal?: AbortSignal;
+		// How often a scene's draft is checked while its request is out.
+		watchMs?: number;
 	},
 	deps: GatewayDeps = {}
 ): Promise<ChapterDraftResult> {
@@ -845,6 +928,7 @@ export async function runChapterDraft(
 			.where(and(mine(draftId), eq(assistantDrafts.status, 'pending')));
 
 		let result: Awaited<ReturnType<typeof completeDetailed>>;
+		const watch = watchDraft(db, draftId, signal, opts.watchMs ?? DRAFT_WATCH_MS);
 		try {
 			result = await completeDetailed(
 				db,
@@ -858,7 +942,7 @@ export async function runChapterDraft(
 					boundedReply: true,
 					mayResend: () => !wouldPassCap(meter, request),
 					meter,
-					signal
+					signal: watch.signal
 				},
 				deps
 			);
@@ -868,6 +952,17 @@ export async function runChapterDraft(
 			if (stoppedByWriter(signal)) {
 				ended = 'stopped';
 				break;
+			}
+			// The writer discarded this scene's draft while it was written: the
+			// run passes over it, unless that was a Stop settled by a read.
+			if (watch.dropped()) {
+				const [now] = await db.select().from(assistantDrafts).where(mine(draftId));
+				if (stoppedRow(now)) {
+					ended = 'stopped';
+					break;
+				}
+				previous = null;
+				continue;
 			}
 			// The failed attempt was billed, and another would not fit under
 			// the cap.
@@ -879,6 +974,7 @@ export async function runChapterDraft(
 			}
 			throw err;
 		} finally {
+			watch.stop();
 			await meter.flush();
 		}
 		const text = result.content.trim();

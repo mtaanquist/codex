@@ -398,9 +398,11 @@ Where to find what an app left:
   one waiting draft at a time, so an app cannot leave another until you have
   decided.
 
-Suggested edits, suggested entries, proposed splits and waiting drafts are not
-part of your export. What you accepted or kept is, because it is then part of
-your writing. Review comments are exported with the story they are on.
+Suggested edits, suggested entries and proposed splits are not part of your
+export. What you accepted or kept is, because it is then part of your writing.
+Review comments are exported with the story they are on. Waiting drafts are in
+the export of your whole account (see [Security](/docs/security)), but not in a
+story's own export.
 
 A connected app is also given ready-made prompts for the work the Assistant
 does in Codex: review, copyedit, continuity review, pattern pass, write,

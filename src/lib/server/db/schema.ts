@@ -335,7 +335,12 @@ export const scenes = pgTable(
 		mentionsIndexedAt: timestamp('mentions_indexed_at', { withTimezone: true }),
 		// Soft delete: a deleted scene sits in the story's trash until restored
 		// or deleted for good. Null means live; every live query filters on it.
-		deletedAt: timestamp('deleted_at', { withTimezone: true })
+		deletedAt: timestamp('deleted_at', { withTimezone: true }),
+		// The editor copy that saved last and its save's number (see save-order):
+		// a later save from that copy that arrives after an earlier one is not
+		// undone by it.
+		saveSource: text('save_source'),
+		saveSeq: integer('save_seq')
 	},
 	(table) => [
 		index('scenes_characters_present_gin').using('gin', table.charactersPresent),
@@ -1697,8 +1702,15 @@ export const assistantDrafts = pgTable(
 		textMd: text('text_md').notNull().default(''),
 		status: text('status', { enum: ASSISTANT_DRAFT_STATUSES }).notNull().default('pending'),
 		note: text('note'),
+		// What the writer said about the whole chapter, on each draft of a
+		// chapter run, so trying one scene again can start from it.
+		chapterBrief: text('chapter_brief'),
 		// The pg-boss job writing it, for the status poll and Stop.
 		jobId: text('job_id'),
+		// The panel copy that saved the writer's edits last, and its save's
+		// number (see save-order).
+		saveSource: text('save_source'),
+		saveSeq: integer('save_seq'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true })
 			.notNull()

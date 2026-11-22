@@ -6,7 +6,9 @@ import {
 	draftMaxTokens,
 	FALLBACK_DRAFT_WORDS,
 	MAX_DRAFT_WORDS,
+	MAX_DRAFT_BRIEF_CHARS,
 	MIN_DRAFT_WORDS,
+	retryBrief,
 	wordsForTokens
 } from './scene-draft';
 import { MAX_REPLY_TOKENS } from './assistant-tuning';
@@ -67,5 +69,21 @@ describe('wordsForTokens', () => {
 	it('rounds down to fifty words', () => {
 		expect(wordsForTokens(900)).toBe(600);
 		expect(wordsForTokens(10)).toBe(0);
+	});
+});
+
+describe('retryBrief', () => {
+	it("puts a chapter run's chapter brief before the scene's own", () => {
+		expect(retryBrief({ brief: 'She reaches the quay.', chapterBrief: 'Ilse flees.' })).toBe(
+			'Ilse flees.\n\nShe reaches the quay.'
+		);
+		// A scene the chapter brief covered on its own.
+		expect(retryBrief({ brief: '', chapterBrief: ' Ilse flees. ' })).toBe('Ilse flees.');
+		expect(retryBrief({ brief: 'Alone.', chapterBrief: null })).toBe('Alone.');
+	});
+
+	it('stays within what the brief box holds', () => {
+		const long = 'x'.repeat(MAX_DRAFT_BRIEF_CHARS);
+		expect(retryBrief({ brief: long, chapterBrief: long })).toHaveLength(MAX_DRAFT_BRIEF_CHARS);
 	});
 });

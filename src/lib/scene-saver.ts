@@ -1,5 +1,6 @@
 import { keepaliveFits, saveFailure, UnretryableSaveError } from './autosave';
 import { createSaveBases, MAX_BASE_HASHES } from './save-bases';
+import { newSaveSource } from './save-order';
 
 // The scene editors' save request, with the conflict check. Each save sends
 // the fingerprint of the text this editor last saw on the server; when the
@@ -54,6 +55,10 @@ export function createSceneSaver(
 	// Bumped whenever the editor settles a conflict or rebases, so a refusal
 	// for an older save does not bring the notice back.
 	let generation = 0;
+	// This editor's saves are numbered, so one sent as the page is left is not
+	// undone by an older one that reaches the server after it (see save-order).
+	const source = newSaveSource();
+	let seq = 0;
 
 	return {
 		async save({ keepalive, title, bodyMd, markers }) {
@@ -66,7 +71,8 @@ export function createSceneSaver(
 				bodyMd,
 				markers,
 				baseHashes,
-				overwrite: sendOverwrite || undefined
+				overwrite: sendOverwrite || undefined,
+				order: { source, seq: ++seq }
 			});
 			const controller = new AbortController();
 			// Covers reading a refusal's body too.
@@ -88,6 +94,10 @@ export function createSceneSaver(
 					throw new UnretryableSaveError('the scene changed somewhere else');
 				}
 				if (!response.ok) throw saveFailure(response.status);
+				// A later save of this editor's landed first; this one changed
+				// nothing, so the server does not hold its text.
+				const answer = (await response.json().catch(() => ({}))) as { superseded?: boolean };
+				if (answer.superseded) return;
 			} finally {
 				clearTimeout(timer);
 			}

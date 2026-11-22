@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { isHttpError } from '@sveltejs/kit';
 import { MAX_BASE_HASHES } from '#lib/scene-saver';
+import { textHash } from '#lib/text-hash';
 
 // Only the request checks are under test; the scene lookup and save are stubbed.
 vi.mock('#lib/server/db', () => ({ db: {} }));
@@ -16,7 +17,7 @@ const { PUT } = await import('./+server');
 
 async function statusFor(
 	baseHashes: string[],
-	fields: { bodyMd?: string; title?: string } = {}
+	fields: { bodyMd?: string; title?: string; order?: unknown } = {}
 ): Promise<number> {
 	const body = JSON.stringify({ bodyMd: 'Words.', baseHashes, ...fields });
 	const event = {
@@ -32,7 +33,7 @@ async function statusFor(
 	}
 }
 
-const hashes = (n: number) => Array.from({ length: n }, (_, i) => `h${i}`);
+const hashes = (n: number) => Array.from({ length: n }, (_, i) => textHash(`text ${i}`));
 
 describe('scene save fingerprints', () => {
 	it('accepts as many fingerprints as the editor may send', async () => {
@@ -41,6 +42,20 @@ describe('scene save fingerprints', () => {
 
 	it('refuses more than that', async () => {
 		expect(await statusFor(hashes(MAX_BASE_HASHES + 1))).toBe(400);
+	});
+
+	it('refuses one no editor could have sent', async () => {
+		expect(await statusFor(['not a fingerprint'])).toBe(400);
+		expect(await statusFor([textHash('a'), 'x'.repeat(32)])).toBe(400);
+	});
+});
+
+describe('scene save order', () => {
+	it('takes a numbered save, or none, and refuses a malformed number', async () => {
+		expect(await statusFor(hashes(1), { order: { source: 'editor-copy-1', seq: 3 } })).toBe(200);
+		expect(await statusFor(hashes(1))).toBe(200);
+		expect(await statusFor(hashes(1), { order: { source: 'editor-copy-1', seq: -1 } })).toBe(400);
+		expect(await statusFor(hashes(1), { order: 'late' })).toBe(400);
 	});
 });
 

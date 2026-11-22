@@ -49,7 +49,10 @@ everywhere else asks for your password.
 ## Export everything
 
 Select "Prepare everything (.zip)" to build a single zip of everything you own:
-every universe, story, scene, entity, and note, as markdown. Images placed in
+every universe, story, scene, entity, and note, as markdown. Drafts that wait on
+a scene for you to keep or discard are in it too, one file per draft in the
+story's waiting-drafts folder. To bring a story back with its waiting drafts,
+zip that story's folder from the export and import it as a story. Images placed in
 your text and story covers are bundled in; other uploads, such as images used as
 entity badges, are not. The file is prepared in the background; it appears below
 the button when it is ready, and a bell notification tells you too. Reload the

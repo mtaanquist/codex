@@ -22,6 +22,7 @@
 		titleTaken: boolean;
 		notes: ImportNote[];
 		freeformNoteCount: number;
+		waitingDraftCount: number;
 		problems: string[];
 	};
 	type ImportResult = {
@@ -30,6 +31,7 @@
 		notesAttached: number;
 		entitiesCreated: number;
 		freeformNotesCreated: number;
+		waitingDraftsCreated: number;
 		problems: string[];
 	};
 
@@ -222,6 +224,8 @@
 								? `, creating ${imported.entitiesCreated} ${imported.entitiesCreated === 1 ? 'new entry' : 'new entries'}`
 								: ''}{imported.freeformNotesCreated > 0
 								? `, plus ${imported.freeformNotesCreated} ${imported.freeformNotesCreated === 1 ? 'note' : 'notes'} in the notebook`
+								: ''}{imported.waitingDraftsCreated > 0
+								? `, and ${imported.waitingDraftsCreated} waiting ${imported.waitingDraftsCreated === 1 ? 'draft' : 'drafts'}`
 								: ''}.
 						</p>
 						{#each imported.problems as problem (problem)}
@@ -239,6 +243,8 @@
 								? `, ${preview.assetCount} ${preview.assetCount === 1 ? 'image' : 'images'}`
 								: ''}{preview.freeformNoteCount > 0
 								? `, ${preview.freeformNoteCount} ${preview.freeformNoteCount === 1 ? 'notebook note' : 'notebook notes'}`
+								: ''}{preview.waitingDraftCount > 0
+								? `, ${preview.waitingDraftCount} waiting ${preview.waitingDraftCount === 1 ? 'draft' : 'drafts'}`
 								: ''}.
 						</p>
 						{#if preview.titleTaken}

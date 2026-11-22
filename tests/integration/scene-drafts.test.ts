@@ -852,6 +852,51 @@ describe('the endpoint', () => {
 		expect(kept.status).toBe(200);
 	});
 
+	// #1334: the save sent as the page is left puts the draft back as it was,
+	// and lands before an older save still on its way. Both name the stored
+	// text, so only the save numbers tell them apart.
+	it('drops an older save from the same copy that lands after a later one', async () => {
+		const draftId = await readyDraft('As written.');
+		const send = (body: Record<string, unknown>) =>
+			call(
+				decideRoute.PATCH,
+				event({ id: ownerId }, { method: 'PATCH', params: { id: draftId }, body })
+			);
+		const seen = await baseFor(draftId);
+		const copy = 'panel-copy-a';
+		const leave = await send({
+			text: 'As written.',
+			baseHashes: seen,
+			order: { source: copy, seq: 2 }
+		});
+		expect(leave.status).toBe(200);
+		expect(leave.body).toEqual({ ok: true });
+		const late = await send({
+			text: 'Changed, then put back.',
+			baseHashes: seen,
+			order: { source: copy, seq: 1 }
+		});
+		expect(late.status).toBe(200);
+		expect(late.body).toEqual({ ok: true, superseded: true });
+		expect((await draftRow(draftId)).textMd).toBe('As written.');
+
+		// A later save of the same copy, and another copy's, go through as before.
+		expect(
+			(await send({ text: 'Third.', baseHashes: seen, order: { source: copy, seq: 3 } })).status
+		).toBe(200);
+		expect(
+			await saveDraftText(db, ownerId, draftId, 'Fourth.', [textHash('Third.')], {
+				source: 'panel-copy-b',
+				seq: 1
+			})
+		).toEqual({ ok: true });
+		expect((await draftRow(draftId)).textMd).toBe('Fourth.');
+		// A malformed order is refused, as are fingerprints no page could send.
+		expect((await send({ text: 'Fifth.', baseHashes: seen, order: { seq: 9 } })).status).toBe(400);
+		expect((await send({ text: 'Fifth.', baseHashes: ['stale'] })).status).toBe(400);
+		expect((await draftRow(draftId)).textMd).toBe('Fourth.');
+	});
+
 	it('fills from text already stored when the save that stored it was not answered', async () => {
 		const draftId = await readyDraft('As written.');
 		const seen = await baseFor(draftId);

@@ -2188,6 +2188,39 @@ MCP endpoint itself is the next lane.
   `suggest` (lane 4), and attribution of an app's suggestions, which has to
   survive the client row being pruned.
 
+## Scene drafting, lows and known limits (2026-11-22)
+
+The rest of #1334, branch `fix/drafting-limits` on `staging/bug-fixes`.
+
+- Save order. The leave save goes out beside a save still on its way; when
+  it puts the text back, both name the stored text and the older one could
+  land last. A counter kept by the row alone does not help, since both saves
+  were made from the same row version, so the order comes from the client:
+  each editor copy names itself (a random id, not `crypto.randomUUID`, which
+  plain-http installs lack) and numbers its saves. The row keeps the copy and
+  number that saved last, also on a save that changes nothing, which is the
+  case that matters. Another copy is still held to its fingerprints. On
+  scenes the stamp of an unchanged save is written with raw SQL so
+  `updated_at`, the prose clock summaries are compared against, stays put.
+- A discarded scene of a chapter run now calls its request off. The run
+  polls the row every five seconds while the request is out, rather than
+  wiring the discard route to the job: the job may be on another worker,
+  and the poll also catches a Stop already settled by a read.
+- The chapter estimate shares one read of the settings and the stable
+  context across its scenes. The run does not: it can take minutes, and the
+  writer may change the world or the model meanwhile.
+- "On screen" for the leave prompt now needs the card to intersect the
+  viewport, so a refusal that arrives under focus mode or a narrow
+  window's other tab is not taken as seen.
+- Two product decisions from Mads. Ready drafts ride the account export as
+  `waiting-drafts/<scene>.md` under each story folder (front matter names
+  the scene by path, as notebook notes do), and the story import reads them
+  back as ready drafts on their scenes, asked for the scene alone (no
+  position or job). The story export leaves them out. And the scene's own
+  card is hidden while a chapter run is writing its draft; the chapter card
+  has the progress and Stop, so the scene card's "part of a chapter" note
+  went.
+
 ## Scene drafting, review round 6 (2026-11-21)
 
 Small fixes from the sixth review of #1168, branch
