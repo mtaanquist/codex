@@ -18,6 +18,7 @@
 	import { landsWhilePaused, pausedExtension } from '#lib/editor-paused';
 	import {
 		buildReviewMarks,
+		remapReviewMarks,
 		removeReviewMarks,
 		reviewMarksExtension,
 		setReviewMarks,
@@ -109,6 +110,12 @@
 	// own typing. Seeded from the initial prop on purpose.
 	// svelte-ignore state_referenced_locally
 	let appliedBody = scene.bodyMd;
+	// The scene.bodyMd the sync below last saw. Only a new value is the server's
+	// change: a save moves appliedBody on while the prop stays stale until the
+	// page data reloads, and a focus or filter change must not then put the
+	// stale text back.
+	// svelte-ignore state_referenced_locally
+	let seenBody = scene.bodyMd;
 
 	// Set when a save was refused because the scene changed elsewhere.
 	let conflict = $state<SceneConflict | null>(null);
@@ -272,13 +279,21 @@
 		if (applied) saver.rebase(accepted.bodyMd, accepted.baseHash);
 	}
 
+	// The scene body the marks were last built from. The anchors in the page
+	// data belong to scene.bodyMd, which an autosave does not refresh, so while
+	// the editor holds typing since then, the marks are built against the text
+	// they were last set on and mapped through that typing.
+	let markedBody: string | null = null;
 	function rebuildMarks() {
-		if (!view) return;
-		view.dispatch({
-			effects: setReviewMarks.of(
-				buildReviewMarks(threads, suggestions, filter, view.state.doc.toString(), focusedId)
-			)
-		});
+		if (!view || !handle) return;
+		const doc = view.state.doc.toString();
+		const build = (text: string) => buildReviewMarks(threads, suggestions, filter, text, focusedId);
+		if (doc === scene.bodyMd || scene.bodyMd !== markedBody) {
+			markedBody = scene.bodyMd;
+			view.dispatch({ effects: setReviewMarks.of(build(doc)) });
+		} else {
+			view.dispatch({ effects: remapReviewMarks.of(build(handle.baseDoc(view))) });
+		}
 	}
 
 	// ---- margin rail + floating selection toolbar, positioned from CM ----
@@ -372,7 +387,9 @@
 		void filter;
 		void focusedId;
 		if (!view) return;
-		if (incoming !== appliedBody) {
+		const changed = incoming !== seenBody;
+		seenBody = incoming;
+		if (changed && incoming !== appliedBody) {
 			if (!autosave.isDirty()) {
 				if (view.state.doc.toString() !== incoming) {
 					// The server's own text, so it lands even while typing is paused,

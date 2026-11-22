@@ -1,4 +1,4 @@
-import { StateField, StateEffect, type Extension } from '@codemirror/state';
+import { ChangeSet, StateField, StateEffect, type Extension, type Text } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
 import {
 	authorColor,
@@ -15,7 +15,9 @@ import {
 // tracked-change suggestions drawn as CodeMirror decorations over the live
 // document, so the prose stays editable underneath them. Positions map through
 // the author's edits on their own; the surrounding component replaces the whole
-// set (via setReviewMarks) only when the data reloads or the filter changes.
+// set (via setReviewMarks) when the editor shows the loaded text, and otherwise
+// rebuilds it against that text and maps it through the typing since
+// (remapReviewMarks).
 
 // A pending suggestion's inserted or replacement text is not in the document,
 // so it rides as a non-editable ghost widget after the anchor.
@@ -177,9 +179,16 @@ export function buildReviewMarks(
 	);
 }
 
-// Replaces the whole mark set. Dispatched by the component on data reload or a
-// filter change; between dispatches the field maps the set through edits.
+// Replaces the whole mark set, built against the current document, which
+// becomes the base later remaps build against.
 export const setReviewMarks = StateEffect.define<DecorationSet>();
+
+// Replaces the whole mark set with one built against the base document (the
+// one the last setReviewMarks was built on), mapped through every edit since
+// and without the marks removeReviewMarks dropped since. Used for a focus or
+// filter change while the editor holds typing the page data has not seen, so
+// the loaded anchors still land on the passages they belong to.
+export const remapReviewMarks = StateEffect.define<DecorationSet>();
 
 // Drops every decoration belonging to the given note ids. Dispatched alongside
 // the text change when an accepted suggestion is applied to the live document,
@@ -196,27 +205,58 @@ function ridOf(deco: Decoration): string | undefined {
 	);
 }
 
-const reviewMarksField = StateField.define<DecorationSet>({
-	create() {
-		return Decoration.none;
+function withoutIds(set: DecorationSet, ids: string[]): DecorationSet {
+	if (ids.length === 0) return set;
+	return set.update({
+		filter: (_from, _to, deco) => {
+			const rid = ridOf(deco);
+			return !rid || !ids.includes(rid);
+		}
+	});
+}
+
+type ReviewMarksState = {
+	marks: DecorationSet;
+	// The document the last setReviewMarks was built on, the edits made since,
+	// and the note ids dropped since.
+	base: Text;
+	changes: ChangeSet;
+	removed: string[];
+};
+
+const reviewMarksField = StateField.define<ReviewMarksState>({
+	create(state) {
+		return {
+			marks: Decoration.none,
+			base: state.doc,
+			changes: ChangeSet.empty(state.doc.length),
+			removed: []
+		};
 	},
 	update(value, tr) {
-		value = value.map(tr.changes);
+		let { marks, base, changes, removed } = value;
+		if (tr.docChanged) {
+			marks = marks.map(tr.changes);
+			changes = changes.compose(tr.changes);
+		}
 		for (const effect of tr.effects) {
-			if (effect.is(setReviewMarks)) value = effect.value;
+			if (effect.is(setReviewMarks)) {
+				marks = effect.value;
+				base = tr.state.doc;
+				changes = ChangeSet.empty(base.length);
+				removed = [];
+			}
+			if (effect.is(remapReviewMarks)) {
+				marks = withoutIds(effect.value.map(changes), removed);
+			}
 			if (effect.is(removeReviewMarks)) {
-				const ids = effect.value;
-				value = value.update({
-					filter: (_from, _to, deco) => {
-						const rid = ridOf(deco);
-						return !rid || !ids.includes(rid);
-					}
-				});
+				marks = withoutIds(marks, effect.value);
+				removed = [...removed, ...effect.value];
 			}
 		}
-		return value;
+		return { marks, base, changes, removed };
 	},
-	provide: (field) => EditorView.decorations.from(field)
+	provide: (field) => EditorView.decorations.from(field, (value) => value.marks)
 });
 
 export type ReviewMarksHandle = {
@@ -224,6 +264,8 @@ export type ReviewMarksHandle = {
 	// Reads a mark's mapped anchor straight from the live field, so a comment or
 	// suggestion the author has since dragged through edits anchors correctly.
 	anchorOf(view: EditorView, rid: string): { start: number; end: number } | null;
+	// The text a remapReviewMarks set must be built against.
+	baseDoc(view: EditorView): string;
 };
 
 // The editable review centre's mark behaviour: the decoration field, a click
@@ -260,7 +302,7 @@ export function reviewMarksExtension(opts: {
 	return {
 		extension: [reviewMarksField, handlers, listener],
 		anchorOf(view, rid) {
-			const set = view.state.field(reviewMarksField, false);
+			const set = view.state.field(reviewMarksField, false)?.marks;
 			if (!set) return null;
 			let found: { start: number; end: number } | null = null;
 			const cursor = set.iter();
@@ -275,6 +317,9 @@ export function reviewMarksExtension(opts: {
 				cursor.next();
 			}
 			return found;
+		},
+		baseDoc(view) {
+			return (view.state.field(reviewMarksField, false)?.base ?? view.state.doc).toString();
 		}
 	};
 }
