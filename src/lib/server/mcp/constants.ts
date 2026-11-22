@@ -90,12 +90,14 @@ export const STAGING_LOCK_TIMEOUT_MS = 2000;
 export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
 // How much comparing of texts one call may do to work out where an edit now
 // sits in a scene that changed since (see DiffBudget). The comparison holds
-// the server's one thread, so this is what one call may cost the others:
-// 20 ms of character diff, and at most 0.2 ms more for each further version
-// of the scene an edit was made on. Past it an edit in a part of the scene
-// that was not compared is reported as possibly no longer applying
-// (get_review_note) or not found (a follow-up edit).
-export const APP_DIFF_BUDGET: DiffBudget = { perPair: 20, total: 20, floor: 0.2 };
+// the server's one thread, so this is what one call may cost the others. In
+// edit units (see DiffBudget): 400,000 a call (edit distance 630, about
+// 25 ms of character diff), and 4,000 (edit distance 63, under 1 ms) for each
+// further version of the scene an edit was made on once that is used up.
+// Past it an edit in a part of the scene that was not compared is reported
+// as possibly no longer applying (get_review_note) or not found (a follow-up
+// edit).
+export const APP_DIFF_BUDGET: DiffBudget = { perPair: 400_000, total: 400_000, floor: 4_000 };
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
 

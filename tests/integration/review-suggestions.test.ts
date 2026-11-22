@@ -19,6 +19,7 @@ import { recordRevision } from '../../src/lib/server/revisions';
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
+import { paragraphStarts, phraseIn, sceneParagraphs, seeded } from '../prose';
 
 process.env.APP_SECRET = process.env.APP_SECRET || 'review-test-secret';
 
@@ -563,6 +564,40 @@ describe('accepting what the writer saw', () => {
 });
 
 describe('decideSuggestions (several at once)', () => {
+	// Round 8, 3: one mapper serves every accept in a bulk accept, and the
+	// cost of finding lines and sentences is not charged to its budget, so
+	// the last of 200 is placed as surely as the first.
+	it('accepts 200 suggestions made on 200 versions of a long scene', async () => {
+		const paragraphs = sceneParagraphs(71, 150_000).slice(0, 400);
+		expect(paragraphs.length).toBe(400);
+		const next = seeded(72);
+		const ids: string[] = [];
+		let version = [...paragraphs];
+		for (let n = 0; n < 200; n++) {
+			// A typo in an odd paragraph, then a suggestion in an even one.
+			const k = 2 * next(200) + 1;
+			version[k] = version[k].replace(/ the /, ' teh ');
+			version = [...version];
+			const body = version.join('\n\n');
+			await db.update(scenes).set({ bodyMd: body }).where(eq(scenes.id, sceneId));
+			const at = phraseIn(version[2 * n])!;
+			const start = paragraphStarts(version)[2 * n] + at[0];
+			const made = await suggest({ start, end: start + at[1] - at[0] }, 'X');
+			if (!made.ok) throw new Error(made.reason);
+			ids.push(made.suggestionId);
+			// Then its paragraph's first letter changes, so placing it takes a
+			// character diff.
+			version[2 * n] = `Q${version[2 * n].slice(1)}`;
+		}
+		await db
+			.update(scenes)
+			.set({ bodyMd: version.join('\n\n') })
+			.where(eq(scenes.id, sceneId));
+		const result = await decideSuggestions(db, authorId, storyId, ids, true);
+		expect(result.failed).toEqual([]);
+		expect(result.decided).toHaveLength(200);
+	}, 120_000);
+
 	async function suggestWord(word: string, replacement: string) {
 		const start = BODY.indexOf(word);
 		const made = await suggest({ start, end: start + word.length }, replacement);

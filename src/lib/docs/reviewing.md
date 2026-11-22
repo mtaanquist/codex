@@ -81,7 +81,7 @@ When the Assistant is set up and a note came from it, replying on that note make
 
 Comments and suggestions point at the exact words they were made on. If you edit the text afterwards, they follow the passage when it can be found; if the passage itself was rewritten, a comment is kept and marked as referring to older text. A suggestion can be accepted only while its passage is exactly as it was when suggested: once you change any of those words, it can only be rejected.
 
-Rarely, a note sits in a long stretch of the scene that was rewritten so thoroughly that it cannot be compared with the text the note was made on. Its card then says "This could not be checked against the current text." Read it against the scene yourself; a suggestion in that state can only be rejected.
+If a card says "This could not be checked against the current text.", find the passage in the scene yourself and read the note against it. A suggestion with that message can only be rejected; to make the change, edit the text yourself.
 
 ## Clearing review notes
 

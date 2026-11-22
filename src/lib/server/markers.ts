@@ -123,13 +123,15 @@ export async function updateMarkerAnchors(
 // \r\n as one character, as the editor does, so the comparison runs on that
 // text.
 //
-// The comparison runs under SAVE_DIFF_BUDGET, which every ordinary rewrite
-// fits. Where a marker lies in a stretch it did not finish (pages replaced
-// with nothing in common), that stretch is compared again by finish(), which
-// lets the server answer others while it works, for up to SAVE_FINISH_MS of
-// wall time; the save holds the scene's row meanwhile. A marker is never
-// stored at a guessed place: if the stretch is still not compared after
-// that, the marker loses its anchor, as one whose words were deleted does.
+// The comparison runs under SAVE_DIFF_BUDGET. Where a marker lies in a
+// stretch it did not compare (pages replaced with nothing in common), that
+// stretch is compared again by finish(), which lets the server answer others
+// while it works, for up to SAVE_FINISH_MS of wall time; the save holds the
+// scene's row meanwhile. If the stretch is still not compared after that,
+// the marker loses its anchor. Each end of a marker is stored only where it
+// rests on text both versions share (see SUPPORT in review-anchor.ts);
+// otherwise the marker loses its anchor, as one whose words were deleted
+// does.
 export async function remapMarkerAnchors(
 	db: Database,
 	sceneId: string,

@@ -8,37 +8,51 @@ import { diffChars, type ChangeObject } from 'diff';
 // deletions inside it shrink it, but if an end's own text is gone the anchor
 // is lost.
 //
-// Main compared the two whole texts with one character diff, which is right
-// but can hold the server's one thread for seconds. Here that diff only runs
-// on the stretches that changed, found like this:
-// 1. Lines that stand exactly once in each text, are the same in both and are
-//    long enough that a chance match is implausible (see MIN_ANCHOR) are
-//    paired, keeping the set with the most text that is in the same order in
-//    both. They map as they are. A line that is repeated ("***", a reply like
-//    "No.") is never paired, so it cannot be bound to the wrong copy; a short
-//    line is never paired, so a reply deleted in one place and typed in
-//    another is not taken for a move.
-// 2. Between two paired lines is a gap. In each gap the same is done with
-//    sentences, so a paragraph that was edited keeps its untouched sentences
-//    and a paragraph split or joined keeps both halves.
-// 3. Each gap left is compared with main's character diff (the diff package,
-//    as main calls it), after setting aside what its two sides share at the
-//    start, under the budget. A gap whose diff runs past the budget is
+// Main compared the two whole texts with one character diff, which can hold
+// the server's one thread for seconds. Here:
+// 1. Every line, and every sentence not inside such a line, that is the same
+//    in both texts, stands exactly once in each whole text and has at least
+//    MIN_ANCHOR visible characters maps to its copy, wherever that now
+//    stands. A repeated line ("***", a reply like "No.") or a short one is
+//    never paired, so it cannot be bound to the wrong copy.
+// 2. Of the paired lines, the set with the most text that is in the same
+//    order in both splits the texts into gaps; inside each gap the same is
+//    done with its paired sentences. Paired units that are out of order
+//    (moved) are cut out of the gaps.
+// 3. What is left of each gap is compared with main's character diff (the
+//    diff package, as main calls it), after setting aside the start its two
+//    sides share, under the budget. A gap whose diff runs past the budget is
 //    "unchecked": an anchor in it was not looked for, which is not the same
 //    as lost (what its two sides share at the end still maps).
-// Nothing else pairs text. Of a paragraph that moved and the paragraphs it
-// moved across, the side with more text keeps its anchors and the other is
-// compared by character with whatever now faces it, which main's diff of
-// the whole text sometimes matched to the moved text and sometimes not.
+// 4. An end mapped through that diff counts only where it rests on shared
+//    text that cannot be chance (see SUPPORT); otherwise the anchor is lost.
 
 // A stretch of text both versions share: where it starts in each, and its
-// length.
-type Span = { base: number; current: number; length: number };
-// A stretch that changed and was not compared, in each version.
-type Gap = { base: number; baseEnd: number; current: number; currentEnd: number };
+// length. Firm when it is a paired unit or the start or end two sides of a
+// gap share; otherwise it is a run the character diff kept.
+type Span = { base: number; current: number; length: number; firm: boolean };
+
+// One side of a gap with the paired units inside it cut out, as one string,
+// and where each of its pieces lies in the text.
+type Side = { text: string; real: number[]; at: number[] };
+
+// A stretch whose character diff did not finish: in each text, and as the
+// part [a, aEnd) x [b, bEnd) of the two cut strings, for finish().
+type Gap = {
+	base: number;
+	baseEnd: number;
+	current: number;
+	currentEnd: number;
+	sides: [Side, Side];
+	a: number;
+	aEnd: number;
+	b: number;
+	bEnd: number;
+};
 
 type Comparison = {
-	// Sorted by base and in the same order in current, not overlapping.
+	// Sorted by base, not overlapping in base. Paired units that moved are in
+	// a different order in current.
 	spans: Span[];
 	// Where the text at an edge of an insertion or deletion reads equally on
 	// either side of it ("a\n\n" + "b" against "a\n\nnew\n\n" + "b"), spans
@@ -51,43 +65,56 @@ type Comparison = {
 	gaps: Gap[];
 };
 
-// Milliseconds of comparing. The server compares in its one thread, so this
-// is what the comparison may hold everyone else up for.
+// Character diff work, in edit units: a diff of edit distance D costs about
+// D * D units (measured on prose, 55 to 65 ns a unit past D = 400, plus
+// about 3 ms per 40,000 characters compared). Counted in units rather than
+// time, so the same texts give the same result however busy the server is.
+// Only the character diff is counted; the line and sentence passes cost
+// about 1 ms per 10,000 characters and are not.
 export type DiffBudget = {
-	// The most one pair of texts may take.
+	// The most one pair of texts may spend.
 	perPair: number;
-	// The most one mapper may take over every pair it compares.
+	// The most one mapper may spend over every pair it compares.
 	total: number;
-	// What any one pair may take even once the total is used up, so a cheap
+	// What any one pair may spend even once the total is used up, so a cheap
 	// comparison late on a page is not starved by costly ones before it.
 	floor: number;
 };
 
-// The writer's own pages, accept, and the Assistant working for them. A page
-// compares its pairs through prepare, which lets the server answer others
-// between pairs, so the longest the thread is held is about one pair.
-export const WRITER_DIFF_BUDGET: DiffBudget = { perPair: 50, total: 500, floor: 2 };
+// The writer's own pages, accept, and the Assistant working for them: up to
+// D = 1000 a pair (about 55 ms), 10,000,000 units a mapper (about 0.6 s),
+// D = 200 a pair after that (about 2.5 ms). A page compares its pairs
+// through prepare, which lets the server answer others between pairs.
+export const WRITER_DIFF_BUDGET: DiffBudget = {
+	perPair: 1_000_000,
+	total: 10_000_000,
+	floor: 40_000
+};
 
-// The marker remap on save: one pair, compared in the save's transaction
-// while it holds the scene's row. A gap holding a marker that this does not
-// finish is then finished by finish(), which does not hold the thread.
-export const SAVE_DIFF_BUDGET: DiffBudget = { perPair: 50, total: 50, floor: 0 };
+// The marker remap on save: one pair, D = 1000 (about 55 ms), compared in
+// the save's transaction while it holds the scene's row. A gap holding a
+// marker that this does not finish is then compared by finish().
+export const SAVE_DIFF_BUDGET: DiffBudget = { perPair: 1_000_000, total: 1_000_000, floor: 0 };
 
 // The most finish() may take on save, in milliseconds of wall time. The save
 // holds the scene's row meanwhile (other saves of that scene wait, well
-// inside the 30 s statement timeout), so it is kept to a few seconds.
+// inside the 30 s statement timeout).
 export const SAVE_FINISH_MS = 3000;
 
 // A line or sentence is paired only if it has at least this many characters
-// that are not white space: about three or four words of prose. Two such
-// units that are the same, stand once in each text and lie in the same order
-// as everything else paired are the same words; a shorter one ("No.", "I
-// know.") can stand once in each by chance after the writer deleted it in
-// one place and typed it in another.
+// that are not white space: about three or four words of prose. A shorter
+// one ("No.", "I know.") can stand once in each text by chance after the
+// writer deleted it in one place and typed it in another.
 const MIN_ANCHOR = 16;
 
-// How long prepare runs before it lets the server answer others.
-const PREPARE_SLICE_MS = 20;
+// An end mapped through a run the character diff kept counts only if that
+// run holds at least this many characters, at least this many of them
+// inside the range (or all of a shorter range). Two unrelated sentences of
+// prose share runs of a word and its spaces by chance (" silence ", nine
+// characters); in the property test over 6 seeds, 4, 8 and 10 still let
+// 0 to 14 ranges a seed land on text that shares nothing with them, and 12
+// let none, at a cost of 0.3% of the ranges main places correctly.
+const SUPPORT = 12;
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
@@ -100,39 +127,32 @@ const splitsPair = (text: string, at: number) =>
 const isSpace = (code: number) =>
 	code === 32 || (code >= 9 && code <= 13) || code === 0xa0 || code === 0x2028 || code === 0x2029;
 
-// What the two sides of a gap share at the start and at the end, each found
-// on its own (so the two may overlap), and never cutting a character in two.
+// What two strings share at the start and at the end, each found on its own
+// (so the two may overlap), and never cutting a character in two.
 const CHUNK = 256;
-function sharedEnds(base: string, current: string, gap: Gap) {
-	const shortest = Math.min(gap.baseEnd - gap.base, gap.currentEnd - gap.current);
-	const b = gap.base;
-	const c = gap.current;
+function sharedEnds(a: string, b: string) {
+	const shortest = Math.min(a.length, b.length);
 	let prefix = 0;
 	// In chunks first, which the engine compares far faster than one
 	// character at a time.
 	while (
 		prefix + CHUNK <= shortest &&
-		base.slice(b + prefix, b + prefix + CHUNK) === current.slice(c + prefix, c + prefix + CHUNK)
+		a.slice(prefix, prefix + CHUNK) === b.slice(prefix, prefix + CHUNK)
 	)
 		prefix += CHUNK;
-	while (prefix < shortest && base.charCodeAt(b + prefix) === current.charCodeAt(c + prefix))
-		prefix++;
-	while (prefix > 0 && (splitsPair(base, b + prefix) || splitsPair(current, c + prefix))) prefix--;
-	const be = gap.baseEnd;
-	const ce = gap.currentEnd;
+	while (prefix < shortest && a.charCodeAt(prefix) === b.charCodeAt(prefix)) prefix++;
+	while (prefix > 0 && (splitsPair(a, prefix) || splitsPair(b, prefix))) prefix--;
+	const ae = a.length;
+	const be = b.length;
 	let suffix = 0;
 	while (
 		suffix + CHUNK <= shortest &&
-		base.slice(be - suffix - CHUNK, be - suffix) === current.slice(ce - suffix - CHUNK, ce - suffix)
+		a.slice(ae - suffix - CHUNK, ae - suffix) === b.slice(be - suffix - CHUNK, be - suffix)
 	)
 		suffix += CHUNK;
-	while (
-		suffix < shortest &&
-		base.charCodeAt(be - 1 - suffix) === current.charCodeAt(ce - 1 - suffix)
-	)
+	while (suffix < shortest && a.charCodeAt(ae - 1 - suffix) === b.charCodeAt(be - 1 - suffix))
 		suffix++;
-	while (suffix > 0 && (splitsPair(base, be - suffix) || splitsPair(current, ce - suffix)))
-		suffix--;
+	while (suffix > 0 && (splitsPair(a, ae - suffix) || splitsPair(b, be - suffix))) suffix--;
 	return { prefix, suffix, shortest };
 }
 
@@ -149,29 +169,30 @@ function unit(text: string, from: number, to: number, units: Unit[]) {
 	if (visible >= MIN_ANCHOR) units.push({ start: from, end: to, key: text.slice(from, to) });
 }
 
-// The lines of text[from, to) long enough to pair.
-function lines(text: string, from: number, to: number): Unit[] {
+// The lines of a text long enough to pair.
+function lines(text: string): Unit[] {
 	const units: Unit[] = [];
-	let at = from;
-	while (at < to) {
+	let at = 0;
+	while (at < text.length) {
 		let end = text.indexOf('\n', at);
-		if (end === -1 || end > to) end = to;
+		if (end === -1) end = text.length;
 		unit(text, at, end, units);
 		at = end + 1;
 	}
 	return units;
 }
 
-// The sentences of text[from, to) long enough to pair. A sentence ends after
-// a run of . ! ? (and any closing quotes or brackets) followed by white
-// space, or at a line break.
+// The sentences of a text long enough to pair. A sentence ends after a run
+// of . ! ? (and any closing quotes or brackets) followed by white space, or
+// at a line break.
 // With the ellipsis and the closing curly quotes as escapes.
 const ENDS = new Set(['.', '!', '?', '…']);
 const CLOSERS = new Set(['"', "'", '”', '’', ')', ']']);
-function sentences(text: string, from: number, to: number): Unit[] {
+function sentences(text: string): Unit[] {
 	const units: Unit[] = [];
-	let start = from;
-	for (let at = from; at < to; at++) {
+	const to = text.length;
+	let start = 0;
+	for (let at = 0; at < to; at++) {
 		const ch = text[at];
 		if (ch === '\n') {
 			unit(text, start, at, units);
@@ -190,9 +211,9 @@ function sentences(text: string, from: number, to: number): Unit[] {
 	return units;
 }
 
-// The units that stand once on each side and are the same, as pairs in the
-// same order on both sides: of all such sets, the one with the most text.
-function pairUnits(a: Unit[], b: Unit[]): [Unit, Unit][] {
+// The units that are the same and stand once in each list, sorted by where
+// they stand in a.
+function uniquePairs(a: Unit[], b: Unit[]): [Unit, Unit][] {
 	const once = (units: Unit[]) => {
 		const seen = new Map<string, Unit | null>();
 		for (const u of units) seen.set(u.key, seen.has(u.key) ? null : u);
@@ -204,8 +225,12 @@ function pairUnits(a: Unit[], b: Unit[]): [Unit, Unit][] {
 		const v = inB.get(key);
 		if (u && v) pairs.push([u, v]);
 	}
+	return pairs.sort((x, y) => x[0].start - y[0].start);
+}
+
+// Of pairs sorted by a, the ones in the same order in b with the most text.
+function inOrder(pairs: [Unit, Unit][]): [Unit, Unit][] {
 	if (pairs.length < 2) return pairs;
-	pairs.sort((x, y) => x[0].start - y[0].start);
 	// Heaviest increasing run of the b positions, with a tree of prefix
 	// maxima over the b order.
 	const rank = new Map<number, number>();
@@ -241,30 +266,174 @@ function pairUnits(a: Unit[], b: Unit[]): [Unit, Unit][] {
 	return kept.reverse();
 }
 
-// The spans a diff of base[gap] against current[gap] gives.
-function partSpans(parts: ChangeObject<string>[], gap: Gap): Span[] {
-	const spans: Span[] = [];
-	let b = gap.base;
-	let c = gap.current;
-	for (const part of parts) {
-		const length = part.value.length;
-		if (part.added) c += length;
-		else if (part.removed) b += length;
-		else {
-			spans.push({ base: b, current: c, length });
-			b += length;
-			c += length;
-		}
+// The last unit of a sorted list that starts at or before `at`, by index.
+function lastAtOrBefore(units: Unit[], at: number): number {
+	let low = 0;
+	let high = units.length - 1;
+	let found = -1;
+	while (low <= high) {
+		const mid = (low + high) >> 1;
+		if (units[mid].start <= at) {
+			found = mid;
+			low = mid + 1;
+		} else high = mid - 1;
 	}
-	return spans;
+	return found;
 }
+const within = (units: Unit[], u: Unit) => {
+	const i = lastAtOrBefore(units, u.start);
+	return i !== -1 && u.end <= units[i].end;
+};
+
+// text[from, to) with the units in `holes` (sorted, not overlapping) that lie
+// inside it cut out.
+function cut(text: string, from: number, to: number, holes: Unit[]): Side {
+	const side: Side = { text: '', real: [], at: [] };
+	const parts: string[] = [];
+	let length = 0;
+	const piece = (s: number, e: number) => {
+		if (e <= s) return;
+		side.real.push(s);
+		side.at.push(length);
+		parts.push(text.slice(s, e));
+		length += e - s;
+	};
+	let at = from;
+	let i = lastAtOrBefore(holes, from);
+	if (i === -1 || holes[i].start < from) i++;
+	for (; i < holes.length && holes[i].start < to; i++) {
+		if (holes[i].end > to) break;
+		piece(at, holes[i].start);
+		at = holes[i].end;
+	}
+	piece(at, to);
+	side.text = parts.join('');
+	return side;
+}
+
+// The piece of a side holding cut offset r (as a start, or as an end).
+function pieceOf(side: Side, r: number, asEnd: boolean): number {
+	let low = 0;
+	let high = side.at.length - 1;
+	let found = 0;
+	while (low <= high) {
+		const mid = (low + high) >> 1;
+		if (asEnd ? side.at[mid] < r : side.at[mid] <= r) {
+			found = mid;
+			low = mid + 1;
+		} else high = mid - 1;
+	}
+	return found;
+}
+const realOf = (side: Side, r: number, asEnd = false) => {
+	const k = pieceOf(side, r, asEnd);
+	return side.real[k] + r - side.at[k];
+};
+const pieceEnd = (side: Side, k: number) =>
+	k + 1 < side.at.length ? side.at[k + 1] : side.text.length;
+
+// Spans for a run the two cut strings share, split where a cut lies inside it
+// on either side.
+function emit(
+	into: Span[],
+	sides: [Side, Side],
+	a: number,
+	b: number,
+	length: number,
+	firm: boolean
+) {
+	const [A, B] = sides;
+	while (length > 0) {
+		const ka = pieceOf(A, a, false);
+		const kb = pieceOf(B, b, false);
+		const n = Math.min(length, pieceEnd(A, ka) - a, pieceEnd(B, kb) - b);
+		into.push({
+			base: A.real[ka] + a - A.at[ka],
+			current: B.real[kb] + b - B.at[kb],
+			length: n,
+			firm
+		});
+		a += n;
+		b += n;
+		length -= n;
+	}
+}
+
+// Spans from a diff of A.text[a, ...) against B.text[b, ...). With `endFirm`,
+// a run the diff kept at the very end of both is the end the two share, so
+// firm.
+function diffSpans(
+	into: Span[],
+	diff: ChangeObject<string>[],
+	sides: [Side, Side],
+	a: number,
+	b: number,
+	endFirm: boolean
+) {
+	const parts = slide(diff);
+	parts.forEach((part, i) => {
+		const length = part.value.length;
+		if (part.added) b += length;
+		else if (part.removed) a += length;
+		else {
+			emit(into, sides, a, b, length, endFirm && i === parts.length - 1);
+			a += length;
+			b += length;
+		}
+	});
+}
+
+// The same diff with each lone insertion or deletion slid along the text it
+// repeats, where that joins the kept runs on either side of it into one
+// (the shift step of diff-match-patch's cleanupMerge). The cost is the same;
+// only which of the equally short alignments is kept changes: "the lantern"
+// against "the old lantern" keeps "lantern" whole instead of the "l" of
+// "old" and then "antern".
+type Part = { value: string; added: boolean; removed: boolean };
+function slide(parts: ChangeObject<string>[]): Part[] {
+	let out: Part[] = parts.map((p) => ({ value: p.value, added: !!p.added, removed: !!p.removed }));
+	const kept = (p: Part | undefined) => p !== undefined && !p.added && !p.removed;
+	for (let changed = true; changed;) {
+		changed = false;
+		for (let i = 1; i + 1 < out.length; i++) {
+			const [before, edit, after] = [out[i - 1], out[i], out[i + 1]];
+			if (!kept(before) || kept(edit) || !kept(after)) continue;
+			if (edit.value.endsWith(before.value)) {
+				edit.value = before.value + edit.value.slice(0, -before.value.length);
+				after.value = before.value + after.value;
+				out.splice(i - 1, 1);
+				changed = true;
+			} else if (edit.value.startsWith(after.value)) {
+				before.value += after.value;
+				edit.value = edit.value.slice(after.value.length) + after.value;
+				out.splice(i + 1, 1);
+				changed = true;
+			}
+		}
+		// Join neighbours of the same kind the shifts brought together.
+		const joined: Part[] = [];
+		for (const p of out) {
+			const last = joined.at(-1);
+			if (last && last.added === p.added && last.removed === p.removed) last.value += p.value;
+			else joined.push(p);
+		}
+		out = joined;
+	}
+	return out;
+}
+
+const editLength = (parts: ChangeObject<string>[]) =>
+	parts.reduce((sum, part) => sum + (part.added || part.removed ? part.value.length : 0), 0);
+
+type Pending = { sides: [Side, Side]; a: number; b: number; suffix: number };
 
 class Comparer {
 	spans: Span[] = [];
 	late: Span[] = [];
 	gaps: Gap[] = [];
-	// Gaps still to be compared by character.
-	private pending: { inner: Gap; suffix: number }[] = [];
+	used = 0;
+	private pending: Pending[] = [];
+	private holes: [Unit[], Unit[]] = [[], []];
 	private base: string;
 	private current: string;
 
@@ -273,117 +442,151 @@ class Comparer {
 		this.current = current;
 	}
 
-	// Sets aside what the two sides of a gap share at the start, and returns
-	// what is left to compare by character, if both sides of it hold text,
-	// with the length the two share at the end. The shared end is not set
-	// aside before the diff: main's diff does not, and where an insertion
-	// next to it reads two ways (".", then "\n\nNew." put after it), setting it
-	// aside would pick the other reading. It is kept only if the diff fails.
-	private trim(gap: Gap): { inner: Gap; suffix: number } | null {
-		const { prefix, suffix, shortest } = sharedEnds(this.base, this.current, gap);
+	// Sets aside what the two sides of a gap share at the start, and queues
+	// what is left for the character diff, with the length the two share at
+	// the end. The shared end is not set aside before the diff: main's diff
+	// does not, and where an insertion next to it reads two ways (".", then
+	// "\n\nNew." put after it), setting it aside would pick the other
+	// reading. It is kept only if the diff fails.
+	private gap(base: number, baseEnd: number, current: number, currentEnd: number) {
+		const sides: [Side, Side] = [
+			cut(this.base, base, baseEnd, this.holes[0]),
+			cut(this.current, current, currentEnd, this.holes[1])
+		];
+		const [A, B] = sides;
+		if (!A.text || !B.text) return;
+		const { prefix, suffix, shortest } = sharedEnds(A.text, B.text);
 		const head = (length: number, into: Span[]) => {
-			if (length > 0) into.push({ base: gap.base, current: gap.current, length });
+			if (length > 0) emit(into, sides, 0, 0, length, true);
 		};
 		const tail = (length: number, into: Span[]) => {
 			if (length > 0)
-				into.push({ base: gap.baseEnd - length, current: gap.currentEnd - length, length });
+				emit(into, sides, A.text.length - length, B.text.length - length, length, true);
 		};
 		if (prefix + suffix <= shortest) {
 			head(prefix, this.spans);
-			const inner = { ...gap, base: gap.base + prefix, current: gap.current + prefix };
-			if (inner.baseEnd - inner.base === suffix || inner.currentEnd - inner.current === suffix) {
+			if (A.text.length - prefix === suffix || B.text.length - prefix === suffix) {
 				tail(suffix, this.spans);
-				return null;
+				return;
 			}
-			return { inner, suffix };
+			this.pending.push({ sides, a: prefix, b: prefix, suffix });
+			return;
 		}
 		// The shorter side is shared whole, and reads two ways: its start with
 		// the start of the longer and the rest with its end, or its end with the
 		// end of the longer and the rest with its start.
 		const cuts = (headLength: number, tailLength: number) =>
-			splitsPair(this.base, gap.base + headLength) ||
-			splitsPair(this.current, gap.current + headLength) ||
-			splitsPair(this.base, gap.baseEnd - tailLength) ||
-			splitsPair(this.current, gap.currentEnd - tailLength);
+			splitsPair(A.text, headLength) ||
+			splitsPair(B.text, headLength) ||
+			splitsPair(A.text, A.text.length - tailLength) ||
+			splitsPair(B.text, B.text.length - tailLength);
 		head(prefix, this.spans);
 		if (!cuts(prefix, shortest - prefix)) tail(shortest - prefix, this.spans);
 		if (!cuts(shortest - suffix, suffix)) {
 			head(shortest - suffix, this.late);
 			tail(suffix, this.late);
 		}
-		return null;
 	}
 
-	// Pairs units of `split` in gap, and hands each stretch between them to
-	// `then`.
-	private pair(gap: Gap, split: typeof lines, then: (gap: Gap) => void) {
-		const pairs = pairUnits(
-			split(this.base, gap.base, gap.baseEnd),
-			split(this.current, gap.current, gap.currentEnd)
-		);
-		let b = gap.base;
-		let c = gap.current;
+	// Hands each stretch between pairs (in order on both sides) to `then`.
+	private between(
+		pairs: [Unit, Unit][],
+		from: [number, number],
+		to: [number, number],
+		then: (b: number, be: number, c: number, ce: number) => void
+	) {
+		let [b, c] = from;
 		for (let i = 0; i <= pairs.length; i++) {
 			const [u, v] = pairs[i] ?? [];
-			const be = u ? u.start : gap.baseEnd;
-			const ce = v ? v.start : gap.currentEnd;
-			if (be > b && ce > c) then({ base: b, baseEnd: be, current: c, currentEnd: ce });
+			const be = u ? u.start : to[0];
+			const ce = v ? v.start : to[1];
+			if (be > b && ce > c) then(b, be, c, ce);
 			if (!u || !v) break;
-			this.spans.push({ base: u.start, current: v.start, length: u.end - u.start });
 			b = u.end;
 			c = v.end;
 		}
 	}
 
 	run(allowance: number) {
-		const began = performance.now();
-		const whole = {
-			base: 0,
-			baseEnd: this.base.length,
-			current: 0,
-			currentEnd: this.current.length
-		};
-		this.pair(whole, lines, (lineGap) =>
-			this.pair(lineGap, sentences, (gap) => {
-				const inner = this.trim(gap);
-				if (inner) this.pending.push(inner);
-			})
+		const { base, current } = this;
+		const linePairs = uniquePairs(lines(base), lines(current));
+		const pairedLines: [Unit[], Unit[]] = [
+			linePairs.map((p) => p[0]),
+			[...linePairs.map((p) => p[1])].sort((x, y) => x.start - y.start)
+		];
+		// Sentences stand once in the whole text, counted with those inside
+		// paired lines; a sentence inside a paired line maps with its line.
+		const sentencePairs = uniquePairs(sentences(base), sentences(current)).filter(
+			([u, v]) => !within(pairedLines[0], u) && !within(pairedLines[1], v)
 		);
+		const identity = [...linePairs, ...sentencePairs];
+		for (const [u, v] of identity)
+			this.spans.push({ base: u.start, current: v.start, length: u.end - u.start, firm: true });
+		this.holes = [
+			identity.map((p) => p[0]).sort((x, y) => x.start - y.start),
+			identity.map((p) => p[1]).sort((x, y) => x.start - y.start)
+		];
+
+		// Line gaps, and the paired sentences lying inside each on both sides.
+		const lineGaps: [number, number, number, number][] = [];
+		this.between(inOrder(linePairs), [0, 0], [base.length, current.length], (...g) =>
+			lineGaps.push(g)
+		);
+		const inside: [Unit, Unit][][] = lineGaps.map(() => []);
+		let g = 0;
+		for (const pair of sentencePairs) {
+			while (g < lineGaps.length && lineGaps[g][1] <= pair[0].start) g++;
+			if (g === lineGaps.length) break;
+			const [b, be, c, ce] = lineGaps[g];
+			if (pair[0].start >= b && pair[0].end <= be && pair[1].start >= c && pair[1].end <= ce)
+				inside[g].push(pair);
+		}
+		lineGaps.forEach(([b, be, c, ce], i) =>
+			this.between(inOrder(inside[i]), [b, c], [be, ce], (...sub) => this.gap(...sub))
+		);
+
 		// Smallest first, so one that cannot finish does not use up what the
 		// others need.
-		const size = (gap: Gap) => gap.baseEnd - gap.base + gap.currentEnd - gap.current;
-		this.pending.sort((x, y) => size(x.inner) - size(y.inner));
-		for (const { inner, suffix } of this.pending) {
-			const left = () => allowance - (performance.now() - began);
-			const [a, b] = texts(this.base, this.current, inner);
-			const parts = left() > 0 ? diffChars(a, b, { timeout: left() }) : undefined;
+		const size = (p: Pending) => p.sides[0].text.length - p.a + p.sides[1].text.length - p.b;
+		this.pending.sort((x, y) => size(x) - size(y));
+		for (const { sides, a, b, suffix } of this.pending) {
+			const [A, B] = sides;
+			const most = Math.floor(Math.sqrt(Math.max(0, allowance - this.used)));
+			const parts =
+				most < 1
+					? undefined
+					: Number.isFinite(most)
+						? diffChars(A.text.slice(a), B.text.slice(b), { maxEditLength: most })
+						: diffChars(A.text.slice(a), B.text.slice(b));
 			if (parts) {
-				this.spans.push(...partSpans(parts, inner));
+				const d = editLength(parts);
+				this.used += d * d;
+				diffSpans(this.spans, parts, sides, a, b, true);
 				continue;
 			}
+			if (most >= 1 && Number.isFinite(most)) this.used += most * most;
 			// Unchecked: what the two sides share at the end still maps.
-			if (suffix > 0) {
-				this.spans.push({
-					base: inner.baseEnd - suffix,
-					current: inner.currentEnd - suffix,
-					length: suffix
-				});
-			}
+			if (suffix > 0)
+				emit(this.spans, sides, A.text.length - suffix, B.text.length - suffix, suffix, true);
+			const aEnd = A.text.length - suffix;
+			const bEnd = B.text.length - suffix;
 			this.gaps.push({
-				...inner,
-				baseEnd: inner.baseEnd - suffix,
-				currentEnd: inner.currentEnd - suffix
+				base: realOf(A, a),
+				baseEnd: realOf(A, aEnd, true),
+				current: realOf(B, b),
+				currentEnd: realOf(B, bEnd, true),
+				sides,
+				a,
+				aEnd,
+				b,
+				bEnd
 			});
 		}
 	}
 }
 
-const texts = (base: string, current: string, gap: Gap): [string, string] => [
-	base.slice(gap.base, gap.baseEnd),
-	current.slice(gap.current, gap.currentEnd)
-];
-
-// Sorted by base, with spans that touch in both texts joined.
+// Sorted by base, with spans that touch in both texts (and are both firm or
+// both not) joined.
 function tidy(spans: Span[]): Span[] {
 	spans.sort((x, y) => x.base - y.base);
 	const out: Span[] = [];
@@ -391,6 +594,7 @@ function tidy(spans: Span[]): Span[] {
 		const last = out.at(-1);
 		if (
 			last &&
+			last.firm === span.firm &&
 			last.base + last.length === span.base &&
 			last.current + last.length === span.current
 		)
@@ -400,27 +604,23 @@ function tidy(spans: Span[]): Span[] {
 	return out;
 }
 
-function compareTexts(base: string, current: string, allowance: number): Comparison {
-	if (base === current) {
-		return {
-			spans: base ? [{ base: 0, current: 0, length: base.length }] : [],
-			late: [],
-			gaps: []
-		};
-	}
+function compareTexts(
+	base: string,
+	current: string,
+	allowance: number
+): { found: Comparison; used: number } {
 	const comparer = new Comparer(base, current);
 	comparer.run(allowance);
 	return {
-		spans: tidy(comparer.spans),
-		late: tidy(comparer.late),
-		gaps: comparer.gaps
+		found: { spans: tidy(comparer.spans), late: tidy(comparer.late), gaps: comparer.gaps },
+		used: comparer.used
 	};
 }
 
 // The span holding a range's start ([base, base + length)), or its end
 // ((base, base + length]), or a point ([base, base + length], the earlier
-// span winning where two meet, as on main); -1 if none.
-function spanAt(spans: Span[], position: number, edge: 'start' | 'end' | 'point'): number {
+// span winning where two meet, as on main); null if none.
+function spanAt(spans: Span[], position: number, edge: 'start' | 'end' | 'point'): Span | null {
 	let low = 0;
 	let high = spans.length - 1;
 	let last = -1;
@@ -432,32 +632,66 @@ function spanAt(spans: Span[], position: number, edge: 'start' | 'end' | 'point'
 			low = mid + 1;
 		} else high = mid - 1;
 	}
-	if (last === -1) return -1;
+	if (last === -1) return null;
 	const endOf = (s: Span) => s.base + s.length;
-	if (edge === 'start') return position < endOf(spans[last]) ? last : -1;
-	if (edge === 'end') return position <= endOf(spans[last]) ? last : -1;
-	if (last > 0 && endOf(spans[last - 1]) === position) return last - 1;
-	return position <= endOf(spans[last]) ? last : -1;
+	if (edge === 'start') return position < endOf(spans[last]) ? spans[last] : null;
+	if (edge === 'end') return position <= endOf(spans[last]) ? spans[last] : null;
+	if (last > 0 && endOf(spans[last - 1]) === position) return spans[last - 1];
+	return position <= endOf(spans[last]) ? spans[last] : null;
 }
 
-function mapIn(spans: Span[], position: number, edge: 'start' | 'end' | 'point'): number | null {
-	const at = spanAt(spans, position, edge);
-	return at === -1 ? null : spans[at].current + position - spans[at].base;
-}
+const through = (span: Span, position: number) => span.current + position - span.base;
 
-// A range's two ends, as main maps them, except that the start moves to the
-// later reading when there is one further on that still leaves a range.
-function mapEnds(
-	found: Comparison,
-	start: number,
-	end: number,
-	edges: ['start', 'end'] | ['point', 'point']
-) {
-	const to = mapIn(found.spans, end, edges[1]);
-	const from = mapIn(found.spans, start, edges[0]);
+// A range's two ends. Each end must lie in a span that is firm, or that
+// holds SUPPORT characters with SUPPORT of them inside the range (all of a
+// shorter range); an end in any other span is lost. A start the early
+// reading does not hold may take the later one. With `loose` (a marker's
+// rule), an end whose own character is in no span (it was changed or
+// deleted) may instead rest on the span just outside it, if that span is
+// firm or holds SUPPORT characters, so an edit right at an edge stretches or
+// shrinks the range instead of losing it. The start moves to the later
+// reading when there is one further on that still leaves a range.
+function mapEnds(found: Comparison, start: number, end: number, loose: boolean, support: boolean) {
+	const need = Math.min(SUPPORT, end - start);
+	const firm = (span: Span, length: number, wanted: number) =>
+		!support || span.firm || (span.length >= SUPPORT && length >= wanted);
+	let from: number | null = null;
+	const first = spanAt(found.spans, start, 'start');
+	const late = found.late.length ? spanAt(found.late, start, 'start') : null;
+	if (first) {
+		if (firm(first, first.base + first.length - start, need)) from = through(first, start);
+	} else if (late) from = through(late, start);
+	else if (loose) {
+		const before = spanAt(found.spans, start, 'end');
+		if (before && before.base + before.length === start && firm(before, before.length, SUPPORT))
+			from = through(before, start);
+	}
+	let to: number | null = null;
+	const last = spanAt(found.spans, end, 'end');
+	if (last) {
+		if (firm(last, end - last.base, need)) to = through(last, end);
+	} else if (loose) {
+		const after = spanAt(found.spans, end, 'start');
+		if (after && after.base === end && firm(after, after.length, SUPPORT)) to = through(after, end);
+	}
 	if (to === null || from === null) return null;
-	const late = found.late.length ? mapIn(found.late, start, edges[0]) : null;
-	if (late !== null && late > from && late < to) return { start: late, end: to };
+	// Both ends resting outside the range: some of its own text must be left.
+	if (!first && !late && !last) {
+		let low = 0;
+		let high = found.spans.length - 1;
+		let before = -1;
+		while (low <= high) {
+			const mid = (low + high) >> 1;
+			if (found.spans[mid].base < end) {
+				before = mid;
+				low = mid + 1;
+			} else high = mid - 1;
+		}
+		const inside = found.spans[before];
+		if (!inside || inside.base + inside.length <= start) return null;
+	}
+	const later = late ? through(late, start) : null;
+	if (later !== null && later > from && later < to) return { start: later, end: to };
 	return from < to ? { start: from, end: to } : null;
 }
 
@@ -483,10 +717,13 @@ export type AnchorMapper = {
 		start: number,
 		end: number
 	): { start: number; end: number } | null;
+	// A point maps through the span it lies in (the earlier where two meet,
+	// as on main), which must be firm or hold SUPPORT characters.
 	point(baseText: string, currentText: string, position: number): number | null;
-	// Each end of a range mapped as a point, so an edit right at an edge
-	// stretches or shrinks it instead of losing it (a marker's rule). Null if
-	// either end is gone or the range is left empty.
+	// A range by a marker's rule: an end whose own character is gone may rest
+	// on the shared text just outside it, so an edit right at an edge
+	// stretches or shrinks the range instead of losing it. Null if either end
+	// is gone or the range is left empty.
 	ends(
 		baseText: string,
 		currentText: string,
@@ -498,18 +735,20 @@ export type AnchorMapper = {
 	// means "not looked for", not "gone". start === end is a point.
 	unchecked(baseText: string, currentText: string, start: number, end: number): boolean;
 	// Compares every pair not yet compared, letting the server answer others
-	// every PREPARE_SLICE_MS. Call it before mapping many pairs in one go.
+	// between pairs. Call it before mapping many pairs in one go.
 	prepare(pairs: Iterable<[string, string]>): Promise<void>;
 	// Compares the unchecked gaps of a pair that hold any of `positions`
 	// without holding the thread (the diff package's own asynchronous mode,
 	// which yields after every step), for up to `ms` of wall time. A gap it
 	// does not finish in that time stays unchecked.
 	finish(baseText: string, currentText: string, positions: number[], ms: number): Promise<void>;
-	// The milliseconds spent comparing so far.
+	// The edit units spent so far.
 	spent(): number;
 };
 
-export function createAnchorMapper(budget: DiffBudget): AnchorMapper {
+// `support` false maps without the SUPPORT rule, as main does; only the tests
+// use it, to measure what the rule costs.
+export function createAnchorMapper(budget: DiffBudget, support = true): AnchorMapper {
 	let spent = 0;
 	// Nested by base text then current text, so neither key has to be
 	// concatenated into a third copy of the scene.
@@ -518,10 +757,10 @@ export function createAnchorMapper(budget: DiffBudget): AnchorMapper {
 	const compare = (baseText: string, currentText: string): Comparison => {
 		let found = cached(baseText, currentText);
 		if (!found) {
-			const began = performance.now();
 			const allowance = Math.max(budget.floor, Math.min(budget.perPair, budget.total - spent));
-			found = compareTexts(baseText, currentText, allowance);
-			spent += performance.now() - began;
+			const result = compareTexts(baseText, currentText, allowance);
+			found = result.found;
+			spent += result.used;
 			let byCurrent = cache.get(baseText);
 			if (!byCurrent) cache.set(baseText, (byCurrent = new Map()));
 			byCurrent.set(currentText, found);
@@ -534,37 +773,37 @@ export function createAnchorMapper(budget: DiffBudget): AnchorMapper {
 		range(baseText, currentText, start, end) {
 			if (start < 0 || end > baseText.length || start >= end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapEnds(compare(baseText, currentText), start, end, ['start', 'end']);
+			return mapEnds(compare(baseText, currentText), start, end, false, support);
 		},
 		point(baseText, currentText, position) {
 			if (position < 0 || position > baseText.length) return null;
 			if (baseText === currentText) return position;
-			return mapIn(compare(baseText, currentText).spans, position, 'point');
+			const span = spanAt(compare(baseText, currentText).spans, position, 'point');
+			if (!span || (support && !span.firm && span.length < SUPPORT)) return null;
+			return through(span, position);
 		},
 		ends(baseText, currentText, start, end) {
 			if (!valid(baseText, start, end) || start === end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapEnds(compare(baseText, currentText), start, end, ['point', 'point']);
+			return mapEnds(compare(baseText, currentText), start, end, true, support);
 		},
 		unchecked(baseText, currentText, start, end) {
 			if (!valid(baseText, start, end) || baseText === currentText) return false;
 			const found = compare(baseText, currentText);
 			if (start === end) {
-				return mapIn(found.spans, start, 'point') === null && inGap(found, start, 'point');
+				return spanAt(found.spans, start, 'point') === null && inGap(found, start, 'point');
 			}
 			return (
-				(mapIn(found.spans, start, 'start') === null && inGap(found, start, 'start')) ||
-				(mapIn(found.spans, end, 'end') === null && inGap(found, end, 'end'))
+				(spanAt(found.spans, start, 'start') === null && inGap(found, start, 'start')) ||
+				(spanAt(found.spans, end, 'end') === null && inGap(found, end, 'end'))
 			);
 		},
 		async prepare(pairs) {
-			let since = performance.now();
+			let first = true;
 			for (const [baseText, currentText] of pairs) {
 				if (baseText === currentText || cached(baseText, currentText)) continue;
-				if (performance.now() - since >= PREPARE_SLICE_MS) {
-					await new Promise((resolve) => setImmediate(resolve));
-					since = performance.now();
-				}
+				if (!first) await new Promise((resolve) => setImmediate(resolve));
+				first = false;
 				compare(baseText, currentText);
 			}
 		},
@@ -578,15 +817,19 @@ export function createAnchorMapper(budget: DiffBudget): AnchorMapper {
 			for (const gap of wanted) {
 				const timeout = deadline - Date.now();
 				if (timeout <= 0) break;
+				const [A, B] = gap.sides;
 				const parts = await new Promise<ChangeObject<string>[] | undefined>((resolve) =>
-					diffChars(
-						baseText.slice(gap.base, gap.baseEnd),
-						currentText.slice(gap.current, gap.currentEnd),
-						{ timeout, callback: resolve }
-					)
+					diffChars(A.text.slice(gap.a, gap.aEnd), B.text.slice(gap.b, gap.bEnd), {
+						timeout,
+						callback: resolve
+					})
 				);
 				if (!parts) continue;
-				found.spans = tidy([...found.spans, ...partSpans(parts, gap)]);
+				const added: Span[] = [];
+				// The last run here meets the shared end set aside on failure, not
+				// the end of the gap, so it is not firm.
+				diffSpans(added, parts, gap.sides, gap.a, gap.b, false);
+				found.spans = tidy([...found.spans, ...added]);
 				found.gaps = found.gaps.filter((other) => other !== gap);
 			}
 		},

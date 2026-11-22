@@ -570,6 +570,55 @@ describe('markers through a save, review findings', () => {
 		}
 	});
 
+	// Round 8, 1a: B moved down past He and C, C respaced, D rewritten.
+	// Round 8, 2: C moved up past B and respaced.
+	const B8 =
+		'Tobin had gone out before dawn to see to the mule. The yard was white and the ' +
+		'gate stood open where he had left it. He came back with his hands raw and said ' +
+		'nothing about the road. She set bread on the table and waited for him to eat ' +
+		'before she asked.';
+	const He8 = 'He did not look up from the fire.';
+	const C8 =
+		'She asked about the letter twice that morning. Neither of them spoke of the ' +
+		'debt that lay on the table between them.';
+	const C8b = C8.replace('the letter', 'the  letter');
+	const moves: [string, string, string][] = [
+		[
+			'1a',
+			[A, P1, B8, He8, C8, C].join('\n\n'),
+			[A, P1, He8, C8b, B8, 'Rain fell all the way down the valley road to the mill.'].join('\n\n')
+		],
+		['2', [A, B8, C8, C].join('\n'), [A, C8b, B8, C].join('\n')]
+	];
+	for (const [name, before, after] of moves) {
+		it(`round 8, ${name}: a marker in a paragraph that moved is kept on its words or detached`, async () => {
+			const phrases = ['debt that lay', 'asked about the', 'twice that morning'];
+			const { sceneId: id, ids } = await sceneWith(before, phrases);
+			expect(await save(id, after)).toMatchObject({ ok: true });
+			const into = after.indexOf(C8b);
+			for (const [n, markerId] of ids.entries()) {
+				const at = await anchorOf(markerId);
+				// The untouched sentence is placed; the respaced one is placed in
+				// it or detached, never stored anywhere else.
+				if (n === 0) expect(at && after.slice(at.start, at.end)).toBe(phrases[0]);
+				if (at) {
+					expect(at.start).toBeGreaterThanOrEqual(into);
+					expect(at.end).toBeLessThanOrEqual(into + C8b.length);
+				}
+			}
+		});
+	}
+
+	// Round 8, 1b: a marker inside a rewritten sentence is detached, not
+	// stored on what chance letters the new sentence shares.
+	it('round 8, 1b: detaches a marker whose sentence was rewritten', async () => {
+		const before = [A, 'She walked to the harbour at dawn and waited.', C].join('\n\n');
+		const after = [A, 'He ran home through the rain, then slept.', C].join('\n\n');
+		const { sceneId: id, ids } = await sceneWith(before, ['walked to the harbour']);
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await anchorOf(ids[0])).toBeNull();
+	});
+
 	for (const changed of [450, 520, 1400]) {
 		it(`H3: keeps 300 markers with one word put into ${changed} of 1400 paragraphs`, async () => {
 			const before = shortParagraphs(43, 1400);

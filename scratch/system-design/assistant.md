@@ -941,25 +941,31 @@ suggestion. On top of those:
     `get_review_note` places only the requested note's edits in the scene.
     Placing an edit compares two versions of the scene, and that runs in
     the server's one thread, so it is bounded everywhere
-    (`createAnchorMapper(budget)` in `review-anchor.ts`). The comparison
-    pairs lines that are the same, stand once in each version and have at
-    least 16 visible characters (the largest such set in the same order in
-    both); between two paired lines it does the same with sentences; and
-    each stretch left is compared with the character diff main used, after
-    setting aside the start the two sides share. Nothing else pairs text:
-    a paragraph that moved is not followed. A request has a `DiffBudget` in
-    milliseconds of character diff (`perPair`, `total`, and a `floor` every
-    pair may spend even once the total is used up, so an early costly pair
-    cannot starve a cheap one after it). A stretch whose diff runs past the
-    budget is recorded as not checked, which is not the same as gone
-    (`mapper.unchecked`). An app's call has `APP_DIFF_BUDGET` (20 ms, 0.2 ms
-    floor); the writer's pages, the in-app Assistant, accepting a suggestion
-    and the export have `WRITER_DIFF_BUDGET` (50 ms a pair, 500 ms a
-    mapper, 2 ms floor), and a page compares its pairs through
-    `mapper.prepare`, which lets the server answer others between pairs;
-    the marker remap on save has `SAVE_DIFF_BUDGET` (50 ms), and a stretch
-    holding a marker that it did not finish is compared again with the
-    diff's asynchronous mode for up to three seconds of wall time
+    (`createAnchorMapper(budget)` in `review-anchor.ts`). Every line, and
+    every sentence not inside such a line, that is the same in both
+    versions, stands once in each whole text and has at least 16 visible
+    characters maps to its copy wherever it now stands. The paired lines in
+    the same order in both (the set with the most text), then the paired
+    sentences in order inside each gap, split the texts into gaps; what is
+    left of each gap, with the moved units cut out, is compared with the
+    character diff main used, after setting aside the start the two sides
+    share. An end mapped through that diff counts only if it rests on a run
+    of at least 12 shared characters, 12 of them (or the whole range)
+    inside the range; otherwise the anchor is lost. A request has a
+    `DiffBudget` in edit units of character diff (about D squared for edit
+    distance D; `perPair`, `total`, and a `floor` every pair may spend even
+    once the total is used up). The line and sentence passes are not
+    charged, so the same texts give the same result however busy the
+    server is. A stretch whose diff runs past the budget is recorded as not
+    checked, which is not the same as gone (`mapper.unchecked`). An app's
+    call has `APP_DIFF_BUDGET` (400,000 units, about 25 ms; floor 4,000);
+    the writer's pages, the in-app Assistant, accepting a suggestion and
+    the export have `WRITER_DIFF_BUDGET` (1,000,000 a pair, about 55 ms;
+    10,000,000 a mapper; floor 40,000), and a page compares its pairs
+    through `mapper.prepare`, which lets the server answer others between
+    pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (1,000,000), and
+    a stretch holding a marker that it did not compare is compared again
+    with the diff's asynchronous mode for up to three seconds of wall time
     (`SAVE_FINISH_MS`) before the marker is detached. An edit that was not checked is reported with `notice`: "The
     text has changed since; the edit may no longer apply." A follow-up
     `suggest_edit` that cannot be placed is refused as "can no longer be
@@ -967,8 +973,7 @@ suggestion. On top of those:
     suggestion as "This could not be checked against the current text. It
     can only be rejected." (or as changed, when its text is gone). A
     suggestion is accepted only where its original text starts at the
-    mapped start or ends at the mapped end, never found by a search. A
-    marker is never stored at a guessed place.
+    mapped start or ends at the mapped end, never found by a search.
   - The per-minute budgets (per connection, per writer, and for requests of
     any kind) count the calls of the last sixty seconds
     (`slidingRateLimit`), so a burst across a minute boundary gets no more
