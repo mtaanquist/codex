@@ -6,7 +6,8 @@ import {
 	remapReviewMarks,
 	removeReviewMarks,
 	reviewMarksExtension,
-	setReviewMarks
+	setReviewMarks,
+	setReviewMarksOn
 } from './editor-review-marks';
 import type { ReviewFilter, ReviewSuggestion, ReviewThread } from './review-ui';
 
@@ -281,5 +282,26 @@ describe('review marks field', () => {
 			effects: remapReviewMarks.of(buildReviewMarks([fresh], [], ALL, now))
 		}).state;
 		expect(handle.anchorOf(viewOf(refocused), 't1')).toEqual({ start: 0, end: 4 });
+	});
+
+	// A reload brings the saved text while the editor holds typing past it:
+	// the anchors belong to the saved text, not to what the editor shows.
+	it('maps marks built on the saved text through typing past it', () => {
+		const { handle, state, viewOf } = stateWith([], []);
+		const saved = 'Look. ' + doc;
+		const live = 'Look. Now. ' + doc;
+		const typed = state.update({ changes: { from: 0, to: doc.length, insert: live } }).state;
+		// "cat" in the saved text.
+		const g = suggestion({ anchor: { start: 10, end: 13 } });
+		const set = typed.update({
+			effects: setReviewMarksOn.of({ base: saved, marks: buildReviewMarks([], [g], ALL, saved) })
+		}).state;
+		expect(handle.anchorOf(viewOf(set), 'g1')).toEqual({ start: 15, end: 18 });
+		expect(handle.baseDoc(viewOf(set))).toBe(saved);
+		const more = set.update({ changes: { from: 0, to: 0, insert: 'So. ' } }).state;
+		const refocused = more.update({
+			effects: remapReviewMarks.of(buildReviewMarks([], [g], ALL, handle.baseDoc(viewOf(more))))
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 'g1')).toEqual({ start: 19, end: 22 });
 	});
 });
