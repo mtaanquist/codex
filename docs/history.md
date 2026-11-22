@@ -13,6 +13,22 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Markers a Write save does not mention (2026-11-22,
+`fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write
+autosave sends anchors only for the markers its editor highlights, and the
+save used to write those and leave every other marker's offsets alone. A
+marker the `remap-markers` sweep placed after the editor loaded it detached
+therefore stayed at its offsets while the writer typed above it, and ended
+up on the wrong words. A save with anchors now also maps every anchored
+marker it did not mention through the old-to-new comparison, as a save
+without anchors does (so a resolved marker, or one made in another tab,
+keeps up too, and one whose words were deleted is detached). Fixed on the
+server rather than by having the editor send detached ids: it covers every
+marker the editor does not track, and a stale tab needs no reload. Skipping
+the sweep when the scene was saved after the row was made would not have
+helped, since the sweep runs before the writer types. The editor still
+shows such a marker without a highlight until the scene is opened again.
+
 Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
 on `staging/bug-fixes`, staging review round 2). Review anchors count
 characters in the stored body, where \r\n is two: the guest review page

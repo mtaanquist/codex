@@ -185,6 +185,53 @@ describe('remapPendingMarkers', () => {
 		expect(await pending()).toBe(0);
 	});
 
+	// #1415: a Write editor that loaded the marker while it was detached sends
+	// no anchors for it, so its next save must still carry the marker the
+	// sweep placed along with the text.
+	it('keeps a marker the sweep placed on its words through a Write save that did not mention it', async () => {
+		const { sceneId, markerId } = await sceneWith(BEFORE, 'lit the candle');
+		await save(sceneId, AFTER);
+		await sweep();
+		const later = `A new first line.\n\n${AFTER}`;
+		expect(
+			await saveSceneBody(db, sceneId, {
+				title: null,
+				bodyMd: later,
+				anchors: [],
+				baseHashes: null,
+				overwrite: false
+			})
+		).toMatchObject({ ok: true });
+		const at = await anchorOf(markerId);
+		expect(at && later.slice(at.start, at.end)).toBe('lit the candle');
+	});
+
+	it('detaches a marker a Write save did not mention when its words are deleted', async () => {
+		const body = [A, MARKED, C].join('\n\n');
+		const { sceneId, markerId } = await sceneWith(body, 'lit the candle');
+		await saveSceneBody(db, sceneId, {
+			title: null,
+			bodyMd: [A, C].join('\n\n'),
+			anchors: [],
+			baseHashes: null,
+			overwrite: false
+		});
+		expect(await anchorOf(markerId)).toBeNull();
+	});
+
+	it('leaves the anchors a Write save sends as they are', async () => {
+		const { sceneId, markerId } = await sceneWith(BEFORE, 'lit the candle');
+		const start = BEFORE.indexOf('the door');
+		await saveSceneBody(db, sceneId, {
+			title: null,
+			bodyMd: `${BEFORE}\n\nMore.`,
+			anchors: [{ id: markerId, anchorStart: start, anchorEnd: start + 8 }],
+			baseHashes: null,
+			overwrite: false
+		});
+		expect(await anchorOf(markerId)).toEqual({ start, end: start + 8 });
+	});
+
 	it('leaves a marker that moved to another scene alone', async () => {
 		const { sceneId, markerId } = await sceneWith(BEFORE, 'lit the candle');
 		await save(sceneId, AFTER);
