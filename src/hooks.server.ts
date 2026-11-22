@@ -7,6 +7,7 @@ import { assertOriginConfigured, publicOrigin } from '#lib/server/origin';
 import { dev } from '$app/env';
 import { isForbiddenCrossSiteForm } from '#lib/server/csrf';
 import {
+	isPageNavigation,
 	isReturnablePath,
 	rememberReturnTo,
 	returnToForForm,
@@ -119,7 +120,10 @@ async function redirectFromHook(
 	}
 	const headers = new Headers({ location });
 	// A page that has to survive sign-in is remembered for afterwards.
-	const returnTo = location === '/login' ? rememberReturnTo(event.cookies, event.url) : null;
+	const returnTo =
+		location === '/login' && isPageNavigation(event.request)
+			? rememberReturnTo(event.cookies, event.url)
+			: null;
 	if (returnTo) headers.append('set-cookie', returnTo);
 	// The stale-session delete is only applied by SvelteKit on its own
 	// responses, so it is carried here by hand.
@@ -181,7 +185,18 @@ export const handle: Handle = async ({ event, resolve }) => {
 	) {
 		return redirectFromHook(event, '/login', staleCookie);
 	}
-	if (event.locals.user && AUTH_PATHS.has(event.url.pathname)) {
+	if (
+		event.locals.user &&
+		AUTH_PATHS.has(event.url.pathname) &&
+		// An emailed sign-in link opened while signed in: the page says which
+		// account is signed in rather than dropping the link without a word.
+		// Only viewing: using a link still needs a signed-out browser.
+		!(
+			event.url.pathname === '/login/link' &&
+			event.url.searchParams.has('token') &&
+			event.request.method === 'GET'
+		)
+	) {
 		return redirectFromHook(event, '/', false);
 	}
 

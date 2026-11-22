@@ -17,7 +17,11 @@ export const PANE_BOUNDS: Record<PaneSide, { min: number; maxVw: number }> = {
 export const PANE_STEP = 16;
 
 const VAR: Record<PaneSide, string> = { left: '--left-w', right: '--right-w' };
-const KEY: Record<PaneSide, string> = { left: 'codex-left-w', right: 'codex-right-w' };
+// The app.html pre-paint script reads these too, as 'codex-' + side + '-w'.
+export const PANE_STORAGE_KEY: Record<PaneSide, string> = {
+	left: 'codex-left-w',
+	right: 'codex-right-w'
+};
 
 // The largest width the window allows right now.
 export function paneMax(side: PaneSide, viewport: number): number {
@@ -44,7 +48,7 @@ export function setPaneWidth(side: PaneSide, px: number): void {
 	const value = paneWidthValue(side, px);
 	document.documentElement.style.setProperty(VAR[side], value);
 	try {
-		localStorage.setItem(KEY[side], value);
+		localStorage.setItem(PANE_STORAGE_KEY[side], value);
 	} catch {
 		/* the width still applies for this page */
 	}
@@ -54,7 +58,7 @@ export function setPaneWidth(side: PaneSide, px: number): void {
 export function resetPaneWidth(side: PaneSide): void {
 	document.documentElement.style.removeProperty(VAR[side]);
 	try {
-		localStorage.removeItem(KEY[side]);
+		localStorage.removeItem(PANE_STORAGE_KEY[side]);
 	} catch {
 		/* nothing stored to clear */
 	}

@@ -25,7 +25,8 @@ import type {
 	ProviderResponse
 } from '../../src/lib/server/llm/providers/types';
 
-const { saveAccountLlmConfig, saveModelPricing } = await import('../../src/lib/server/llm/config');
+const { saveAccountLlmConfig, saveModelPricing, saveStoryLlmOverride } =
+	await import('../../src/lib/server/llm/config');
 const { reviewStoryScenes } = await import('../../src/lib/server/llm/scene-review');
 const { loadReviewRun } = await import('../../src/lib/server/review-runs');
 const { estimateStoryReview, wholeBookCheck } = await import('../../src/lib/server/llm/estimate');
@@ -67,7 +68,9 @@ function patternProvider(
 		async respond(req): Promise<ProviderResponse> {
 			seen.push(req.messages);
 			await onRequest?.(req.messages);
-			const usage = { promptTokens: 1000, completionTokens: 0 };
+			// $1 a request at the tests' price, while what a request is held to
+			// before it is sent (its own size) stays a few cents.
+			const usage = { promptTokens: 100_000, completionTokens: 0 };
 			if (isSurvey(req.messages)) {
 				return {
 					content: JSON.stringify([
@@ -286,7 +289,7 @@ describe('the chapter pattern pass', () => {
 			toolCallBudget: 8,
 			spendCapUsd: 0.5
 		});
-		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		const { provider, seen } = patternProvider();
 		const result = await reviewStoryScenes(
 			db,
@@ -296,6 +299,31 @@ describe('the chapter pattern pass', () => {
 		expect(result.capped).toBe(true);
 		expect(seen).toHaveLength(1);
 		expect(isSurvey(seen[0])).toBe(true);
+	});
+
+	it('stops before an edit request that could pass the cap, as capped (#1331)', async () => {
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			endpoint: 'https://api.example.com/v1',
+			apiKey: 'sk',
+			models: { reviewer: MODEL },
+			toolCallBudget: 8,
+			// The survey's $1 leaves a tenth of a cent, less than any request.
+			spendCapUsd: 1.001
+		});
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
+		const { provider, seen } = patternProvider();
+		const result = await reviewStoryScenes(
+			db,
+			{ userId, storyId, patterns: 'chapter' },
+			{ provider }
+		);
+		expect(result.capped).toBe(true);
+		expect(seen).toHaveLength(1);
+		expect(isSurvey(seen[0])).toBe(true);
+		expect(result.failures).toHaveLength(0);
 	});
 
 	it('continues a capped run under a new job without surveying again', async () => {
@@ -310,7 +338,7 @@ describe('the chapter pattern pass', () => {
 				toolCallBudget: 8,
 				spendCapUsd
 			});
-			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		};
 		await capTo(0.5);
 		const first = patternProvider();
@@ -462,7 +490,37 @@ describe('the chapter pattern pass', () => {
 		expect(await db.select({ id: reviewThreads.id }).from(reviewThreads)).toHaveLength(0);
 	});
 
-	it('fixes a scene restored from the trash when the run is continued', async () => {
+	it('leaves the note and its fixes when a dropped habit is restored before the run goes on', async () => {
+		const controller = new AbortController();
+		const first = patternProvider(async (messages) => {
+			if (isSurvey(messages)) {
+				await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, sceneIds[0]));
+				await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, sceneIds[1]));
+			} else if (!isApply(messages)) controller.abort();
+		});
+		const stopped = await reviewStoryScenes(
+			db,
+			{ userId, storyId, patterns: 'chapter', jobId: 'dropped-1', signal: controller.signal },
+			{ provider: first.provider }
+		);
+		expect(stopped.aborted).toBe(true);
+		expect(await db.select({ id: reviewThreads.id }).from(reviewThreads)).toHaveLength(0);
+		await db.update(scenes).set({ deletedAt: null });
+
+		const second = patternProvider();
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, patterns: 'chapter', jobId: 'dropped-1' },
+			{ provider: second.provider }
+		);
+		expect(second.seen.some(isSurvey)).toBe(false);
+		// The note is not left without the fixes it describes.
+		expect(await db.select({ id: reviewThreads.id }).from(reviewThreads)).toHaveLength(1);
+		const edits = await db.select({ sceneId: reviewSuggestions.sceneId }).from(reviewSuggestions);
+		expect(edits.map((e) => e.sceneId).sort()).toEqual([sceneIds[0], sceneIds[1]].sort());
+	});
+
+	it('fixes only the scenes the note lists when the run is continued', async () => {
 		const controller = new AbortController();
 		const first = patternProvider(async (messages) => {
 			if (isSurvey(messages)) {
@@ -484,8 +542,10 @@ describe('the chapter pattern pass', () => {
 			{ provider: second.provider }
 		);
 		expect(second.seen.some(isSurvey)).toBe(false);
+		// The note was left while the second scene was in the trash, so it does
+		// not list it, and the restored scene gets no fix.
 		const edits = await db.select({ sceneId: reviewSuggestions.sceneId }).from(reviewSuggestions);
-		expect(edits.map((e) => e.sceneId).sort()).toEqual([sceneIds[0], sceneIds[1]].sort());
+		expect(edits.map((e) => e.sceneId)).toEqual([sceneIds[0]]);
 	});
 
 	it('keeps each fix in the scene it was asked about', async () => {
@@ -520,7 +580,7 @@ describe('the chapter pattern pass', () => {
 			toolCallBudget: 8,
 			spendCapUsd: 0.5
 		});
-		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		const first = patternProvider();
 		await reviewStoryScenes(
 			db,
@@ -590,7 +650,7 @@ describe('the whole-book pattern pass', () => {
 								: []
 						),
 						toolCalls: [],
-						usage: { promptTokens: 1000, completionTokens: 0 }
+						usage: { promptTokens: 100_000, completionTokens: 0 }
 					};
 				}
 				if (isApply(req.messages) && !req.messages.some((m) => m.role === 'tool')) {
@@ -684,6 +744,26 @@ describe('the whole-book pattern pass', () => {
 			[sceneIds[0], sceneIds[1], sceneIds[3], sceneIds[4]].sort()
 		);
 		expect(edits.every((e) => e.link === notes[0].id)).toBe(true);
+	});
+
+	it('sends nothing more once the story is muted mid-run (#1322)', async () => {
+		await addSecondChapter();
+		await windowOf(1_000_000);
+		const { provider, seen } = bookProvider();
+		const muting: Provider = {
+			...provider,
+			async respond(...args) {
+				const reply = await provider.respond(...args);
+				if (seen.length === 1) await saveStoryLlmOverride(db, storyId, { enabled: false });
+				return reply;
+			}
+		};
+		await reviewStoryScenes(db, { userId, storyId, patterns: 'book' }, { provider: muting }).catch(
+			() => undefined
+		);
+		// The survey that was in flight, and nothing after it.
+		expect(seen).toHaveLength(1);
+		expect(isBookSurvey(seen[0])).toBe(true);
 	});
 
 	it('goes chapter by chapter when the book does not fit, carrying patterns forward', async () => {
@@ -810,7 +890,7 @@ describe('the whole-book pattern pass', () => {
 				modelContextManual: { [MODEL]: 20000 },
 				spendCapUsd
 			});
-			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		};
 		await configure(0.5);
 		const first = bookProvider();
@@ -853,7 +933,7 @@ describe('the whole-book pattern pass', () => {
 				modelContextManual: { [MODEL]: 20000 },
 				spendCapUsd
 			});
-			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.001, completion: 0 } });
+			await saveModelPricing(db, userId, { [MODEL]: { prompt: 0.00001, completion: 0 } });
 		};
 		await configure(0.5);
 		const capped = await reviewStoryScenes(

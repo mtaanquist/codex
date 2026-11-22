@@ -7,6 +7,7 @@ import {
 } from './autosave';
 import { apiErrorMessage } from './format';
 import { createSaveBases, type SaveBases } from './save-bases';
+import { newSaveSource } from './save-order';
 import { DRAFT_EMPTY_SAVE, isBlankDraft } from './scene-draft';
 
 // The writer's edits to a draft that is waiting to be kept, by draft id. Held
@@ -45,6 +46,9 @@ type Held = {
 	edit: DraftEdit;
 	sceneId: string;
 	bases: SaveBases;
+	// This copy's name, sent with its numbered saves so the server drops one
+	// that arrives after a later one landed (see save-order).
+	source: string;
 	// Requests are numbered; an answer older than one already taken is not.
 	seq: number;
 	applied: number;
@@ -95,6 +99,7 @@ export function draftEdit(id: string, stored: { textMd: string; sceneId: string 
 		edit,
 		sceneId: stored.sceneId,
 		bases: createSaveBases(stored.textMd),
+		source: newSaveSource(),
 		seq: 0,
 		applied: 0,
 		releasedAt: null,
@@ -130,7 +135,11 @@ async function save(id: string, entry: Held, keepalive: boolean): Promise<void> 
 	}
 	const mine = ++entry.seq;
 	const { hash, baseHashes } = bases.begin(sending);
-	const body = JSON.stringify({ text: sending, baseHashes });
+	const body = JSON.stringify({
+		text: sending,
+		baseHashes,
+		order: { source: entry.source, seq: mine }
+	});
 	let response: Response;
 	try {
 		response = await fetch(`/api/assistant/draft/${id}`, {
@@ -162,6 +171,9 @@ async function save(id: string, entry: Held, keepalive: boolean): Promise<void> 
 		}
 		throw saveFailure(response.status);
 	}
+	// A later save from here landed first, so the server dropped this one.
+	const answer = (await response.json().catch(() => ({}))) as { superseded?: boolean };
+	if (answer.superseded) return;
 	entry.applied = mine;
 	bases.landed(hash);
 	edit.saved = sending;
@@ -184,6 +196,9 @@ export function adoptStored(edit: DraftEdit, stored: { textMd: string }): void {
 	edit.saved = stored.textMd;
 	edit.conflict = false;
 	setError(edit, '');
+	// The refused save left the queue dirty; this run finds nothing to send
+	// and settles it, so leaving the page does not ask.
+	edit.autosave.flushSoon();
 }
 
 /** The card showing the draft went away: the edit saves on its own. */

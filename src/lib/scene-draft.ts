@@ -171,7 +171,20 @@ export type SceneDraftView = {
 	sceneTitle: string | null;
 	// The draft is one of a chapter's, written scene by scene by one job.
 	inChapterRun: boolean;
+	// What the writer said about the whole chapter, for a draft of a chapter
+	// run that had a chapter brief.
+	chapterBrief: string | null;
 };
+
+// The brief a failed draft is tried again with. A draft of one scene is not
+// told about its chapter, so for a scene of a chapter run the chapter brief
+// comes first, then the scene's own.
+export function retryBrief(draft: Pick<SceneDraftView, 'brief' | 'chapterBrief'>): string {
+	return [draft.chapterBrief?.trim(), draft.brief.trim()]
+		.filter(Boolean)
+		.join('\n\n')
+		.slice(0, MAX_DRAFT_BRIEF_CHARS);
+}
 
 // How much of the scene drafted just before rides with the next scene's
 // request, so the chapter reads on from it.

@@ -32,7 +32,7 @@ const { listSuggestions, decideSuggestion } = await import('../../src/lib/server
 const { complete, completeDetailed, stream, AssistantDisabledError } =
 	await import('../../src/lib/server/llm/gateway');
 const { anthropicProvider } = await import('../../src/lib/server/llm/providers/anthropic');
-const { SpendMeter } = await import('../../src/lib/server/llm/spend');
+const { SpendMeter, SpendCapError } = await import('../../src/lib/server/llm/spend');
 
 let pool: pg.Pool;
 let db: Database;
@@ -291,6 +291,15 @@ describe('gateway gating', () => {
 			stubDeps
 		);
 		expect(captured?.extraParams).toBeUndefined();
+		// Nor a run held to a spend cap, which is checked at the reply limit (#1331).
+		await complete(
+			db,
+			{ userId, role: 'chat', messages: [], meter: new SpendMeter({ capUsd: 5 }) },
+			stubDeps
+		);
+		expect(captured?.extraParams).toBeUndefined();
+		await complete(db, { userId, role: 'chat', messages: [], meter: new SpendMeter({}) }, stubDeps);
+		expect(captured?.extraParams).toEqual({ max_completion_tokens: 900, n: 2 });
 	});
 
 	it('offers the provider web search only on an established universe, when opted in', async () => {
@@ -400,6 +409,111 @@ describe('gateway gating', () => {
 			await complete(db, { userId, universeId: established.id, role, messages: [] }, stubDeps);
 			expect(captured?.webSearch).toBe(true);
 		}
+	});
+
+	it('counts the web search results before a capped send', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Faerun', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		const config = {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced' as const,
+			provider: 'anthropic' as const,
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8
+		};
+		let calls = 0;
+		// Five searches whose results bill 60k input tokens: $0.60 at this price.
+		const searching: Provider = {
+			...stubProvider,
+			async respond() {
+				calls += 1;
+				return {
+					content: 'checked',
+					toolCalls: [],
+					usage: { promptTokens: 60_000, completionTokens: 0, webSearchRequests: 5 }
+				};
+			}
+		};
+		const run = () => {
+			const meter = new SpendMeter({
+				pricing: { 'claude-opus-5': { prompt: 0.00001, completion: 0 } },
+				provider: 'anthropic',
+				capUsd: 0.5
+			});
+			const done = completeDetailed(
+				db,
+				{
+					userId,
+					storyId: inCanon.id,
+					role: 'reviewer',
+					messages: [{ role: 'user', content: 'Check this scene.' }],
+					maxTokens: 100,
+					meter
+				},
+				{ provider: searching, http: noHttp }
+			);
+			return { meter, done };
+		};
+
+		await saveAccountLlmConfig(db, userId, { ...config, webSearch: true });
+		const capped = run();
+		await expect(capped.done).rejects.toThrow(SpendCapError);
+		expect(calls).toBe(0);
+		expect(capped.meter.spentUsd).toBeLessThanOrEqual(0.5);
+
+		// Without search the same request fits, so only the allowance held it.
+		await saveAccountLlmConfig(db, userId, { ...config, webSearch: false });
+		await run().done;
+		expect(calls).toBe(1);
+	});
+
+	it('counts the provider blocks a resumed request resends before a capped send', async () => {
+		await configure(true);
+		// A paused turn's blocks (earlier search results) go back verbatim and bill
+		// as input: 600k characters is about $2 at this price, past the $1 cap.
+		const raw = [{ type: 'web_search_tool_result', content: 'x'.repeat(600_000) }];
+		let calls = 0;
+		const pausing: Provider = {
+			...stubProvider,
+			async respond(req) {
+				calls += 1;
+				const resent = req.messages.some((m) => m.raw !== undefined);
+				return {
+					content: '',
+					toolCalls: [],
+					finishReason: resent ? 'stop' : 'paused',
+					raw: resent ? undefined : raw,
+					usage: { promptTokens: resent ? 200_000 : 100, completionTokens: 0 }
+				};
+			}
+		};
+		const meter = new SpendMeter({
+			pricing: { 'chat-model': { prompt: 0.00001, completion: 0 } },
+			capUsd: 1
+		});
+		const done = completeDetailed(
+			db,
+			{
+				userId,
+				role: 'chat',
+				messages: [{ role: 'user', content: 'Look this up.' }],
+				maxTokens: 100,
+				meter
+			},
+			{ provider: pausing, http: noHttp }
+		);
+		await expect(done).rejects.toThrow(SpendCapError);
+		expect(calls).toBe(1);
+		expect(meter.spentUsd).toBeLessThanOrEqual(1);
 	});
 
 	it('never offers web search on an OpenAI-compatible endpoint', async () => {
@@ -2217,6 +2331,84 @@ describe('gateway request retries', () => {
 		expect(meter.spentUsd).toBeCloseTo(3 * (40 * 0.001 + 7 * 0.01));
 	});
 
+	it('does not resend a billed failure when the next attempt could pass the cap (#1331)', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		// With the prompt priced at nothing, the request could cost $1.00 at its
+		// 100-token reply: it fits under $1.05, but not after the failed attempt
+		// billed $0.07.
+		const meter = new SpendMeter({
+			pricing: { 'chat-model': { prompt: 0, completion: 0.01 } },
+			capUsd: 1.05
+		});
+		await expect(
+			completeDetailed(
+				db,
+				{ userId, role: 'chat', messages: [], maxTokens: 100, meter },
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			)
+		).rejects.toThrow(SpendCapError);
+		expect(endpoint.calls()).toBe(1);
+		expect(meter.spentUsd).toBeCloseTo(7 * 0.01);
+	});
+
+	it('does not send a first request that could pass the cap (#1331)', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		// What an earlier attempt of the job spent, carried into its retry.
+		const meter = new SpendMeter({ pricing, capUsd: 1, spentUsd: 0.5 });
+		await expect(
+			completeDetailed(
+				db,
+				{ userId, role: 'chat', messages: [], maxTokens: 100, meter },
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			)
+		).rejects.toThrow(SpendCapError);
+		expect(endpoint.calls()).toBe(0);
+		expect(await usageRows()).toHaveLength(0);
+	});
+
+	it('counts a non-English prompt high enough for the cap (#1331)', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		const prompted = (text: string) =>
+			completeDetailed(
+				db,
+				{
+					userId,
+					role: 'chat',
+					messages: [{ role: 'user', content: text }],
+					maxTokens: 1,
+					meter: new SpendMeter({
+						pricing: { 'chat-model': { prompt: 0.001, completion: 0 } },
+						capUsd: 2
+					})
+				},
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			);
+		// 3000 CJK characters are about 3000 tokens ($3), not the 750 that
+		// chars/4 gives ($0.75), so the request is held.
+		await expect(prompted('\u6587'.repeat(3000))).rejects.toThrow(SpendCapError);
+		expect(endpoint.calls()).toBe(0);
+		// The same length in English is about 750 tokens, and it is sent.
+		await expect(prompted('word '.repeat(600))).rejects.toThrow(/Endpoint returned 529/);
+		expect(endpoint.calls()).toBeGreaterThan(0);
+	});
+
+	it('leaves the ceiling to a caller that holds its own', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		const meter = new SpendMeter({ pricing, capUsd: 1, spentUsd: 0.5 });
+		await expect(
+			completeDetailed(
+				db,
+				{ userId, role: 'chat', messages: [], maxTokens: 100, meter, mayResend: () => false },
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			)
+		).rejects.toThrow(/Endpoint returned 529/);
+		expect(endpoint.calls()).toBe(1);
+	});
+
 	it('gives up on a stream that keeps failing with a server fault after the usual retries', async () => {
 		await configure(true);
 		const endpoint = scriptedHttp(() => ({
@@ -2383,6 +2575,93 @@ describe('gateway refusal and paused turns (#1083)', () => {
 			)
 		).rejects.toThrow(/stopped partway/);
 		expect(tools.seen).toHaveLength(1);
+	});
+
+	// With the prompt priced at nothing, a request at a 100-token reply could
+	// cost $1.00: the first fits under $1.05, the next does not once the first
+	// billed $0.07 (#1331).
+	const capPricing = { 'chat-model': { prompt: 0, completion: 0.01 } };
+	const billed = { promptTokens: 40, completionTokens: 7 };
+
+	it('does not resume a paused turn that could pass the spend cap (#1331)', async () => {
+		await configure(true);
+		const paused = {
+			content: 'x',
+			toolCalls: [],
+			finishReason: 'paused' as const,
+			raw: [],
+			usage: billed
+		};
+		const { provider, seen } = queued([paused, { content: 'y', toolCalls: [] }]);
+		const meter = new SpendMeter({ pricing: capPricing, capUsd: 1.05 });
+		await expect(
+			completeDetailed(
+				db,
+				{ userId, role: 'chat', messages: [], maxTokens: 100, meter },
+				{ provider, http: noHttp }
+			)
+		).rejects.toThrow(SpendCapError);
+		expect(seen).toHaveLength(1);
+
+		const { storyId } = await seedStoryScene('Text.');
+		const tools = queued([paused, { content: 'y', toolCalls: [] }]);
+		await expect(
+			completeDetailed(
+				db,
+				{
+					userId,
+					storyId,
+					role: 'chat',
+					enableTools: true,
+					messages: [],
+					maxTokens: 100,
+					meter: new SpendMeter({ pricing: capPricing, capUsd: 1.05 })
+				},
+				{ provider: tools.provider, http: noHttp }
+			)
+		).rejects.toThrow(SpendCapError);
+		expect(tools.seen).toHaveLength(1);
+
+		// Under a cap it fits, the turn resumes as before.
+		const roomy = queued([paused, { content: 'y', toolCalls: [] }]);
+		const result = await completeDetailed(
+			db,
+			{
+				userId,
+				role: 'chat',
+				messages: [],
+				maxTokens: 100,
+				meter: new SpendMeter({ pricing: capPricing, capUsd: 100 })
+			},
+			{ provider: roomy.provider, http: noHttp }
+		);
+		expect(result.content).toBe('xy');
+		expect(roomy.seen).toHaveLength(2);
+	});
+
+	it('does not retry a cut-off tool round that could pass the spend cap (#1331)', async () => {
+		await configure(true);
+		const { storyId } = await seedStoryScene('Text.');
+		const { provider, seen } = queued([
+			{ content: 'Half', toolCalls: [], finishReason: 'length', usage: billed },
+			{ content: 'Whole.', toolCalls: [] }
+		]);
+		await expect(
+			completeDetailed(
+				db,
+				{
+					userId,
+					storyId,
+					role: 'chat',
+					enableTools: true,
+					messages: [],
+					maxTokens: 100,
+					meter: new SpendMeter({ pricing: capPricing, capUsd: 1.05 })
+				},
+				{ provider, http: noHttp }
+			)
+		).rejects.toThrow(SpendCapError);
+		expect(seen).toHaveLength(1);
 	});
 
 	it('resumes a paused round of the tool loop', async () => {

@@ -1,5 +1,5 @@
 import { showPanel, type EditorView, type Panel } from '@codemirror/view';
-import { StateField, type Extension } from '@codemirror/state';
+import { StateEffect, StateField, type Extension } from '@codemirror/state';
 import { getSearchQuery, searchPanelOpen } from '@codemirror/search';
 
 // A row under the editor's find panel (Ctrl+F) that hands the search over to
@@ -15,14 +15,14 @@ export type WiderSearch = {
 	) => void;
 };
 
+// Dispatched by the host when the scene moves into or out of a chapter, so an
+// open panel shows or hides its chapter button without being reopened.
+export const searchScopeChanged = StateEffect.define<null>();
+
 export function searchScopeExtension(wider: WiderSearch): Extension {
 	const create = (view: EditorView): Panel => {
 		const dom = document.createElement('div');
 		dom.className = 'cm-search-scope';
-		const label = document.createElement('span');
-		label.className = 'cm-search-scope-label';
-		label.textContent = 'Find and replace in';
-		dom.append(label);
 		const button = (text: string, scope: SearchScope) => {
 			const el = document.createElement('button');
 			el.type = 'button';
@@ -37,11 +37,31 @@ export function searchScopeExtension(wider: WiderSearch): Extension {
 					wholeWord: query.wholeWord
 				});
 			});
-			dom.append(el);
+			return el;
 		};
-		if (wider.hasChapter()) button('This chapter...', 'chapter');
-		button('Whole story...', 'story');
-		return { dom, top: false };
+		const label = document.createElement('span');
+		label.className = 'cm-search-scope-label';
+		label.textContent = 'Find and replace in';
+		const chapter = button('This chapter...', 'chapter');
+		const story = button('Whole story...', 'story');
+		let shown: boolean | null = null;
+		const render = () => {
+			const hasChapter = wider.hasChapter();
+			if (hasChapter === shown) return;
+			shown = hasChapter;
+			dom.replaceChildren(...(hasChapter ? [label, chapter, story] : [label, story]));
+		};
+		render();
+		return {
+			dom,
+			top: false,
+			update: (update) => {
+				const changed = update.transactions.some((tr) =>
+					tr.effects.some((effect) => effect.is(searchScopeChanged))
+				);
+				if (changed) render();
+			}
+		};
 	};
 	return StateField.define<boolean>({
 		create: (state) => searchPanelOpen(state),

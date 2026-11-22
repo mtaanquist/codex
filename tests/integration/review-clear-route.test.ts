@@ -23,12 +23,21 @@ vi.mock('#lib/server/db', async () => {
 	return { db: drizzle(testPool, { schema: schemaModule }), pool: testPool };
 });
 
+// Mention indexing is queued on pg-boss; here it is only counted.
+const queueSceneMentions = vi.hoisted(() =>
+	vi.fn<(sceneId: string) => Promise<void>>(async () => {})
+);
+vi.mock('#lib/server/jobs', async (importOriginal) => ({
+	...(await importOriginal<typeof import('#lib/server/jobs')>()),
+	queueSceneMentions
+}));
+
 const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	db: Database;
 	pool: pg.Pool;
 };
 const page = await import('../../src/routes/stories/[id]/review/+page.server');
-const { createSuggestion, listSuggestions, updateAssistantSuggestion } =
+const { BULK_DECISION_MAX, createSuggestion, listSuggestions, updateAssistantSuggestion } =
 	await import('#lib/server/review');
 
 type User = { id: string; displayName: string };
@@ -189,5 +198,52 @@ describe('accepting a suggested edit', () => {
 			])
 		).toMatchObject({ decided: [id] });
 		expect(await status()).toBe('rejected');
+	});
+
+	it('refuses a bulk decision it cannot read, and changes nothing', async () => {
+		const { id, stamp } = await staged();
+		const tooMany = Array.from({ length: BULK_DECISION_MAX + 1 }, () => crypto.randomUUID());
+		const cases: [string, [string, string][]][] = [
+			['Choose to accept or reject.', [['suggestionId', id]]],
+			[
+				'Choose to accept or reject.',
+				[
+					['decision', 'approve'],
+					['suggestionId', id]
+				]
+			],
+			['Tick the suggestions to decide on.', [['decision', 'reject']]],
+			[
+				'Tick the suggestions to decide on.',
+				[
+					['decision', 'reject'],
+					['suggestionId', id],
+					['suggestionId', 'not-a-uuid']
+				]
+			],
+			[
+				`Decide on up to ${BULK_DECISION_MAX} suggestions at a time. Untick some and try again.`,
+				[['decision', 'reject'], ...tooMany.map((x): [string, string] => ['suggestionId', x])]
+			]
+		];
+		for (const [message, fields] of cases) {
+			expect(await post('decideSuggestions', fields)).toMatchObject({
+				status: 400,
+				data: { message }
+			});
+		}
+		expect(await status()).toBe('pending');
+		expect(await body()).toBe('Text.');
+		// A well-formed accept still goes through, and its scene is reindexed.
+		queueSceneMentions.mockClear();
+		expect(
+			await post('decideSuggestions', [
+				['decision', 'accept'],
+				['suggestionId', id],
+				[`seen:${id}`, stamp]
+			])
+		).toMatchObject({ decided: [id], failed: [] });
+		expect(await body()).toBe('Words.');
+		expect(queueSceneMentions.mock.calls).toEqual([[sceneId]]);
 	});
 });

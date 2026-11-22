@@ -3,7 +3,13 @@ import { UnretryableSaveError } from './autosave';
 import { createSceneSaver, MAX_BASE_HASHES, SAVE_TIMEOUT_MS, saveTimeoutMs } from './scene-saver';
 import { textHash } from './text-hash';
 
-type Sent = { baseHashes: string[]; overwrite?: boolean; bodyMd: string; keepalive?: boolean };
+type Sent = {
+	baseHashes: string[];
+	overwrite?: boolean;
+	bodyMd: string;
+	keepalive?: boolean;
+	order: { source: string; seq: number };
+};
 
 // Each fetch is answered by the next queued responder; the request bodies are
 // kept so the test can read what the saver sent.
@@ -42,6 +48,30 @@ describe('createSceneSaver', () => {
 		await saver.save(save('abc'));
 		expect(sent[0].baseHashes).toEqual([textHash('a')]);
 		expect(sent[1].baseHashes).toEqual([textHash('ab')]);
+	});
+
+	it('numbers its saves, so the server can drop an older one that arrives late', async () => {
+		const sent = mockFetch([networkError, ok, ok]);
+		const saver = createSceneSaver('s', 'a', () => {});
+		await expect(saver.save(save('ab'))).rejects.toThrow();
+		await saver.save(save('ab'));
+		await saver.save(save('a', true));
+		expect(sent.map((s) => s.order.seq)).toEqual([1, 2, 3]);
+		expect(new Set(sent.map((s) => s.order.source)).size).toBe(1);
+		// Another editor of the same scene is another copy.
+		const other = mockFetch([ok]);
+		await createSceneSaver('s', 'a', () => {}).save(save('b'));
+		expect(other[0].order.source).not.toBe(sent[0].order.source);
+	});
+
+	it('does not build on a save the server dropped as older than one it holds', async () => {
+		const superseded = () => new Response('{"superseded":true}', { status: 200 });
+		const sent = mockFetch([superseded, ok]);
+		const saver = createSceneSaver('s', 'a', () => {});
+		await saver.save(save('ab'));
+		await saver.save(save('abc'));
+		// The dropped text is no longer one the server may hold.
+		expect(sent[1].baseHashes).toEqual([textHash('a')]);
 	});
 
 	it('advances the base after a successful close-tab save', async () => {

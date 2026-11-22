@@ -490,6 +490,46 @@ test('typing in a draft decided in another window is kept to copy', async ({ pag
 	await expect(brief).toHaveValue('The horse bolts.');
 });
 
+// #1369: "/draft ..." typed while the form opened from the menu is still
+// loading puts its words in the brief, not the scene's suggestion.
+test('words typed with /draft while the form loads reach the brief', async ({ page }) => {
+	const stamp = Date.now();
+	await storyWithScene(page, `Lockkeepers ${stamp}`, `Sluice ${stamp}`);
+	const card = page.getByRole('group', { name: 'Scene draft' });
+	const composer = page.getByPlaceholder('Ask about your story', { exact: false });
+	await page.getByRole('tab', { name: 'Assistant' }).click();
+
+	// The first ask for the form's defaults waits until the second is made, and
+	// is answered first, as it would be on a slow line.
+	let asked = 0;
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assistant/draft', async (route) => {
+		const body = route.request().postDataJSON() as { defaults?: boolean };
+		if (!body?.defaults) return route.continue();
+		asked += 1;
+		if (asked === 1) {
+			await held;
+			return route.continue();
+		}
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		await route.continue();
+	});
+
+	await openRowMenu(page, page.locator('.scene-row').first());
+	await page.locator('.row-menu').getByRole('menuitem', { name: 'Assistant' }).hover();
+	await page.locator('.row-submenu').getByRole('menuitem', { name: 'Draft this scene...' }).click();
+	await expect(card).toContainText('Loading...');
+	await composer.fill('/draft The gates open at noon.');
+	await page.keyboard.press('Enter');
+	await expect.poll(() => asked).toBe(2);
+	await expect(card.getByLabel('What happens in this scene')).toHaveValue(
+		'The gates open at noon.'
+	);
+	await page.unroute('**/api/assistant/draft');
+});
+
 // #1168: on a story with the Assistant turned off, the panel lists the drafts
 // that wait on other scenes, one still being written among them.
 test('a muted story lists its waiting drafts, and one being written can be stopped', async ({
@@ -552,4 +592,155 @@ test('a muted story lists its waiting drafts, and one being written can be stopp
 		again
 	]);
 	await expect(list.getByRole('listitem').nth(1)).toContainText('Ready', { timeout: 20_000 });
+});
+
+// Whether closing the page asks first, as the browser does while an edit is
+// unsaved. The page is closed either way.
+async function asksBeforeClosing(page: Page): Promise<boolean> {
+	let asked = false;
+	page.on('dialog', (dialog) => {
+		if (dialog.type() === 'beforeunload') asked = true;
+		void dialog.accept();
+	});
+	await page.close({ runBeforeUnload: true });
+	await expect.poll(() => page.isClosed()).toBe(true);
+	return asked;
+}
+
+// #1334: an estimate over the spend cap. The count comes from the real
+// endpoint and is then priced over a cap by the test, since the e2e account
+// is shared by specs that run at once and has no prices on record.
+test('a draft over the spend cap says so and cannot be started', async ({ page }) => {
+	const stamp = Date.now();
+	await storyWithScene(page, `Pilots ${stamp}`, `Shoals ${stamp}`);
+	let started = 0;
+	await page.route('**/api/assistant/draft', async (route) => {
+		if (route.request().method() !== 'POST') return route.continue();
+		const body = route.request().postDataJSON() as { defaults?: boolean; estimate?: boolean };
+		if (body.defaults) return route.continue();
+		if (!body.estimate) {
+			started += 1;
+			return route.continue();
+		}
+		const response = await route.fetch();
+		const estimate = await response.json();
+		await route.fulfill({
+			response,
+			json: { ...estimate, estCostUsd: 3.2, capUsd: 2, capEnforceable: true, overCap: true }
+		});
+	});
+
+	const composer = page.getByPlaceholder('Ask about your story', { exact: false });
+	await page.getByRole('tab', { name: 'Assistant' }).click();
+	await composer.fill('/draft Ilse runs aground.');
+	await page.keyboard.press('Enter');
+	const card = page.getByRole('group', { name: 'Scene draft' });
+	await card.getByRole('button', { name: 'Check the cost' }).click();
+	await expect(card).toContainText('(up to $3.20)');
+	await expect(card).toContainText(
+		'That is over your spend cap of $2.00, so the draft will not run.'
+	);
+	// Nothing can start it: the only way on is a smaller draft or a new count.
+	await expect(card.getByRole('button', { name: 'Draft the scene' })).toHaveCount(0);
+	await card.getByRole('button', { name: 'Check the cost' }).click();
+	await expect(card).toContainText('over your spend cap');
+	await page.keyboard.press('Enter');
+	await page.waitForTimeout(500);
+	expect(started).toBe(0);
+	// Changing the length drops the count, and with it the refusal.
+	await card.getByLabel('Length in words').fill('300');
+	await expect(card).not.toContainText('over your spend cap');
+});
+
+// #1334: the same draft open in two real windows of one browser.
+test('a draft edited in two windows: the second is refused and loads the first', async ({
+	page
+}) => {
+	const stamp = Date.now();
+	const sceneId = await storyWithScene(page, `Ferrywomen ${stamp}`, `Slack ${stamp}`);
+	const link = `/stories/slack-${stamp}?scene=${sceneId}&draft=show`;
+	await stageDraft(sceneId, 'The tide stood still.');
+	const other = await page.context().newPage();
+	const cardIn = (p: Page) => p.getByRole('group', { name: 'Scene draft' });
+	const textIn = (p: Page) =>
+		cardIn(p).getByLabel('Read it, and change anything you like before keeping it');
+	const saved = (p: Page) =>
+		p.waitForResponse((response) => response.request().method() === 'PATCH');
+	await gotoReady(page, link);
+	await gotoReady(other, link);
+	await expect(textIn(page)).toHaveValue('The tide stood still.');
+	await expect(textIn(other)).toHaveValue('The tide stood still.');
+
+	// Saved in the other window first.
+	let answer = saved(other);
+	await textIn(other).fill('The tide stood still. Nobody rowed.');
+	await textIn(other).blur();
+	expect((await answer).status()).toBe(200);
+
+	// This window's copy is behind: its save is refused, and nothing is lost.
+	answer = saved(page);
+	await textIn(page).fill('The tide stood still. Ilse waited.');
+	await textIn(page).blur();
+	expect((await answer).status()).toBe(409);
+	await expect(cardIn(page)).toContainText('This draft was changed in another window.');
+	await expect(textIn(page)).toHaveValue('The tide stood still. Ilse waited.');
+	await cardIn(page).getByRole('button', { name: 'Load the current text' }).click();
+	await expect(textIn(page)).toHaveValue('The tide stood still. Nobody rowed.');
+
+	// Now the other window is behind, and its card is out of sight (focus
+	// mode) when the refusal comes: that is not the writer seeing it, so
+	// closing that window asks first.
+	answer = saved(page);
+	await textIn(page).fill('The tide stood still. Nobody rowed. Then the wind.');
+	await textIn(page).blur();
+	expect((await answer).status()).toBe(200);
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await other.route('**/api/assistant/draft/*', async (route) => {
+		if (route.request().method() === 'PATCH') await held;
+		await route.continue();
+	});
+	answer = saved(other);
+	await textIn(other).fill('The tide stood still. Nobody rowed. The oars were gone.');
+	await other.keyboard.press('ControlOrMeta+k');
+	await other.getByLabel('Search everything').fill('focus');
+	await other.getByRole('option', { name: 'Command Focus mode' }).click();
+	await expect(other.locator('.app.focus-mode')).toHaveCount(1);
+	await expect(textIn(other)).toBeHidden();
+	release();
+	expect((await answer).status()).toBe(409);
+	expect(await asksBeforeClosing(other)).toBe(true);
+	await expect(textIn(page)).toHaveValue('The tide stood still. Nobody rowed. Then the wind.');
+});
+
+// #1334: typing in a draft that the other window has just discarded, then
+// moving to another scene before the save is answered. The typing is kept for
+// that scene's card, and closing the window asks first.
+test('typing in a draft discarded in another window asks before the window is closed', async ({
+	page
+}) => {
+	const stamp = Date.now();
+	const sceneId = await storyWithScene(page, `Dredgers ${stamp}`, `Silt ${stamp}`);
+	await page.getByRole('button', { name: 'New scene' }).click();
+	await expect(page).not.toHaveURL(new RegExp(`scene=${sceneId}`));
+	const link = `/stories/silt-${stamp}?scene=${sceneId}&draft=show`;
+	await stageDraft(sceneId, 'The channel narrowed.');
+	const other = await page.context().newPage();
+	const cardIn = (p: Page) => p.getByRole('group', { name: 'Scene draft' });
+	const textIn = (p: Page) =>
+		cardIn(p).getByLabel('Read it, and change anything you like before keeping it');
+	await gotoReady(page, link);
+	await gotoReady(other, link);
+	await expect(textIn(other)).toHaveValue('The channel narrowed.');
+	await cardIn(other).getByRole('button', { name: 'Discard' }).click();
+	await expect(cardIn(other)).toHaveCount(0);
+	await other.close();
+
+	await expect(textIn(page)).toHaveValue('The channel narrowed.');
+	const refused = page.waitForResponse((response) => response.request().method() === 'PATCH');
+	await textIn(page).fill('The channel narrowed. The hull scraped.');
+	await page.locator('.scene-row').nth(1).click();
+	expect((await refused).status()).toBe(409);
+	await expect(cardIn(page)).toHaveCount(0);
+	expect(await asksBeforeClosing(page)).toBe(true);
 });

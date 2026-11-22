@@ -13,6 +13,7 @@ import {
 } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { textHash } from '../../src/lib/text-hash';
+import { retryBrief } from '../../src/lib/scene-draft';
 import type { GatewayDeps } from '../../src/lib/server/llm/gateway';
 import {
 	WriterStopError,
@@ -67,6 +68,7 @@ const {
 	failChapterDraft,
 	estimateSceneDraft,
 	CHAPTER_DRAFT_ENDED_NOTE,
+	DRAFT_STOPPED_NOTE,
 	emptyDraftCutOffNote
 } = await import('../../src/lib/server/llm/scene-draft');
 const {
@@ -94,7 +96,7 @@ const statusRoute = await import('../../src/routes/api/assistant/job-status/+ser
 let prompts: string[] = [];
 let maxTokensSent: (number | undefined)[] = [];
 let calls = 0;
-let whileWriting: ((call: number) => Promise<void>) | null = null;
+let whileWriting: ((call: number, signal?: AbortSignal) => Promise<void>) | null = null;
 let cutOff = false;
 // The request, counted from 1, that is answered with no text.
 let emptyCall = 0;
@@ -102,11 +104,11 @@ const stubProvider: Provider = {
 	async *chatStream() {
 		yield { type: 'done' };
 	},
-	async respond(req) {
+	async respond(req, _conn, _http, signal) {
 		prompts.push(req.messages.map((m) => m.content).join('\n'));
 		maxTokensSent.push(req.maxTokens);
 		const call = ++calls;
-		await whileWriting?.(call);
+		await whileWriting?.(call, signal);
 		return {
 			content: call === emptyCall ? '' : `Draft ${call}. The river ran on.`,
 			toolCalls: [],
@@ -286,7 +288,7 @@ it('keeps new chapter drafts whose run has failed by the time it is queued', asy
 
 const run = (
 	started: { draftIds: string[]; jobId: string },
-	extra: { signal?: AbortSignal; userId?: string } = {}
+	extra: { signal?: AbortSignal; userId?: string; watchMs?: number } = {}
 ) =>
 	runChapterDraft(
 		db,
@@ -489,6 +491,36 @@ describe('the chapter estimate', () => {
 			return result.estimate.estTokens;
 		};
 		expect(await tokensAt(1501)).toBeGreaterThan(await tokensAt(1500));
+	});
+
+	// #1334: the estimate assembled the full context once per scene. The
+	// settings and the world are the same for every scene of the chapter, so
+	// each scene after the first adds only its own reads.
+	it('reads the settings and the world once for the whole chapter', async () => {
+		const queries = vi.spyOn(pool, 'query');
+		try {
+			const readsFor = async (scenes: { sceneId: string; brief: string }[]) => {
+				queries.mockClear();
+				const result = await chapterDraftEstimate(db, input({ scenes }));
+				if (!result.ok) throw new Error(result.reason);
+				return queries.mock.calls.length;
+			};
+			const one = await readsFor([{ sceneId: quay, brief: 'a' }]);
+			const two = await readsFor([
+				{ sceneId: quay, brief: 'a' },
+				{ sceneId: crossing, brief: 'b' }
+			]);
+			const three = await readsFor([
+				{ sceneId: quay, brief: 'a' },
+				{ sceneId: crossing, brief: 'b' },
+				{ sceneId: bank, brief: 'c' }
+			]);
+			// Each further scene costs the same, and well under a first one.
+			expect(three - two).toBe(two - one);
+			expect((two - one) * 2).toBeLessThan(one);
+		} finally {
+			queries.mockRestore();
+		}
 	});
 
 	it('prices the whole run and holds it against the cap', async () => {
@@ -1045,6 +1077,53 @@ describe('the job', () => {
 		expect(await scenesSnapshot()).toEqual(snapshot);
 	});
 
+	// #1334: discarding the scene being written did not stop its request; it
+	// ran to its limit and the result was dropped.
+	it('drops the request of a scene discarded while it is written, and carries on', async () => {
+		const started = await request();
+		const [, second] = started.draftIds;
+		let aborted: unknown;
+		whileWriting = async (n, signal) => {
+			if (n !== 2) return;
+			expect(await discardSceneDraft(db, ownerId, second)).toEqual({ ok: true, stopJobId: null });
+			// The request waits for its reply until it is called off.
+			await new Promise<void>((_resolve, reject) => {
+				const timeout = setTimeout(() => reject(new Error('the request ran on')), 5000);
+				signal!.addEventListener('abort', () => {
+					clearTimeout(timeout);
+					aborted = signal!.reason;
+					reject(signal!.reason);
+				});
+			});
+		};
+		const result = await run(started, { watchMs: 20 });
+		// Called off as the writer's own stop, so it is billed for what streamed.
+		expect(aborted).toBeInstanceOf(WriterStopError);
+		expect(result).toMatchObject({ outcome: 'done', drafted: 2, total: 3 });
+		expect(result.outcome === 'done' && result.ended).toBeUndefined();
+		expect(await statuses()).toEqual(['ready', 'discarded', 'ready']);
+		// The scene after it is not told it carries on from a draft.
+		expect(prompts).toHaveLength(3);
+		expect(prompts[2]).not.toContain('was just drafted');
+	});
+
+	it('ends as stopped when the scene being written is settled by a Stop the job has not seen', async () => {
+		const started = await request();
+		whileWriting = async (n, signal) => {
+			if (n !== 1) return;
+			await db
+				.update(assistantDrafts)
+				.set({ status: 'discarded', note: DRAFT_STOPPED_NOTE })
+				.where(inArray(assistantDrafts.id, started.draftIds));
+			await new Promise<void>((_resolve, reject) => {
+				signal!.addEventListener('abort', () => reject(signal!.reason));
+			});
+		};
+		const result = await run(started, { watchMs: 20 });
+		expect(result).toMatchObject({ outcome: 'done', drafted: 0, ended: 'stopped' });
+		expect(prompts).toHaveLength(1);
+	});
+
 	it('stops before the next scene when Stop lands between two', async () => {
 		const started = await request();
 		const controller = new AbortController();
@@ -1442,6 +1521,28 @@ describe('a Stop the worker has not seen yet', () => {
 	});
 });
 
+// #1334: the chapter brief was kept only in the job's data, so trying one
+// failed scene again could not start from it.
+it('keeps the chapter brief on each draft of the run, for trying a scene again', async () => {
+	const started = await request();
+	await failChapterDraft(db, ownerId, started.draftIds, 'The endpoint was down.');
+	const view = await sceneDraftFor(db, ownerId, quay);
+	expect(view).toMatchObject({
+		status: 'failed',
+		brief: 'Ilse reaches the quay at dusk.',
+		chapterBrief: CHAPTER_BRIEF
+	});
+	expect(retryBrief(view!)).toBe(`${CHAPTER_BRIEF}\n\nIlse reaches the quay at dusk.`);
+	// A run asked for with no chapter brief keeps none.
+	await db.delete(assistantDrafts);
+	const each = await request({
+		brief: '',
+		scenes: [{ sceneId: quay, brief: 'Ilse reaches the quay at dusk.' }]
+	});
+	expect((await sceneDraftFor(db, ownerId, quay))?.chapterBrief).toBeNull();
+	expect(each.draftIds).toHaveLength(1);
+});
+
 describe('deciding each drafted scene', () => {
 	it('keeps or discards each scene on its own, with the scene draft actions', async () => {
 		const started = await request();
@@ -1453,7 +1554,8 @@ describe('deciding each drafted scene', () => {
 			id: first,
 			status: 'ready',
 			sceneEmpty: true,
-			inChapterRun: true
+			inChapterRun: true,
+			chapterBrief: CHAPTER_BRIEF
 		});
 
 		expect(await fillSceneFromDraft(db, ownerId, first)).toEqual({ ok: true, sceneId: quay });

@@ -134,6 +134,21 @@ describe('suggest action', () => {
 		expect(result).toMatchObject({ status: 403 });
 		expect(await db.select().from(reviewSuggestions)).toHaveLength(0);
 	});
+
+	it('refuses a range that does not hold the passage the reviewer selected', async () => {
+		const invitation = await createReviewInvitation(db, { storyId, createdBy: authorId });
+		const reviewer = await ensureReviewer(db, invitation.id, { displayName: 'Robin' });
+		const cookie = issueReviewerToken(reviewer!.id);
+		const form = suggestForm();
+		form.set('original', 'brown');
+		const result = await page.actions.suggest(event(invitation.token, cookie, form));
+		expect(result).toMatchObject({ status: 400 });
+		expect(await db.select().from(reviewSuggestions)).toHaveLength(0);
+		form.set('original', 'quick');
+		expect(await page.actions.suggest(event(invitation.token, cookie, form))).toEqual({
+			suggested: true
+		});
+	});
 });
 
 describe('comment action limit', () => {

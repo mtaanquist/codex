@@ -8,7 +8,8 @@ import {
 	fillSceneFromDraft,
 	saveDraftText
 } from '#lib/server/scene-drafts';
-import { MAX_BASE_HASHES } from '#lib/save-bases';
+import { isBaseHashList } from '#lib/save-bases';
+import { parseSaveOrder } from '#lib/save-order';
 import { checkNoNull, checkProseLength, readJson } from '#lib/server/validation';
 import { rateLimitWrites } from '#lib/server/write-guard';
 
@@ -27,33 +28,33 @@ import { rateLimitWrites } from '#lib/server/write-guard';
 export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 	if (!locals.user) error(401, 'Sign in to edit a draft.');
 	rateLimitWrites(locals.user.id);
-	const payload = await readJson<{ text?: unknown; baseHashes?: unknown }>(request);
+	const payload = await readJson<{ text?: unknown; baseHashes?: unknown; order?: unknown }>(
+		request
+	);
 	if (typeof payload.text !== 'string') error(400, 'text must be a string.');
 	checkText(payload.text);
+	const order = parseSaveOrder(payload.order);
+	if (order === 'invalid') error(400, 'order must name the copy saving and number the save.');
 	const result = await saveDraftText(
 		db,
 		locals.user.id,
 		params.id!,
 		payload.text,
-		baseHashesOf(payload.baseHashes)
+		baseHashesOf(payload.baseHashes),
+		order
 	);
 	if (!result.ok) throwActionError(result);
-	return Response.json({ ok: true });
+	// superseded: a later save from the same copy landed first; this one
+	// changed nothing.
+	return Response.json({ ok: true, ...(result.superseded ? { superseded: true } : {}) });
 };
 
 // Fingerprints of the texts the writer's window has saved or may have saved
 // (see save-bases), as the scene save takes them. Required: a save or a
 // decision without them could replace text saved from another window.
 function baseHashesOf(value: unknown): string[] {
-	if (
-		!Array.isArray(value) ||
-		value.length === 0 ||
-		value.length > MAX_BASE_HASHES ||
-		!value.every((hash) => typeof hash === 'string' && hash.length <= 32)
-	) {
-		error(400, 'baseHashes must be a short list of strings.');
-	}
-	return value as string[];
+	if (!isBaseHashList(value)) error(400, 'baseHashes must be a short list of fingerprints.');
+	return value;
 }
 
 // Postgres text cannot hold a null character, so it is refused here and not

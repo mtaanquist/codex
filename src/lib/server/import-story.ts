@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Database } from './auth';
 import {
+	assistantDrafts,
 	chapters,
 	characterStoryMemberships,
 	characterStoryNotes,
@@ -14,6 +15,7 @@ import {
 import { entityNameColumn, entityTable, type EntityType } from './entity-lookups';
 import { uniqueSlug } from './slugs';
 import { wordCount } from '../word-count';
+import { clampDraftWords, MAX_DRAFT_BRIEF_CHARS } from '../scene-draft';
 import { rewriteBundledAssetLinks, type ImportedNote, type ImportPlan } from '../import-markdown';
 import { effectiveAssetConfig, createAsset, s3AssetStore } from './assets';
 import { createStoryEntity } from './create-entity';
@@ -40,6 +42,7 @@ export type ImportPreview = {
 	notes: { kind: ImportedNote['kind']; name: string; outcome: NoteOutcome }[];
 	// Freeform notes from the story's notebook.
 	freeformNoteCount: number;
+	waitingDraftCount: number;
 	assetCount: number;
 	assetsConfigured: boolean;
 	problems: string[];
@@ -106,6 +109,7 @@ export async function previewImport(
 		words: allScenes.reduce((sum, scene) => sum + wordCount(scene.bodyMd), 0),
 		notes: resolutions.map(({ kind, name, outcome }) => ({ kind, name, outcome })),
 		freeformNoteCount: plan.freeformNotes?.length ?? 0,
+		waitingDraftCount: plan.waitingDrafts?.length ?? 0,
 		assetCount: plan.assets.length,
 		assetsConfigured: (await effectiveAssetConfig(db)) !== null,
 		problems: plan.problems
@@ -120,6 +124,7 @@ export type ImportResult = {
 	entitiesCreated: number;
 	notesSkipped: number;
 	freeformNotesCreated: number;
+	waitingDraftsCreated: number;
 	problems: string[];
 };
 
@@ -171,6 +176,7 @@ export async function runImport(
 	let entitiesCreated = 0;
 	let notesSkipped = 0;
 	let freeformNotesCreated = 0;
+	let waitingDraftsCreated = 0;
 
 	const story = await db.transaction(async (tx) => {
 		const [created] = await tx
@@ -284,16 +290,15 @@ export async function runImport(
 			notesAttached += 1;
 		}
 
+		const sceneIdAt = (at: { chapter: number | null; index: number }) =>
+			at.chapter === null ? unfiledSceneIds[at.index] : chapterSceneIds[at.chapter][at.index];
+
 		for (const note of plan.freeformNotes ?? []) {
 			await tx.insert(notes).values({
 				ownerId: universe.ownerId,
 				universeId: universe.id,
 				storyId: story.id,
-				sceneId: note.scene
-					? note.scene.chapter === null
-						? unfiledSceneIds[note.scene.index]
-						: chapterSceneIds[note.scene.chapter][note.scene.index]
-					: null,
+				sceneId: note.scene ? sceneIdAt(note.scene) : null,
 				title: note.title,
 				bodyMd: rewrite(note.bodyMd),
 				pinned: note.pinned,
@@ -301,6 +306,25 @@ export async function runImport(
 				createdAt: note.createdAt ?? undefined
 			});
 			freeformNotesCreated += 1;
+		}
+
+		// Back as drafts waiting on their scenes, each asked for its scene alone.
+		for (const draft of plan.waitingDrafts ?? []) {
+			const textMd = rewrite(draft.textMd);
+			await tx.insert(assistantDrafts).values({
+				userId: universe.ownerId,
+				storyId: story.id,
+				sceneId: sceneIdAt(draft.scene),
+				brief: draft.brief.slice(0, MAX_DRAFT_BRIEF_CHARS),
+				targetWords: clampDraftWords(draft.targetWords ?? wordCount(textMd)),
+				pov: draft.pov,
+				textMd,
+				status: 'ready',
+				note: draft.note,
+				chapterBrief: draft.chapterBrief,
+				source: draft.source
+			});
+			waitingDraftsCreated += 1;
 		}
 		return story;
 	});
@@ -316,6 +340,7 @@ export async function runImport(
 		entitiesCreated,
 		notesSkipped,
 		freeformNotesCreated,
+		waitingDraftsCreated,
 		problems
 	};
 }

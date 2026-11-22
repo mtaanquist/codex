@@ -151,6 +151,9 @@ export const actions: Actions = {
 			sceneId,
 			author: { userId: locals.user!.id },
 			range: { start: Number(data.get('start')), end: Number(data.get('end')) },
+			// The passage the writer selected, so a range that no longer holds it
+			// is refused rather than applied somewhere else.
+			original: data.has('original') ? formText(data, 'original') : undefined,
 			replacement: formText(data, 'replacement')
 		});
 		if (!result.ok) return fail(400, { message: result.reason });
@@ -297,16 +300,23 @@ export const actions: Actions = {
 				});
 			}
 		}
-		const result = await decideSuggestions(
-			db,
-			locals.user!.id,
-			story.id,
-			ids,
-			decision === 'accept',
-			seen
-		);
-		// The body changed; keep the mention index in step.
-		for (const sceneId of result.sceneIds) await queueSceneMentions(sceneId);
+		// The body changed; keep the mention index in step, also for the
+		// accepts stored before a failure part way through.
+		const changedScenes = new Set<string>();
+		let result;
+		try {
+			result = await decideSuggestions(
+				db,
+				locals.user!.id,
+				story.id,
+				ids,
+				decision === 'accept',
+				seen,
+				changedScenes
+			);
+		} finally {
+			for (const sceneId of changedScenes) await queueSceneMentions(sceneId);
+		}
 		return {
 			done: true,
 			decided: result.decided,

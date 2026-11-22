@@ -40,6 +40,7 @@ import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
 import { locateQuote } from '#lib/quote-locate';
 import { universeSkeleton, type SceneSummary } from '../context/sources.ts';
+import { sceneSummaryToSend } from '../../summary-currency.ts';
 import type { ProviderToolCall, SplitProposal } from '../providers/types.ts';
 import { findTool } from './registry.ts';
 
@@ -151,6 +152,9 @@ export type ToolOutcome = {
 	noteCount?: number;
 	// The call was turned away by `external.stillAllowed`.
 	refused?: true;
+	// The call came while the writer's other staging calls held its turn, and
+	// did nothing.
+	busy?: true;
 	// True when the handler threw. The result says only that it failed, unless
 	// the error was one of the app's own with a message meant to be read.
 	failed?: boolean;
@@ -303,7 +307,7 @@ function toolFailure(err: unknown): ToolOutcome {
 	const code = typeof cause?.code === 'string' ? cause.code : undefined;
 	// Nothing went wrong; the call came at a busy moment and staged nothing.
 	if (err instanceof GateBusyError || code === LOCK_NOT_AVAILABLE) {
-		return { result: STAGING_BUSY, staged: false };
+		return { result: STAGING_BUSY, staged: false, busy: true };
 	}
 	const fromDatabase =
 		code !== undefined || typeof (err as { query?: unknown })?.query === 'string';
@@ -428,6 +432,8 @@ async function loadScene(ctx: ToolContext, sceneId: string) {
 			title: scenes.title,
 			status: scenes.status,
 			summaryMd: scenes.summaryMd,
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt,
 			bodyMd: scenes.bodyMd
 		})
 		.from(scenes)
@@ -566,7 +572,7 @@ async function getScene(ctx: ToolContext, sceneId: string): Promise<string> {
 		id: scene.id,
 		title: scene.title,
 		status: scene.status,
-		summary: scene.summaryMd,
+		summary: sceneSummaryToSend(scene),
 		body
 	});
 }

@@ -17,6 +17,7 @@ import {
 	estimateSceneDraft,
 	type SceneDraftInput
 } from './llm/scene-draft.ts';
+import { supersededSave, type SaveOrder } from '#lib/save-order';
 import { isUuid } from '#lib/slug';
 import { textHash } from '#lib/text-hash';
 import { wordCount } from '#lib/word-count';
@@ -195,7 +196,8 @@ export async function sceneDraftFor(
 		sceneEmpty: scene.bodyMd.trim() === '',
 		sceneTitle: title?.title ?? null,
 		// position marks a draft of a chapter run; it outlives the chapter.
-		inChapterRun: draft.position !== null
+		inChapterRun: draft.position !== null,
+		chapterBrief: draft.chapterBrief
 	};
 }
 
@@ -256,6 +258,7 @@ export async function requestSceneDraft(
 				storyId: input.storyId,
 				sceneId: input.sceneId,
 				jobId,
+				source: 'assistant',
 				brief: input.brief,
 				targetWords: input.targetWords,
 				pov: input.pov?.trim() || null
@@ -343,9 +346,7 @@ export async function stageAppDraft(
 		.where(and(mine, inArray(assistantDrafts.status, OPEN)))
 		.limit(1);
 	if (open) return waiting;
-	// A ceiling on what apps leave for the writer to read in one universe. A
-	// draft an app staged is ready at once and has no job; the Assistant's
-	// always has one.
+	// A ceiling on what apps leave for the writer to read in one universe.
 	const [{ n }] = await db
 		.select({ n: sql<number>`count(*)::int` })
 		.from(assistantDrafts)
@@ -353,7 +354,7 @@ export async function stageAppDraft(
 			and(
 				eq(assistantDrafts.userId, input.userId),
 				eq(assistantDrafts.status, 'ready'),
-				isNull(assistantDrafts.jobId),
+				eq(assistantDrafts.source, 'app'),
 				sql`${assistantDrafts.storyId} in (select ${stories.id} from ${stories} where ${stories.universeId} = (select ${stories.universeId} from ${stories} where ${stories.id} = ${input.storyId}) and ${stories.deletedAt} is null)`,
 				// A draft on a scene in the trash is not waiting for anyone.
 				sql`exists (select 1 from ${scenes} where ${scenes.id} = ${assistantDrafts.sceneId} and ${scenes.deletedAt} is null)`
@@ -379,6 +380,7 @@ export async function stageAppDraft(
 					targetWords: clampDraftWords(wordCount(text)),
 					textMd: text,
 					status: 'ready',
+					source: 'app',
 					note: `Drafted by ${input.from}.`
 				})
 				.returning({ id: assistantDrafts.id })
@@ -407,7 +409,12 @@ async function ownedDraft(db: Database, userId: string, draftId: string) {
 // scene rows: deleting a scene removes its drafts in that order too.
 async function lockReadyDraft(tx: Database, userId: string, draftId: string) {
 	const [draft] = await tx
-		.select({ id: assistantDrafts.id, textMd: assistantDrafts.textMd })
+		.select({
+			id: assistantDrafts.id,
+			textMd: assistantDrafts.textMd,
+			saveSource: assistantDrafts.saveSource,
+			saveSeq: assistantDrafts.saveSeq
+		})
 		.from(assistantDrafts)
 		.where(
 			and(
@@ -566,8 +573,9 @@ export async function discardSceneDraft(
 	// Already accepted or discarded: nothing to do, and nothing to undo.
 	if (rows.length === 0) return notReady('discarded');
 	const unsettled = draft.status === 'pending' || draft.status === 'running';
-	// One scene of a chapter draft: its job has other scenes to write, and
-	// passes over this one now that it is discarded.
+	// One scene of a chapter draft: its job has other scenes to write. It
+	// passes over this one now that it is discarded, and drops its request
+	// if it is being written (see runChapterDraft).
 	return { ok: true, stopJobId: unsettled && draft.position === null ? draft.jobId : null };
 }
 
@@ -584,8 +592,10 @@ export async function saveDraftText(
 	// Fingerprints of the texts the window saving has saved or may have saved.
 	// When the stored text is none of them (it was saved from another window),
 	// the save is refused.
-	baseHashes?: string[]
-): Promise<{ ok: true } | ActionFailure> {
+	baseHashes?: string[],
+	// Which copy is saving, and which of its saves this is (see save-order).
+	order?: SaveOrder | null
+): Promise<{ ok: true; superseded?: true } | ActionFailure> {
 	if (!isUuid(draftId)) return NOT_FOUND;
 	// A draft is paid for and has no history: it is dropped by Discard, never
 	// by a save that would leave it blank.
@@ -593,9 +603,19 @@ export async function saveDraftText(
 	return await db.transaction(async (tx) => {
 		const ready = await lockReadyDraft(tx, userId, draftId);
 		if (!ready) return notReady((await ownedDraft(tx, userId, draftId))?.status);
+		// A later save from the same copy landed first: this one is older.
+		if (supersededSave(ready, order)) return { ok: true as const, superseded: true as const };
 		if (changedElsewhere(ready.textMd, text, baseHashes)) return CHANGED;
-		if (ready.textMd !== text) {
-			await tx.update(assistantDrafts).set({ textMd: text }).where(eq(assistantDrafts.id, draftId));
+		// The order is kept even when the text is unchanged: that save may be
+		// the one that put the text back, and an older one is still on its way.
+		if (ready.textMd !== text || order) {
+			await tx
+				.update(assistantDrafts)
+				.set({
+					textMd: text,
+					...(order ? { saveSource: order.source, saveSeq: order.seq } : {})
+				})
+				.where(eq(assistantDrafts.id, draftId));
 		}
 		return { ok: true as const };
 	});
@@ -924,8 +944,10 @@ export async function requestChapterDraft(
 						chapterId: input.chapterId,
 						sceneId: scene.sceneId,
 						jobId,
+						source: 'assistant' as const,
 						position: index,
 						brief: scene.brief,
+						chapterBrief: input.brief.trim() || null,
 						targetWords: input.targetWords,
 						pov: input.pov?.trim() || null
 					}))

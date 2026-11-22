@@ -451,7 +451,7 @@ describe('assistant notices link by id', () => {
 		]);
 
 		expect(await titles(owner.id)).toEqual([
-			"The Assistant did not write the arc for Bram: this job reached the spend cap at about $1.25. Raise the cap in settings, then try again from the character's entry in Plan."
+			"The Assistant did not write the arc for Bram: it stopped before the next request could take it past your spend cap, having spent about $1.25. Raise the cap in settings, then try again from the character's entry in Plan."
 		]);
 	});
 
@@ -733,7 +733,7 @@ describe('a details read for one entry', () => {
 			[
 				'The Assistant stopped partway through reading for details about Bram, with 1 suggestion left on the entry. To read the rest, select "Suggest details with the Assistant" on the entry again.',
 				'The Assistant stopped partway through reading for details about Bram, with 1 suggestion left on the entry. Raise Longest reply.',
-				'The Assistant stopped reading for details about Bram at about $1.25, with 3 suggestions left on the entry. Raise the cap in settings, then select "Suggest details with the Assistant" on the entry again.'
+				'The Assistant stopped reading for details about Bram before the next request could take it past your spend cap, having spent about $1.25, with 3 suggestions left on the entry. Raise the cap in settings, then select "Suggest details with the Assistant" on the entry again.'
 			].sort()
 		);
 	});
@@ -1174,7 +1174,7 @@ describe('assistant review notices', () => {
 			reviewResult({ reviewed: 2, total: 5, notes: 3, capped: true, spentUsd: 1.5 })
 		);
 		expect(title).toBe(
-			'The review of "Halden" stopped after 2 of 5 scenes at about $1.50. Raise the cap in settings or run the review again to continue.'
+			'The review of "Halden" stopped after 2 of 5 scenes, before the next request could take it past your spend cap, having spent about $1.50. Raise the cap in settings or run the review again to continue.'
 		);
 	});
 
@@ -1250,7 +1250,7 @@ describe('assistant review notices', () => {
 			job({ userId: owner.id, storyId: story.id, mode: 'continuity' as const })
 		]);
 		expect(await titles(owner.id)).toEqual([
-			'The continuity pass on "Halden" stopped at about $0.25, with 2 notes left. Raise the cap in settings or run the review again to continue.'
+			'The continuity pass on "Halden" stopped before the next request could take it past your spend cap, having spent about $0.25, with 2 notes left. Raise the cap in settings or run the review again to continue.'
 		]);
 	});
 
@@ -1324,7 +1324,7 @@ describe('assistant review notices', () => {
 		});
 		await handlers.assistantSummaries([job({ userId: owner.id, storyId: story.id })]);
 		expect(await titles(owner.id)).toEqual([
-			'The Assistant stopped summarising "Halden" at about $0.40, after 3 summaries. Raise the cap in settings or run it again to continue. The cap could not be checked.'
+			'The Assistant stopped summarising "Halden" after 3 summaries, before the next request could take it past your spend cap, having spent about $0.40. Raise the cap in settings or run it again to continue. The cap could not be checked.'
 		]);
 	});
 

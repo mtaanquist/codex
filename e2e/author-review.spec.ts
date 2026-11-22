@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import pg from 'pg';
+import { e2eDatabaseUrl } from './database';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 import { confirmPrompt } from './confirm';
@@ -233,6 +235,154 @@ test('typing immediately after an accept keeps the accepted text', async ({ page
 	await page.reload();
 	await expect(page.locator('.review-edit .cm-content')).toContainText('REPLACED');
 	await expect(page.locator('.review-edit .cm-content')).toContainText('TYPEDTAIL');
+});
+
+// #1368: an insertion (here staged by the Assistant) accepted while the
+// author keeps typing elsewhere lands alongside the typing, with no conflict.
+test('typing while an insertion is accepted keeps both', async ({ page }) => {
+	await gotoReady(page, '/');
+	const name = `Insert ${Date.now()}`;
+	await pickFromLibraryMenu(page, 'New universe');
+	await page.getByLabel('New universe').fill(name);
+	await page.getByRole('button', { name: 'Create universe' }).click();
+	await gotoReady(page, '/');
+	await startStoryInUniverse(page, name);
+	await page.getByLabel('New story').fill('Insert');
+	await page.getByRole('button', { name: 'Create story' }).click();
+	await page.getByRole('button', { name: 'New chapter' }).click();
+	await page.getByRole('button', { name: 'New scene' }).click();
+	await page.locator('.cm-content').click();
+	await page.keyboard.type('Alpha beta. Gamma delta.');
+	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
+	const storyPath = new URL(page.url()).pathname;
+
+	const pool = new pg.Pool({ connectionString: e2eDatabaseUrl() });
+	let sceneId: string;
+	try {
+		const { rows } = await pool.query<{ id: string; story_id: string; body_md: string }>(
+			`select s.id, s.story_id, s.body_md from scenes s join stories st on st.id = s.story_id
+			 join universes u on u.id = st.universe_id where u.name = $1`,
+			[name]
+		);
+		const [scene] = rows;
+		sceneId = scene.id;
+		const revision = await pool.query<{ id: string }>(
+			`insert into revisions (entity_type, entity_id, body_md, reason)
+			 values ('scene', $1, $2, 'autosave') returning id`,
+			[scene.id, scene.body_md]
+		);
+		await pool.query(
+			`insert into review_suggestions
+			 (story_id, scene_id, assistant, base_revision_id, range_start, range_end, replacement)
+			 values ($1, $2, true, $3, 12, 12, 'INSERTED ')`,
+			[scene.story_id, scene.id, revision.rows[0].id]
+		);
+	} finally {
+		await pool.end();
+	}
+	await gotoReady(page, `${storyPath}/review?scene=${sceneId}`);
+	const prose = page.locator('.review-edit .cm-content');
+	await expect(prose).toContainText('Gamma delta.');
+
+	// Hold the accept's answer until the author has typed.
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	let arrived!: () => void;
+	const accepting = new Promise<void>((resolve) => (arrived = resolve));
+	await page.route(
+		(url) => url.search.includes('acceptSuggestion'),
+		async (route) => {
+			const response = await route.fetch();
+			arrived();
+			await held;
+			await route.fulfill({ response });
+		}
+	);
+	const saved = page.waitForResponse(
+		(response) =>
+			response.url().includes('/api/scenes/') &&
+			response.request().method() === 'PUT' &&
+			response.ok() &&
+			(response.request().postData() ?? '').includes('INSERTED Gamma') &&
+			(response.request().postData() ?? '').includes('TYPEDTAIL')
+	);
+	await page
+		.locator('.rv-card')
+		.filter({ hasText: 'INSERTED' })
+		.getByRole('button', { name: 'Accept suggestion' })
+		.click();
+	await accepting;
+	await prose.click();
+	await prose.press('ControlOrMeta+End');
+	await prose.pressSequentially(' TYPEDTAIL');
+	release();
+	await saved;
+	await expect(page.getByText('This scene was changed in another window')).toHaveCount(0);
+	await page.reload();
+	await expect(page.locator('.review-edit .cm-content')).toHaveText(
+		'Alpha beta. INSERTED Gamma delta. TYPEDTAIL'
+	);
+});
+
+// #1356: once an accept's page refresh lands, the editor keeps focus, so keys
+// typed after it reach the text and are saved, not dropped while the pill
+// reads "Saved".
+test('typing after an accept refresh lands is kept', async ({ page }) => {
+	await gotoReady(page, '/');
+	const stamp = Date.now();
+	await pickFromLibraryMenu(page, 'New universe');
+	await page.getByLabel('New universe').fill(`Focus ${stamp}`);
+	await page.getByRole('button', { name: 'Create universe' }).click();
+	await gotoReady(page, '/');
+	await startStoryInUniverse(page, `Focus ${stamp}`);
+	await page.getByLabel('New story').fill('Focus');
+	await page.getByRole('button', { name: 'Create story' }).click();
+	await page.getByRole('button', { name: 'New chapter' }).click();
+	await page.getByRole('button', { name: 'New scene' }).click();
+	await page.locator('.cm-content').click();
+	await page.keyboard.type('Keyword BASETAIL closing.');
+	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
+
+	await page.getByRole('link', { name: 'Review', exact: true }).click();
+	const prose = page.locator('.review-edit .cm-content');
+	await prose.waitFor();
+
+	const line = prose.locator('.cm-line').first();
+	const box = (await line.boundingBox())!;
+	await page.mouse.move(box.x + 3, box.y + box.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 8 });
+	await page.mouse.up();
+	await page.locator('.rv-seltool').getByRole('button', { name: 'Suggest edit' }).click();
+	await page.getByLabel('Suggested text').fill('REPLACED');
+	await page.getByRole('button', { name: 'Save suggestion' }).click();
+	await expect(page.locator('.rv-diff-ins')).toHaveText('REPLACED');
+
+	// Hold the page data refresh that follows the accept, so the writer is
+	// already back in the editor and typing when it lands.
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/__data.json*', async (route) => {
+		await held;
+		await route.continue();
+	});
+	const refreshed = page.waitForResponse((response) => response.url().includes('__data.json'));
+	await page.getByRole('button', { name: 'Accept suggestion' }).click();
+	await expect(prose).toContainText('REPLACED');
+	await prose.press('End');
+	await page.keyboard.type(' BEFORE');
+	release();
+	await refreshed;
+	await expect(page.locator('.rv-diff-ins')).toHaveCount(0);
+	await page.unroute('**/__data.json*');
+
+	// No click back into the editor: the keys go wherever focus now is.
+	await page.keyboard.type(' AFTER');
+	await expect(prose).toContainText('BEFORE AFTER');
+	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
+	await page.reload();
+	await expect(page.locator('.review-edit .cm-content')).toContainText('REPLACED');
+	await expect(page.locator('.review-edit .cm-content')).toContainText('BEFORE AFTER');
 });
 
 // #823: the author clears finished notes, keeping open ones, then clears

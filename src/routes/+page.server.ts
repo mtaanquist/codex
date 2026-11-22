@@ -19,6 +19,7 @@ import { signupMode } from '#lib/server/settings';
 import { saveLibraryView, userPreferences } from '#lib/server/preferences';
 import { formText } from '#lib/server/validation';
 import { draftsByStory } from '#lib/server/story-drafts';
+import { countProposals } from '#lib/server/proposals';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	// Signed-out visitors get the landing page. The page checks the layout's
@@ -114,9 +115,12 @@ export const load: PageServerLoad = async ({ locals }) => {
 		};
 	});
 
+	// What the Assistant or an app left for the writer to decide, per universe.
+	const waiting = await countProposals(db, user.id);
+
 	return {
 		libraryView: (await userPreferences(db, user.id)).libraryView,
-		universes: list,
+		universes: list.map((universe) => ({ ...universe, waiting: waiting.get(universe.id) ?? 0 })),
 		stories: storyList,
 		trashedUniverses,
 		trashedStories

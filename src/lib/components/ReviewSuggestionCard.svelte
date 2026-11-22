@@ -61,6 +61,10 @@
 	const pending = $derived(suggestion.status === 'pending');
 	// The author works an open suggestion straight from the card corner.
 	const canDecide = $derived(role === 'author' && pending);
+	// While an accept or reject runs (an accept first saves the open editor,
+	// which can stall), so repeated clicks do not queue more. The buttons are
+	// marked aria-disabled rather than disabled so they keep focus.
+	let deciding = $state(false);
 
 	const confirmRetract = confirmEnhance({
 		title: 'Delete your suggested edit?',
@@ -116,24 +120,31 @@
 						method="POST"
 						action="?/acceptSuggestion"
 						use:enhance={async ({ cancel }) => {
+							if (deciding) return cancel();
+							deciding = true;
 							if (beforeAccept && !(await beforeAccept())) {
+								deciding = false;
 								cancel();
 								return;
 							}
 							return async ({ result, update }) => {
-								if (result.type === 'success') {
-									const { bodyMd, baseHash } = result.data ?? {};
-									onAccepted?.(
-										[suggestion.id],
-										typeof bodyMd === 'string' && typeof baseHash === 'string'
-											? { bodyMd, baseHash }
-											: null
-									);
-								} else if (result.type === 'failure') {
-									// The suggestion may have been revised; show it as it is now.
-									await invalidateAll();
+								try {
+									if (result.type === 'success') {
+										const { bodyMd, baseHash } = result.data ?? {};
+										onAccepted?.(
+											[suggestion.id],
+											typeof bodyMd === 'string' && typeof baseHash === 'string'
+												? { bodyMd, baseHash }
+												: null
+										);
+									} else if (result.type === 'failure') {
+										// The suggestion may have been revised; show it as it is now.
+										await invalidateAll();
+									}
+									await update();
+								} finally {
+									deciding = false;
 								}
-								await update();
 							};
 						}}
 					>
@@ -144,18 +155,34 @@
 							type="submit"
 							title="Accept suggestion"
 							aria-label="Accept suggestion"
+							aria-disabled={deciding}
 						>
 							<Icon name="check" size={15} />
 						</button>
 					</form>
 				{/if}
-				<form method="POST" action="?/rejectSuggestion" use:enhance>
+				<form
+					method="POST"
+					action="?/rejectSuggestion"
+					use:enhance={({ cancel }) => {
+						if (deciding) return cancel();
+						deciding = true;
+						return async ({ update }) => {
+							try {
+								await update();
+							} finally {
+								deciding = false;
+							}
+						};
+					}}
+				>
 					<input type="hidden" name="suggestionId" value={suggestion.id} />
 					<button
 						class="icon-btn sm reject"
 						type="submit"
 						title="Reject suggestion"
 						aria-label="Reject suggestion"
+						aria-disabled={deciding}
 					>
 						<Icon name="close" size={15} />
 					</button>

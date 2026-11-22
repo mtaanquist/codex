@@ -109,20 +109,24 @@ function requestBody(req: CompletionRequest, stream: boolean): string {
 
 // Both response shapes report usage as prompt_tokens/completion_tokens. Where
 // the endpoint also reports prompt_tokens_details.cached_tokens (OpenAI and the
-// gateways that mirror it), that count is already part of prompt_tokens; it is
-// carried through as the cached share so the cost can price it cheaper.
+// gateways that mirror it), or prompt_cache_hit_tokens (DeepSeek), that count
+// is already part of prompt_tokens; it is carried through as the cached share
+// so the cost can price it cheaper.
 function parseUsage(raw: unknown): TokenUsage | undefined {
 	const usage = raw as
 		| {
 				prompt_tokens?: unknown;
 				completion_tokens?: unknown;
 				prompt_tokens_details?: { cached_tokens?: unknown };
+				prompt_cache_hit_tokens?: unknown;
 		  }
 		| undefined;
 	const prompt = Number(usage?.prompt_tokens);
 	const completion = Number(usage?.completion_tokens);
 	if (!Number.isFinite(prompt) || !Number.isFinite(completion)) return undefined;
-	const cached = Number(usage?.prompt_tokens_details?.cached_tokens);
+	const cached = Number(
+		usage?.prompt_tokens_details?.cached_tokens ?? usage?.prompt_cache_hit_tokens
+	);
 	return {
 		promptTokens: prompt,
 		completionTokens: completion,
@@ -388,7 +392,7 @@ export const openaiProvider: Provider = {
 		const json = JSON.parse(text) as {
 			data?: {
 				id?: unknown;
-				pricing?: { prompt?: unknown; completion?: unknown };
+				pricing?: { prompt?: unknown; completion?: unknown; input_cache_read?: unknown };
 				context_length?: unknown;
 			}[];
 		};
@@ -408,11 +412,14 @@ export const openaiProvider: Provider = {
 
 // OpenRouter's /models reports per-token USD pricing as strings; carry it
 // through where present so the picker can show it. Other endpoints omit it.
+// input_cache_read is what a cached prompt token costs on models that cache,
+// kept so the spend meter can price those tokens at the real figure.
 function parsePricing(
 	raw:
 		| {
 				prompt?: unknown;
 				completion?: unknown;
+				input_cache_read?: unknown;
 		  }
 		| undefined
 ): Pick<ModelInfo, 'pricing'> {
@@ -420,7 +427,20 @@ function parsePricing(
 	const completion = Number(raw?.completion);
 	if (!Number.isFinite(prompt) || !Number.isFinite(completion)) return {};
 	if (prompt === 0 && completion === 0) return {};
-	return { pricing: { prompt, completion } };
+	// Number(undefined) is NaN and Number('') is 0, so an absent or blank
+	// figure must be ruled out before the conversion.
+	const rawRead = raw?.input_cache_read;
+	const cacheRead =
+		(typeof rawRead === 'string' && rawRead.trim() !== '') || typeof rawRead === 'number'
+			? Number(rawRead)
+			: NaN;
+	return {
+		pricing: {
+			prompt,
+			completion,
+			...(Number.isFinite(cacheRead) && cacheRead >= 0 ? { cacheRead } : {})
+		}
+	};
 }
 
 // OpenRouter's /models reports the model's context window as context_length;

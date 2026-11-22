@@ -1016,17 +1016,147 @@ describe('review findings, round 10', () => {
 	it('L1: does not grow a marker over a word typed beside it when its edge letter is still there', () => {
 		const was = 'She said it always her through!';
 		const base = [before, was, after].join('\n\n');
-		for (const [now, words, main] of [
-			['She said it always hor through! brisk', 'always her through!', 'always hor through!'],
-			['She said it always hor through! brisk', 'her through!', 'hor through!'],
-			['She said it brisk hor through!', 'her through!', 'hor through!']
+		// Since #1361 the first two keep their end in " through!", a run
+		// between the typo and the typed word that is no chance match, so
+		// they land where main's do; before, they were detached.
+		for (const [now, words, main, got] of [
+			[
+				'She said it always hor through! brisk',
+				'always her through!',
+				'always hor through!',
+				'always hor through!'
+			],
+			['She said it always hor through! brisk', 'her through!', 'hor through!', 'hor through!'],
+			['She said it brisk hor through!', 'her through!', 'hor through!', null]
 		]) {
 			const current = [before, now, after].join('\n\n');
-			const at = base.indexOf(words);
-			const end = at + words.length;
+			const at = base.indexOf(words!);
+			const end = at + words!.length;
 			expect(quote(current, mainMarkerOf(base, current, at, end))).toBe(main);
-			expect(createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end)).toBeNull();
+			expect(
+				quote(current, createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end))
+			).toBe(got);
 		}
+	});
+});
+
+// Known limits of #1361: a chance run in a rewritten paragraph, and ranges
+// lost between edits a few letters apart.
+describe('runs that cleanupSemantic folds', () => {
+	const door = 'Grey wind every our there there, heavy pulled light road candle door.';
+	const after = 'They set out before the bell rang for the morning office.';
+
+	// Seed 38 of the property test: the paragraph was rewritten, and the new
+	// one shares "lmost through " (14 characters) with it by chance.
+	it('places nothing through a long chance run in a rewritten paragraph', () => {
+		const was =
+			'Almost your almost, listened heavy frowned silence table held once? Key frowned field almost through night their almost slowly after gave!';
+		const now =
+			'Light your Halvard Dunmore even lantern before the boat looked she. Cold the my kept found Corwen map, hand through book Tobin evening harbour Aldous. Almost through gave garden quiet opened called waited kettle that only but boat lantern kettle gave!';
+		const base = [door, was].join('\n\n');
+		const current = [door, now].join('\n\n');
+		const at = base.indexOf('rough night their almost slowly after gave!');
+		const end = base.length;
+		expect(createAnchorMapper(WRITER_DIFF_BUDGET).range(base, current, at, end)).toBeNull();
+		expect(createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end)).toBeNull();
+		// The paragraph before it still maps.
+		expect(reanchorRange(base, current, 0, door.length)).toEqual({ start: 0, end: door.length });
+	});
+
+	// " to the ol" lies between two typos: ten characters, too few to count
+	// on their own, but the edits on either side are a letter each, so the
+	// run is no chance match.
+	const was = 'She carried the lantern down to the old harbour wall at dawn.';
+	const now = 'She carried the lantern dowm to the olf harbour wall at dawn.';
+	const base = [door, was, after].join('\n\n');
+	const current = [door, now, after].join('\n\n');
+
+	it('keeps a range whose end lies between two typos a few letters apart', () => {
+		const at = base.indexOf('the lantern');
+		const end = base.indexOf('to the old') + 'to the'.length;
+		expect(quote(current, mainCommentOf(base, current, at, end))).toBe('the lantern dowm to the');
+		expect(quote(current, reanchorRange(base, current, at, end))).toBe('the lantern dowm to the');
+		expect(quote(current, createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end))).toBe(
+			'the lantern dowm to the'
+		);
+	});
+
+	it('still needs twelve characters to place an edit for an accept', () => {
+		const at = base.indexOf('to the old');
+		const end = at + 'to the'.length;
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		expect(quote(current, mapper.range(base, current, at, end))).toBe('to the');
+		expect(placeSuggestion(mapper, base, current, at, end)).toBeNull();
+		expect(mapper.point(base, current, at + 1)).toBeNull();
+	});
+});
+
+// A body stored with \r\n (an old import) is saved back with plain newlines
+// once the writer edits it in the editor. That change of line endings is not
+// an edit, so it must not cost a short line its comments.
+describe('a body whose line breaks became plain newlines', () => {
+	const lines = [
+		'The rain had not stopped for three days on the coast.',
+		'"Yes."',
+		'"No, not yet."',
+		'She walked down to the harbour alone after supper.',
+		'Wait.',
+		'The boats were tied up and nobody was about.'
+	];
+	const base = lines.join('\r\n\r\n') + '\r\n';
+	const current = lines.join('\n\n').replace('alone after', 'alone, after') + '\n';
+	const shortLines = ['"Yes."', '"No, not yet."', 'Wait.'];
+
+	it('keeps comments and suggestions on short lines', () => {
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		for (const words of [...shortLines, 'harbour', 'nobody was about.']) {
+			const at = base.indexOf(words);
+			const range = mapper.range(base, current, at, at + words.length);
+			expect({ words, got: quote(current, range) }).toEqual({ words, got: words });
+			const placed = placeSuggestion(mapper, base, current, at, at + words.length);
+			expect({ words, got: quote(current, placed) }).toEqual({ words, got: words });
+			expect(mapper.unchecked(base, current, at, at + words.length)).toBe(false);
+		}
+	});
+
+	it('maps points and marker ends through the old line breaks', () => {
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		for (const words of shortLines) {
+			const at = base.indexOf(words);
+			expect(mapper.point(base, current, at)).toBe(current.indexOf(words));
+			expect(quote(current, mapper.ends(base, current, at, at + words.length))).toBe(words);
+		}
+		// Between \r and \n: the newline that replaced them.
+		const gap = base.indexOf('\r\n"Yes."') + 1;
+		expect(mapper.point(base, current, gap)).toBe(current.indexOf('\n"Yes."'));
+	});
+
+	it('maps a range across a line break onto the newline text', () => {
+		const from = base.indexOf('Wait.');
+		const to = base.indexOf('nobody');
+		const range = createAnchorMapper(WRITER_DIFF_BUDGET).range(base, current, from, to);
+		expect(quote(current, range)).toBe('Wait.\n\nThe boats were tied up and ');
+	});
+
+	// The suggestion's original holds \r\n; the text it now sits in does not.
+	it('places a suggestion across a line break on the newline text', () => {
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		const from = base.indexOf('Wait.');
+		const to = base.indexOf('nobody');
+		const placed = placeSuggestion(mapper, base, current, from, to);
+		expect(quote(current, placed)).toBe('Wait.\n\nThe boats were tied up and ');
+		const edge = base.indexOf('"Yes."');
+		const across = placeSuggestion(mapper, base, current, edge, edge + 13);
+		expect(quote(current, across)).toBe('"Yes."\n\n"No');
+	});
+
+	it('still refuses a suggestion across a line break whose words changed', () => {
+		const edited = current.replace('Wait.', 'Hold on.');
+		const from = base.indexOf('Wait.');
+		const to = base.indexOf('nobody');
+		expect(placeSuggestion(createAnchorMapper(WRITER_DIFF_BUDGET), base, edited, from, to)).toBe(
+			null
+		);
 	});
 });
 
@@ -1844,9 +1974,10 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 		expect(stretchedAlone.Retyped.length).toBeLessThanOrEqual(RETYPED_LIMIT);
 		expect(grown.length).toBeLessThanOrEqual(GROWN_LIMIT);
 		// What clustered edits cost: over seeds 1 to 60 and 100 to 160, the
-		// support rule lost 3.5% to 5.1% a seed of the ranges main placed
-		// where they belong, and ties at most 0.031% (seed 51: 4.1% and 4).
-		expect(counts.clusterSupport).toBeLessThan(0.06 * counts.clusterMainRight);
+		// support rule lost 2.9% of the ranges main placed where they belong
+		// (3.7% at most a seed; 4.1% and 5.1% before #1361), and ties at most
+		// 0.031% (seed 51: 3.1% and 4).
+		expect(counts.clusterSupport).toBeLessThan(0.045 * counts.clusterMainRight);
 		expect(ties.length).toBeLessThan(0.0005 * counts.clusterMainRight);
 		expect(counts.untouched).toBeGreaterThan(1000);
 		expect(counts.truth).toBeGreaterThan(4000);

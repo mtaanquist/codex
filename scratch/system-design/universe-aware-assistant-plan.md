@@ -197,8 +197,9 @@ rest of the line. Add a `/write` command where everything after `/write` is the
 brief, routed to the same co-author drafting the toolbar Write button uses, so the
 writer can draft a passage without leaving the chat.
 
-- `src/lib/assistant-slash.ts` - add `{ name: 'write', detail: 'Draft a passage from
-  a brief (everything after the command)' }`, and add a generic `slashArgs(raw):
+- `src/lib/assistant-slash.ts` - add `{ name: 'write', detail: 'Write a passage from
+  a brief (everything after the command)' }` (first shipped as "Draft a passage",
+  renamed once "Draft" came to mean a whole scene), and add a generic `slashArgs(raw):
   string` helper returning the text after the first token (reuse the same split as
   `slashName`). Keep it generic so other commands can take arguments later, but only
   `/write` uses it now.

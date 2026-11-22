@@ -30,9 +30,11 @@ let universeId: string;
 
 const MODEL = 'review-model';
 // A round number so the arithmetic in the cap tests is obvious: every request
-// reports 1000 prompt tokens, priced at $0.001 each, so one scene costs $1.
-const PROMPT_TOKENS = 1000;
-const PRICE_PER_TOKEN = 0.001;
+// reports 100,000 prompt tokens, priced at $0.00001 each, so one scene costs
+// $1. What a request is held to before it is sent (its own few thousand
+// tokens) stays a few cents, so the stops fall where the reported spend says.
+const PROMPT_TOKENS = 100_000;
+const PRICE_PER_TOKEN = 0.00001;
 
 // fail: a scene title whose pass throws. The reply is an empty JSON list, which
 // a scene pass ignores and the continuity survey reads as no candidates.
@@ -326,7 +328,33 @@ describe('per-run spend cap (#549)', () => {
 		expect(result.spentUsd).toBeCloseTo(2, 6);
 	});
 
-	it('stops on a price the writer typed, with nothing discovered (#1274)', async () => {
+	it('stops before a scene whose review could pass the cap, as a capped run (#1331)', async () => {
+		const storyId = await seedStory(3);
+		await priceModel();
+		// One dollar a scene already spent by an earlier attempt of the job, and
+		// the next scene's prompt alone priced past what is left.
+		await configure({ spendCapUsd: 1.01 });
+		await pool.query(
+			`insert into assistant_job_spend (job_id, user_id, spent_usd) values ('held-1', $1, 1)`,
+			[userId]
+		);
+		const { provider: p, seen } = provider();
+		const result = await reviewStoryScenes(
+			db,
+			{ userId, storyId, jobId: 'held-1' },
+			{ provider: p }
+		);
+
+		expect(seen).toHaveLength(0);
+		expect(result.reviewed).toBe(0);
+		expect(result.failed).toBe(0);
+		expect(result.failures).toHaveLength(0);
+		expect(result.capped).toBe(true);
+		const run = await loadReviewRun(db, 'held-1');
+		expect(run?.completed ?? []).toHaveLength(0);
+	});
+
+	it('stops on a price the writer typed, with nothing discovered', async () => {
 		const storyId = await seedStory(3);
 		await configure({
 			spendCapUsd: 1.5,
@@ -342,7 +370,7 @@ describe('per-run spend cap (#549)', () => {
 		expect(result.failures).toHaveLength(0);
 	});
 
-	// 900 of every 1000 prompt tokens come back as read from the endpoint's cache.
+	// Nine in ten prompt tokens come back as read from the endpoint's cache.
 	function mostlyCached() {
 		const stub = provider();
 		const respond = stub.provider.respond.bind(stub.provider);
@@ -350,7 +378,7 @@ describe('per-run spend cap (#549)', () => {
 			const reply = await respond(...args);
 			return {
 				...reply,
-				usage: { promptTokens: PROMPT_TOKENS, completionTokens: 0, cachedPromptTokens: 900 }
+				usage: { promptTokens: PROMPT_TOKENS, completionTokens: 0, cachedPromptTokens: 90_000 }
 			};
 		};
 		return stub.provider;
@@ -384,7 +412,7 @@ describe('per-run spend cap (#549)', () => {
 		});
 		const result = await reviewStoryScenes(db, { userId, storyId }, { provider: mostlyCached() });
 
-		// 100 fresh + 900 at a tenth = 19 cents a scene.
+		// A tenth fresh, nine tenths at a tenth of the price: 19 cents a scene.
 		expect(result.reviewed).toBe(3);
 		expect(result.capped).toBeUndefined();
 	});
@@ -912,6 +940,25 @@ describe('spend cap on the standalone summaries job (#622)', () => {
 			.where(eq(scenes.storyId, storyId))
 			.orderBy(asc(scenes.globalPosition));
 		expect(rows[2].summaryMd).toBeNull();
+	});
+
+	it('stops before a summary that could take the job past the cap (#1331)', async () => {
+		const storyId = await seedUnsummarised(3);
+		// A summary's reply, at its 200-token limit, could add another $1.
+		await saveModelPricing(db, userId, {
+			[MODEL]: { prompt: PRICE_PER_TOKEN, completion: 0.005 }
+		});
+		await configure({ spendCapUsd: 1.5 });
+		const { provider: p, seen } = provider();
+		const result = await summariseStory(db, { userId, storyId }, { provider: p });
+
+		// The second would fit under the old check ($1 spent), but not with
+		// its own cost counted.
+		expect(seen).toHaveLength(1);
+		expect(result.scenes).toBe(1);
+		expect(result.failed).toBe(0);
+		expect(result.capped).toBe(true);
+		expect(result.spentUsd).toBeCloseTo(1, 6);
 	});
 
 	it('runs to the end with no cap set', async () => {

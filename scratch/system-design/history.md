@@ -13,6 +13,196 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
+on `staging/bug-fixes`, staging review round 2). Review anchors count
+characters in the stored body, where \r\n is two: the guest review page
+slices the raw text, the Assistant locates quotes in it, the anchor mapper
+moves a CRLF base onto an LF current text with `lfOffset`, and accept slices
+the stored body. All of that was consistent (integration tests confirm a
+replacement and an insertion land right on a CRLF body). The odd one out was
+the review centre's CodeMirror editor, which reads \r\n as one break: it
+drew marks one character short per earlier break, and sent its selection
+offsets as they were, so a suggestion made there on an unsaved CRLF scene
+was stored at the wrong place and an accept would have rewritten the wrong
+text. Both were already so on main. The editor now moves anchors across at
+its boundary (`anchorsAsShown` in, `storedOffset` out, against the text the
+server holds). As a guard for any offset mismatch, both suggest actions send
+the selected passage as `original`, and createSuggestion refuses a range that
+does not hold it, compared with plain newlines. Normalising to LF on the
+server instead was left out: it would change every stored offset and the
+mapper's CRLF path.
+
+Review anchor limits (2026-11-22, `fix/review-anchor-limits` on
+`staging/bug-fixes`, part of #1361). The support rule counted only a run's
+length, so a 14-character chance run in a rewritten paragraph held an end
+(property seed 38), while a run of 10 or 11 between two typos did not. A run
+now also has to survive the equality fold of diff-match-patch's
+cleanupSemantic (a run no longer than the edits on both sides of it is
+folded, and the runs before it are looked at again). The fold is only a
+mark: the diff and so every mapping stays as it was. With the fold, 12 alone
+changed nothing over seeds 1 to 60 and 100 to 160 but take away seed 38's 4
+results on unrelated text. An end lying in its own run then needs 10
+characters (`CLOSE_SUPPORT`), which cut the clustered losses from 4.1% to
+2.9% (5.1% to 3.7% at most a seed) and added no misplaced, grown or
+stretched result. 8 was tried: it lost 1.9%, but put 4 results on unrelated
+text (seeds 22 and 45, "Dunmore " in a rewritten sentence) and misplaced 66
+clustered ones. Lowering the length for every use first let markers grow
+over a typed word (+15). An end resting outside, the other end of such a
+marker, points and `placeSuggestion` (`range(..., exact)`) therefore keep
+12. The L1 test's first two cases now land where main's do instead of
+detaching. Mads kept three limits as accepted (recorded on the issue): a
+marker whose edge word or whole text was replaced follows the replacement
+(identical text can come from a word typed beside a deleted one), the
+identical copy beside an edited original takes the accept, and a sentence
+moved past a lightly edited paragraph can stretch a range over it (the
+single sentence pair splits the gap, so the paragraph is unmatched on both
+sides). For the save budget he chose a background remap: a marker the save
+cannot compare within `SAVE_DIFF_BUDGET` is detached as before, and a
+`marker_remaps` row (migration 0104) keeps the old text and its anchor. The
+worker's `remap-markers` sweep, every minute, maps it onto the scene's text
+as it then stands under `BACKGROUND_DIFF_BUDGET` (edit distance 10,000),
+outside any lock. It writes under the scene's row lock only if the text is
+still the one it mapped onto (otherwise the row waits for the next sweep),
+only to markers still detached and still in that scene, and deletes the row
+in the same transaction. A marker given a new anchor, or detached again by a
+later save, is dropped from older rows, so a stale base is never used. A
+sweep rather than a job sent from the save: the row is only visible once the
+save commits, and the save paths run inside transactions in modules the
+worker also loads. The line and sentence passes stay unbudgeted (at most
+about 0.8 s for a save at 2M here; 1.9 s was not reproduced).
+
+MCP endpoint low findings, second pass (2026-11-22,
+`fix/mcp-endpoint-lows-2` on `staging/bug-fixes`, #1360). A call turned
+away before it did anything (a full reading or staging queue, or the
+writer's budget when the app's own had room) now gives back the stamps it
+took, through `refundSlidingRateLimit`; before, an app retrying into a busy
+queue spent its minute without one call running. Staging "busy" is now an
+error result like reading "busy". Client metadata documents that could not
+be fetched, or did not qualify, are not fetched again for a minute
+(`CLIENT_DOCUMENT_RETRY_MS`), kept in memory like the rate limits: an
+unreachable host keeps the copy already checked, a disqualified document
+lets nobody in. A minute keeps a fixed document usable at once while
+capping a failing one at one fetch a minute; fetches of one address at once
+share one request. Connected apps stays on the account page while the admin
+switch is off for a writer with apps or tokens left, since turning access
+back on would let them in again; it shows only the lists and their
+Disconnect and Revoke buttons. Suggestion decisions are enhanced forms that
+move focus to the next row (or the list heading) and announce the outcome
+through `FormStatus live`. On Mads's decisions: the 30-day clean-up of
+self-registered clients stays, and the consent page's unknown-client error
+now tells the writer to remove and re-add the connector; a count chip beside
+each universe in the library (`countProposals`, now one grouped count per
+universe covering entries, splits and app drafts) links to Suggestions,
+which lists app drafts too. No bell notification. The axe pass now leaves a
+comment and a
+suggested edit on its story: it found the margin markers focusable inside
+the `aria-hidden` rail (now `tabindex="-1"`, the cards are the keyboard
+path) and struck text at 3.6:1 under a comment; struck text is muted rather
+than faint, and full strength where a comment's tint is laid over it.
+
+Fingerprint low findings, wave 2 (2026-11-22, `fix/fingerprint-lows` on
+`staging/bug-fixes`, part of #1322, after #1392). A cut-off enrich read and
+an empty chapter summary stored nothing, so every pass paid for the same
+request again. They now store `unusableReplyMark` in the fingerprint column:
+a distinct `unusable:` hash of the request plus the role's model, tuning and
+extra fields, so it never reads as a read, and a new limit or model is
+worth another try. Storing the plain fingerprint was rejected: it would mark
+an unread entry read. The 3.21.4 enrich fingerprint covered aliases and
+details, so an entry edited after its read matched neither formula; the
+entry's History snapshots supply the aliases and details it had, and a hash
+match is proof, so no time heuristic was needed (coalesced autosaves can
+lose the version, and then it is read once, as before). The pass now builds
+only the fingerprint, with the entity type known and the stored input in
+the same select. The arc check's first-mention query reads off a widened
+`entity_mentions_target_idx` (target type, target, source, position;
+0103): on 2,000 scenes and 50 arcs the median check went from about 250
+to 200 ms locally, the rest being the 20,000 first-mention rows it joins and
+moves. Sampling in SQL to move fewer rows was left out: any drift from
+`sampleEvenly` would change every stored arc fingerprint. A universe-wide "Suggest details" checks each
+part's stories before sending, since the gateway only checks a story's mute
+on a story-scoped request; the whole-book review was already safe (each
+call is story-scoped) and now has a test. The arc section names stories
+with out-of-date scene summaries, so the writer runs Update summaries
+before refreshing.
+
+Cache read rates per provider (2026-11-22, `fix/cache-read-rates` on
+`staging/bug-fixes`, #1372). Cached tokens on every provider but Claude were
+metered at the full price, so an OpenAI or Gemini figure read high and a cap
+stopped early. `cacheReadRate` is now keyed by the provider id: the preset
+providers whose adapters report cached tokens get their published rate, the
+dearest across their models so a figure still never reads low (OpenAI a half,
+since gpt-4o caches at a half and newer models lower; Gemini a quarter;
+DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with
+`prompt_cache_hit_tokens` now read as the cached share where
+`prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
+no one rate fits; its discovery reports `input_cache_read` per model, which is
+carried as an optional `cacheRead` on the price itself and wins over any rate.
+A custom endpoint and a typed price keep the full-rate fallback. The rates
+were set from the providers' published price lists as known at the time; the
+build environment could not reach them to re-check.
+
+Guided pass lows, rest (2026-11-22, `fix/guided-pass-lows` on
+`staging/bug-fixes`, #1317). An accepted deletion has nothing to mark, so its
+anchor is null and `patternEdits` put it after the pending edits of its scene.
+A zero-width anchor would have drawn empty marks, so the suggestion view now
+carries a separate `position`: the anchor's start, or for a decided edit with
+no text left (an accepted deletion, a rejected insertion) the mapped point
+where it was. The pass sorts by that. A restarted pass counts only what is
+left and says "N done earlier" under the count; following "Follows an earlier
+change" puts a "Back to the current change" button on that card (Escape was
+not used, as it already closes things on the review page).
+
+MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
+`staging/bug-fixes`, part of #1360). The side-column resize handle carried
+the bare classes `left` and `right`, so the panes' own `.left` and `.right`
+rules (later in theme.css, same specificity) gave it `display: flex`, a
+background and a border, and beat the narrow-window rule that hides it; it
+showed on Plan at 390 px. The modifiers are now `pane-resizer-left` and
+`pane-resizer-right`. The guided pass lost focus after a successful accept
+because the form's `update()` re-reads the page data after the step effect
+had already focused the next card; the card (or the end of the pass) is
+focused again when focus fell to the page. The return-to cookie is only set
+for a request with `Sec-Fetch-Dest: document` (or none), and `?pass=` is
+taken off the address with a shallow replace once read.
+
+Spend cap counts the prompt high (2026-11-22, `fix/spend-cap-estimate-margin`,
+#1331): the cap check counted the prompt at chars/4, which runs short on
+non-English prose (a CJK character is about a token, not a quarter), so a
+request just under the cap could be billed just over it. Every cap check now
+counts the prompt with `ceilingTokens` (UTF-8 bytes / 3): a third above chars/4
+for English and a token per CJK character, where a flat multiplier on chars/4
+would have to be about 4x to cover CJK and would then overcount English badly.
+The provider's own token counting was not used: only Claude has an endpoint
+for it, and it would add a request before every send. `ceilingPromptTokens` in
+the gateway is the one count; drafting's check and its up-front estimate use it
+too, with the real persona message in place of the flat `PERSONA_TOKENS`. The
+budgets (context assembly, the context guard) keep chars/4, since an
+overcount there only trims context.
+
+Spend cap held before every request (2026-11-22, `fix/assistant-retry-cap`,
+#1331): the background jobs checked `capReached` (spend at or over the cap)
+only between steps, and the gateway resent a failed attempt the endpoint had
+billed, so a job could end well past its cap, and a pg-boss retry of the job
+sent again from under it. The rule drafting already had now lives in the
+gateway for every metered request: before each send (first, resend, resume,
+tool round) it asks `SpendMeter.wouldPassCap` with the request's prompt
+(chars/4, tool specs included, as a Claude cache write) and its reply at the
+limit. A held request throws `SpendCapError` and marks the meter held, so
+`capReached` is true from then on and every existing boundary check stops the
+run there; each job maps the error to its own capped outcome instead of a
+failure. A caller with its own `mayResend` hook (drafting) keeps its own
+ceiling, which follows the cap in force at each request. A hold inside a
+review's tool loop can stop a scene after some of its notes were staged; the
+scene stays out of `completed`, so a continuation reads it again with those
+notes as prior. The cap tests now report $1 a request as many cheap tokens,
+so a request's own estimate stays a few cents. A request under a capped
+meter drops the writer's reply-size and reply-count extra parameters, as a
+bounded drafting request does, so the reply cannot outgrow the limit the
+check counted. The capped notices share one phrase (`capStopPhrase`): the job
+stopped before the next request could pass the cap, having spent about $X,
+which stays true below the cap. Left open: the chars/4 estimate with no
+safety factor.
+
 Version from the release tag (2026-11-22, #1375): `package.json` had stayed at
 3.20.0 through v3.22.0 because releases were tagged without the bump commit,
 so the admin footer showed the wrong version. The image workflow now passes
@@ -1224,10 +1414,13 @@ sixth commit narrowed it. What the code does now:
   detached on the fourth commit); "hard" to "Mara" detaches it (only a
   chance "ar" is shared), where main keeps it on "Mara"; a range with an
   edit inside it and others within a few letters
-  of its ends is lost more often than on main (above); a whole-text conversion
-  between CRLF and LF loses comments and suggestions on lines of ten
-  characters or fewer, which main keeps (markers are mapped on LF text and
-  are not affected).
+  of its ends is lost more often than on main (above). A whole-text conversion
+  from CRLF to LF lost comments and suggestions on lines of ten characters
+  or fewer (each such line sat in a kept run between two `\r` deletions, too
+  short to count); since #1361 a base with `\r` is compared as `toLf(base)`
+  when the current text has no `\r`, offsets moved across as `lfOffset`
+  does. The reverse (LF base, CRLF current) is not handled: the editor
+  never saves `\r`. Markers are mapped on LF text and were not affected.
 
 ## MCP endpoint, review round 5 (2026-11-22)
 
@@ -2023,6 +2216,39 @@ MCP endpoint itself is the next lane.
 - Deferred: the MCP route and its Origin check (lane 3), any use of
   `suggest` (lane 4), and attribution of an app's suggestions, which has to
   survive the client row being pruned.
+
+## Scene drafting, lows and known limits (2026-11-22)
+
+The rest of #1334, branch `fix/drafting-limits` on `staging/bug-fixes`.
+
+- Save order. The leave save goes out beside a save still on its way; when
+  it puts the text back, both name the stored text and the older one could
+  land last. A counter kept by the row alone does not help, since both saves
+  were made from the same row version, so the order comes from the client:
+  each editor copy names itself (a random id, not `crypto.randomUUID`, which
+  plain-http installs lack) and numbers its saves. The row keeps the copy and
+  number that saved last, also on a save that changes nothing, which is the
+  case that matters. Another copy is still held to its fingerprints. On
+  scenes the stamp of an unchanged save is written with raw SQL so
+  `updated_at`, the prose clock summaries are compared against, stays put.
+- A discarded scene of a chapter run now calls its request off. The run
+  polls the row every five seconds while the request is out, rather than
+  wiring the discard route to the job: the job may be on another worker,
+  and the poll also catches a Stop already settled by a read.
+- The chapter estimate shares one read of the settings and the stable
+  context across its scenes. The run does not: it can take minutes, and the
+  writer may change the world or the model meanwhile.
+- "On screen" for the leave prompt now needs the card to intersect the
+  viewport, so a refusal that arrives under focus mode or a narrow
+  window's other tab is not taken as seen.
+- Two product decisions from Mads. Ready drafts ride the account export as
+  `waiting-drafts/<scene>.md` under each story folder (front matter names
+  the scene by path, as notebook notes do), and the story import reads them
+  back as ready drafts on their scenes, asked for the scene alone (no
+  position or job). The story export leaves them out. And the scene's own
+  card is hidden while a chapter run is writing its draft; the chapter card
+  has the progress and Stop, so the scene card's "part of a chapter" note
+  went.
 
 ## Scene drafting, review round 6 (2026-11-21)
 

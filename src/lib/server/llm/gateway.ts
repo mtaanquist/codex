@@ -16,6 +16,7 @@ import {
 import { loadStoryScope, loadUniverseScope } from './context/sources.ts';
 import { adapterKind } from './providers/presets.ts';
 import { estimateTokens } from './context/assemble.ts';
+import { ceilingTokens } from './context/budgets.ts';
 import {
 	EgressDeniedError,
 	EgressTimeoutError,
@@ -23,6 +24,7 @@ import {
 	egressPolicy
 } from './egress.ts';
 import { providerFor } from './providers/index.ts';
+import { WEB_SEARCH_MAX_USES } from './providers/anthropic.ts';
 import { buildPersonaPrompt } from './prompts/persona.ts';
 import { recordAssistantUsage } from './usage.ts';
 import {
@@ -47,7 +49,7 @@ import {
 	type ToolSpec,
 	billedUsage
 } from './providers/types.ts';
-import type { SpendMeter } from './spend.ts';
+import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatModelSettings } from '../../assistant-chat.ts';
 
 // Adds one request's reported counts to a running total, so a caller can price
@@ -146,17 +148,53 @@ const CONTEXT_NUDGE =
 // An assistant turn that called tools carries far more than its text: the call
 // name and the whole arguments JSON go back on the wire every round, and a
 // staged suggest_edit holds an entire passage in its arguments. Counting content
-// alone let a run of edit-heavy rounds sail past the context guard.
-function messageTokens(message: ChatMessage): number {
-	let tokens = estimateTokens(message.content) + MESSAGE_OVERHEAD_TOKENS;
+// alone let a run of edit-heavy rounds sail past the context guard. A turn with
+// provider blocks (raw) is resent as those blocks instead, and they hold the
+// text, the calls, and any thinking or earlier search results, so they are what
+// is counted.
+function messageTokens(message: ChatMessage, count = estimateTokens): number {
+	if (message.raw !== undefined) {
+		return count(JSON.stringify(message.raw)) + MESSAGE_OVERHEAD_TOKENS;
+	}
+	let tokens = count(message.content) + MESSAGE_OVERHEAD_TOKENS;
 	for (const call of message.toolCalls ?? []) {
-		tokens += estimateTokens(call.name) + estimateTokens(call.arguments);
+		tokens += count(call.name) + count(call.arguments);
 	}
 	return tokens;
 }
 
-function conversationTokens(messages: ChatMessage[]): number {
-	return messages.reduce((sum, message) => sum + messageTokens(message), 0);
+function conversationTokens(messages: ChatMessage[], count = estimateTokens): number {
+	return messages.reduce((sum, message) => sum + messageTokens(message, count), 0);
+}
+
+// What a request's prompt could be billed as at most, for the spend cap: the
+// messages and tool specs counted high (ceilingTokens). The one count every
+// cap check uses, drafting's own included.
+export function ceilingPromptTokens(
+	messages: ChatMessage[],
+	tools?: CompletionRequest['tools']
+): number {
+	return (
+		conversationTokens(messages, ceilingTokens) + (tools ? ceilingTokens(JSON.stringify(tools)) : 0)
+	);
+}
+
+// What one web search's results may add to a request's input, for the spend
+// cap. Results come back inside the reply but bill as input tokens, so a capped
+// request that may search is counted as if it ran every search it is allowed
+// (WEB_SEARCH_MAX_USES), each returning this much.
+const WEB_SEARCH_RESULT_CEILING_TOKENS = 10_000;
+
+function webSearchCeilingTokens(webSearch: boolean | undefined): number {
+	return webSearch ? WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS : 0;
+}
+
+// The persona system message the gateway puts at the front of every turn.
+export function personaMessage(config: {
+	assistantName: string;
+	persona: Parameters<typeof buildPersonaPrompt>[1];
+}): ChatMessage {
+	return { role: 'system', content: buildPersonaPrompt(config.assistantName, config.persona) };
 }
 
 export type GatewayRequest = {
@@ -251,6 +289,7 @@ async function respondWithRetry(
 ): Promise<ProviderResponse & { failedUsage?: TokenUsage }> {
 	let failedUsage: TokenUsage | undefined;
 	for (let attempt = 0; ; attempt += 1) {
+		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(req);
 		try {
 			const response = await p.provider.respond(request, p.conn, p.http, req.signal);
 			return failedUsage ? { ...response, failedUsage } : response;
@@ -264,6 +303,7 @@ async function respondWithRetry(
 				throw err;
 			}
 			if (req.mayResend && !req.mayResend()) throw err;
+			if (wouldPassCap(p, req, request)) throw heldAtCap(req);
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -273,6 +313,37 @@ async function respondWithRetry(
 			await p.sleep(RETRY_DELAYS_MS[attempt]);
 		}
 	}
+}
+
+// Whether sending this request could take a metered run past its spend cap:
+// what the run has spent, plus this request with its reply at the limit. Asked
+// before every send (a first send, a resend after a failure the endpoint may
+// have billed, a resume, a tool round), so the rule lives here and not in each
+// job. The prompt is counted high (ceilingPromptTokens) and as written to
+// Claude's cache, the dearest way it can be billed, with the results of every
+// web search the request may run (webSearchCeilingTokens). A caller with its own mayResend
+// hook holds its own ceiling (drafting, against the cap in force at each
+// request).
+function wouldPassCap(
+	p: Prepared,
+	req: GatewayRequest,
+	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
+): boolean {
+	if (!req.meter || req.mayResend) return false;
+	const promptTokens =
+		ceilingPromptTokens(request.messages, request.tools) + webSearchCeilingTokens(p.webSearch);
+	const written = p.claude ? promptTokens : 0;
+	return req.meter.wouldPassCap(p.model, {
+		promptTokens,
+		completionTokens: request.maxTokens,
+		cacheWriteTokens: written,
+		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
+	});
+}
+
+function heldAtCap(req: GatewayRequest): SpendCapError {
+	req.meter?.hold();
+	return new SpendCapError();
 }
 
 // Parameters that change how much a request can be billed for. A writer's
@@ -294,10 +365,33 @@ const REPLY_LIMIT_PARAMS = [
 	'num_predict'
 ];
 // Names that ask for several replies at once. Short enough to mean something
-// else elsewhere (a property of a response_format schema), so they are left
-// out only at the top level and in the groups endpoints read options from.
-const REPLY_COUNT_PARAMS = ['n', 'best_of', 'candidate_count', 'num_return_sequences'];
-const OPTION_GROUPS = ['options', 'extra_body', 'parameters'];
+// else elsewhere, so they are left out only at the top level and in the
+// groups endpoints read options from.
+const REPLY_COUNT_PARAMS = [
+	'n',
+	'best_of',
+	'candidate_count',
+	'candidateCount',
+	'num_return_sequences'
+];
+const OPTION_GROUPS = [
+	'options',
+	'extra_body',
+	'parameters',
+	'generationConfig',
+	'generation_config'
+];
+// Keys that carry a schema for the reply (OpenAI response_format and
+// text.format, Ollama format, Gemini responseSchema): its property names are
+// the writer's own, so nothing inside one is left out.
+const REPLY_SCHEMA_KEYS = [
+	'response_format',
+	'format',
+	'responseSchema',
+	'response_schema',
+	'responseJsonSchema',
+	'response_json_schema'
+];
 export function withoutReplySizeParams<T extends Record<string, unknown> | undefined>(
 	params: T,
 	options = true
@@ -305,8 +399,7 @@ export function withoutReplySizeParams<T extends Record<string, unknown> | undef
 	if (!params) return params;
 	const kept: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(params)) {
-		// A schema for the reply: its property names are the writer's own.
-		if (key === 'response_format') {
+		if (REPLY_SCHEMA_KEYS.includes(key)) {
 			kept[key] = value;
 			continue;
 		}
@@ -393,6 +486,8 @@ type Prepared = {
 	webSearch?: boolean;
 	// The account's prompt cache lifetime (see CompletionRequest.cacheTtl).
 	cacheTtl?: '5m' | '1h';
+	// The requests go to Claude, which bills a cache write above the prompt rate.
+	claude: boolean;
 	// The reply length for this turn: what the writer set for this role, else
 	// what the surface asked for, else the role's default.
 	maxTokens: number;
@@ -469,10 +564,7 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 	// The persona system message rides at the front of every turn, so the
 	// Assistant's name and tone are consistent across surfaces. Any
 	// surface-supplied system message (the assembled world context) follows it.
-	const persona: ChatMessage = {
-		role: 'system',
-		content: buildPersonaPrompt(resolved.config.assistantName, resolved.config.persona)
-	};
+	const persona = personaMessage(resolved.config);
 
 	// The window of the model this role runs on, where one is known; the tools
 	// size their results against it and later callers can size what they send.
@@ -536,11 +628,15 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 				? claudeEffort(req.role, model, resolved.config.tuning[req.role])
 				: undefined
 		),
-		extraParams: req.boundedReply
-			? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
-			: roleExtraParams(resolved.config, req.role),
+		// A run held to a spend cap is checked at the reply limit (see
+		// wouldPassCap), so an extra parameter must not raise or multiply it.
+		extraParams:
+			req.boundedReply || req.meter?.capUsd !== undefined
+				? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
+				: roleExtraParams(resolved.config, req.role),
 		webSearch: await webSearchAllowed(db, resolved.config, req),
 		cacheTtl: resolved.config.cacheTtl,
+		claude: adapterKind(resolved.config.provider) === 'anthropic',
 		maxTokens: requestReplyLimit(
 			resolved.config,
 			req.role,

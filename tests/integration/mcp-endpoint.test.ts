@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, asc, eq } from 'drizzle-orm';
 import type pg from 'pg';
 import {
+	apiTokens,
 	assistantDrafts,
 	characters,
 	entityCategories,
@@ -56,6 +57,7 @@ const {
 	createPersonalToken,
 	exchangeCode,
 	listPersonalTokens,
+	purgeExternalAccess,
 	resolveBearer,
 	revokeAllGrants,
 	revokeGrant
@@ -76,6 +78,7 @@ const {
 const {
 	decideEntityProposal,
 	decideSplitProposal,
+	countProposals,
 	listProposals,
 	stageEntityProposal,
 	MAX_ENTITY_PROPOSALS_WAITING,
@@ -85,8 +88,12 @@ const { discardSceneDraft, sceneDraftFor } = await import('#lib/server/scene-dra
 const { saveSceneBody } = await import('#lib/server/scene-save');
 const { readGate, stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
 const { reanchorRange } = await import('#lib/review-anchor');
-const { MAX_APP_DRAFTS_WAITING, MAX_STAGING_CALLS_WAITING, TOOL_RESULT_MAX_CHARS } =
-	await import('#lib/server/mcp/constants');
+const {
+	MAX_APP_DRAFTS_WAITING,
+	MAX_READ_CALLS_WAITING,
+	MAX_STAGING_CALLS_WAITING,
+	TOOL_RESULT_MAX_CHARS
+} = await import('#lib/server/mcp/constants');
 const route = await import('../../src/routes/api/mcp/+server');
 
 const ORIGIN = 'http://localhost';
@@ -251,7 +258,12 @@ async function buildWorld(name: string): Promise<World> {
 
 // ============ Talking to the endpoint ============
 
-type Init = { token?: string; headers?: Record<string, string>; method?: string };
+type Init = {
+	token?: string;
+	headers?: Record<string, string>;
+	method?: string;
+	address?: string;
+};
 
 function send(body: unknown, init: Init = {}): Promise<Response> {
 	const url = new URL(`${ORIGIN}/api/mcp`);
@@ -267,7 +279,8 @@ function send(body: unknown, init: Init = {}): Promise<Response> {
 		}
 	});
 	const handler = route[method as 'POST' | 'GET' | 'DELETE'];
-	return handler({ request, url } as never) as Promise<Response>;
+	const address = init.address ?? '203.0.113.1';
+	return handler({ request, url, getClientAddress: () => address } as never) as Promise<Response>;
 }
 
 // The JSON-RPC answer, whether it came as plain JSON or as one event.
@@ -3097,6 +3110,30 @@ describe('stage_scene_draft', () => {
 		expect(shown).toMatchObject({ status: 'ready', textMd: DRAFT });
 	});
 
+	it('is listed and counted under the universes suggestions until the scene goes', async () => {
+		await stage(alice);
+		await call(alice, 'suggest_entity', {
+			universeId: alice.universeId,
+			kind: 'character',
+			name: 'Old Marit',
+			description: 'The lamplighter on the quay.'
+		});
+		const { drafts } = await listProposals(db, alice.userId, alice.universeId);
+		expect(drafts).toEqual([
+			expect.objectContaining({
+				storyId: alice.storyId,
+				sceneId: alice.sceneId,
+				note: `Drafted by ${APP}.`
+			})
+		]);
+		expect(await countProposals(db, alice.userId)).toEqual(new Map([[alice.universeId, 2]]));
+		expect(await countProposals(db, bob.userId)).toEqual(new Map());
+		// A draft on a scene in the trash waits for no one.
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, alice.sceneId));
+		expect((await listProposals(db, alice.userId, alice.universeId)).drafts).toEqual([]);
+		expect(await countProposals(db, alice.userId)).toEqual(new Map([[alice.universeId, 1]]));
+	});
+
 	it('stages nothing outside the writers own open stories', async () => {
 		await expectNoUniverse('stage_scene_draft', { sceneId: alice.sceneId, text: DRAFT });
 		for (const sceneId of hiddenScenes()) {
@@ -3131,7 +3168,7 @@ describe('stage_scene_draft', () => {
 				)
 				.returning({ id: scenes.id })
 		).map((row) => row.id);
-		const waiting = (sceneId: string, jobId: string | null = null) => ({
+		const waiting = (sceneId: string, source: 'app' | 'assistant' = 'app') => ({
 			userId: alice.userId,
 			storyId: alice.storyId,
 			sceneId,
@@ -3139,15 +3176,15 @@ describe('stage_scene_draft', () => {
 			targetWords: 100,
 			textMd: 'Words.',
 			status: 'ready' as const,
-			jobId
+			source
 		});
 		// One short of the ceiling, and a draft the Assistant wrote, which does
-		// not count.
+		// not count though it has no job (as one brought back by an import).
 		await db
 			.insert(assistantDrafts)
 			.values([
 				...sceneIds.slice(0, MAX_APP_DRAFTS_WAITING - 1).map((sceneId) => waiting(sceneId)),
-				waiting(sceneIds[MAX_APP_DRAFTS_WAITING - 1], 'a-job')
+				waiting(sceneIds[MAX_APP_DRAFTS_WAITING - 1], 'assistant')
 			]);
 		expect((await stage(alice)).text).toContain('Staged the draft');
 		const full = await stage(alice, { sceneId: sceneIds[MAX_APP_DRAFTS_WAITING] });
@@ -3631,6 +3668,79 @@ describe('limits', () => {
 		expect((await send(list, { token: bob.token })).status).toBe(200);
 	}, 30_000);
 
+	it('answers 429 to an address that keeps sending bad tokens', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 120; i++) {
+			expect((await send(list, { token: `cdx_at_guess${i}` })).status).toBe(401);
+		}
+		const blocked = await send(list, { token: 'cdx_at_one_more' });
+		expect(blocked.status).toBe(429);
+		expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+		// Another address is not affected.
+		const elsewhere = await send(list, { token: 'cdx_at_nope', address: '198.51.100.7' });
+		expect(elsewhere.status).toBe(401);
+	});
+
+	it('still lets a valid token through from an address over the budget', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 121; i++) await send(list, { token: `cdx_at_guess${i}` });
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
+		expect((await send(list, { token: alice.token })).status).toBe(200);
+		expect((await send(list, { token: bob.token })).status).toBe(200);
+	});
+
+	it('answers 401 with the challenge to a known token that expired, even from an address over the budget', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 121; i++) await send(list, { token: `cdx_at_guess${i}` });
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
+		await db
+			.update(apiTokens)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(apiTokens.kind, 'access'));
+		const expired = await send(list, { token: alice.token });
+		expect(expired.status).toBe(401);
+		expect(expired.headers.get('www-authenticate')).toContain('error="invalid_token"');
+	});
+
+	it('does not count known tokens that expired or were revoked against the address', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		await db
+			.update(apiTokens)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(apiTokens.userId, alice.userId));
+		await revokeAllGrants(db, bob.userId);
+		for (let i = 0; i < 80; i++) {
+			expect((await send(list, { token: alice.token })).status).toBe(401);
+			expect((await send(list, { token: bob.token })).status).toBe(401);
+		}
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(401);
+	});
+
+	it('answers 401 with the challenge to a token the daily clean-up removed, even from a busy address', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		await db
+			.update(apiTokens)
+			.set({ expiresAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) })
+			.where(eq(apiTokens.userId, alice.userId));
+		await purgeExternalAccess(db);
+		for (let i = 0; i < 120; i++) await send(list, { token: `cdx_at_guess${i}` });
+		const purged = await send(list, { token: alice.token });
+		expect(purged.status).toBe(401);
+		expect(purged.headers.get('www-authenticate')).toContain('error="invalid_token"');
+		// Any token of the shape this server issues is answered the same way.
+		const wellFormed = await send(list, { token: `cdx_pat_${'A'.repeat(43)}` });
+		expect(wellFormed.status).toBe(401);
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
+	});
+
+	it('does not count good tokens against the address', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 150; i++) {
+			expect((await send(list, { token: alice.token })).status).toBe(200);
+		}
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(401);
+	});
+
 	it('gives staging a tighter budget of its own', async () => {
 		let staged = 0;
 		for (let i = 0; i < 31; i++) {
@@ -3641,6 +3751,71 @@ describe('limits', () => {
 		expect((await comment(alice, { comment: 'One more.' })).text).toMatch(/^Too many calls/);
 		// Reading is counted apart.
 		expect((await call(alice, 'list_universes')).isError).toBe(false);
+	});
+
+	it('does not count a call turned away because too many were running', async () => {
+		// Fill the writer's reading line: two running and every waiting place.
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const held = Array.from({ length: 2 + MAX_READ_CALLS_WAITING }, () =>
+			readGate.run(alice.userId, () => gate)
+		);
+		for (let i = 0; i < 130; i++) {
+			expect((await call(alice, 'list_universes')).text).toBe('Too many calls at once. Try again.');
+		}
+		open();
+		await Promise.all(held);
+		for (let i = 0; i < 120; i++) {
+			expect((await call(alice, 'list_universes')).isError).toBe(false);
+		}
+		expect((await call(alice, 'list_universes')).text).toMatch(/^Too many calls\. Wait/);
+	});
+
+	it('does not count a staging call turned away while others held its turn', async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const held = Array.from({ length: 1 + MAX_STAGING_CALLS_WAITING }, () =>
+			stagingGate.run(alice.userId, () => gate)
+		);
+		for (let i = 0; i < 40; i++) {
+			expect(await comment(alice, { comment: `Busy ${i}.` })).toEqual({
+				text: 'Another call is still running. Try again.',
+				isError: true
+			});
+		}
+		open();
+		await Promise.all(held);
+		let staged = 0;
+		for (let i = 0; i < 31; i++) {
+			if (!(await comment(alice, { comment: `Note number ${i}.` })).isError) staged++;
+		}
+		expect(staged).toBe(30);
+	});
+
+	it('does not spend a connections budget on calls the writers budget refused', async () => {
+		const second = await connect(alice.userId, 'Second');
+		const third = await connect(alice.userId, 'Third');
+		let clock = performance.now();
+		const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+		try {
+			for (let i = 0; i < 120; i++) await call(alice, 'list_universes');
+			for (let i = 0; i < 120; i++) await call(second, 'list_universes');
+			// Later in the minute the writer's budget is still spent, so the third
+			// app's calls are refused.
+			clock += 50_000;
+			for (let i = 0; i < 120; i++) {
+				expect((await call(third, 'list_universes')).text).toMatch(/^Too many calls\. Wait/);
+			}
+			// Once the writer's budget comes back, the third app has its own whole.
+			clock += 11_000;
+			let allowed = 0;
+			for (let i = 0; i < 120; i++) {
+				if (!(await call(third, 'list_universes')).isError) allowed++;
+			}
+			expect(allowed).toBe(120);
+		} finally {
+			now.mockRestore();
+		}
 	});
 
 	it('marks the connection as used', async () => {

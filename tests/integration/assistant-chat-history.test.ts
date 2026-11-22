@@ -123,11 +123,25 @@ describe('chat history', () => {
 			.values({ universeId, ownerId: userId, categoryId: category.id, title: 'The Pact' })
 			.returning({ id: loreEntries.id });
 		const gone = '11111111-1111-4111-8111-111111111111';
+		// Another writer's entry: its type is not read for this writer's chat.
+		const [other] = await db
+			.insert(users)
+			.values({ email: 'o@example.com', displayName: 'Other', passwordHash: 'x', role: 'user' })
+			.returning({ id: users.id });
+		const [otherUniverse] = await db
+			.insert(universes)
+			.values({ ownerId: other.id, name: 'O' })
+			.returning({ id: universes.id });
+		const [theirs] = await db
+			.insert(places)
+			.values({ universeId: otherUniverse.id, ownerId: other.id, name: 'Elsewhere' })
+			.returning({ id: places.id });
 		const chatId = await newChat({ storyId });
 		const attachments = [
 			{ kind: 'entity' as const, id: place.id, label: 'Saltmarsh' },
 			{ kind: 'entity' as const, id: lore.id, label: 'The Pact' },
-			{ kind: 'entity' as const, id: gone, label: 'Gone' }
+			{ kind: 'entity' as const, id: gone, label: 'Gone' },
+			{ kind: 'entity' as const, id: theirs.id, label: 'Elsewhere' }
 		];
 		await appendChat(db, userId, { storyId }, chatId, {
 			role: 'user',
@@ -138,7 +152,8 @@ describe('chat history', () => {
 		expect(turn.meta?.attachments).toEqual([
 			{ ...attachments[0], entityType: 'place' },
 			{ ...attachments[1], entityType: 'lore' },
-			attachments[2]
+			attachments[2],
+			attachments[3]
 		]);
 		// The stored row is not rewritten.
 		const [row] = await db.select({ meta: assistantChatMessages.meta }).from(assistantChatMessages);

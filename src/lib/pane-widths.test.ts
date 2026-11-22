@@ -1,6 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { clampPaneWidth, PANE_BOUNDS, PANE_VALUE_RE, paneMax, paneWidthValue } from './pane-widths';
+import {
+	clampPaneWidth,
+	PANE_BOUNDS,
+	PANE_STORAGE_KEY,
+	PANE_VALUE_RE,
+	paneMax,
+	paneWidthValue
+} from './pane-widths';
 
 describe('pane widths', () => {
 	it('never goes below the token floor', () => {
@@ -38,5 +45,11 @@ describe('pane widths', () => {
 		expect(html).toContain(
 			`{ left: [${left.min}, ${left.maxVw}], right: [${right.min}, ${right.maxVw}] }`
 		);
+	});
+
+	it('is restored from the same storage keys it saves to', () => {
+		const html = readFileSync('src/app.html', 'utf8');
+		expect(html).toContain("localStorage.getItem('codex-' + side + '-w')");
+		expect(PANE_STORAGE_KEY).toEqual({ left: 'codex-left-w', right: 'codex-right-w' });
 	});
 });

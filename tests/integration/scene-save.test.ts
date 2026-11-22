@@ -221,6 +221,74 @@ describe('saveSceneBody', () => {
 		expect((await stored()).bodyMd).toBe('Old tab.');
 	});
 
+	// #1334: the save sent as the page is left puts the text back as it was,
+	// and lands before an older save still on its way. The fingerprints cannot
+	// tell the two apart; the save numbers can.
+	it('drops an older save from the same editor that lands after a later one', async () => {
+		const editor = 'editor-copy-a';
+		const before = await stored();
+		const leave = await saveSceneBody(
+			db,
+			sceneId,
+			save({ title: 'Gate', order: { source: editor, seq: 2 } })
+		);
+		expect(leave).toEqual({ ok: true, wordCount: 3, bodyChanged: false });
+		// The older save was made from the same text, so its fingerprint matches.
+		const late = await saveSceneBody(
+			db,
+			sceneId,
+			save({ bodyMd: 'The gate opened wide.', order: { source: editor, seq: 1 } })
+		);
+		expect(late).toEqual({ ok: true, wordCount: 3, bodyChanged: false, superseded: true });
+		const row = await stored();
+		expect(row.bodyMd).toBe(START);
+		expect(await history()).toEqual([]);
+		// Keeping the order did not move the prose clock.
+		expect(row.updatedAt).toEqual(before.updatedAt);
+	});
+
+	it('keeps the order without touching the prose clock, and takes a later save', async () => {
+		const before = await stored();
+		await saveSceneBody(
+			db,
+			sceneId,
+			save({ title: 'Gate', order: { source: 'editor-copy-a', seq: 4 } })
+		);
+		const kept = await stored();
+		expect(kept.updatedAt).toEqual(before.updatedAt);
+		expect([kept.saveSource, kept.saveSeq]).toEqual(['editor-copy-a', 4]);
+		const next = await saveSceneBody(
+			db,
+			sceneId,
+			save({ bodyMd: 'The gate opened wide.', order: { source: 'editor-copy-a', seq: 5 } })
+		);
+		expect(next).toMatchObject({ ok: true, bodyChanged: true });
+		// Another editor is held to its fingerprints, not to this one's number.
+		const other = await saveSceneBody(
+			db,
+			sceneId,
+			save({
+				bodyMd: 'The gate shut.',
+				baseHashes: [textHash('The gate opened wide.')],
+				order: { source: 'editor-copy-b', seq: 1 }
+			})
+		);
+		expect(other).toMatchObject({ ok: true, bodyChanged: true });
+		expect((await stored()).saveSource).toBe('editor-copy-b');
+	});
+
+	it('keeps the order on a title-only save', async () => {
+		await saveSceneBody(
+			db,
+			sceneId,
+			save({ title: 'The Gate', order: { source: 'editor-copy-a', seq: 7 } })
+		);
+		const row = await stored();
+		expect([row.title, row.saveSource, row.saveSeq]).toEqual(['The Gate', 'editor-copy-a', 7]);
+		await saveSceneBody(db, sceneId, save({ title: 'Gate two' }));
+		expect((await stored()).saveSeq).toBe(7);
+	});
+
 	it('leaves marker anchors alone when none are sent, and moves them when they are', async () => {
 		const [marker] = await db
 			.insert(sceneMarkers)

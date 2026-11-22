@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+	bulkDecisionNote,
 	nudgeMarkers,
 	authorColor,
 	appAuthorParts,
@@ -10,6 +11,8 @@ import {
 	reviewMarks,
 	reviewProse,
 	suggestionKind,
+	insertionFits,
+	isServerChange,
 	suggestionSnippet,
 	suggestionInFilter,
 	threadInFilter,
@@ -113,6 +116,47 @@ describe('suggestionKind', () => {
 		expect(suggestionKind({ original: '', replacement: 'new' })).toBe('insert');
 		expect(suggestionKind({ original: 'old', replacement: '' })).toBe('delete');
 		expect(suggestionKind({ original: 'old', replacement: 'new' })).toBe('replace');
+	});
+});
+
+describe('insertionFits', () => {
+	const base = 'One two. Three four.';
+	// The server inserted "Big " before "Three".
+	const stored = 'One two. Big Three four.';
+
+	it('fits with no typing', () => {
+		expect(insertionFits(base, base, stored, 9, 'Big ')).toBe(true);
+	});
+
+	it('fits around typing after the point', () => {
+		const live = 'One two. Three four. More';
+		expect(insertionFits(base, live, stored, 9, 'Big ')).toBe(true);
+	});
+
+	it('fits around typing before the point', () => {
+		const live = 'Well, one two. Three four.';
+		expect(insertionFits(base, live, stored, 15, 'Big ')).toBe(true);
+	});
+
+	it('does not fit where the typing touches the point', () => {
+		// Typed "x" right at the point; the mark may sit on either side of it.
+		expect(insertionFits(base, 'One two. xThree four.', stored, 9, 'Big ')).toBe(false);
+		expect(insertionFits(base, 'One two. xThree four.', stored, 10, 'Big ')).toBe(false);
+	});
+
+	it('does not fit when the point is not where the server inserted', () => {
+		const live = 'One two. Three four. More';
+		expect(insertionFits(base, live, stored, 4, 'Big ')).toBe(false);
+	});
+
+	it('does not fit with typing on both sides of the point', () => {
+		const live = 'Well, one two. Three four. More';
+		expect(insertionFits(base, live, stored, 15, 'Big ')).toBe(false);
+	});
+
+	it('fits at the end of the text', () => {
+		expect(insertionFits('Ab', 'Ab', 'Ab cd', 2, ' cd')).toBe(true);
+		expect(insertionFits('Ab', 'Xy Ab', 'Ab cd', 5, ' cd')).toBe(true);
 	});
 });
 
@@ -304,6 +348,7 @@ describe('the guided pass over a pattern note', () => {
 			status: string;
 			followsId: string | null;
 			createdAt: string;
+			position: number | null;
 		}> = {}
 	) => ({
 		id,
@@ -361,6 +406,19 @@ describe('the guided pass over a pattern note', () => {
 		expect(edits.map((s) => s.id)).toEqual(['first', 'accepted', 'rejected', 'late']);
 	});
 
+	it('keeps a decided edit with nothing left to mark in its reading place', () => {
+		const edits = patternEdits(
+			[
+				edit('late', 's1', 40),
+				edit('deleted', 's1', null, { status: 'accepted', position: 20 }),
+				edit('first', 's1', 10)
+			],
+			'note',
+			['s1']
+		);
+		expect(edits.map((s) => s.id)).toEqual(['first', 'deleted', 'late']);
+	});
+
 	it("puts follow-ups after the note's own edits, oldest first", () => {
 		const queue = patternQueue(
 			[
@@ -383,5 +441,48 @@ describe('the guided pass over a pattern note', () => {
 			'The narration leans on "seemed".'
 		);
 		expect(patternName('x'.repeat(80))).toBe(`${'x'.repeat(60)}...`);
+	});
+});
+
+describe('bulkDecisionNote', () => {
+	it('says how many went through when none failed', () => {
+		expect(bulkDecisionNote(3, [], true)).toBe('3 edits accepted.');
+		expect(bulkDecisionNote(1, [], false)).toBe('1 edit rejected.');
+	});
+
+	it("gives the server's reasons, each once", () => {
+		const decided = 'That suggestion was already decided.';
+		const changed = 'This suggestion changed. Read it again.';
+		expect(bulkDecisionNote(1, [decided, decided], true)).toBe(
+			`1 edit accepted. 2 edits could not be accepted. ${decided}`
+		);
+		expect(bulkDecisionNote(0, [decided, changed], false)).toBe(
+			`0 edits rejected. 2 edits could not be rejected. ${decided} ${changed}`
+		);
+	});
+
+	it('still counts a failure that came with no reason', () => {
+		expect(bulkDecisionNote(2, [''], true)).toBe('2 edits accepted. 1 edit could not be accepted.');
+	});
+});
+
+describe('isServerChange', () => {
+	// The editor saved B, then C. A reload whose read ran before C landed
+	// brings B after C's save has finished: it is older than the editor's
+	// text, not a change made elsewhere.
+	it('ignores an older text this editor saved, brought back by a stale reload', () => {
+		const held = new Set(['A', 'B', 'C']);
+		expect(isServerChange('B', 'A', 'C', (body) => held.has(body))).toBe(false);
+	});
+
+	it('takes a text it never held (an accept made on the server, another window)', () => {
+		const held = new Set(['A', 'C']);
+		expect(isServerChange('D', 'A', 'C', (body) => held.has(body))).toBe(true);
+	});
+
+	it('ignores the prop when it has not changed, or matches what was saved', () => {
+		const held = new Set(['A', 'C']);
+		expect(isServerChange('A', 'A', 'C', (body) => held.has(body))).toBe(false);
+		expect(isServerChange('C', 'A', 'C', (body) => held.has(body))).toBe(false);
 	});
 });

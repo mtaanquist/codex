@@ -5,7 +5,7 @@
 	import { tick, untrack } from 'svelte';
 	import type { ResolvedPathname } from '$app/types';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import { refreshAll } from '$app/navigation';
+	import { goto, refreshAll } from '$app/navigation';
 	import {
 		dismissActivity,
 		flashActivity,
@@ -18,6 +18,7 @@
 	import SidebarSearch from './SidebarSearch.svelte';
 	import StoryOutline from './StoryOutline.svelte';
 	import ClearReviewsModal from './ClearReviewsModal.svelte';
+	import { clearedSuggestions } from '#lib/review-clear';
 	import ReviewDecideModal from './ReviewDecideModal.svelte';
 	import StoryRowMenu, { type RowMenuState, type RowMenuTarget } from './StoryRowMenu.svelte';
 	import ReviewSurface from './ReviewSurface.svelte';
@@ -159,12 +160,27 @@
 	const liveSuggestions = $derived(suggestions.filter((s) => liveSceneIds.has(s.sceneId)));
 	const finishedNotes = $derived(
 		liveThreads.filter((t) => t.resolvedAt !== null).length +
-			liveSuggestions.filter((s) => s.status !== 'pending').length
+			clearedSuggestions(liveSuggestions, (s) => s.status !== 'pending').size
 	);
 	const totalNotes = $derived(liveThreads.length + liveSuggestions.length);
 	let clearing = $state(false);
 	// The review toolbar's dialog for deciding on several edits at once.
 	let deciding = $state(false);
+	// Read out once the dialog closes itself, having decided every ticked edit.
+	let decidedNote = $state('');
+	async function closeDecide(outcome?: string) {
+		deciding = false;
+		if (!outcome) return;
+		// Emptied first so the same outcome twice is read out twice.
+		decidedNote = '';
+		await tick();
+		decidedNote = outcome;
+		// The toolbar that opened the dialog goes with the last edits, so focus
+		// would drop to the page; the notes pane holds it instead.
+		await tick();
+		const active = document.activeElement;
+		if (!active || active === document.body) paneEls.notes?.focus();
+	}
 	const discussions = $derived(
 		new Map(threads.filter((t) => t.suggestionId).map((t) => [t.suggestionId!, t]))
 	);
@@ -500,6 +516,10 @@
 	const passOpen = $derived(
 		pass ? passEdits.filter((s) => s.status === 'pending' && !pass!.done.has(s.id)) : []
 	);
+	// Decided before this pass started, so left out of its count.
+	const passEarlier = $derived(
+		pass ? passEdits.filter((s) => s.status !== 'pending' && !pass!.done.has(s.id)).length : 0
+	);
 	const passStep = $derived(
 		pass ? (passOpen.find((s) => s.id === pass!.currentId) ?? passOpen[0] ?? null) : null
 	);
@@ -535,6 +555,12 @@
 		untrack(() => {
 			const note = liveThreads.find((thread) => thread.id === asked);
 			if (note && (patternCounts.get(asked) ?? 0) > 0) startPass(asked);
+			// Taken off the address, so a reload after the pass ends does not
+			// start it again.
+			const url = new URL(page.url.href);
+			url.searchParams.delete('pass');
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- this page's own address
+			void goto(url, { replace: true, shallow: true });
 		});
 	});
 
@@ -615,9 +641,8 @@
 	}
 
 	async function rereadAfter(suggestionId: string) {
-		const current = pass;
-		if (!current) return;
-		const threadId = current.threadId;
+		if (!pass) return;
+		const threadId = pass.threadId;
 		const card = startActivity('Re-reading the last change');
 		rereadCards.add(card);
 		countRereading(threadId, 1);
@@ -626,6 +651,8 @@
 		// staged nothing, so there is nothing to load.
 		let answered = false;
 		let ids: string[] = [];
+		// Whether the card is still up: Stop clears it.
+		let shown: boolean;
 		try {
 			const response = await fetch('/api/assistant/pattern-reread', {
 				method: 'POST',
@@ -649,15 +676,22 @@
 			ok = false;
 		} finally {
 			countRereading(threadId, -1);
-			rereadCards.delete(card);
+			shown = rereadCards.delete(card);
 		}
-		if (destroyed || pass !== current) {
+		// Said to any pass on the same note, also one stopped and started again
+		// while this ran; its card went at Stop, so a new one says the outcome.
+		if (destroyed || pass?.threadId !== threadId) {
 			dismissActivity(card);
 			return;
 		}
-		if (!ok) resolveActivity(card, { state: 'failed', label: 'Could not re-read the last change' });
-		else if (ids.length > 0) resolveActivity(card, { state: 'done', label: 'Follow-up added' });
-		else dismissActivity(card);
+		const outcome = !ok
+			? ({ state: 'failed', label: 'Could not re-read the last change' } as const)
+			: ids.length > 0
+				? ({ state: 'done', label: 'Follow-up added' } as const)
+				: null;
+		if (!outcome) dismissActivity(card);
+		else if (shown) resolveActivity(card, outcome);
+		else flashActivity(outcome.state, outcome.label);
 	}
 
 	function startComment(sel: { start: number; end: number; text: string }) {
@@ -822,6 +856,7 @@
 
 		<aside class="pane right" aria-label={RIGHT_PANE_LABEL} tabindex="-1" bind:this={paneEls.notes}>
 			<PaneResizer side="right" />
+			<p class="visually-hidden" role="status">{decidedNote}</p>
 			<!-- One panel invocation, two shapes of pane: with the Assistant the strip
 			     is a real tablist, without it the pane is just the Comments panel,
 			     which carries its own title. The props must not drift between the
@@ -839,6 +874,7 @@
 						rereading={rereading.has(pass.threadId)}
 						position={pass.done.size + 1}
 						total={pass.done.size + passOpen.length}
+						earlier={passEarlier}
 						onAccepted={passAccepted}
 						onSkip={(id) => {
 							pass?.skipped.add(id);
@@ -939,7 +975,7 @@
 		suggestions={pendingHere}
 		beforeAccept={flushEditor}
 		onAccepted={(ids, accepted) => editorRef?.applyAccepted(ids, accepted)}
-		onClose={() => (deciding = false)}
+		onClose={closeDecide}
 	/>
 {/if}
 

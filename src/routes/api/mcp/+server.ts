@@ -1,12 +1,12 @@
 import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { publicOrigin } from '#lib/server/origin';
-import { slidingRateLimit } from '#lib/server/rate-limit';
+import { rateLimit, slidingRateLimit } from '#lib/server/rate-limit';
 import { GRANTABLE_PERMISSIONS, scopeFromPermissions } from '#lib/mcp-access';
-import { REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
+import { FAILED_BEARER_PER_MINUTE, REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
 import { notFound } from '#lib/server/mcp/http';
 import { protectedResourceUrl } from '#lib/server/mcp/metadata';
-import { resolveBearer } from '#lib/server/mcp/oauth';
+import { issuedTokenShape, resolveBearer } from '#lib/server/mcp/oauth';
 import { serveMcp } from '#lib/server/mcp/server';
 import { mcpInstanceEnabled } from '#lib/server/mcp/settings';
 
@@ -37,12 +37,16 @@ function unauthorized(origin: string, hadToken: boolean): Response {
 	);
 }
 
+function tooManyRequests(retryAfterSeconds: number): Response {
+	return json(429, { error: 'too_many_requests' }, { 'retry-after': String(retryAfterSeconds) });
+}
+
 function bearerToken(request: Request): string {
 	const match = /^Bearer +(\S+)$/i.exec(request.headers.get('authorization')?.trim() ?? '');
 	return match?.[1] ?? '';
 }
 
-const handle: RequestHandler = async ({ request, url }) => {
+const handle: RequestHandler = async ({ request, url, getClientAddress }) => {
 	if (!(await mcpInstanceEnabled(db))) return notFound();
 	const origin = publicOrigin(url);
 
@@ -55,16 +59,21 @@ const handle: RequestHandler = async ({ request, url }) => {
 
 	const token = bearerToken(request);
 	const identity = await resolveBearer(db, token);
-	if (!identity) return unauthorized(origin, token !== '');
+	if (!identity) {
+		// Only tokens not shaped like one this server issues are counted per
+		// address: hosted apps share addresses, so an app's token, live, expired,
+		// revoked or long since cleaned up, must always get the 401 that tells
+		// its client to refresh or sign in again.
+		if (token && !issuedTokenShape(token)) {
+			const key = `mcp:bad-token:${getClientAddress()}`;
+			const failures = rateLimit(key, FAILED_BEARER_PER_MINUTE, 60 * 1000);
+			if (!failures.allowed) return tooManyRequests(failures.retryAfterSeconds);
+		}
+		return unauthorized(origin, token !== '');
+	}
 
 	const limit = slidingRateLimit(`mcp:requests:${identity.userId}`, REQUESTS_PER_MINUTE, 60 * 1000);
-	if (!limit.allowed) {
-		return json(
-			429,
-			{ error: 'too_many_requests' },
-			{ 'retry-after': String(limit.retryAfterSeconds) }
-		);
-	}
+	if (!limit.allowed) return tooManyRequests(limit.retryAfterSeconds);
 
 	return serveMcp(request, { db, identity, origin });
 };
