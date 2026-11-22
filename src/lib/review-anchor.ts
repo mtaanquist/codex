@@ -1,5 +1,5 @@
 import { diffChars, type ChangeObject } from 'diff';
-import { toLf } from './line-endings';
+import { toLf } from './line-endings.ts';
 
 // Re-anchors review threads, suggestions and to-do markers after the text
 // changed. An anchor pins a [start, end) range (or a point) against the text
