@@ -58,19 +58,19 @@ const handle: RequestHandler = async ({ request, url, getClientAddress }) => {
 	}
 
 	const token = bearerToken(request);
-	const identity = await resolveBearer(db, token);
-	if (!identity) {
-		// Only tokens not shaped like one this server issues are counted per
-		// address: hosted apps share addresses, so an app's token, live, expired,
-		// revoked or long since cleaned up, must always get the 401 that tells
-		// its client to refresh or sign in again.
-		if (token && !issuedTokenShape(token)) {
-			const key = `mcp:bad-token:${getClientAddress()}`;
-			const failures = rateLimit(key, FAILED_BEARER_PER_MINUTE, 60 * 1000);
-			if (!failures.allowed) return tooManyRequests(failures.retryAfterSeconds);
-		}
-		return unauthorized(origin, token !== '');
+	// A token not shaped like one this server issues can match no row, so it
+	// is answered without a lookup and counted per address. Only these are
+	// counted: hosted apps share addresses, so an app's token, live, expired,
+	// revoked or long since cleaned up, must always get the 401 that tells its
+	// client to refresh or sign in again.
+	if (token && !issuedTokenShape(token)) {
+		const key = `mcp:bad-token:${getClientAddress()}`;
+		const failures = rateLimit(key, FAILED_BEARER_PER_MINUTE, 60 * 1000);
+		if (!failures.allowed) return tooManyRequests(failures.retryAfterSeconds);
+		return unauthorized(origin, true);
 	}
+	const identity = await resolveBearer(db, token);
+	if (!identity) return unauthorized(origin, token !== '');
 
 	const limit = slidingRateLimit(`mcp:requests:${identity.userId}`, REQUESTS_PER_MINUTE, 60 * 1000);
 	if (!limit.allowed) return tooManyRequests(limit.retryAfterSeconds);
