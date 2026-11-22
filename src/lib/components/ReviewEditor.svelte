@@ -25,6 +25,7 @@
 	} from '#lib/editor-review-marks';
 	import { createAutosave, type SaveStatus } from '#lib/autosave';
 	import { createSceneSaver, type SceneConflict } from '#lib/scene-saver';
+	import { textHash } from '#lib/text-hash';
 	import {
 		toggleCommandMarkers as toggleCommandMarkersView,
 		toggleNonPrintingMarks
@@ -32,6 +33,7 @@
 	import {
 		nudgeMarkers,
 		isWholeSceneNote,
+		insertionFits,
 		authorColor,
 		suggestionAuthor,
 		threadAuthor,
@@ -221,10 +223,24 @@
 				applied = false;
 				continue;
 			}
-			// An insertion has no text to check its place against. Over unsaved
-			// typing it is left out, and the save check reports the difference,
-			// rather than risk it landing in the wrong place.
-			if (original === '' && !wasClean) {
+			const insert = replacements[id] ?? suggestion.replacement;
+			// An insertion has no text of its own to check its place against.
+			// Over unsaved typing it lands only when it was the one change, made
+			// on the text this editor last saved, and the text around the mark
+			// still reads as it did there. Otherwise it is left out, and the save
+			// check reports the difference, rather than risk it landing in the
+			// wrong place.
+			if (
+				original === '' &&
+				!wasClean &&
+				!(
+					ids.length === 1 &&
+					accepted &&
+					!conflict &&
+					textHash(appliedBody) === accepted.baseHash &&
+					insertionFits(appliedBody, view.state.doc.toString(), accepted.bodyMd, from, insert)
+				)
+			) {
 				applied = false;
 				continue;
 			}
@@ -237,7 +253,7 @@
 			syncingFromServer = wasClean;
 			try {
 				view.dispatch({
-					changes: { from, to, insert: replacements[id] ?? suggestion.replacement },
+					changes: { from, to, insert },
 					effects: removeReviewMarks.of([id]),
 					annotations: landsWhilePaused.of(true)
 				});
