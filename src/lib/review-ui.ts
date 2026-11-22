@@ -122,6 +122,9 @@ export type ReviewThread = {
 	suggestionId: string | null;
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Where it sits in the current text, also for a decided edit that left
+	// nothing to mark; null when lost.
+	position?: number | null;
 	// Lost only because that part of the scene could not be compared with
 	// the version it was made on.
 	anchorNotSought?: boolean;
@@ -448,7 +451,8 @@ export function pendingPatternCounts(
 // takes them. The note's own edits come first in reading order: by the scene's
 // place in the story, then by where the edit sits in the scene. An edit whose
 // passage was rewritten (no anchor) goes last in its scene; a scene not in the
-// order (in the deleted list) goes last of all. Follow-ups staged by the
+// order (in the deleted list) goes last of all. A decided edit that left
+// nothing to mark (an accepted deletion) keeps its place by its position. Follow-ups staged by the
 // re-read after an accept come after all of those, oldest first, so a
 // follow-up never takes the pass back to a spot already done.
 export function patternEdits<
@@ -459,21 +463,20 @@ export function patternEdits<
 		followsId: string | null;
 		createdAt: Date | string;
 		anchor: { start: number; end: number } | null;
+		position?: number | null;
 	}
 >(suggestions: S[], threadId: string, sceneOrder: string[]): S[] {
 	const rank = new Map(sceneOrder.map((id, i) => [id, i]));
 	const sceneRank = (s: S) => rank.get(s.sceneId) ?? sceneOrder.length;
 	const time = (s: S) => new Date(s.createdAt).getTime();
+	const at = (s: S) => s.anchor?.start ?? s.position ?? Number.MAX_SAFE_INTEGER;
 	return suggestions
 		.filter((s) => s.patternThreadId === threadId)
 		.sort((a, b) => {
 			const followUp = Number(a.followsId !== null) - Number(b.followsId !== null);
 			if (followUp !== 0) return followUp;
 			if (a.followsId !== null) return time(a) - time(b) || a.id.localeCompare(b.id);
-			return (
-				sceneRank(a) - sceneRank(b) ||
-				(a.anchor?.start ?? Number.MAX_SAFE_INTEGER) - (b.anchor?.start ?? Number.MAX_SAFE_INTEGER)
-			);
+			return sceneRank(a) - sceneRank(b) || at(a) - at(b);
 		});
 }
 

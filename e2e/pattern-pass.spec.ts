@@ -508,14 +508,20 @@ test.describe('with the Assistant on', () => {
 			await expect(accepted).toHaveCount(1);
 			await current.getByRole('button', { name: 'Follows an earlier change' }).click();
 			await expect(accepted).toHaveClass(/pp-flash/);
+			// The earlier card offers the way back to the step.
+			await accepted.getByRole('button', { name: 'Back to the current change' }).click();
+			await expect(current).toBeFocused();
+			await expect(pass.getByRole('button', { name: 'Back to the current change' })).toHaveCount(0);
 
 			// After a reload the follow-up still links back.
 			await page.reload();
 			await page.locator('html[data-hydrated="true"]').waitFor();
 			const note = page.locator('.rv-card').filter({ hasText: 'Pattern note (POV epithets)' });
 			await note.getByRole('button', { name: /Work through this/ }).click();
-			// The skipped edit comes round again first.
+			// The skipped edit comes round again first. The edit accepted before
+			// the reload is counted apart.
 			await expect(pass.locator('.pp-para')).toContainText('looked back.');
+			await expect(pass.locator('.pp-count')).toHaveText('1 of 2, 1 done earlier');
 			await pass.getByRole('button', { name: 'Skip' }).click();
 			await expect(current.getByText('Follow-up')).toBeVisible();
 			await expect(
