@@ -8,6 +8,10 @@ RUN npm run build && npm prune --omit=dev
 FROM node:26.13.0-alpine3.24
 WORKDIR /app
 ENV NODE_ENV=production
+# Set from the release tag by the image workflow; the app falls back to
+# package.json when it is empty.
+ARG APP_VERSION=
+ENV APP_VERSION=$APP_VERSION
 # pg_dump and pg_restore for off-site backups; the major version must be
 # able to talk to the postgres:18 server. Chromium renders the stored PDF
 # exports in the worker (driven via puppeteer-core, which finds it on the
