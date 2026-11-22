@@ -38,6 +38,22 @@ call is story-scoped) and now has a test. The arc section names stories
 with out-of-date scene summaries, so the writer runs Update summaries
 before refreshing.
 
+Cache read rates per provider (2026-11-22, `fix/cache-read-rates` on
+`staging/bug-fixes`, #1372). Cached tokens on every provider but Claude were
+metered at the full price, so an OpenAI or Gemini figure read high and a cap
+stopped early. `cacheReadRate` is now keyed by the provider id: the preset
+providers whose adapters report cached tokens get their published rate, the
+dearest across their models so a figure still never reads low (OpenAI a half,
+since gpt-4o caches at a half and newer models lower; Gemini a quarter;
+DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with
+`prompt_cache_hit_tokens` now read as the cached share where
+`prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
+no one rate fits; its discovery reports `input_cache_read` per model, which is
+carried as an optional `cacheRead` on the price itself and wins over any rate.
+A custom endpoint and a typed price keep the full-rate fallback. The rates
+were set from the providers' published price lists as known at the time; the
+build environment could not reach them to re-check.
+
 Guided pass lows, rest (2026-11-22, `fix/guided-pass-lows` on
 `staging/bug-fixes`, #1317). An accepted deletion has nothing to mark, so its
 anchor is null and `patternEdits` put it after the pending edits of its scene.
@@ -61,6 +77,20 @@ had already focused the next card; the card (or the end of the pass) is
 focused again when focus fell to the page. The return-to cookie is only set
 for a request with `Sec-Fetch-Dest: document` (or none), and `?pass=` is
 taken off the address with a shallow replace once read.
+
+Spend cap counts the prompt high (2026-11-22, `fix/spend-cap-estimate-margin`,
+#1331): the cap check counted the prompt at chars/4, which runs short on
+non-English prose (a CJK character is about a token, not a quarter), so a
+request just under the cap could be billed just over it. Every cap check now
+counts the prompt with `ceilingTokens` (UTF-8 bytes / 3): a third above chars/4
+for English and a token per CJK character, where a flat multiplier on chars/4
+would have to be about 4x to cover CJK and would then overcount English badly.
+The provider's own token counting was not used: only Claude has an endpoint
+for it, and it would add a request before every send. `ceilingPromptTokens` in
+the gateway is the one count; drafting's check and its up-front estimate use it
+too, with the real persona message in place of the flat `PERSONA_TOKENS`. The
+budgets (context assembly, the context guard) keep chars/4, since an
+overcount there only trims context.
 
 Spend cap held before every request (2026-11-22, `fix/assistant-retry-cap`,
 #1331): the background jobs checked `capReached` (spend at or over the cap)
