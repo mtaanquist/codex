@@ -16,7 +16,7 @@ the card's group; the Design System pane uses it to build its index.
   source of truth, and the cards always render whatever is currently
   shipped.
 - Cards show only the canonical primitives named in
-  `scratch/system-design/design-system.md`. Legacy skins (the extra button
+  `docs/design/design-system.md`. Legacy skins (the extra button
   and menu systems listed in that sheet's drift section) stay out, so
   design sessions never learn them.
 - Markup in the cards mirrors real call sites in `src/lib/components/` and

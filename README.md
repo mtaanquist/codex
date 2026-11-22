@@ -243,8 +243,10 @@ the copy, since their secrets were encrypted with the source instance's key.
 - `src/lib/docs` - the in-app help articles
 - `drizzle` - generated SQL migrations
 - `tests`, `e2e` - integration (Vitest against Postgres) and Playwright
-- `scratch` - design documents; planning material, not part of the app
-- `scratch/system-design/history.md` - notes on how shipped work was built (progress is tracked in GitHub milestones and issues)
+- `docs` - self-hosting guide and project documentation
+- `docs/design` - design, schema, roadmap, and the design-system sheet
+- `docs/design-kit` - design-system preview cards for Claude Design
+- `docs/history.md` - notes on how shipped work was built (progress is tracked in GitHub milestones and issues)
 
 ## License
 

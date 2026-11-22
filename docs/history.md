@@ -263,7 +263,7 @@ guest review, and the public reader. `/docs` became public, because the guest
 and reader shells keep the help tool. Deleted with it: `HelpModal`, `TopBar`,
 `PageTopBar`, `PaletteButton`, and the `.topbar`, `.crumbs`, `.back-link`,
 `.breadcrumb`, `.save-status`, `.review-guest-bar` and `.universe-edit` CSS.
-New kit card `scratch/design-kit/appbar.html`. Deferred on purpose: the mock's
+New kit card `docs/design-kit/appbar.html`. Deferred on purpose: the mock's
 universe-overview restructure (the Plan page keeps its `PlanSidebar` entity
 list, gaining only the bar, the four-mode strip and a small Insights link),
 and full reader retheming, which is session 3.
@@ -271,10 +271,10 @@ and full reader retheming, which is session 3.
 Visual design pass (2026-07-29, branch `worktree-design-system-sheet`).
 Groundwork for a whole-app cohesion pass with Claude Design: a components
 sheet written from a full audit of `src/lib/styles/` and
-`src/lib/components/` (`scratch/system-design/design-system.md`, now
+`src/lib/components/` (`docs/design/design-system.md`, now
 referenced from CLAUDE.md as required reading for page work), and four
 session briefs for Claude Design
-(`scratch/system-design/design-pass-prompts.md`): landing page,
+(`docs/design/design-pass-prompts.md`): landing page,
 navigation and wayfinding, secondary-surface cohesion, and a primitive
 consolidation sheet. The audit found the drift the briefs target: 20+
 button skins, 9 menu systems, 3 modals, ~400 lines of dead CSS,
@@ -288,7 +288,7 @@ surface" section stating what review, insights, goals, notifications,
 print, import, and admin are each for), the stale status header in
 `assistant.md`, and three stale schema comments (`llm_config` twice,
 `cover_asset_id`). Next: build the design kit preview bundle
-(`scratch/design-kit/`, one card per canonical primitive in all three
+(`docs/design-kit/`, one card per canonical primitive in all three
 themes, DesignSync-ready), run the briefs in Claude Design, port the
 results, then the code-side consolidation refactor the sheet's backlog
 section lists.
@@ -352,7 +352,7 @@ criterion; the timeline view stays parked on the world-calendar
 design.
 
 Write/Review sidebar parity (planned 2026-06-17, design note
-`scratch/system-design/write-review-unification.md`): Write and Review
+`docs/design/write-review-unification.md`): Write and Review
 stay separate views (merging them was considered and rejected); the
 goal is only to make the two left sidebars uniform. Today the Review
 sidebar (`ReviewNav`) is a reduced reimplementation of `StoryOutline`
@@ -609,9 +609,9 @@ Page setup: line spacing + binding gutter batch (2026-06-08, branch
 `feat/page-setup-spacing-gutter`; the page-setup half of the #309
 conversation, plus a print-binding gutter the writer asked for). The
 deferred per-user paragraph styles are recorded in
-`scratch/system-design/paragraph-styles-309.md`; the gutter feasibility
+`docs/design/paragraph-styles-309.md`; the gutter feasibility
 spike (Chromium honours mirrored `@page :left/:right`, page numbers
-coexist) in `scratch/system-design/page-setup-gutters.md`.
+coexist) in `docs/design/page-setup-gutters.md`.
 
 - [x] Line spacing: a `lineSpacing` page-setup knob (single / normal /
       relaxed / double) replacing the hardcoded 1.6 across pageCss (PDF),
@@ -964,7 +964,7 @@ button above the chat, plus the existing `/review` command). Help doc
 unit, build green locally.
 
 Universe-aware Assistant (planned 2026-06-23, design note
-`scratch/system-design/universe-aware-assistant-plan.md`, branch
+`docs/design/universe-aware-assistant-plan.md`, branch
 `feat/universe-aware-assistant`). Five parts, A first as the foundation; B-E
 depend on it. Part A (done): every Assistant layer carries a scope - a story
 focus (`{ universeId, storyId, sceneId? }`) or the whole universe
@@ -3568,7 +3568,7 @@ for usage evidence, per the roadmap's own criteria. Started 2026-06-05.
 
 ## Phase 9 - The Assistant (LLM)
 
-Full design in `scratch/system-design/assistant.md`. Building foundations
+Full design in `docs/design/assistant.md`. Building foundations
 first, surfaces later; no bundled model, bring-your-own OpenAI-compatible
 endpoint. Started 2026-06-09. Every step below through entity enrichment
 merged as #324-#335 and shipped together as v3.0.0; later items carry their

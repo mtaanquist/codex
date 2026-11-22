@@ -13,8 +13,12 @@ build/
 # would otherwise be format-checked alongside the real one.
 .claude/worktrees/
 
-# Planning material: the prototype and design docs are not ours to format.
+# The local Claude Design prototype, and the design docs and kit, which keep
+# their hand formatting (as they did under scratch/).
 scratch/
+docs/design/
+docs/design-kit/
+docs/history.md
 
 # Miscellaneous
 /static/

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Guards the design-system rules in scratch/system-design/design-system.md:
+// Guards the design-system rules in docs/design/design-system.md:
 // no `var(--token, #hex)` fallbacks and no hard-coded white. Colours live in
 // tokens.css; everything else reads a token.
 const root = join(process.cwd(), 'src');
