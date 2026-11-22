@@ -459,6 +459,53 @@ describe('a text too long for one request', () => {
 		expect(result.partial).toBeUndefined();
 	});
 
+	// Reads the universe, muting a story while the first part is being read.
+	const readMutingDuringFirst = (story: string) =>
+		enrichEntityFromText(
+			db,
+			{ userId: ownerId, scope: { universeId }, entityId: bram, mode: 'scenes' },
+			{
+				...deps,
+				provider: {
+					...stubProvider,
+					async respond(...args) {
+						if (prompts.length === 0) await saveStoryLlmOverride(db, story, { enabled: false });
+						return stubProvider.respond(...args);
+					}
+				}
+			}
+		);
+
+	it('asks for the summary from the last part left when a muted story empties the final part (#1419)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const middle = await makeStory('The Middle Book');
+		await writeScenes(middle, [long('THREE'), long('FOUR')]);
+		const quiet = await makeStory('The Quiet Book');
+		await writeScenes(quiet, [long('FIVE')]);
+		replies = [
+			'{"aliases":["The Grey"],"details":[],"summary":null}',
+			'{"aliases":[],"details":[],"summary":"A harbourmaster."}'
+		];
+		const result = await readMutingDuringFirst(quiet);
+		expect(prompts).toHaveLength(2);
+		expect(prompts.join('\n')).not.toContain('Bram FIVE');
+		expect(prompts[1]).toContain('Bram THREE');
+		expect(prompts[1]).not.toContain('do not propose a summary');
+		expect(result.suggestions.map((s) => s.value).sort()).toEqual(['A harbourmaster.', 'The Grey']);
+		expect(result.skipped).toBeUndefined();
+	});
+
+	it('says no summary was asked for when the story muted held every part after the first (#1419)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const quiet = await makeStory('The Quiet Book');
+		await writeScenes(quiet, [long('THREE')]);
+		const result = await readMutingDuringFirst(quiet);
+		expect(prompts).toHaveLength(1);
+		expect(prompts[0]).toContain('do not propose a summary');
+		expect(result.skipped).toBe('summary');
+		expect(result.partial).toBeUndefined();
+	});
+
 	it('says how to fix it when a later part is cut off at the reply limit', async () => {
 		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
 		cutOffCalls = [2];
