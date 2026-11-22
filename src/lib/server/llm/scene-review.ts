@@ -55,7 +55,7 @@ import {
 import { summaryIsCurrent } from '../summary-currency.ts';
 import { completeDetailed, type GatewayDeps } from './gateway.ts';
 import { modelContextWindow, resolveLlmConfig, type ResolvedConfig } from './config.ts';
-import { CAP_NOT_APPLIED_MESSAGE, spentFields, type SpendMeter } from './spend.ts';
+import { CAP_NOT_APPLIED_MESSAGE, SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import { errorFields, logEvent } from '../log.ts';
 import type { ChatMessage } from './providers/types.ts';
@@ -451,21 +451,27 @@ async function runConsistencyPass(
 			spendCapped = true;
 			break;
 		}
-		candidates.push(
-			...(await surveyChunk(
-				db,
-				{
-					userId: opts.userId,
-					scope: opts.scope,
-					system,
-					scenes: chunk,
-					...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {}),
-					meter: opts.meter,
-					signal: opts.signal
-				},
-				deps
-			))
-		);
+		try {
+			candidates.push(
+				...(await surveyChunk(
+					db,
+					{
+						userId: opts.userId,
+						scope: opts.scope,
+						system,
+						scenes: chunk,
+						...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {}),
+						meter: opts.meter,
+						signal: opts.signal
+					},
+					deps
+				))
+			);
+		} catch (err) {
+			if (!(err instanceof SpendCapError)) throw err;
+			spendCapped = true;
+			break;
+		}
 	}
 
 	const capped = candidates.length > MAX_CANDIDATES;
@@ -507,21 +513,28 @@ async function runConsistencyPass(
 			role: 'user',
 			content: buildConfirmMessage(candidate.claim, involved, bodyChars)
 		};
-		const result = await completeDetailed(
-			db,
-			{
-				userId: opts.userId,
-				...scopeIds(opts.scope),
-				role: 'reviewer',
-				enableTools: true,
-				toolNames: CONFIRM_TOOL_NAMES,
-				toolBudget: CONFIRM_TOOL_BUDGET,
-				messages: system ? [system, task] : [task],
-				meter: opts.meter,
-				signal: opts.signal
-			},
-			deps
-		);
+		let result: Awaited<ReturnType<typeof completeDetailed>>;
+		try {
+			result = await completeDetailed(
+				db,
+				{
+					userId: opts.userId,
+					...scopeIds(opts.scope),
+					role: 'reviewer',
+					enableTools: true,
+					toolNames: CONFIRM_TOOL_NAMES,
+					toolBudget: CONFIRM_TOOL_BUDGET,
+					messages: system ? [system, task] : [task],
+					meter: opts.meter,
+					signal: opts.signal
+				},
+				deps
+			);
+		} catch (err) {
+			if (!(err instanceof SpendCapError)) throw err;
+			spendCapped = true;
+			break;
+		}
 		notes += result.notes;
 		stopped ??= result.stopped;
 	}
@@ -1213,6 +1226,11 @@ export async function reviewStoryScenes(
 			// A cancelled run is not a failed scene: stop where it was told to.
 			if (opts.signal?.aborted) {
 				aborted = true;
+				break;
+			}
+			// Left out of done, so a continuation reviews it (see adoptCappedRun).
+			if (err instanceof SpendCapError) {
+				capped = true;
 				break;
 			}
 			failed += 1;

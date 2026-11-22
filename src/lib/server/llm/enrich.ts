@@ -9,7 +9,7 @@ import {
 	ReplyCutOffError,
 	type GatewayDeps
 } from './gateway.ts';
-import { spentFields, type SpendMeter } from './spend.ts';
+import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { estimateTokens } from './context/budgets.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import { buildEnrichMessage, buildEnrichTextMessage } from './prompts/enrich.ts';
@@ -345,7 +345,8 @@ export async function enrichEntityFromText(
 				);
 			}
 		} catch (err) {
-			failure = err;
+			if (err instanceof SpendCapError) capped = true;
+			else failure = err;
 			break;
 		}
 	}
@@ -712,6 +713,10 @@ export async function enrichUniverse(
 		} catch (err) {
 			if (signal?.aborted) {
 				aborted = true;
+				break;
+			}
+			if (err instanceof SpendCapError) {
+				capped = true;
 				break;
 			}
 			// Every later entity would be refused the same way.

@@ -32,7 +32,7 @@ const { listSuggestions, decideSuggestion } = await import('../../src/lib/server
 const { complete, completeDetailed, stream, AssistantDisabledError } =
 	await import('../../src/lib/server/llm/gateway');
 const { anthropicProvider } = await import('../../src/lib/server/llm/providers/anthropic');
-const { SpendMeter } = await import('../../src/lib/server/llm/spend');
+const { SpendMeter, SpendCapError } = await import('../../src/lib/server/llm/spend');
 
 let pool: pg.Pool;
 let db: Database;
@@ -2220,18 +2220,52 @@ describe('gateway request retries', () => {
 	it('does not resend a billed failure when the next attempt could pass the cap (#1331)', async () => {
 		await configure(true);
 		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
-		// The failed attempt bills $0.11; a resend at a 100-token reply could add
-		// over $1.00 more, past the $1.00 cap.
-		const meter = new SpendMeter({ pricing, capUsd: 1 });
+		// With the prompt priced at nothing, the request could cost $1.00 at its
+		// 100-token reply: it fits under $1.05, but not after the failed attempt
+		// billed $0.07.
+		const meter = new SpendMeter({
+			pricing: { 'chat-model': { prompt: 0, completion: 0.01 } },
+			capUsd: 1.05
+		});
 		await expect(
 			completeDetailed(
 				db,
 				{ userId, role: 'chat', messages: [], maxTokens: 100, meter },
 				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
 			)
+		).rejects.toThrow(SpendCapError);
+		expect(endpoint.calls()).toBe(1);
+		expect(meter.spentUsd).toBeCloseTo(7 * 0.01);
+	});
+
+	it('does not send a first request that could pass the cap (#1331)', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		// What an earlier attempt of the job spent, carried into its retry.
+		const meter = new SpendMeter({ pricing, capUsd: 1, spentUsd: 0.5 });
+		await expect(
+			completeDetailed(
+				db,
+				{ userId, role: 'chat', messages: [], maxTokens: 100, meter },
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			)
+		).rejects.toThrow(SpendCapError);
+		expect(endpoint.calls()).toBe(0);
+		expect(await usageRows()).toHaveLength(0);
+	});
+
+	it('leaves the ceiling to a caller that holds its own', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		const meter = new SpendMeter({ pricing, capUsd: 1, spentUsd: 0.5 });
+		await expect(
+			completeDetailed(
+				db,
+				{ userId, role: 'chat', messages: [], maxTokens: 100, meter, mayResend: () => false },
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			)
 		).rejects.toThrow(/Endpoint returned 529/);
 		expect(endpoint.calls()).toBe(1);
-		expect(meter.spentUsd).toBeCloseTo(40 * 0.001 + 7 * 0.01);
 	});
 
 	it('gives up on a stream that keeps failing with a server fault after the usual retries', async () => {
@@ -2402,9 +2436,10 @@ describe('gateway refusal and paused turns (#1083)', () => {
 		expect(tools.seen).toHaveLength(1);
 	});
 
-	// $0.11 billed by the first request; the next, at a 100-token reply, could
-	// add over $1.00 more, past the $1.00 cap (#1331).
-	const capPricing = { 'chat-model': { prompt: 0.001, completion: 0.01 } };
+	// With the prompt priced at nothing, a request at a 100-token reply could
+	// cost $1.00: the first fits under $1.05, the next does not once the first
+	// billed $0.07 (#1331).
+	const capPricing = { 'chat-model': { prompt: 0, completion: 0.01 } };
 	const billed = { promptTokens: 40, completionTokens: 7 };
 
 	it('does not resume a paused turn that could pass the spend cap (#1331)', async () => {
@@ -2417,14 +2452,14 @@ describe('gateway refusal and paused turns (#1083)', () => {
 			usage: billed
 		};
 		const { provider, seen } = queued([paused, { content: 'y', toolCalls: [] }]);
-		const meter = new SpendMeter({ pricing: capPricing, capUsd: 1 });
+		const meter = new SpendMeter({ pricing: capPricing, capUsd: 1.05 });
 		await expect(
 			completeDetailed(
 				db,
 				{ userId, role: 'chat', messages: [], maxTokens: 100, meter },
 				{ provider, http: noHttp }
 			)
-		).rejects.toThrow(/stopped partway/);
+		).rejects.toThrow(SpendCapError);
 		expect(seen).toHaveLength(1);
 
 		const { storyId } = await seedStoryScene('Text.');
@@ -2439,11 +2474,11 @@ describe('gateway refusal and paused turns (#1083)', () => {
 					enableTools: true,
 					messages: [],
 					maxTokens: 100,
-					meter: new SpendMeter({ pricing: capPricing, capUsd: 1 })
+					meter: new SpendMeter({ pricing: capPricing, capUsd: 1.05 })
 				},
 				{ provider: tools.provider, http: noHttp }
 			)
-		).rejects.toThrow(/stopped partway/);
+		).rejects.toThrow(SpendCapError);
 		expect(tools.seen).toHaveLength(1);
 
 		// Under a cap it fits, the turn resumes as before.
@@ -2480,11 +2515,11 @@ describe('gateway refusal and paused turns (#1083)', () => {
 					enableTools: true,
 					messages: [],
 					maxTokens: 100,
-					meter: new SpendMeter({ pricing: capPricing, capUsd: 1 })
+					meter: new SpendMeter({ pricing: capPricing, capUsd: 1.05 })
 				},
 				{ provider, http: noHttp }
 			)
-		).rejects.toThrow(/spend cap/);
+		).rejects.toThrow(SpendCapError);
 		expect(seen).toHaveLength(1);
 	});
 

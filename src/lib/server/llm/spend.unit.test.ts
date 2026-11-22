@@ -131,6 +131,15 @@ describe('SpendMeter', () => {
 		expect(meter.wouldPassCap('other', next)).toBe(true);
 	});
 
+	it('counts as at the cap once a request was held back (#1331)', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 0.5 });
+		meter.record('priced', { promptTokens: 100, completionTokens: 10 });
+		expect(meter.capReached).toBe(false);
+		meter.hold();
+		expect(meter.capReached).toBe(true);
+		expect(meter.spentUsd).toBeCloseTo(0.12, 10);
+	});
+
 	it('does nothing at all without a cap', () => {
 		const meter = new SpendMeter({ pricing });
 		meter.record('other');

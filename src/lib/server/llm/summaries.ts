@@ -9,7 +9,7 @@ import {
 	type GatewayDeps
 } from './gateway.ts';
 import { buildSceneSummaryMessage } from './prompts/summary.ts';
-import { spentFields, type SpendMeter } from './spend.ts';
+import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import type { ChatMessage } from './providers/types.ts';
 import { storyIsLive } from '../universe-scope.ts';
@@ -136,9 +136,11 @@ export async function summariseStory(
 	let changed = 0;
 	let noModel = false;
 	let disabled = false;
-	// The gate refusal ends the pass; anything else is one item's failure.
+	// The gate refusal and the spend cap end the pass; anything else is one
+	// item's failure.
 	const stopsPass = (err: unknown): boolean => {
-		if (err instanceof NoModelError) noModel = true;
+		if (err instanceof SpendCapError) capped = true;
+		else if (err instanceof NoModelError) noModel = true;
 		else if (err instanceof AssistantDisabledError) disabled = true;
 		else return false;
 		return true;

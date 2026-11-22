@@ -23,6 +23,16 @@ export const CAP_NOT_APPLIED_MESSAGE =
 export const CAP_NOT_APPLIED_NO_USAGE_MESSAGE =
 	'A spend cap is set but the endpoint did not report token counts for every request, so the cap could not be fully applied.';
 
+// Thrown by the gateway in place of sending a metered request that could take
+// the run past its cap (SpendMeter.wouldPassCap). A job ends as capped on it,
+// at the same boundary its own capReached check stops at.
+export class SpendCapError extends Error {
+	constructor() {
+		super('The next request could take this job past your spend cap, so it was not sent.');
+		this.name = 'SpendCapError';
+	}
+}
+
 export function requestCostUsd(
 	pricing: ModelPricing | undefined,
 	model: string,
@@ -50,6 +60,7 @@ export class SpendMeter {
 	private unpriced = false;
 	private unreported = false;
 	private estimated = false;
+	private held = false;
 	private readonly persist: ((spentUsd: number) => Promise<void>) | undefined;
 	private readonly uncapped: boolean;
 	private saving: Promise<void> = Promise.resolve();
@@ -120,10 +131,17 @@ export class SpendMeter {
 		return this.estimated;
 	}
 
-	// True once the run has spent its ceiling. Always false when there is no cap,
-	// and false when nothing could be priced (see notApplied).
+	// True once the run has spent its ceiling, or a request was held back
+	// because it could have passed it (see hold). Always false when there is no
+	// cap, and false when nothing could be priced (see notApplied).
 	get capReached(): boolean {
-		return this.capUsd !== undefined && this.usd >= this.capUsd;
+		return this.capUsd !== undefined && (this.held || this.usd >= this.capUsd);
+	}
+
+	// A request was not sent because it could have passed the ceiling: the run
+	// stops at its next boundary, as it would at the ceiling itself.
+	hold(): void {
+		this.held = true;
 	}
 
 	// Whether one more request, at the usage it could bill at most, could take
