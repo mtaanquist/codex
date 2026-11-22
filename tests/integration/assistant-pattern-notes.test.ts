@@ -363,6 +363,52 @@ describe('the pattern link', () => {
 		expect(row.patternThreadId).toBeNull();
 	});
 
+	// Clearing finished notes must not cut a waiting follow-up loose from the
+	// accepted edit it follows: the link is what marks it as a follow-up and
+	// keeps it at the back of the guided pass.
+	it('keeps an accepted edit a waiting follow-up still follows', async () => {
+		const threadId = await note();
+		const stage = async (find: string, replacement: string, followsSuggestionId?: string) => {
+			const [scene] = await db.select({ bodyMd: scenes.bodyMd }).from(scenes);
+			const at = scene.bodyMd.indexOf(find);
+			const staged = await createSuggestion(db, {
+				storyId,
+				sceneId,
+				author: { assistant: true },
+				range: { start: at, end: at + find.length },
+				replacement,
+				patternThreadId: threadId,
+				followsSuggestionId
+			});
+			if (!staged.ok) throw new Error(staged.reason);
+			return staged.suggestionId;
+		};
+		const first = await stage('The elf crossed', 'Kara crossed');
+		expect((await decideSuggestion(db, userId, storyId, first, true)).ok).toBe(true);
+		const second = await stage('ford', 'river', first);
+		expect((await decideSuggestion(db, userId, storyId, second, true)).ok).toBe(true);
+		const third = await stage('river', 'stream', second);
+		const done = await stage('Far behind', 'Well behind');
+		expect((await decideSuggestion(db, userId, storyId, done, false)).ok).toBe(true);
+
+		const seen = new Date(Date.now() + 60_000).toISOString();
+		await clearReviews(db, storyId, 'finished', seen);
+		const rows = await db
+			.select({ id: reviewSuggestions.id, follows: reviewSuggestions.followsSuggestionId })
+			.from(reviewSuggestions);
+		const follows = new Map(rows.map((r) => [r.id, r.follows]));
+		// The chain behind the waiting follow-up stays; the unrelated decided edit goes.
+		expect(follows.get(third)).toBe(second);
+		expect(follows.get(second)).toBe(first);
+		expect(follows.has(first)).toBe(true);
+		expect(follows.has(done)).toBe(false);
+
+		// Once the follow-up is decided, the whole chain clears.
+		expect((await decideSuggestion(db, userId, storyId, third, false)).ok).toBe(true);
+		await clearReviews(db, storyId, 'finished', seen);
+		expect(await db.select().from(reviewSuggestions)).toHaveLength(0);
+	});
+
 	it('accepts with the owner wording and records what was applied', async () => {
 		const threadId = await note();
 		const staged = await createSuggestion(db, {

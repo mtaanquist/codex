@@ -85,7 +85,7 @@ If a card says "This could not be checked against the current text.", find the p
 
 ## Clearing review notes
 
-When you are done with a round of feedback, select "Clear review notes..." at the foot of the Comments panel. It works on the whole story, not only the open scene. Choose "Finished notes only" to remove resolved comments and accepted or rejected suggestions and keep the open ones, or "Everything" to remove every comment and suggestion. Cleared notes and their replies are deleted, yours and your reviewers'. Notes on scenes in the deleted list stay with those scenes. A note or reply that arrives after you opened the page is kept, so reload to see it before you clear it too. Your text and your [saved drafts](/docs/drafts) do not change.
+When you are done with a round of feedback, select "Clear review notes..." at the foot of the Comments panel. It works on the whole story, not only the open scene. Choose "Finished notes only" to remove resolved comments and accepted or rejected suggestions and keep the open ones (an accepted change that an open follow-up from the Assistant builds on also stays until you decide the follow-up), or "Everything" to remove every comment and suggestion. Cleared notes and their replies are deleted, yours and your reviewers'. Notes on scenes in the deleted list stay with those scenes. A note or reply that arrives after you opened the page is kept, so reload to see it before you clear it too. Your text and your [saved drafts](/docs/drafts) do not change.
 
 ## Hearing about activity
 
