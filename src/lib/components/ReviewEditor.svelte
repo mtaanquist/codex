@@ -373,7 +373,7 @@
 		void focusedId;
 		if (!view) return;
 		if (incoming !== appliedBody) {
-			if (!autosave.isDirty()) {
+			if (!autosave.hasUnsaved()) {
 				if (view.state.doc.toString() !== incoming) {
 					// The server's own text, so it lands even while typing is paused,
 					// and it is not an edit to save: a save queued for it would be
@@ -392,8 +392,8 @@
 				// text the writer never saw.
 				if (view.state.doc.toString() === incoming) saver.adopt(incoming);
 			}
-			// With unsaved edits the next save is refused as a conflict, and the
-			// banner lets the author choose.
+			// With unsaved edits, a save still on its way included (#1374), the
+			// save is refused as a conflict, and the banner lets the author choose.
 			appliedBody = incoming;
 		}
 		rebuildMarks();
