@@ -149,13 +149,14 @@ describe('handle without a session', () => {
 	});
 
 	// #1360: only the writer's own visit to the consent page is remembered for
-	// after sign-in. An image or a script on another site that loads the page
+	// after sign-in. An image, script or frame on another site that loads the page
 	// must not choose where the writer lands.
 	it.each([
-		['a page navigation', { 'sec-fetch-mode': 'navigate' }, true],
+		['a page navigation', { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }, true],
 		['a browser that sends no fetch metadata', {}, true],
-		['an embedded load', { 'sec-fetch-mode': 'no-cors' }, false],
-		['a script fetch', { 'sec-fetch-mode': 'cors' }, false]
+		['an image', { 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }, false],
+		['a script fetch', { 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }, false],
+		['a frame', { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' }, false]
 	])(
 		'remembers the consent page only for a navigation: %s',
 		async (_label, headers, remembered) => {

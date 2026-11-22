@@ -23,7 +23,7 @@ showed on Plan at 390 px. The modifiers are now `pane-resizer-left` and
 because the form's `update()` re-reads the page data after the step effect
 had already focused the next card; the card (or the end of the pass) is
 focused again when focus fell to the page. The return-to cookie is only set
-for a request with `Sec-Fetch-Mode: navigate` (or none), and `?pass=` is
+for a request with `Sec-Fetch-Dest: document` (or none), and `?pass=` is
 taken off the address with a shallow replace once read.
 
 Small non-Assistant polish (2026-11-20, staging branch

@@ -66,13 +66,14 @@ export function isReturnablePath(pathname: string): boolean {
 	return RETURNABLE_PATHS.has(pathname);
 }
 
-// Whether a request is the browser opening a page, as opposed to an image,
-// script or fetch on some page loading it. Only an opened page is remembered:
-// another site could otherwise choose where the writer lands after signing
-// in. A browser that sends no fetch metadata is taken at its word.
+// Whether a request is the browser opening a page in its own tab or window,
+// as opposed to an image, script, fetch or frame on some page loading it.
+// Only an opened page is remembered: another site could otherwise choose
+// where the writer lands after signing in. A browser that sends no fetch
+// metadata is taken at its word.
 export function isPageNavigation(request: Request): boolean {
-	const mode = request.headers.get('sec-fetch-mode');
-	return mode === null || mode === 'navigate';
+	const dest = request.headers.get('sec-fetch-dest');
+	return dest === null || dest === 'document';
 }
 
 // The Set-Cookie value that remembers the page, for the sign-in redirect.
