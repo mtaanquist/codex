@@ -492,7 +492,8 @@ async function buildScopeEntities(
 	// every story it was written from is still there, out of the trash, and
 	// still read. The list
 	// is stored with the arc, so this holds after the scenes that mentioned the
-	// character are gone. (A current arc was built from stories read now.)
+	// character are gone. (A current arc was built from stories read now.) An
+	// empty list (the 0093 backfill, with no story left) cannot be checked.
 	const stale = shown.filter((c) => outOfDate.has(c.id));
 	const readStoryIds = [...new Set(stale.flatMap((c) => c.arcSummaryStories ?? []))];
 	const stillRead = new Set(
@@ -508,7 +509,8 @@ async function buildScopeEntities(
 			: []
 	);
 	for (const row of stale) {
-		if (row.arcSummaryStories?.every((id) => stillRead.has(id))) continue;
+		const read = row.arcSummaryStories ?? [];
+		if (read.length > 0 && read.every((id) => stillRead.has(id))) continue;
 		outOfDate.delete(row.id);
 		row.arcSummaryMd = null;
 	}
