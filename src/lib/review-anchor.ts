@@ -1000,9 +1000,10 @@ export type AnchorMapper = {
 // when the base has \r and the current text has none, the base is compared
 // as plain newlines, and offsets in it are moved across as lfOffset does.
 type Entry = { found: Comparison; at: (offset: number) => number };
+const comparesAsLf = (baseText: string, currentText: string) =>
+	baseText.includes('\r') && !currentText.includes('\r');
 function lfView(baseText: string, currentText: string): { text: string; at: Entry['at'] } {
-	if (!baseText.includes('\r') || currentText.includes('\r'))
-		return { text: baseText, at: (offset) => offset };
+	if (!comparesAsLf(baseText, currentText)) return { text: baseText, at: (offset) => offset };
 	// Where each \r that starts a \r\n stands; a lone \r becomes \n in place.
 	const dropped: number[] = [];
 	for (let i = baseText.indexOf('\r\n'); i !== -1; i = baseText.indexOf('\r\n', i + 2))
@@ -1135,7 +1136,10 @@ export function placeSuggestion(
 	}
 	const range = mapper.range(baseText, currentText, start, end, true);
 	if (!range) return null;
-	const original = baseText.slice(start, end);
+	// As the mapper compared it: a span across a \r\n the writer's save turned
+	// into \n is that much shorter in the current text.
+	const slice = baseText.slice(start, end);
+	const original = comparesAsLf(baseText, currentText) ? toLf(slice) : slice;
 	if (currentText.slice(range.start, range.end) === original) return range;
 	const length = original.length;
 	if (range.end - range.start < length) return null;

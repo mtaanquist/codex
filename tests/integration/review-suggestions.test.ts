@@ -531,6 +531,24 @@ describe('a body stored with Windows line breaks', () => {
 		expect(await sceneBody()).toBe('Line one is here.\nThe dog sat on the mat.\nLine three.');
 	});
 
+	it('accepts a suggestion across a line break once the writer edited the text', async () => {
+		const start = CRLF.indexOf('here.');
+		const { suggestionId } = (await suggest({ start, end: cat }, 'here. The ')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		const edited = CRLF.replace(/\r\n/g, '\n').replace('Line three.', 'Line three, at last.');
+		await db.update(scenes).set({ bodyMd: edited }).where(eq(scenes.id, sceneId));
+		const listed = (await listSuggestions(db, storyId)).find((s) => s.id === suggestionId);
+		expect(listed?.anchor).toEqual({ start, end: edited.indexOf('cat') });
+		expect(await decideSuggestion(db, authorId, storyId, suggestionId, true)).toMatchObject({
+			ok: true
+		});
+		expect(await sceneBody()).toBe(
+			'Line one is here. The cat sat on the mat.\nLine three, at last.'
+		);
+	});
+
 	it('refuses a range that does not hold the text the writer selected', async () => {
 		// Counted with plain newlines: one character short of "cat".
 		const lf = CRLF.replace(/\r\n/g, '\n').indexOf('cat');
