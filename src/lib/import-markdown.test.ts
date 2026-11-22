@@ -152,6 +152,45 @@ describe('parseStoryZip', () => {
 		expect(plan.problems).toEqual([expect.stringContaining('unfiled/09-gone.md')]);
 	});
 
+	it('reads waiting drafts onto their scenes, skipping a missing scene and a second draft', () => {
+		const plan = parseStoryZip(
+			zip({
+				'story.md': '---\ntitle: "T"\n---\n',
+				'chapters/01-a/01-one.md': '---\ntitle: "One"\n---\n',
+				'unfiled/01-two.md': '---\ntitle: "Two"\n---\n',
+				'waiting-drafts/a.md':
+					'---\nscene: "chapters/01-a/01-one.md"\nbrief: "B"\nwords: "800"\npov: "Mara"\nnote: "N"\nchapter-brief: "C"\n---\nRain.\n',
+				'waiting-drafts/b.md': '---\nscene: "unfiled/01-two.md"\nwords: "lots"\n---\nSun.',
+				'waiting-drafts/c.md': '---\nscene: "unfiled/01-two.md"\n---\nAgain.',
+				'waiting-drafts/d.md': '---\nscene: "unfiled/09-gone.md"\n---\nGone.'
+			})
+		);
+		expect(plan.waitingDrafts).toEqual([
+			{
+				scene: { chapter: 0, index: 0 },
+				brief: 'B',
+				targetWords: 800,
+				pov: 'Mara',
+				note: 'N',
+				chapterBrief: 'C',
+				textMd: 'Rain.'
+			},
+			{
+				scene: { chapter: null, index: 0 },
+				brief: '',
+				targetWords: null,
+				pov: null,
+				note: null,
+				chapterBrief: null,
+				textMd: 'Sun.'
+			}
+		]);
+		expect(plan.problems).toEqual([
+			expect.stringContaining('waiting-drafts/c.md'),
+			expect.stringContaining('waiting-drafts/d.md')
+		]);
+	});
+
 	it('falls back to de-slugified chapter names for zips without chapter.md', () => {
 		const plan = parseStoryZip(
 			zip({

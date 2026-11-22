@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { logEvent } from './log.ts';
 import {
+	assistantDrafts,
 	assets,
 	chapters,
 	characters,
@@ -517,7 +518,8 @@ function reviewsMarkdown(threads: ExportReviewThread[]): string {
 // with its characters, places, lore, and relationships, and every story's
 // chapters, scenes, and story notes, with referenced images and covers
 // bundled and links rewritten. This is the "export first" safety net before
-// account deletion, so review feedback rides along when a loader is given.
+// account deletion, so review feedback rides along when a loader is given,
+// and so do the account's waiting drafts.
 export async function buildAccountExport(
 	db: Database,
 	userId: string,
@@ -533,7 +535,7 @@ export async function buildAccountExport(
 
 	for (const universe of universeList) {
 		const uDir = `universes/${slugify(universe.name, universe.id)}`;
-		docs.push(...(await gatherUniverseDocs(db, universe, uDir, loadReviews)));
+		docs.push(...(await gatherUniverseDocs(db, universe, uDir, loadReviews, userId)));
 	}
 	return packDocs(docs, loadAssets, 'codex-export.zip');
 }
@@ -553,7 +555,9 @@ async function gatherUniverseDocs(
 	db: Database,
 	universe: typeof universes.$inferSelect,
 	uDir: string,
-	loadReviews?: ReviewLoader
+	loadReviews?: ReviewLoader,
+	// The account whose waiting drafts ride along; the account export only.
+	waitingDraftsOf?: string
 ): Promise<Doc[]> {
 	const docs: Doc[] = [];
 	{
@@ -685,6 +689,9 @@ async function gatherUniverseDocs(
 				.orderBy(asc(notes.createdAt));
 			docs.push(...notebookDocs(storyNoteRows, `${sDir}/notebook`, (id) => scenePaths.get(id)));
 			docs.push(...draftFolders(await gatherDrafts(db, story.id), `${sDir}/drafts`));
+			if (waitingDraftsOf) {
+				docs.push(...(await waitingDraftDocs(db, story.id, waitingDraftsOf, scenePaths, sDir)));
+			}
 			if (loadReviews) {
 				const threads = await loadReviews(story.id);
 				if (threads.length > 0) {
@@ -699,6 +706,62 @@ async function gatherUniverseDocs(
 		}
 	}
 	return docs;
+}
+
+// A writer's undecided drafts on a story's scenes, one file each under
+// waiting-drafts/, naming its scene by path as the importer reads it. A draft
+// still being written is left out: there is nothing to read yet.
+async function waitingDraftDocs(
+	db: Database,
+	storyId: string,
+	userId: string,
+	scenePaths: Map<string, string>,
+	sDir: string
+): Promise<Doc[]> {
+	const rows = await db
+		.select({
+			sceneId: assistantDrafts.sceneId,
+			brief: assistantDrafts.brief,
+			targetWords: assistantDrafts.targetWords,
+			pov: assistantDrafts.pov,
+			note: assistantDrafts.note,
+			chapterBrief: assistantDrafts.chapterBrief,
+			textMd: assistantDrafts.textMd
+		})
+		.from(assistantDrafts)
+		.where(
+			and(
+				eq(assistantDrafts.storyId, storyId),
+				eq(assistantDrafts.userId, userId),
+				eq(assistantDrafts.status, 'ready')
+			)
+		)
+		.orderBy(asc(assistantDrafts.createdAt));
+	const namer = uniqueNamer();
+	return rows.flatMap((row) => {
+		// A scene in the trash has no path, and its draft waits on nothing.
+		const scene = row.sceneId ? scenePaths.get(row.sceneId) : undefined;
+		if (!scene) return [];
+		const stem = scene
+			.replace(/^chapters\//, '')
+			.replace(/\.md$/, '')
+			.replace(/\//g, '-');
+		return [
+			{
+				dir: `${sDir}/waiting-drafts`,
+				name: `${namer(stem)}.md`,
+				front: {
+					scene,
+					brief: row.brief,
+					words: String(row.targetWords),
+					pov: row.pov,
+					note: row.note,
+					'chapter-brief': row.chapterBrief
+				},
+				body: row.textMd
+			}
+		];
+	});
 }
 
 // Every relationship in the universe, once each in its forward direction,

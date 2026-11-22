@@ -2103,6 +2103,14 @@ The rest of #1334, branch `fix/drafting-limits` on `staging/bug-fixes`.
 - "On screen" for the leave prompt now needs the card to intersect the
   viewport, so a refusal that arrives under focus mode or a narrow
   window's other tab is not taken as seen.
+- Two product decisions from Mads. Ready drafts ride the account export as
+  `waiting-drafts/<scene>.md` under each story folder (front matter names
+  the scene by path, as notebook notes do), and the story import reads them
+  back as ready drafts on their scenes, asked for the scene alone (no
+  position or job). The story export leaves them out. And the scene's own
+  card is hidden while a chapter run is writing its draft; the chapter card
+  has the progress and Stop, so the scene card's "part of a chapter" note
+  went.
 
 ## Scene drafting, review round 6 (2026-11-21)
 

@@ -158,6 +158,8 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 // #1334: the chapter card while its run is under way. The job is the test's
 // to answer for, and the drafts are written into the database one by one, as
 // the job would write them.
+// The scene made last is the one open in the editor.
+const OPEN_SCENE = 1;
 test('a chapter draft under way shows its progress and can be stopped', async ({ page }) => {
 	const stamp = Date.now();
 	const slug = await chapterOfTwo(page, stamp);
@@ -208,27 +210,37 @@ test('a chapter draft under way shows its progress and can be stopped', async ({
 	await expect(card.getByRole('link')).toHaveCount(0);
 	await expect(card.getByRole('button', { name: 'Stop' })).toBeVisible();
 	await expect(card).toContainText('Stopping keeps the scenes already drafted.');
-	// After a reload, both cards come back: the open scene's own card says it is
-	// part of the run, with no Stop of its own.
+	// After a reload the chapter card comes back. The open scene's own card
+	// stays hidden while the run writes its draft, once it has read that draft.
 	await page.reload();
 	await waitForHydration(page);
+	const sceneRead = page.waitForResponse(
+		(response) =>
+			response.request().method() === 'GET' &&
+			new URL(response.url()).pathname === '/api/assistant/draft'
+	);
 	await page.getByRole('tab', { name: 'Assistant' }).click();
+	const { draft: openDraft } = (await (await sceneRead).json()) as {
+		draft: { id: string; inChapterRun: boolean } | null;
+	};
+	expect(openDraft).toMatchObject({ id: draftIds[OPEN_SCENE], inChapterRun: true });
 	await expect(card).toContainText('0 of 2');
 	const sceneCard = page.getByRole('group', { name: 'Scene draft' });
-	await expect(sceneCard).toContainText(
-		'This scene is part of a chapter the Assistant is drafting'
-	);
-	await expect(sceneCard.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+	await expect(sceneCard).toHaveCount(0);
 
-	// The first scene is written: the list follows with no reload.
+	// The open scene is written: the list follows with no reload.
 	await sql(
-		`update assistant_drafts set status = 'ready', text_md = 'Drafted scene 1.' where id = $1`,
-		[draftIds[0]]
+		`update assistant_drafts set status = 'ready', text_md = 'Drafted scene 2.' where id = $1`,
+		[draftIds[OPEN_SCENE]]
 	);
 	job = { state: 'running', phase: 'scenes', completed: 1, total: 2 };
 	await expect(card).toContainText('1 of 2', { timeout: 15_000 });
 	await expect(card.getByRole('link')).toHaveCount(1);
-	await expect(card.getByRole('listitem').first()).toContainText('Ready');
+	await expect(card.getByRole('listitem').nth(OPEN_SCENE)).toContainText('Ready');
+	// The open scene's own card shows its draft once it is written.
+	await expect(sceneCard.getByRole('textbox')).toHaveValue('Drafted scene 2.', {
+		timeout: 15_000
+	});
 
 	// Stop keeps the scene already drafted and drops the other.
 	await card.getByRole('button', { name: 'Stop' }).click();

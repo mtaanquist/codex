@@ -30,6 +30,17 @@ export type ImportedFreeformNote = {
 	scene: { chapter: number | null; index: number } | null;
 	createdAt: Date | null;
 };
+// An undecided draft from the account export's waiting-drafts/ folder, on the
+// scene at that plan position.
+export type ImportedWaitingDraft = {
+	scene: { chapter: number | null; index: number };
+	brief: string;
+	targetWords: number | null;
+	pov: string | null;
+	note: string | null;
+	chapterBrief: string | null;
+	textMd: string;
+};
 export type ImportedAsset = { id: string; path: string; bytes: Uint8Array };
 export type ImportPlan = {
 	story: {
@@ -45,6 +56,7 @@ export type ImportPlan = {
 	notes: ImportedNote[];
 	// Absent from plans built from a manuscript document rather than a zip.
 	freeformNotes?: ImportedFreeformNote[];
+	waitingDrafts?: ImportedWaitingDraft[];
 	assets: ImportedAsset[];
 	// Tolerated oddities worth telling the author about before they commit.
 	problems: string[];
@@ -220,6 +232,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const unfiled: { path: string; file: string }[] = [];
 	const notes: ImportedNote[] = [];
 	const notebook: { rel: string; doc: ReturnType<typeof parseFrontMatter> }[] = [];
+	const waiting: { rel: string; doc: ReturnType<typeof parseFrontMatter> }[] = [];
 	const assets: ImportedAsset[] = [];
 
 	for (const path of Object.keys(entries)) {
@@ -249,6 +262,8 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 			notes.push({ kind, name, notesMd: doc.body.trim() });
 		} else if (parts[0] === 'notebook' && parts.length === 2 && parts[1].endsWith('.md')) {
 			notebook.push({ rel, doc: parseFrontMatter(read(path)) });
+		} else if (parts[0] === 'waiting-drafts' && parts.length === 2 && parts[1].endsWith('.md')) {
+			waiting.push({ rel, doc: parseFrontMatter(read(path)) });
 		} else if (parts[0] === 'assets' && parts.length === 2) {
 			const match = parts[1].match(ASSET_FILE);
 			if (match) assets.push({ id: match[1], path: parts[1], bytes: entries[path] });
@@ -303,5 +318,44 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		};
 	});
 
-	return { story, chapters, unfiled: unfiledScenes, notes, freeformNotes, assets, problems };
+	// A scene holds one waiting draft at a time; the first by file name wins.
+	const drafted = new Set<string>();
+	const waitingDrafts = waiting
+		.sort((a, b) => a.rel.localeCompare(b.rel))
+		.flatMap(({ rel, doc }): ImportedWaitingDraft[] => {
+			const scenePath = scalar(doc.fields, 'scene');
+			const scene = scenePath ? scenePositions.get(scenePath) : undefined;
+			if (!scenePath || !scene) {
+				problems.push(`${rel}: the draft's scene is not in this archive; the draft is skipped.`);
+				return [];
+			}
+			if (drafted.has(scenePath)) {
+				problems.push(`${rel}: ${scenePath} already has a waiting draft; this one is skipped.`);
+				return [];
+			}
+			drafted.add(scenePath);
+			const words = Number(scalar(doc.fields, 'words'));
+			return [
+				{
+					scene,
+					brief: scalar(doc.fields, 'brief') ?? '',
+					targetWords: Number.isFinite(words) && words > 0 ? words : null,
+					pov: scalar(doc.fields, 'pov'),
+					note: scalar(doc.fields, 'note'),
+					chapterBrief: scalar(doc.fields, 'chapter-brief'),
+					textMd: doc.body.trim()
+				}
+			];
+		});
+
+	return {
+		story,
+		chapters,
+		unfiled: unfiledScenes,
+		notes,
+		freeformNotes,
+		waitingDrafts,
+		assets,
+		problems
+	};
 }

@@ -131,6 +131,9 @@
 
 	const label = $derived(sceneTitle ? `"${sceneTitle}"` : 'this scene');
 	const running = $derived(draft?.status === 'pending' || draft?.status === 'running');
+	// A chapter run's card shows the progress and Stop for a scene it is
+	// writing, so the scene's own card stays out of the way until the draft is in.
+	const chapterWriting = $derived(view === 'draft' && running && !!draft?.inChapterRun);
 	// The form asks ("Draft this scene"); a draft under way or written is
 	// named for what it is.
 	const heading = $derived(
@@ -693,7 +696,7 @@
 	}
 </script>
 
-{#if view !== 'hidden'}
+{#if view !== 'hidden' && !chapterWriting}
 	<div
 		class="assist-card assist-card-stack"
 		bind:this={card}
@@ -798,30 +801,23 @@
 			</p>
 		{:else if draft && running}
 			<p class="assist-card-note" role="status">
-				{#if draft.inChapterRun}
-					This scene is part of a chapter the Assistant is drafting in the background. Its draft
-					shows here when it is written.
-				{:else}
-					The Assistant is writing this draft in the background. You can keep working, and you will
-					be notified when it is ready.
-				{/if}
+				The Assistant is writing this draft in the background. You can keep working, and you will be
+				notified when it is ready.
 			</p>
 			{#if unread}
 				<p class="assist-card-note" role="status">Could not check on this draft. Trying again.</p>
 			{/if}
-			{#if !draft.inChapterRun}
-				<FormStatus block error={job?.stopError} />
-				<div class="assist-card-actions">
-					<button
-						class="btn"
-						type="button"
-						disabled={!job?.stop || job.stopping}
-						onclick={() => job?.stop?.()}
-					>
-						{job?.stopping ? 'Stopping...' : 'Stop'}
-					</button>
-				</div>
-			{/if}
+			<FormStatus block error={job?.stopError} />
+			<div class="assist-card-actions">
+				<button
+					class="btn"
+					type="button"
+					disabled={!job?.stop || job.stopping}
+					onclick={() => job?.stop?.()}
+				>
+					{job?.stopping ? 'Stopping...' : 'Stop'}
+				</button>
+			</div>
 		{:else if draft?.status === 'ready'}
 			{#if draft.note}
 				<p class="assist-card-note">{draft.note}</p>
