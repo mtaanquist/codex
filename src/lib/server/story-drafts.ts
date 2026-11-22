@@ -671,7 +671,12 @@ export async function newStoryFromDraft(
 					descriptionMd: content.story.descriptionMd,
 					styleNotes: story.styleNotes,
 					isAdult: story.isAdult,
-					coverColor: story.coverColor
+					coverColor: story.coverColor,
+					// The copy holds the same text, so a mute carries over. Only
+					// the mute: the models are the original owner's choice.
+					...((story.llmConfig as { enabled?: unknown }).enabled === false && {
+						llmConfig: { enabled: false }
+					})
 				})
 				.returning({ id: stories.id, slug: stories.slug });
 
