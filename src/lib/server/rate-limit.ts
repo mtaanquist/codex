@@ -39,27 +39,6 @@ export function rateLimit(
 	return { allowed: true, remaining: limit - existing.count, retryAfterSeconds: 0 };
 }
 
-// Whether `rateLimit` would refuse the next call for `key`, without counting
-// one. For limits on failures: check before the work, count only when it fails.
-export function peekRateLimit(
-	key: string,
-	limit: number,
-	now: number = Date.now()
-): RateLimitResult {
-	const existing = windows.get(key);
-	if (!existing || now >= existing.resetAt) {
-		return { allowed: true, remaining: limit, retryAfterSeconds: 0 };
-	}
-	if (existing.count >= limit) {
-		return {
-			allowed: false,
-			remaining: 0,
-			retryAfterSeconds: Math.ceil((existing.resetAt - now) / 1000)
-		};
-	}
-	return { allowed: true, remaining: limit - existing.count, retryAfterSeconds: 0 };
-}
-
 // A limiter that counts the calls of the last `windowMs`, whenever they came.
 // The fixed window above lets through twice the limit across a boundary (the
 // end of one window and the start of the next); this one never lets more than

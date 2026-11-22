@@ -3637,19 +3637,25 @@ describe('limits', () => {
 		expect((await send(list, { token: bob.token })).status).toBe(200);
 	}, 30_000);
 
-	it('shuts out an address that keeps sending bad tokens, before looking them up', async () => {
+	it('answers 429 to an address that keeps sending bad tokens', async () => {
 		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
 		for (let i = 0; i < 120; i++) {
 			expect((await send(list, { token: `cdx_at_guess${i}` })).status).toBe(401);
 		}
-		const lookups = vi.spyOn(db, 'select');
 		const blocked = await send(list, { token: 'cdx_at_one_more' });
 		expect(blocked.status).toBe(429);
 		expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
-		expect(lookups).not.toHaveBeenCalled();
-		lookups.mockRestore();
-		// Another address is not affected, and good tokens from it still work.
-		expect((await send(list, { token: alice.token, address: '198.51.100.7' })).status).toBe(200);
+		// Another address is not affected.
+		const elsewhere = await send(list, { token: 'cdx_at_nope', address: '198.51.100.7' });
+		expect(elsewhere.status).toBe(401);
+	});
+
+	it('still lets a valid token through from an address over the budget', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 121; i++) await send(list, { token: `cdx_at_guess${i}` });
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
+		expect((await send(list, { token: alice.token })).status).toBe(200);
+		expect((await send(list, { token: bob.token })).status).toBe(200);
 	});
 
 	it('does not count good tokens against the address', async () => {

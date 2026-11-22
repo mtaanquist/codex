@@ -1,7 +1,7 @@
 import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { publicOrigin } from '#lib/server/origin';
-import { peekRateLimit, rateLimit, slidingRateLimit } from '#lib/server/rate-limit';
+import { rateLimit, slidingRateLimit } from '#lib/server/rate-limit';
 import { GRANTABLE_PERMISSIONS, scopeFromPermissions } from '#lib/mcp-access';
 import { FAILED_BEARER_PER_MINUTE, REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
 import { notFound } from '#lib/server/mcp/http';
@@ -47,13 +47,6 @@ function bearerToken(request: Request): string {
 }
 
 const handle: RequestHandler = async ({ request, url, getClientAddress }) => {
-	// An address that keeps sending tokens that resolve to no one is refused
-	// before anything touches the database. Only failures count, so many
-	// writers' apps behind one address are not limited by their good calls.
-	const failuresKey = `mcp:bad-token:${getClientAddress()}`;
-	const shut = peekRateLimit(failuresKey, FAILED_BEARER_PER_MINUTE);
-	if (!shut.allowed) return tooManyRequests(shut.retryAfterSeconds);
-
 	if (!(await mcpInstanceEnabled(db))) return notFound();
 	const origin = publicOrigin(url);
 
@@ -67,7 +60,13 @@ const handle: RequestHandler = async ({ request, url, getClientAddress }) => {
 	const token = bearerToken(request);
 	const identity = await resolveBearer(db, token);
 	if (!identity) {
-		if (token) rateLimit(failuresKey, FAILED_BEARER_PER_MINUTE, 60 * 1000);
+		// Bad tokens are limited per address, but only after the lookup: hosted
+		// apps share addresses, so a valid token must never be refused by this.
+		if (token) {
+			const key = `mcp:bad-token:${getClientAddress()}`;
+			const failures = rateLimit(key, FAILED_BEARER_PER_MINUTE, 60 * 1000);
+			if (!failures.allowed) return tooManyRequests(failures.retryAfterSeconds);
+		}
 		return unauthorized(origin, token !== '');
 	}
 

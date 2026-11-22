@@ -104,8 +104,9 @@ export const APP_DIFF_BUDGET: DiffBudget = { perPair: 400_000, total: 400_000, f
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
 // Requests with a token that resolves to no one, per address per minute. Past
-// this the address is refused before any lookup. A client whose token expired
-// fetches a new one from the token endpoint, which allows the same number.
+// this they get 429 instead of 401; valid tokens from the address still work.
+// A client whose token expired fetches a new one from the token endpoint,
+// which allows the same number.
 export const FAILED_BEARER_PER_MINUTE = TOKEN_PER_MINUTE;
 
 // Clients cut a tool result off at about 150,000 characters, so results stay

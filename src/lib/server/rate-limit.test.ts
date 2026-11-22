@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-	peekRateLimit,
 	rateLimit,
 	resetRateLimits,
 	slidingRateLimit,
@@ -35,19 +34,6 @@ describe('rateLimit', () => {
 		expect(rateLimit('a', 1, 1000, 0).allowed).toBe(true);
 		expect(rateLimit('a', 1, 1000, 0).allowed).toBe(false);
 		expect(rateLimit('b', 1, 1000, 0).allowed).toBe(true);
-	});
-});
-
-describe('peekRateLimit', () => {
-	it('reports whether a key is shut without counting a call', () => {
-		const key = 'failures:a';
-		expect(peekRateLimit(key, 2, 0).allowed).toBe(true);
-		rateLimit(key, 2, 1000, 0);
-		expect(peekRateLimit(key, 2, 100).allowed).toBe(true);
-		expect(peekRateLimit(key, 2, 100).allowed).toBe(true);
-		rateLimit(key, 2, 1000, 200);
-		expect(peekRateLimit(key, 2, 300)).toMatchObject({ allowed: false, retryAfterSeconds: 1 });
-		expect(peekRateLimit(key, 2, 1000).allowed).toBe(true);
 	});
 });
 
