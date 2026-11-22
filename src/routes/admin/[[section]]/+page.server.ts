@@ -54,7 +54,7 @@ import {
 } from '#lib/server/assets';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
-import pkg from '../../../../package.json';
+import { appVersion } from '#lib/server/app-version';
 import { formText } from '#lib/server/validation';
 
 // A compact uptime for the sidebar footer: minutes, then hours, then days.
@@ -94,7 +94,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		egress: await egressPolicy(db),
 		externalAccess: await mcpInstanceEnabled(db),
 		secretsAvailable: secretsAvailable(),
-		version: pkg.version,
+		version: appVersion(),
 		uptime: formatUptime(process.uptime())
 	};
 };
