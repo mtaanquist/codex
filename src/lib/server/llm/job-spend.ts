@@ -4,7 +4,6 @@ import { assistantJobSpend } from '../db/schema.ts';
 import { errorFields, logEvent } from '../log.ts';
 import { REVIEW_RUN_RETENTION_DAYS } from '../review-runs.ts';
 import { resolveLlmConfig } from './config.ts';
-import { adapterKind } from './providers/presets.ts';
 import { SpendMeter } from './spend.ts';
 
 // The spend meter for one queued Assistant job. pg-boss retries a job under the
@@ -20,7 +19,7 @@ export async function jobSpendMeter(
 	const base = {
 		pricing: config.modelPricing,
 		capUsd: config.spendCapUsd,
-		claude: adapterKind(config.provider) === 'anthropic',
+		provider: config.provider,
 		meterUncapped: opts.meterUncapped
 	};
 	const jobId = opts.jobId;

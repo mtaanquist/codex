@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { normaliseReason } from '#lib/suggestion-reason';
 import { textHash } from '#lib/text-hash';
+import { toLf } from '#lib/line-endings';
 import {
 	and,
 	asc,
@@ -44,6 +45,7 @@ import {
 } from '../review-anchor.ts';
 import { wordCount } from '../word-count.ts';
 import { paragraphWindow } from '../paragraphs.ts';
+import { clearedSuggestions } from '../review-clear.ts';
 import { normaliseAssistantName } from './llm/prompts/persona.ts';
 import { EMAIL_RE } from './signup.ts';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
@@ -917,7 +919,12 @@ export async function createSuggestion(
 	if (start < 0 || end > scene.bodyMd.length || start > end) {
 		return { ok: false, reason: 'That selection no longer matches the text.' };
 	}
-	if (input.original !== undefined && scene.bodyMd.slice(start, end) !== input.original) {
+	// The review centre's editor reads \r\n as one line break, so the text it
+	// quotes may have plain newlines where the stored body has \r\n.
+	if (
+		input.original !== undefined &&
+		toLf(scene.bodyMd.slice(start, end)) !== toLf(input.original)
+	) {
 		return {
 			ok: false,
 			reason: 'The scene changed while this was staged; find the passage again.'
@@ -1028,6 +1035,10 @@ export type SuggestionView = {
 	// been rewritten, which also blocks accepting it.
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Where it sits in the current text, for reading order: the anchor's
+	// start, or for a decided edit that left nothing to mark (an accepted
+	// deletion, a rejected insertion) the spot it was at. Null when lost.
+	position: number | null;
 	// The passage lies in a part of the scene that was not compared with the
 	// version it was made on (comparing would have cost too much), so a
 	// missing anchor does not mean the passage is gone.
@@ -1149,6 +1160,11 @@ export async function listSuggestions(
 			status: row.suggestion.status,
 			anchor,
 			anchorLost: row.suggestion.status === 'pending' && anchor === null,
+			position:
+				anchor?.start ??
+				(row.suggestion.status === 'pending'
+					? null
+					: mapper.point(row.baseBody, row.currentBody, rangeStart)),
 			...(row.suggestion.status === 'pending' &&
 			anchor === null &&
 			mapper.unchecked(row.baseBody, row.currentBody, rangeStart, rangeEnd)
@@ -1956,7 +1972,10 @@ export async function decideSuggestions(
 	accept: boolean,
 	// For an accept: the stamp of each replacement as the writer was shown it
 	// (see decideSuggestion), by suggestion id.
-	seen?: Record<string, string>
+	seen?: Record<string, string>,
+	// Filled with each scene as its text changes, so a caller can still act
+	// on the stored changes when a later accept throws part way.
+	changedScenes?: Set<string>
 ): Promise<BulkDecision> {
 	const decided: string[] = [];
 	const failed: BulkDecision['failed'] = [];
@@ -1980,6 +1999,7 @@ export async function decideSuggestions(
 		decided.push(id);
 		if (result.sceneId && result.bodyMd !== null && result.baseHash !== null) {
 			changes.push({ sceneId: result.sceneId, bodyMd: result.bodyMd, baseHash: result.baseHash });
+			changedScenes?.add(result.sceneId);
 		}
 	}
 	// The open editor may only build on the final text when every change was
@@ -2179,6 +2199,7 @@ export async function clearReviews(
 			.select({
 				id: reviewSuggestions.id,
 				status: reviewSuggestions.status,
+				followsId: reviewSuggestions.followsSuggestionId,
 				fresh: after(reviewSuggestions.createdAt)
 			})
 			.from(reviewSuggestions)
@@ -2221,12 +2242,14 @@ export async function clearReviews(
 				.filter((thread) => thread.suggestionId)
 				.map((thread) => [thread.suggestionId!, thread.id])
 		);
-		const goingSuggestions = suggestions
-			.filter((suggestion) => scope === 'all' || suggestion.status !== 'pending')
-			.filter((suggestion) => !suggestion.fresh)
-			.filter((suggestion) => !newSince.has(discussed.get(suggestion.id) ?? ''))
-			.map((suggestion) => suggestion.id);
-		const going = new Set(goingSuggestions);
+		const going = clearedSuggestions(
+			suggestions,
+			(suggestion) =>
+				(scope === 'all' || suggestion.status !== 'pending') &&
+				!suggestion.fresh &&
+				!newSince.has(discussed.get(suggestion.id) ?? '')
+		);
+		const goingSuggestions = [...going];
 		const goingThreads = threads
 			.filter((thread) =>
 				thread.suggestionId

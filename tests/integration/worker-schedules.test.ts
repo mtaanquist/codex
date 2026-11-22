@@ -6,6 +6,7 @@ import {
 	PURGE_SESSIONS_QUEUE,
 	PURGE_UNIVERSES_QUEUE,
 	RECONCILE_MENTIONS_QUEUE,
+	REMAP_MARKERS_QUEUE,
 	SWEEP_DELETED_OBJECTS_QUEUE
 } from '../../src/lib/server/queues';
 import { registerSchedules, WORKER_SCHEDULES } from '../../src/worker/schedules';
@@ -20,7 +21,8 @@ const EXPECTED: Record<string, string> = {
 	[SWEEP_DELETED_OBJECTS_QUEUE]: '0 4 * * *',
 	[PURGE_REVIEW_RUNS_QUEUE]: '15 4 * * *',
 	[PURGE_SESSIONS_QUEUE]: '50 4 * * *',
-	[RECONCILE_MENTIONS_QUEUE]: '*/5 * * * *'
+	[RECONCILE_MENTIONS_QUEUE]: '*/5 * * * *',
+	[REMAP_MARKERS_QUEUE]: '* * * * *'
 };
 
 let boss: PgBoss;

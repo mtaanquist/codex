@@ -86,10 +86,10 @@ contacts a model on its own.
   it if your endpoint charges per request. It also applies to reviews. With
   Fewer tools picked, the Assistant gets half this number.
 - **Spend cap per background run**: the most one background review, summary
-  update, pass suggesting details for the entries, or character arc may spend before it stops. It checks
-  between steps (a scene, an entry), so it never stops half way through one, and
-  the last step can take it a little over the cap. It tells you how far it got
-  and what it spent. A stopped summary update picks up where it left off when you run it
+  update, pass suggesting details for the entries, or character arc may spend. Before
+  each request to the model it works out what that request could cost with its
+  reply at the longest allowed, and stops without sending it if that could take
+  the run over the cap. It tells you how far it got and what it spent. A stopped summary update picks up where it left off when you run it
   again. To carry on with a review, either raise the cap and run it again, or run the same review again as it is: a run over the same
   scope (the same chapter, or the same whole story) skips the scenes the stopped
   run already read and starts from a fresh budget. Leave the box empty for no cap.
@@ -195,7 +195,9 @@ contacts a model on its own.
   a Rubber duck request would send, so it checks the endpoint settings and that
   role's own together. Codex sets the model,
   messages, tools, reply length, and streaming itself, so those cannot be
-  overridden. This does not show on the Claude provider, which is driven by the
+  overridden. When a spend cap is set, background work and drafts also leave out
+  any setting here that changes how long a reply can be or asks for several
+  replies at once, so the cap holds. This does not show on the Claude provider, which is driven by the
   thinking and effort settings instead.
 - **Effort (Claude only)**: with the Claude provider, a role's Tune window also
   has an effort list. Effort sets how hard the model works on each request, from low (fast and
@@ -220,8 +222,9 @@ Your words are sent only to the endpoint you set here.
 
 - **Estimated rows**: with the Claude provider, when a request fails, or you
   stop it, before the endpoint reports its token counts, Codex estimates them
-  from what had arrived. Those rows say "estimated", and the 30-day total says
-  how many it includes. A request you stopped can cost more than its estimate.
+  from what had arrived. The same happens when a web search's results are not
+  included in the counts the endpoint reports. Those rows say "estimated", and
+  the 30-day total says how many it includes. A request you stopped can cost more than its estimate.
   With other providers, a stopped or failed chat reply shows "token counts
   not reported", and a failed background request is not listed.
 - **Spend cap**: a request that fails partway is counted from what had
@@ -229,21 +232,27 @@ Your words are sent only to the endpoint you set here.
   notice marks the amount as estimated. If the endpoint leaves out the
   token counts for any request, that request cannot be priced, and the run says
   the cap could not be fully applied.
-- **Cached context**: with the Claude provider, repeated context (your world
-  details, earlier turns) is cached by the API and billed far cheaper on reuse.
-  Text sent for the first time is billed a little higher so it can be reused.
-  The cost in the list and the spend cap both count reused text at a tenth of
-  the price and first-time text at Claude's higher rate. With any other
-  provider, reused text is counted at the full price, because what an endpoint
-  charges for it is not known. If your provider gives a discount, the cost
-  shown can run well above what you were charged, and a spend cap can stop
-  well before the figure you set. Requests made before
+- **Cached context**: most providers cache repeated context (your world
+  details, earlier turns) and bill it far cheaper on reuse. With the Claude
+  provider, text sent for the first time is billed a little higher so it can
+  be reused. The cost in the list and the spend cap count reused text at the
+  rate the provider publishes: a tenth of the price on Claude, about a quarter on
+  Gemini and DeepSeek, and half on ChatGPT. Some models charge less than that, so
+  the cost shown can run a little above what you were charged. With OpenRouter,
+  reused text is counted at the price OpenRouter lists for the model, when
+  you use the prices it reports. With a custom endpoint, or a price you typed
+  yourself on OpenRouter, reused text is counted at the full price, so the
+  cost shown can run well above what you were charged, and a spend cap can
+  stop well before the figure you set. First-time text is counted at Claude's
+  higher rate. Requests made before
   Codex kept those counts are priced with every token sent at the plain price.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
-  searches a request ran. Claude charges for each search on top of tokens; that
-  fee is not in the cost shown here or counted by the spend cap.
+  searches a request ran. The search results count as tokens like the rest of
+  the request, and the spend cap allows for the most a request's searches could
+  add before it sends one. Claude also charges a fee for each search on top of
+  tokens; that fee is not in the cost shown here or counted by the spend cap.
 
 ### Which model to pick for each role
 
@@ -391,9 +400,11 @@ Where to find what an app left:
   one waiting draft at a time, so an app cannot leave another until you have
   decided.
 
-Suggested edits, suggested entries, proposed splits and waiting drafts are not
-part of your export. What you accepted or kept is, because it is then part of
-your writing. Review comments are exported with the story they are on.
+Suggested edits, suggested entries and proposed splits are not part of your
+export. What you accepted or kept is, because it is then part of your writing.
+Review comments are exported with the story they are on. Waiting drafts are in
+the export of your whole account (see [Security](/docs/security)), but not in a
+story's own export.
 
 A connected app is also given ready-made prompts for the work the Assistant
 does in Codex: review, copyedit, continuity review, pattern pass, write,

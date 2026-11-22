@@ -4,11 +4,12 @@ import { db } from '#lib/server/db';
 import { ownedScene } from '#lib/server/scene-access';
 import { queueSceneMentions } from '#lib/server/jobs';
 import { rateLimitWrites } from '#lib/server/write-guard';
-import { checkProseLength, readJson } from '#lib/server/validation';
+import { checkNoNull, checkProseLength, readJson } from '#lib/server/validation';
 import { saveSceneBody } from '#lib/server/scene-save';
 import { setSceneStatus } from '#lib/server/scene-status';
 import { isSceneStatus } from '#lib/scene-status';
-import { MAX_BASE_HASHES } from '#lib/scene-saver';
+import { isBaseHashList } from '#lib/save-bases';
+import { parseSaveOrder } from '#lib/save-order';
 
 // Debounced autosave target for the scene editor.
 export const PUT: RequestHandler = async ({ params, request, locals }) => {
@@ -22,11 +23,14 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 		markers?: unknown;
 		baseHashes?: unknown;
 		overwrite?: unknown;
+		order?: unknown;
 	}>(request);
 	if (typeof payload.bodyMd !== 'string') {
 		error(400, 'bodyMd must be a string');
 	}
 	checkProseLength(payload.bodyMd);
+	checkNoNull(payload.bodyMd, 'bodyMd');
+	if (typeof payload.title === 'string') checkNoNull(payload.title, 'title');
 	// The editor maps marker anchors through edits; they ride the autosave.
 	// A review save omits markers entirely (the review centre does not load
 	// them): when the field is absent, the stored anchors are mapped through
@@ -48,16 +52,13 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 	// its saves still go through until it reloads.
 	let baseHashes: string[] | null = null;
 	if (payload.baseHashes !== undefined) {
-		if (
-			!Array.isArray(payload.baseHashes) ||
-			payload.baseHashes.length === 0 ||
-			payload.baseHashes.length > MAX_BASE_HASHES ||
-			!payload.baseHashes.every((hash) => typeof hash === 'string' && hash.length <= 32)
-		) {
-			error(400, 'baseHashes must be a short list of strings');
+		if (!isBaseHashList(payload.baseHashes)) {
+			error(400, 'baseHashes must be a short list of fingerprints');
 		}
-		baseHashes = payload.baseHashes as string[];
+		baseHashes = payload.baseHashes;
 	}
+	const order = parseSaveOrder(payload.order);
+	if (order === 'invalid') error(400, 'order must name the copy saving and number the save');
 	const title =
 		typeof payload.title === 'string' && payload.title.trim() !== '' ? payload.title.trim() : null;
 
@@ -66,7 +67,8 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 		bodyMd: payload.bodyMd,
 		anchors,
 		baseHashes,
-		overwrite: payload.overwrite === true
+		overwrite: payload.overwrite === true,
+		order
 	});
 	if (!result.ok && 'missing' in result) error(404, 'Scene not found');
 	if (!result.ok) {
@@ -76,7 +78,12 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 	}
 	if (result.bodyChanged) await queueSceneMentions(row.id);
 
-	return Response.json({ savedAt: new Date().toISOString(), wordCount: result.wordCount });
+	return Response.json({
+		savedAt: new Date().toISOString(),
+		wordCount: result.wordCount,
+		// A later save from the same editor landed first; this one changed nothing.
+		...(result.superseded ? { superseded: true } : {})
+	});
 };
 
 // Status changes come from the scene board, separate from the autosave: no

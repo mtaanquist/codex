@@ -273,7 +273,8 @@ describe('summariseCharacterArc', () => {
 		expect(requests.get(bram.id)).toEqual({
 			messages: bramMessages,
 			input: requestHash(bramMessages as ChatMessage[]),
-			storyIds: [firstStoryId, secondStoryId]
+			storyIds: [firstStoryId, secondStoryId],
+			staleSummaryStories: []
 		});
 		expect(requests.get(isolde.id)!.storyIds).toEqual([firstStoryId]);
 		// A scene with a summary is told by it, whichever mention came first.
@@ -283,6 +284,41 @@ describe('summariseCharacterArc', () => {
 				['The Tide Below', 'Isolde waits']
 			])
 		);
+	});
+
+	it('names the stories whose out-of-date scene summaries a refresh would read around (#1322)', async () => {
+		const bram = await makeCharacter();
+		const sceneId = await sceneMentioning(firstStoryId, bram.id, {
+			position: 1,
+			summaryMd: 'Bram leaves home.',
+			snippet: 'Bram at the quay'
+		});
+		await sceneMentioning(secondStoryId, bram.id, { position: 1, snippet: 'Bram on the road' });
+		await pool.query(
+			`update scenes set body_md = 'Bram at the quay.', summary_generated_at = updated_at where id = $1`,
+			[sceneId]
+		);
+		await summariseCharacterArc(db, { userId: ownerId, characterId: bram.id }, deps);
+		const planArcOf = async () => {
+			const [entity] = await db.select().from(characters).where(eq(characters.id, bram.id));
+			return (await planArc(db, { kind: 'character', entity }))!;
+		};
+		expect(await planArcOf()).toMatchObject({ stale: false, staleSummaryStories: [] });
+
+		// The scene changes after the Assistant summarised it: the arc reads its
+		// passage now, and a summaries pass in that story would change it again.
+		await pool.query(
+			`update scenes set body_md = 'Bram sails at dawn.', updated_at = now() + interval '1 minute' where id = $1`,
+			[sceneId]
+		);
+		expect(await planArcOf()).toMatchObject({
+			stale: true,
+			staleSummaryStories: ['The Tide Below']
+		});
+
+		reply = 'Bram sails.';
+		await summariseStory(db, { userId: ownerId, storyId: firstStoryId }, deps);
+		expect((await planArcOf()).staleSummaryStories).toEqual([]);
 	});
 
 	it('leaves out a story the Assistant is muted on', async () => {
@@ -482,6 +518,26 @@ describe('the arc job and the spend cap (#1105)', () => {
 		expect(calls).toBe(0);
 		expect((await readArc(bram.id)).arcSummaryMd).toBeNull();
 	});
+
+	it('asks nothing when the request could take a retried job past the ceiling (#1331)', async () => {
+		await capAt(2);
+		// The reply alone, at its 400-token limit, could cost $0.40.
+		await saveModelPricing(db, ownerId, { 'chat-model': { prompt: 0, completion: 0.001 } });
+		const bram = await makeCharacter();
+		await sceneMentioning(firstStoryId, bram.id, { position: 1, snippet: 'Bram' });
+		await pool.query(
+			`insert into assistant_job_spend (job_id, user_id, spent_usd) values ('arc-3', $1, 1.7)`,
+			[ownerId]
+		);
+		const result = await summariseCharacterArc(
+			db,
+			{ userId: ownerId, characterId: bram.id, jobId: 'arc-3' },
+			deps
+		);
+		expect(result).toEqual({ outcome: 'capped', spentUsd: 1.7 });
+		expect(calls).toBe(0);
+		expect((await readArc(bram.id)).arcSummaryMd).toBeNull();
+	});
 });
 
 describe('arc staleness', () => {
@@ -505,7 +561,8 @@ describe('arc staleness', () => {
 		const sceneId = await sceneWithProse('Bram at the harbour.');
 		expect(await planArc(db, { kind: 'character', entity: await readCharacter(bram.id) })).toEqual({
 			summaryMd: null,
-			stale: false
+			stale: false,
+			staleSummaryStories: []
 		});
 
 		await summariseCharacterArc(db, { userId: ownerId, characterId: bram.id }, deps);

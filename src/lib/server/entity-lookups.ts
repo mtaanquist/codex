@@ -52,14 +52,15 @@ export function ownedLiveEntity(table: EntityTable, entityId: string, userId: st
 
 /** Resolves an entity id to whichever table holds it, owner-scoped and live,
  * selecting `columns(table)`. Null when none of the tables has it for this
- * user. */
+ * user. A caller that knows the type passes it to look in that table only. */
 export async function resolveOwnedEntity<S extends SelectedFields>(
 	db: Database,
 	userId: string,
 	entityId: string,
-	columns: (table: EntityTable) => S
+	columns: (table: EntityTable) => S,
+	types: readonly EntityType[] = ENTITY_TYPES
 ): Promise<({ type: EntityType } & SelectResultFields<S>) | null> {
-	for (const type of ENTITY_TYPES) {
+	for (const type of types) {
 		const table = entityTable(type);
 		const [row] = await db
 			.select(columns(table))

@@ -580,6 +580,19 @@ describe('newStoryFromDraft', () => {
 		expect(copied[1].summaryGeneratedAt).toBeNull();
 	});
 
+	it('keeps the Assistant off for a copy of a story it was off for', async () => {
+		await db
+			.update(stories)
+			.set({ llmConfig: { enabled: false } } as Partial<typeof stories.$inferInsert>)
+			.where(eq(stories.id, storyId));
+		const id = await save();
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		const result = await newStoryFromDraft(db, ownerId, story, id, 'Copy');
+		if (!result.ok) throw new Error('expected a new story');
+		const [copy] = await db.select().from(stories).where(eq(stories.slug, result.slug));
+		expect(copy.llmConfig).toEqual({ enabled: false });
+	});
+
 	it('copies relationships that held only in this story', async () => {
 		await db
 			.update(entityRelationships)

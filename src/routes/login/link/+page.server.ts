@@ -1,19 +1,17 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { users } from '#lib/server/db/schema';
 import { publicOrigin } from '#lib/server/origin';
 import { queueEmail } from '#lib/server/jobs';
 import { rateLimit } from '#lib/server/rate-limit';
 import { logEvent } from '#lib/server/log';
 import { continueSignIn } from '#lib/server/sign-in';
 import {
+	peekSignInLink,
 	redeemSignInLink,
 	requestSignInLink,
 	SIGN_IN_LINK_TTL_MINUTES
 } from '#lib/server/sign-in-link';
-import { peekToken } from '#lib/server/tokens';
 import { formText } from '#lib/server/validation';
 
 // Per-address, so link mail to one inbox cannot be triggered repeatedly, and
@@ -33,19 +31,19 @@ const INVALID =
 // With a token, the page offers a button that signs in; the link itself only
 // peeks, so an email scanner that opens it cannot spend it. Without one (or
 // with a dead one), the page asks for an email address to send a link to.
-export const load: PageServerLoad = async ({ url }) => {
+// Someone already signed in (the hook lets a link through) is told so, and the
+// link is left alone.
+export const load: PageServerLoad = async ({ url, locals }) => {
 	const token = url.searchParams.get('token') ?? '';
-	const userId = token === '' ? null : await peekToken(db, 'sign_in', token);
-	const valid = userId !== null;
+	const signedInAs = locals.user?.email ?? null;
 	// Shown beside the button, so a link passed on by someone else cannot sign
 	// the reader in to an account they do not expect.
-	const [account] = userId
-		? await db.select({ email: users.email }).from(users).where(eq(users.id, userId))
-		: [];
+	const email = token === '' || signedInAs ? null : await peekSignInLink(db, token);
 	return {
-		token: valid ? token : '',
-		email: account?.email ?? '',
-		message: token !== '' && !valid ? INVALID : null,
+		token: email ? token : '',
+		email: email ?? '',
+		signedInAs,
+		message: token !== '' && !signedInAs && !email ? INVALID : null,
 		minutes: SIGN_IN_LINK_TTL_MINUTES
 	};
 };
@@ -78,8 +76,10 @@ export const actions: Actions = {
 
 		if (!rateLimit(`login:ip:${getClientAddress()}`, LOGIN_IP_LIMIT, LOGIN_WINDOW_MS).allowed) {
 			logEvent('warn', 'login.rate_limited', { via: 'link' });
+			// The link is not spent, so the page keeps its button.
 			return fail(429, {
-				message: 'Too many sign-in attempts. Wait a few minutes and try again.'
+				message: 'Too many sign-in attempts. Wait a few minutes and try again.',
+				retry: true
 			});
 		}
 

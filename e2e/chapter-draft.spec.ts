@@ -1,32 +1,31 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { PgBoss } from 'pg-boss';
 import { e2eDatabaseUrl } from './database';
-import { gotoReady } from './navigate';
+import { gotoReady, waitForHydration } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 import { openRowMenu } from './context-menu';
 
 // Runs as the account with the Assistant switched on.
 test.use({ storageState: 'e2e/.auth/assistant.json' });
 
-async function sql(text: string, values: unknown[]): Promise<void> {
+async function sql<Row extends pg.QueryResultRow = pg.QueryResultRow>(
+	text: string,
+	values: unknown[]
+): Promise<Row[]> {
 	const pool = new pg.Pool({ connectionString: e2eDatabaseUrl() });
 	try {
-		await pool.query(text, values);
+		return (await pool.query<Row>(text, values)).rows;
 	} finally {
 		await pool.end();
 	}
 }
 
-// #1168, step 2: the Assistant drafts a chapter scene by scene. Counting the
-// cost and asking for the run go through the real endpoints; the background
-// job has no model to call, so the drafts' rows are then marked written as the
-// job would leave them, and the job's status is stubbed. The form's scene
-// list, reading the drafts back, and keeping each one are real too.
-test('a chapter draft is costed first, and each drafted scene is kept on its own', async ({
-	page
-}) => {
+// A story with one chapter of two empty scenes, open in Write, with a model
+// chosen for Write so the drafts can be counted. Resolves to the story's slug.
+async function chapterOfTwo(page: Page, stamp: number): Promise<string> {
 	await gotoReady(page, '/');
-	const stamp = Date.now();
 	await pickFromLibraryMenu(page, 'New universe');
 	await page.getByLabel('New universe').fill(`Rivermen ${stamp}`);
 	await page.getByRole('button', { name: 'Create universe' }).click();
@@ -41,11 +40,32 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 	await expect(page.locator('.scene-row')).toHaveCount(1);
 	await page.getByRole('button', { name: 'New scene' }).click();
 	await expect(page.locator('.scene-row')).toHaveCount(2);
-	// A model for Write, so the drafts can be counted.
 	await sql(
 		`update stories set llm_config = '{"models":{"coauthor":"e2e-model"}}' where slug = $1`,
 		[`flight-${stamp}`]
 	);
+	return `flight-${stamp}`;
+}
+
+async function openChapterForm(page: Page) {
+	await openRowMenu(page, page.locator('.chapter-row').first());
+	await page.locator('.row-menu').getByRole('menuitem', { name: 'Assistant' }).hover();
+	await page
+		.locator('.row-submenu')
+		.getByRole('menuitem', { name: 'Draft this chapter...' })
+		.click();
+}
+
+// #1168, step 2: the Assistant drafts a chapter scene by scene. Counting the
+// cost and asking for the run go through the real endpoints; the background
+// job has no model to call, so the drafts' rows are then marked written as the
+// job would leave them, and the job's status is stubbed. The form's scene
+// list, reading the drafts back, and keeping each one are real too.
+test('a chapter draft is costed first, and each drafted scene is kept on its own', async ({
+	page
+}) => {
+	const stamp = Date.now();
+	await chapterOfTwo(page, stamp);
 
 	const asked: { brief?: string; scenes?: { brief: string }[] }[] = [];
 	let chapterId = '';
@@ -76,12 +96,7 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 	});
 
 	// Asked for from the chapter's own menu.
-	await openRowMenu(page, page.locator('.chapter-row').first());
-	await page.locator('.row-menu').getByRole('menuitem', { name: 'Assistant' }).hover();
-	await page
-		.locator('.row-submenu')
-		.getByRole('menuitem', { name: 'Draft this chapter...' })
-		.click();
+	await openChapterForm(page);
 
 	const card = page.getByRole('group', { name: 'Chapter draft' });
 	await card.getByLabel('What happens in this chapter').fill('Ilse flees across the river.');
@@ -143,4 +158,151 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 	await page.reload();
 	await expect(page.locator('.scene-row')).toHaveCount(3);
 	await expect(card).toHaveCount(0);
+});
+
+// #1334: the chapter card while its run is under way. The suite's worker would
+// pick up a real run and fail it (no model is reachable), so the request is
+// answered here: the drafts are staged as the server stages them, under a job
+// queued to start an hour from now, which the queue reports as running and
+// the worker leaves alone. They are then written one by one, as the job would.
+// The scene made last is the one open in the editor.
+const OPEN_SCENE = 1;
+test('a chapter draft under way shows its progress and can be stopped', async ({ page }) => {
+	const stamp = Date.now();
+	const slug = await chapterOfTwo(page, stamp);
+	let draftIds: string[] = [];
+	let chapterId = '';
+	let jobId: string | null = null;
+	const boss = new PgBoss({
+		connectionString: e2eDatabaseUrl(),
+		supervise: false,
+		schedule: false
+	});
+	await boss.start();
+	try {
+		await page.route('**/api/assistant/draft/chapter', async (route) => {
+			if (route.request().method() !== 'POST') return route.continue();
+			const body = route.request().postDataJSON() as {
+				defaults?: boolean;
+				estimate?: boolean;
+				chapterId: string;
+				brief: string;
+				scenes: { sceneId: string; brief: string }[];
+			};
+			if (body.defaults || body.estimate) return route.continue();
+			chapterId = body.chapterId;
+			const [owner] = await sql<{ userId: string; storyId: string }>(
+				`select st.owner_id as "userId", st.id as "storyId"
+				 from chapters c join stories st on st.id = c.story_id where c.id = $1`,
+				[chapterId]
+			);
+			const id = randomUUID();
+			const rows = await sql<{ id: string; position: number }>(
+				`insert into assistant_drafts
+				   (user_id, story_id, chapter_id, scene_id, position, brief, target_words,
+				    status, job_id, chapter_brief)
+				 select $1, $2, $3, x.scene_id, x.pos - 1, x.brief, 900, 'pending', $4, $5
+				 from unnest($6::uuid[], $7::text[]) with ordinality as x(scene_id, brief, pos)
+				 returning id, position`,
+				[
+					owner.userId,
+					owner.storyId,
+					chapterId,
+					id,
+					body.brief,
+					body.scenes.map((scene) => scene.sceneId),
+					body.scenes.map((scene) => scene.brief)
+				]
+			);
+			draftIds = rows.sort((a, b) => a.position - b.position).map((row) => row.id);
+			// The data a chapter run's job carries, so the job shows as the writer's.
+			jobId = await boss.send(
+				'assistant-draft',
+				{ ...owner, chapterId, draftIds, brief: body.brief },
+				{ id, startAfter: 3600 }
+			);
+			await route.fulfill({ json: { ok: true, jobId, draftIds, skipped: [] } });
+		});
+		let job: Record<string, unknown> = {
+			state: 'running',
+			phase: 'scenes',
+			completed: 0,
+			total: 2
+		};
+		await page.route('**/api/assistant/job-status*', (route) => route.fulfill({ json: job }));
+		let stopped = false;
+		await page.route('**/api/assistant/job-stop', async (route) => {
+			stopped = true;
+			await sql(
+				`update assistant_drafts set status = 'discarded',
+				   note = 'The chapter draft ended before it reached this scene, so it was not drafted.'
+				 where id = any($1::uuid[]) and status in ('pending', 'running')`,
+				[draftIds]
+			);
+			job = { state: 'stopped', phase: 'scenes', completed: 2, total: 2 };
+			await route.fulfill({ json: { ok: true } });
+		});
+
+		await openChapterForm(page);
+		const card = page.getByRole('group', { name: 'Chapter draft' });
+		await card.getByLabel('What happens in this chapter').fill('Ilse flees across the river.');
+		await card.getByRole('button', { name: 'Check the cost' }).click();
+		await expect(card.getByRole('button', { name: 'Draft the chapter' })).toBeVisible();
+		await page.waitForTimeout(1100);
+		await card.getByRole('button', { name: 'Draft the chapter' }).click();
+
+		// Both scenes wait; nothing can be opened yet, and the run can be stopped.
+		await expect(card).toContainText(
+			'drafting these scenes in the background, one at a time: 0 of 2'
+		);
+		await expect(card.getByRole('listitem')).toHaveCount(2);
+		await expect(card.getByRole('listitem').first()).toContainText('Waiting');
+		await expect(card.getByRole('link')).toHaveCount(0);
+		await expect(card.getByRole('button', { name: 'Stop' })).toBeVisible();
+		await expect(card).toContainText('Stopping keeps the scenes already drafted.');
+		// After a reload the chapter card comes back. The open scene's own card
+		// stays hidden while the run writes its draft, once it has read that draft.
+		await page.reload();
+		await waitForHydration(page);
+		const sceneRead = page.waitForResponse(
+			(response) =>
+				response.request().method() === 'GET' &&
+				new URL(response.url()).pathname === '/api/assistant/draft'
+		);
+		await page.getByRole('tab', { name: 'Assistant' }).click();
+		const { draft: openDraft } = (await (await sceneRead).json()) as {
+			draft: { id: string; inChapterRun: boolean } | null;
+		};
+		expect(openDraft).toMatchObject({ id: draftIds[OPEN_SCENE], inChapterRun: true });
+		await expect(card).toContainText('0 of 2');
+		const sceneCard = page.getByRole('group', { name: 'Scene draft' });
+		await expect(sceneCard).toHaveCount(0);
+
+		// The first scene is written (a run goes in order): the list follows with
+		// no reload, and the open scene's card stays hidden while it waits.
+		await sql(
+			`update assistant_drafts set status = 'ready', text_md = 'Drafted scene 1.' where id = $1`,
+			[draftIds[0]]
+		);
+		job = { state: 'running', phase: 'scenes', completed: 1, total: 2 };
+		await expect(card).toContainText('1 of 2', { timeout: 15_000 });
+		await expect(card.getByRole('link')).toHaveCount(1);
+		await expect(card.getByRole('listitem').first()).toContainText('Ready');
+		await expect(sceneCard).toHaveCount(0);
+
+		// Stop keeps the scene already drafted and drops the other.
+		await card.getByRole('button', { name: 'Stop' }).click();
+		await expect.poll(() => stopped).toBe(true);
+		await expect(card).toContainText('Open each scene to read its draft', { timeout: 15_000 });
+		await expect(card.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+		// The scene dropped by the stop leaves the list; the drafted one stays.
+		await expect(card.getByRole('listitem')).toHaveCount(1);
+		await expect(card.getByRole('link')).toHaveCount(1);
+		await gotoReady(page, `/stories/${slug}?draftChapter=${chapterId}`);
+		await expect(card.getByRole('listitem')).toHaveCount(1);
+		await expect(card.getByRole('listitem')).toContainText('Ready');
+	} finally {
+		if (jobId) await boss.deleteJob('assistant-draft', jobId);
+		await boss.stop({ graceful: false });
+	}
 });

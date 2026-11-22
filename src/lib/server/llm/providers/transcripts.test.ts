@@ -67,9 +67,13 @@ function load(): Transcript[] {
 }
 
 // What the body itself says was billed: the input side and the final output
-// count, where the endpoint reported them.
-function reported(t: Transcript, body: string): { input?: number; output?: number } {
-	const result: { input?: number; output?: number } = {};
+// count, where the endpoint reported them. resultsUncounted is set when web
+// search results streamed and no message_delta reported the input after them,
+// so the adapter has to estimate them.
+type Reported = { input?: number; output?: number; resultsUncounted?: boolean };
+
+function reported(t: Transcript, body: string): Reported {
+	const result: Reported = {};
 	if (t.provider === 'anthropic' && t.contentType === 'application/json') {
 		// One JSON body in place of a stream carries its usage at the top.
 		try {
@@ -95,8 +99,16 @@ function reported(t: Transcript, body: string): { input?: number; output?: numbe
 					.map((key) => Number(usage[key] ?? 0))
 					.reduce((a, b) => a + b, 0);
 			}
-			const output = Number((frame.usage as { output_tokens?: unknown })?.output_tokens);
+			const block = frame.content_block as { type?: unknown } | undefined;
+			if (frame.type === 'content_block_start' && block?.type === 'web_search_tool_result') {
+				result.resultsUncounted ??= true;
+			}
+			const delta = frame.usage as { output_tokens?: unknown; input_tokens?: unknown } | undefined;
+			const output = Number(delta?.output_tokens);
 			if (frame.type === 'message_delta' && Number.isFinite(output)) result.output = output;
+			if (frame.type === 'message_delta' && Number(delta?.input_tokens) > 0) {
+				result.resultsUncounted = false;
+			}
 		} else {
 			const usage = frame.usage as { prompt_tokens?: number; completion_tokens?: number };
 			if (usage?.prompt_tokens !== undefined) result.input = usage.prompt_tokens;
@@ -107,12 +119,9 @@ function reported(t: Transcript, body: string): { input?: number; output?: numbe
 }
 
 // Spend is what the endpoint reported (the output count exactly), and is
-// marked estimated exactly when the output count is the adapter's own guess.
-function checkUsage(
-	billed: TokenUsage | undefined,
-	counts: { input?: number; output?: number },
-	where: string
-) {
+// marked estimated exactly when part of it is the adapter's own guess: the
+// output count, or search results no message_delta counted.
+function checkUsage(billed: TokenUsage | undefined, counts: Reported, where: string) {
 	// Nothing reported, nothing recorded. That covers an OpenAI-style stream cut
 	// off before its usage frame, which only arrives at the end: the adapter does
 	// not guess, so that spend goes uncounted.
@@ -126,7 +135,9 @@ function checkUsage(
 	expect(billed!.promptTokens, `${where}: prompt`).toBeGreaterThanOrEqual(counts.input);
 	if (counts.output !== undefined) {
 		expect(billed!.completionTokens, `${where}: output`).toBe(counts.output);
-		expect(billed!.estimated ?? false, `${where}: estimated`).toBe(false);
+		expect(billed!.estimated ?? false, `${where}: estimated`).toBe(
+			counts.resultsUncounted ?? false
+		);
 	} else {
 		expect(billed!.estimated, `${where}: estimated`).toBe(true);
 	}

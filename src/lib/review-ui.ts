@@ -71,6 +71,59 @@ export function suggestionKind(suggestion: {
 	return 'replace';
 }
 
+// The one span that turns base into live: the lengths of the text the two
+// share at the start and, after that, at the end.
+export function editSpan(base: string, live: string): { prefix: number; suffix: number } {
+	const most = Math.min(base.length, live.length);
+	let prefix = 0;
+	while (prefix < most && base[prefix] === live[prefix]) prefix++;
+	let suffix = 0;
+	while (
+		suffix < most - prefix &&
+		base[base.length - 1 - suffix] === live[live.length - 1 - suffix]
+	)
+		suffix++;
+	return { prefix, suffix };
+}
+
+// Whether an insertion the server made can be made at the point at in live,
+// the editor's text: base (the text the server inserted into) with the
+// writer's unsaved typing since. The typing must not touch the point, so the
+// text on both sides of it still reads as in base, and inserting there must
+// give stored, the server's text.
+export function insertionFits(
+	base: string,
+	live: string,
+	stored: string,
+	at: number,
+	insert: string
+): boolean {
+	let place = at;
+	if (live !== base) {
+		const { prefix, suffix } = editSpan(base, live);
+		if (at < prefix) place = at;
+		else if (at > live.length - suffix) place = at - (live.length - base.length);
+		else return false;
+	}
+	return base.slice(0, place) + insert + base.slice(place) === stored;
+}
+
+// Whether a scene body from a page data reload is a change made elsewhere
+// that the review editor must take: a new value of the prop (seen is the one
+// it last saw) that is neither the text the editor last took from or saved to
+// the server (applied) nor an earlier one it held there (held). A reload
+// whose read ran before this editor's later save landed brings such an older
+// text back, and it must not replace the writer's newer words. Should the
+// server really hold that text again, the next save reports the difference.
+export function isServerChange(
+	incoming: string,
+	seen: string,
+	applied: string,
+	held: (body: string) => boolean
+): boolean {
+	return incoming !== seen && incoming !== applied && !held(incoming);
+}
+
 // The client shapes of a thread and a suggestion, matching what listThreads
 // and listSuggestions return once serialised to the page.
 export type ReviewComment = {
@@ -92,6 +145,9 @@ export type ReviewThread = {
 	suggestionId: string | null;
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Where it sits in the current text, also for a decided edit that left
+	// nothing to mark; null when lost.
+	position?: number | null;
 	// Lost only because that part of the scene could not be compared with
 	// the version it was made on.
 	anchorNotSought?: boolean;
@@ -418,7 +474,8 @@ export function pendingPatternCounts(
 // takes them. The note's own edits come first in reading order: by the scene's
 // place in the story, then by where the edit sits in the scene. An edit whose
 // passage was rewritten (no anchor) goes last in its scene; a scene not in the
-// order (in the deleted list) goes last of all. Follow-ups staged by the
+// order (in the deleted list) goes last of all. A decided edit that left
+// nothing to mark (an accepted deletion) keeps its place by its position. Follow-ups staged by the
 // re-read after an accept come after all of those, oldest first, so a
 // follow-up never takes the pass back to a spot already done.
 export function patternEdits<
@@ -429,21 +486,20 @@ export function patternEdits<
 		followsId: string | null;
 		createdAt: Date | string;
 		anchor: { start: number; end: number } | null;
+		position?: number | null;
 	}
 >(suggestions: S[], threadId: string, sceneOrder: string[]): S[] {
 	const rank = new Map(sceneOrder.map((id, i) => [id, i]));
 	const sceneRank = (s: S) => rank.get(s.sceneId) ?? sceneOrder.length;
 	const time = (s: S) => new Date(s.createdAt).getTime();
+	const at = (s: S) => s.anchor?.start ?? s.position ?? Number.MAX_SAFE_INTEGER;
 	return suggestions
 		.filter((s) => s.patternThreadId === threadId)
 		.sort((a, b) => {
 			const followUp = Number(a.followsId !== null) - Number(b.followsId !== null);
 			if (followUp !== 0) return followUp;
 			if (a.followsId !== null) return time(a) - time(b) || a.id.localeCompare(b.id);
-			return (
-				sceneRank(a) - sceneRank(b) ||
-				(a.anchor?.start ?? Number.MAX_SAFE_INTEGER) - (b.anchor?.start ?? Number.MAX_SAFE_INTEGER)
-			);
+			return sceneRank(a) - sceneRank(b) || at(a) - at(b);
 		});
 }
 
@@ -469,4 +525,23 @@ export function patternName(body: string): string {
 	if (labelled) return labelled[1].trim();
 	const line = body.trim().split('\n')[0] ?? '';
 	return line.length > 60 ? `${line.slice(0, 60).trimEnd()}...` : line;
+}
+
+export function editCount(n: number): string {
+	return n === 1 ? '1 edit' : `${n} edits`;
+}
+
+// What the decide dialog says after a bulk accept or reject: how many went
+// through and, for the rest, the server's own reasons, each said once.
+export function bulkDecisionNote(
+	decided: number,
+	failedReasons: string[],
+	accept: boolean
+): string {
+	const verb = accept ? 'accepted' : 'rejected';
+	const done = `${editCount(decided)} ${verb}.`;
+	if (failedReasons.length === 0) return done;
+	const reasons = [...new Set(failedReasons.filter((r) => r.trim()))];
+	const why = reasons.length > 0 ? ` ${reasons.join(' ')}` : '';
+	return `${done} ${editCount(failedReasons.length)} could not be ${verb}.${why}`;
 }

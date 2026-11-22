@@ -52,10 +52,14 @@ import {
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
-import { summaryIsCurrent } from '../summary-currency.ts';
+import {
+	sceneSummaryToSend,
+	summaryIsCurrent,
+	type SceneSummarySource
+} from '../summary-currency.ts';
 import { completeDetailed, type GatewayDeps } from './gateway.ts';
 import { modelContextWindow, resolveLlmConfig, type ResolvedConfig } from './config.ts';
-import { CAP_NOT_APPLIED_MESSAGE, spentFields, type SpendMeter } from './spend.ts';
+import { CAP_NOT_APPLIED_MESSAGE, SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import { errorFields, logEvent } from '../log.ts';
 import type { ChatMessage } from './providers/types.ts';
@@ -451,21 +455,27 @@ async function runConsistencyPass(
 			spendCapped = true;
 			break;
 		}
-		candidates.push(
-			...(await surveyChunk(
-				db,
-				{
-					userId: opts.userId,
-					scope: opts.scope,
-					system,
-					scenes: chunk,
-					...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {}),
-					meter: opts.meter,
-					signal: opts.signal
-				},
-				deps
-			))
-		);
+		try {
+			candidates.push(
+				...(await surveyChunk(
+					db,
+					{
+						userId: opts.userId,
+						scope: opts.scope,
+						system,
+						scenes: chunk,
+						...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {}),
+						meter: opts.meter,
+						signal: opts.signal
+					},
+					deps
+				))
+			);
+		} catch (err) {
+			if (!(err instanceof SpendCapError)) throw err;
+			spendCapped = true;
+			break;
+		}
 	}
 
 	const capped = candidates.length > MAX_CANDIDATES;
@@ -507,21 +517,28 @@ async function runConsistencyPass(
 			role: 'user',
 			content: buildConfirmMessage(candidate.claim, involved, bodyChars)
 		};
-		const result = await completeDetailed(
-			db,
-			{
-				userId: opts.userId,
-				...scopeIds(opts.scope),
-				role: 'reviewer',
-				enableTools: true,
-				toolNames: CONFIRM_TOOL_NAMES,
-				toolBudget: CONFIRM_TOOL_BUDGET,
-				messages: system ? [system, task] : [task],
-				meter: opts.meter,
-				signal: opts.signal
-			},
-			deps
-		);
+		let result: Awaited<ReturnType<typeof completeDetailed>>;
+		try {
+			result = await completeDetailed(
+				db,
+				{
+					userId: opts.userId,
+					...scopeIds(opts.scope),
+					role: 'reviewer',
+					enableTools: true,
+					toolNames: CONFIRM_TOOL_NAMES,
+					toolBudget: CONFIRM_TOOL_BUDGET,
+					messages: system ? [system, task] : [task],
+					meter: opts.meter,
+					signal: opts.signal
+				},
+				deps
+			);
+		} catch (err) {
+			if (!(err instanceof SpendCapError)) throw err;
+			spendCapped = true;
+			break;
+		}
 		notes += result.notes;
 		stopped ??= result.stopped;
 	}
@@ -542,11 +559,13 @@ async function storySurveyScenes(
 	userId: string,
 	storyId: string
 ): Promise<SurveyScene[]> {
-	return db
+	const rows = await db
 		.select({
 			id: scenes.id,
 			title: scenes.title,
 			summaryMd: scenes.summaryMd,
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt,
 			bodyMd: scenes.bodyMd
 		})
 		.from(scenes)
@@ -560,6 +579,18 @@ async function storySurveyScenes(
 			)
 		)
 		.orderBy(asc(scenes.globalPosition));
+	return rows.map(surveyScene);
+}
+
+// A scene as the survey lists it, with an out-of-date summary labelled.
+function surveyScene(row: SceneSummarySource & Omit<SurveyScene, 'summaryMd'>): SurveyScene {
+	return {
+		id: row.id,
+		title: row.title,
+		summaryMd: sceneSummaryToSend(row),
+		bodyMd: row.bodyMd,
+		storyTitle: row.storyTitle
+	};
 }
 
 // The cross-scene pass of a full story review: the two-stage continuity run
@@ -618,16 +649,17 @@ async function staleSummaryCount(db: Database, userId: string, storyId: string):
 				isNull(scenes.deletedAt)
 			)
 		);
-	return rows.filter(
-		(row) =>
-			Boolean(row.bodyMd && row.bodyMd.trim()) &&
-			needsSummary({
-				summaryMd: row.summaryMd,
-				summaryGeneratedAt: row.summaryGeneratedAt,
-				changedSince: row.summaryGeneratedAt
-					? !summaryIsCurrent(row.summaryGeneratedAt, row.updatedAt)
-					: false
-			})
+	return rows.filter((row) =>
+		!row.bodyMd?.trim()
+			? // The pass clears an Assistant summary of an emptied scene.
+				row.summaryGeneratedAt !== null && row.summaryMd !== null
+			: needsSummary({
+					summaryMd: row.summaryMd,
+					summaryGeneratedAt: row.summaryGeneratedAt,
+					changedSince: row.summaryGeneratedAt
+						? !summaryIsCurrent(row.summaryGeneratedAt, row.updatedAt)
+						: false
+				})
 	).length;
 }
 
@@ -673,7 +705,7 @@ async function refreshSummaries(
 }
 
 export const SUMMARIES_CAPPED_MESSAGE =
-	'The spend cap was reached while the summaries were being brought up to date.';
+	'Bringing the summaries up to date stopped before the next request could take it past your spend cap.';
 
 // How a standalone continuity review went: how many scenes were in scope, how
 // many notes it staged, and whether the pass ran at all (it is skipped when
@@ -881,26 +913,30 @@ export async function reviewUniverseContinuity(
 	const meter = await jobSpendMeter(db, { userId: opts.userId, jobId: opts.jobId });
 	// Ordered by story, then story order within it, so the survey listing groups
 	// each story's scenes together.
-	const rows = await db
-		.select({
-			id: scenes.id,
-			title: scenes.title,
-			summaryMd: scenes.summaryMd,
-			bodyMd: scenes.bodyMd,
-			storyTitle: stories.title
-		})
-		.from(scenes)
-		.innerJoin(stories, eq(scenes.storyId, stories.id))
-		.where(
-			and(
-				eq(stories.universeId, opts.universeId),
-				eq(stories.ownerId, opts.userId),
-				storyIsLive(),
-				storyAssistantOn(),
-				isNull(scenes.deletedAt)
+	const rows = (
+		await db
+			.select({
+				id: scenes.id,
+				title: scenes.title,
+				summaryMd: scenes.summaryMd,
+				summaryGeneratedAt: scenes.summaryGeneratedAt,
+				updatedAt: scenes.updatedAt,
+				bodyMd: scenes.bodyMd,
+				storyTitle: stories.title
+			})
+			.from(scenes)
+			.innerJoin(stories, eq(scenes.storyId, stories.id))
+			.where(
+				and(
+					eq(stories.universeId, opts.universeId),
+					eq(stories.ownerId, opts.userId),
+					storyIsLive(),
+					storyAssistantOn(),
+					isNull(scenes.deletedAt)
+				)
 			)
-		)
-		.orderBy(asc(stories.title), asc(scenes.globalPosition));
+			.orderBy(asc(stories.title), asc(scenes.globalPosition))
+	).map(surveyScene);
 	run.state.total = rows.length;
 	if (rows.length < 2) {
 		run.state.phase = 'done';
@@ -1213,6 +1249,11 @@ export async function reviewStoryScenes(
 			// A cancelled run is not a failed scene: stop where it was told to.
 			if (opts.signal?.aborted) {
 				aborted = true;
+				break;
+			}
+			// Left out of done, so a continuation reviews it (see adoptCappedRun).
+			if (err instanceof SpendCapError) {
+				capped = true;
 				break;
 			}
 			failed += 1;

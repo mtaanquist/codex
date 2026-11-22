@@ -1,11 +1,11 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { sceneMarkers, scenes, stories } from './db/schema.ts';
+import { markerRemaps, sceneMarkers, scenes, stories } from './db/schema.ts';
 import { ownedScene } from './scene-access.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findTodoLines } from '#lib/todo-markers';
 import { toLf } from '#lib/line-endings';
-import { createAnchorMapper, SAVE_DIFF_BUDGET } from '../review-anchor.ts';
+import { BACKGROUND_DIFF_BUDGET, createAnchorMapper, SAVE_DIFF_BUDGET } from '../review-anchor.ts';
 import type { ActionFailure } from './action-result.ts';
 
 // A selection turned into a checkable marker. Anchors are clamped to the
@@ -112,6 +112,28 @@ export async function updateMarkerAnchors(
 		) as v
 		where scene_markers.id = v.id and scene_markers.scene_id = ${sceneId}
 	`);
+	await forgetPendingRemaps(
+		db,
+		sceneId,
+		anchors.map((anchor) => anchor.id)
+	);
+}
+
+// A marker that was given a new anchor, or detached by a later save, is no
+// longer waiting on a remap row made earlier: that row's text is not what
+// its anchor counts into any more.
+async function forgetPendingRemaps(db: Database, sceneId: string, ids: string[]) {
+	if (ids.length === 0) return;
+	await db.execute(sql`
+		update marker_remaps set markers = coalesce((
+			select jsonb_agg(m) from jsonb_array_elements(marker_remaps.markers) as m
+			where not (m->>'id' = any(array[${sql.join(
+				ids.map((id) => sql`${id}`),
+				sql`, `
+			)}]::text[]))
+		), '[]'::jsonb)
+		where scene_id = ${sceneId}
+	`);
 }
 
 // For a body rewrite that does not come from the Write editor (a review
@@ -124,7 +146,9 @@ export async function updateMarkerAnchors(
 // text.
 //
 // The comparison runs under SAVE_DIFF_BUDGET, in one go. A marker in a
-// stretch that would cost more to compare loses its anchor. Each end of a
+// stretch that would cost more to compare loses its anchor for now, and a
+// marker_remaps row keeps the old text and its anchor for the worker's sweep
+// (remapPendingMarkers), which maps it again without that limit. Each end of a
 // marker is stored only where it rests on text both versions share (see
 // SUPPORT in review-anchor.ts); otherwise the marker loses its anchor, as one
 // whose words were deleted does.
@@ -151,12 +175,16 @@ export async function remapMarkerAnchors(
 	);
 	const moved: { id: string; anchorStart: number; anchorEnd: number }[] = [];
 	const lost: string[] = [];
+	const unchecked: { id: string; start: number; end: number }[] = [];
 	for (const marker of anchored) {
 		// Each end maps on its own, so an edit at the edge of the marked text
 		// stretches or shrinks the range instead of losing it.
 		const now = mapper.ends(oldBody, newBody, marker.start, marker.end);
 		if (now) moved.push({ id: marker.id, anchorStart: now.start, anchorEnd: now.end });
-		else lost.push(marker.id);
+		else {
+			lost.push(marker.id);
+			if (mapper.unchecked(oldBody, newBody, marker.start, marker.end)) unchecked.push(marker);
+		}
 	}
 	await updateMarkerAnchors(db, sceneId, moved, newBody.length);
 	if (lost.length > 0) {
@@ -164,7 +192,78 @@ export async function remapMarkerAnchors(
 			.update(sceneMarkers)
 			.set({ anchorStart: null, anchorEnd: null })
 			.where(and(eq(sceneMarkers.sceneId, sceneId), inArray(sceneMarkers.id, lost)));
+		await forgetPendingRemaps(db, sceneId, lost);
 	}
+	if (unchecked.length > 0) {
+		await db.insert(markerRemaps).values({ sceneId, baseBody: oldBody, markers: unchecked });
+	}
+}
+
+// The worker's sweep over markers a save detached because comparing their
+// stretch cost more than the save's budget. Each row is mapped from the text
+// its anchors were made on to the scene's text as it now stands, under
+// BACKGROUND_DIFF_BUDGET, outside any lock. The write then happens under the
+// scene's row lock, only if the text is still the one that was mapped onto
+// (otherwise the row waits for the next sweep), and only to markers that are
+// still in that scene and still detached: one the writer anchored again in
+// the meantime, deleted or moved to another scene by a split or merge is
+// left alone. Deleting the row in the same transaction makes a repeat a no
+// op. A marker that still cannot be placed stays detached. Never touches the
+// scene's text. Returns how many rows it finished.
+export async function remapPendingMarkers(db: Database, limit = 20): Promise<number> {
+	const rows = await db
+		.select({ id: markerRemaps.id, sceneId: markerRemaps.sceneId })
+		.from(markerRemaps)
+		.orderBy(asc(markerRemaps.createdAt))
+		.limit(limit);
+	let done = 0;
+	for (const { id } of rows) {
+		const [row] = await db
+			.select({
+				sceneId: markerRemaps.sceneId,
+				baseBody: markerRemaps.baseBody,
+				markers: markerRemaps.markers,
+				bodyMd: scenes.bodyMd
+			})
+			.from(markerRemaps)
+			.innerJoin(scenes, eq(markerRemaps.sceneId, scenes.id))
+			.where(eq(markerRemaps.id, id));
+		if (!row) continue;
+		const mapped = row.bodyMd;
+		const body = toLf(mapped);
+		const mapper = createAnchorMapper(BACKGROUND_DIFF_BUDGET);
+		const placed = row.markers.flatMap(({ id, start, end }) => {
+			const now = mapper.ends(row.baseBody, body, start, end);
+			return now ? [{ id, anchorStart: now.start, anchorEnd: now.end }] : [];
+		});
+		const finished = await db.transaction(async (tx) => {
+			const [scene] = await tx
+				.select({ bodyMd: scenes.bodyMd })
+				.from(scenes)
+				.where(eq(scenes.id, row.sceneId))
+				.for('update');
+			if (!scene || scene.bodyMd !== mapped) return false;
+			for (const marker of placed) {
+				const end = Math.min(marker.anchorEnd, body.length);
+				const start = Math.min(marker.anchorStart, end);
+				await tx
+					.update(sceneMarkers)
+					.set({ anchorStart: start, anchorEnd: end })
+					.where(
+						and(
+							eq(sceneMarkers.id, marker.id),
+							eq(sceneMarkers.sceneId, row.sceneId),
+							isNull(sceneMarkers.anchorStart),
+							isNull(sceneMarkers.anchorEnd)
+						)
+					);
+			}
+			await tx.delete(markerRemaps).where(eq(markerRemaps.id, id));
+			return true;
+		});
+		if (finished) done++;
+	}
+	return done;
 }
 
 // Unresolved markers across a story, for the continuous view's stitched

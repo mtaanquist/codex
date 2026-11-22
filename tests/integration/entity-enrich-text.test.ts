@@ -430,6 +430,35 @@ describe('a text too long for one request', () => {
 		expect(pendingAtSecondCall).toBe(2);
 	});
 
+	it('leaves a story muted while earlier parts are read out of the later parts (#1322)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const later = await makeStory('The Quiet Book');
+		await writeScenes(later, [long('THREE'), 'Bram in the open.']);
+		const other = await makeStory('The Open Book');
+		await writeScenes(other, ['Bram in the OPEN-BOOK.']);
+		const muting: GatewayDeps = {
+			...deps,
+			provider: {
+				...stubProvider,
+				async respond(...args) {
+					if (prompts.length === 0) await saveStoryLlmOverride(db, later, { enabled: false });
+					return stubProvider.respond(...args);
+				}
+			}
+		};
+		const result = await enrichEntityFromText(
+			db,
+			{ userId: ownerId, scope: { universeId }, entityId: bram, mode: 'scenes' },
+			muting
+		);
+		expect(prompts).toHaveLength(2);
+		expect(prompts[0]).toContain('Bram ONE');
+		expect(prompts.join('\n')).not.toContain('Bram THREE');
+		expect(prompts.join('\n')).not.toContain('Bram in the open.');
+		expect(prompts[1]).toContain('OPEN-BOOK');
+		expect(result.partial).toBeUndefined();
+	});
+
 	it('says how to fix it when a later part is cut off at the reply limit', async () => {
 		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
 		cutOffCalls = [2];
@@ -467,6 +496,10 @@ describe('a text too long for one request', () => {
 			record() {
 				calls += 1;
 			},
+			wouldPassCap() {
+				return false;
+			},
+			hold() {},
 			async flush() {},
 			spentUsd: 1.5,
 			spentEstimated: false
@@ -483,6 +516,45 @@ describe('a text too long for one request', () => {
 			deps
 		);
 		expect(result.capped).toBe(true);
+		expect(result.requests).toBe(2);
+		expect(prompts).toHaveLength(2);
+	});
+
+	it('stops as capped, not partial, before a part that could pass the cap (#1331)', async () => {
+		const huge = (i: number) => `Bram ${i}. ${'word '.repeat(4000)}`;
+		await writeScenes(
+			storyId,
+			Array.from({ length: 4 }, (_, i) => huge(i))
+		);
+		prompts = [];
+		let calls = 0;
+		const meter = {
+			capReached: false,
+			// The third request could pass the cap.
+			wouldPassCap() {
+				return calls >= 2;
+			},
+			hold() {},
+			record() {
+				calls += 1;
+			},
+			async flush() {},
+			spentUsd: 1.5,
+			spentEstimated: false
+		};
+		const result = await enrichEntityFromText(
+			db,
+			{
+				userId: ownerId,
+				scope: { storyId },
+				entityId: bram,
+				mode: 'scenes',
+				meter: meter as never
+			},
+			deps
+		);
+		expect(result.capped).toBe(true);
+		expect(result.partial).toBeUndefined();
 		expect(result.requests).toBe(2);
 		expect(prompts).toHaveLength(2);
 	});
@@ -553,6 +625,30 @@ describe('the estimate', () => {
 		const counted = await estimate();
 		expect(counted!.scenes.estCostUsd).toBeCloseTo(
 			counted!.scenes.estTokens * 0.000001 + 1500 * 0.000002,
+			8
+		);
+	});
+
+	it('prices a Claude read at the rate for writing its text to the cache', async () => {
+		await writeScenes(storyId, ['Bram counted the boats.']);
+		await saveAccountLlmConfig(db, ownerId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk',
+			models: { chat: 'chat-model', utility: 'chat-model' },
+			toolCallBudget: 8,
+			cacheTtl: '1h'
+		});
+		await saveModelPricing(db, ownerId, {
+			'chat-model': { prompt: 0.000001, completion: 0.000002 }
+		});
+		const counted = await estimate();
+		// The one-hour cache bills new text at twice the plain prompt price.
+		expect(counted!.scenes.estCostUsd).toBeCloseTo(
+			counted!.scenes.estTokens * 0.000002 + 1500 * 0.000002,
 			8
 		);
 	});

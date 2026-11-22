@@ -8,6 +8,8 @@ let edits: Module;
 type Sent = { url: string; body: { text: string; baseHashes: string[] }; keepalive: boolean };
 
 let sent: Sent[];
+// The order each request carried, by request (see save-order).
+let orders: { source: string; seq: number }[];
 // What the next requests answer; the last entry repeats.
 let answers: (() => Promise<Response> | Response)[];
 let n = 0;
@@ -43,6 +45,7 @@ beforeEach(async () => {
 	vi.useFakeTimers();
 	vi.resetModules();
 	sent = [];
+	orders = [];
 	answers = [ok];
 	page = new EventTarget();
 	doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
@@ -51,11 +54,9 @@ beforeEach(async () => {
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async (url: string, init: RequestInit) => {
-			sent.push({
-				url,
-				body: JSON.parse(init.body as string),
-				keepalive: init.keepalive === true
-			});
+			const { order, ...body } = JSON.parse(init.body as string);
+			orders.push(order);
+			sent.push({ url, body, keepalive: init.keepalive === true });
 			const answer = answers.length > 1 ? answers.shift()! : answers[0];
 			return answer();
 		})
@@ -236,6 +237,21 @@ describe('a draft changed in another window', () => {
 		answers = [ok];
 		await type(edit, 'From the other window. And on.');
 		expect(bodies()[1].baseHashes).toEqual([h('From the other window.')]);
+	});
+
+	it('does not ask before the page is left once the writer loads the current text', async () => {
+		answers = [refused(409, 'This draft was changed in another window.')];
+		const edit = edits.draftEdit(id(), stored);
+		edit.onChange = () => {};
+		await type(edit, 'Edited in a window that fell behind.');
+		expect(edit.conflict).toBe(true);
+		expect(leaving()).toBe(true);
+		answers = [ok];
+		edits.adoptStored(edit, { textMd: 'From the other window.' });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(leaving()).toBe(false);
+		// The server already holds that text: nothing is sent.
+		expect(sent).toHaveLength(1);
 	});
 
 	it('with no card showing, keeps the text for the next card and asks before leaving until it is seen', async () => {
@@ -586,6 +602,34 @@ describe('leaving the page', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		expect(edit).toMatchObject({ saved: 'First. Second.', error: '' });
 		expect(edits.draftBaseHashes(edit)).toEqual([h('First. Second.')]);
+	});
+
+	it('numbers the saves, so the server can drop an older one that lands after the leave save', async () => {
+		const first = later();
+		const second = later();
+		answers = [first.answer, second.answer];
+		const edit = edits.draftEdit(id(), stored);
+		edit.text = 'Changed.';
+		edit.autosave.schedule();
+		edit.autosave.flushSoon();
+		await vi.advanceTimersByTimeAsync(0);
+		// Put back as it was, and the page is left while that save is out.
+		edit.text = STORED;
+		edit.autosave.schedule();
+		page.dispatchEvent(new Event('pagehide'));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(bodies().map((b) => b.text)).toEqual(['Changed.', STORED]);
+		expect(orders.map((o) => o.seq)).toEqual([1, 2]);
+		expect(orders[0].source).toBe(orders[1].source);
+		// The page lives on. The server dropped the older save, having landed
+		// the later one first: its text is not taken as what the server holds.
+		first.resolve(Response.json({ ok: true, superseded: true }));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(edit).toMatchObject({ text: STORED, saved: STORED, error: '' });
+		expect(edits.draftBaseHashes(edit)).not.toContain(h('Changed.'));
+		second.resolve(ok());
+		await vi.advanceTimersByTimeAsync(0);
+		expect(edits.draftBaseHashes(edit)).toEqual([h(STORED)]);
 	});
 
 	it('says nothing of an older save that fails after a newer one landed', async () => {

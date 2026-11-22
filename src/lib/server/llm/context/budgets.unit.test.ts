@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	CHAT_BUDGET_TOKENS,
 	DEFAULT_BUDGET_TOKENS,
+	ceilingTokens,
 	chatBudgetTokens,
-	contextBudgetTokens
+	contextBudgetTokens,
+	estimateTokens
 } from './budgets';
 
 describe('context budgets', () => {
@@ -29,5 +31,22 @@ describe('context budgets', () => {
 		const window = 8192;
 		expect(contextBudgetTokens(window) + chatBudgetTokens(window)).toBeLessThan(window / 2);
 		expect(contextBudgetTokens(2000)).toBe(1000);
+	});
+});
+
+describe('ceilingTokens', () => {
+	it('counts English above the chars/4 estimate', () => {
+		const text = 'The lighthouse keeper counted the ships. '.repeat(10);
+		expect(ceilingTokens(text)).toBeGreaterThan(estimateTokens(text));
+		expect(ceilingTokens(text)).toBe(Math.ceil(text.length / 3));
+	});
+
+	it('counts a CJK character as a whole token', () => {
+		expect(ceilingTokens('\u6587'.repeat(100))).toBe(100);
+		expect(estimateTokens('\u6587'.repeat(100))).toBe(25);
+	});
+
+	it('counts nothing as nothing', () => {
+		expect(ceilingTokens('')).toBe(0);
 	});
 });

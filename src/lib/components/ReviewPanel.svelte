@@ -189,6 +189,9 @@
 				{/if}
 
 				{#if composer.mode === 'suggest'}
+					{#if composer.anchored}
+						<input type="hidden" name="original" value={composer.text} />
+					{/if}
 					<div class="rv-draft-from">
 						<span class="rv-draft-k">Original</span>
 						<span class="rv-draft-orig">"{composer.text}"</span>

@@ -168,7 +168,7 @@
 				</a>
 			{/if}
 
-			{#if data.externalAccess.available}
+			{#if data.externalAccess.shown}
 				<a class="nav-item" class:active={active === 'apps'} href={sectionHref('apps')}>
 					<svg
 						viewBox="0 0 24 24"
@@ -330,7 +330,7 @@
 	{/if}
 
 	<!-- ========== CONNECTED APPS ========== -->
-	{#if data.externalAccess.available}
+	{#if data.externalAccess.shown}
 		<section class="admin-section" class:active={active === 'apps'}>
 			<AccountApps {data} {form} />
 		</section>

@@ -1,6 +1,6 @@
-import { and, asc, eq, getTableName, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableName, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
-import { entityMentions, scenes, stories } from '../db/schema.ts';
+import { entityMentions, revisions, scenes, stories } from '../db/schema.ts';
 import { errorFields, logEvent } from '../log.ts';
 import {
 	AssistantDisabledError,
@@ -9,7 +9,7 @@ import {
 	ReplyCutOffError,
 	type GatewayDeps
 } from './gateway.ts';
-import { spentFields, type SpendMeter } from './spend.ts';
+import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { estimateTokens } from './context/budgets.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import { buildEnrichMessage, buildEnrichTextMessage } from './prompts/enrich.ts';
@@ -21,6 +21,7 @@ import {
 	formatExcerpts,
 	splitExcerptParts,
 	type EnrichEstimate,
+	type ExcerptScene,
 	type EnrichMode,
 	type EnrichTextMode
 } from './enrich-context.ts';
@@ -30,7 +31,8 @@ import {
 	entityAliasColumn,
 	entityNameColumn,
 	entityTable,
-	resolveOwnedEntity
+	resolveOwnedEntity,
+	type EntityType
 } from '../entity-lookups.ts';
 import { inLiveUniverse, storyAssistantOn } from '../universe-scope.ts';
 import {
@@ -40,7 +42,8 @@ import {
 	type ProposedSuggestion
 } from '../entity-suggestions.ts';
 import type { ChatMessage } from './providers/types.ts';
-import { requestHash } from './request-hash.ts';
+import { requestHash, unusableReplyMark } from './request-hash.ts';
+import { resolveLlmConfig, roleReplySettings } from './config.ts';
 
 // Inline per-entity enrichment: gather where an entity appears (in one story, or
 // across its universe), ask the Assistant for new aliases, quick details, and a
@@ -55,6 +58,8 @@ const MAX_ENRICH_TOKENS = 700;
 // Failed reads in a row after which the pass stops rather than keep calling an
 // endpoint that is down. A cut-off reply is not counted: the endpoint answered.
 export const MAX_FAILURES_IN_A_ROW = 3;
+const CUT_OFF_ADVICE =
+	'The suggestions were cut off at the reply limit. Raise Longest reply for Background work in its Tune window under Account, Assistant.';
 
 // Defensive parse of the model's reply into proposals. Endpoints vary, so this
 // pulls the first JSON object out of the text and validates each field, ignoring
@@ -222,6 +227,25 @@ async function entityInScope(
 	return story?.universeId === universeId;
 }
 
+// The scenes of a part whose story the Assistant still reads. A universe-wide
+// read covers several stories and the gateway checks a story's mute only on a
+// request scoped to that story, so each part is checked as it is sent: a story
+// muted or trashed while earlier parts are read is left out of the rest.
+async function stillReadable(
+	db: Database,
+	scope: EnrichScope,
+	part: ExcerptScene[]
+): Promise<ExcerptScene[]> {
+	if (!('universeId' in scope)) return part;
+	const ids = [...new Set(part.map((scene) => scene.storyId))];
+	const open = await db
+		.select({ id: stories.id })
+		.from(stories)
+		.where(and(inArray(stories.id, ids), isNull(stories.deletedAt), storyAssistantOn()));
+	const readable = new Set(open.map((row) => row.id));
+	return part.filter((scene) => readable.has(scene.storyId));
+}
+
 // The button's read, run as a background job: the full text of the scenes that
 // mention the entity with the scene before and after each, or the whole book.
 // Text that does not fit one request is read in parts in reading order, each
@@ -278,7 +302,7 @@ export async function enrichEntityFromText(
 	let requests = 0;
 	let failure: unknown;
 	let capped = false;
-	for (const [index, part] of parts.entries()) {
+	for (const index of parts.keys()) {
 		if (opts.signal?.aborted) {
 			failure = opts.signal.reason ?? new Error('stopped');
 			break;
@@ -288,6 +312,8 @@ export async function enrichEntityFromText(
 			break;
 		}
 		const last = index === parts.length - 1;
+		const part = await stillReadable(db, opts.scope, parts[index]);
+		if (part.length === 0) continue;
 		const content = buildEnrichTextMessage(
 			// The summary is asked for once, from the last part, which also has
 			// what the earlier parts found.
@@ -320,9 +346,7 @@ export async function enrichEntityFromText(
 			);
 			requests += 1;
 			if (result.cutOff) {
-				throw new ReplyCutOffError(
-					'The suggestions were cut off at the reply limit. Raise Longest reply for Background work in its Tune window under Account, Assistant.'
-				);
+				throw new ReplyCutOffError(CUT_OFF_ADVICE);
 			}
 			// A summary offered against the instruction (an earlier part, or one
 			// the writer already has or turned down) is dropped.
@@ -345,7 +369,8 @@ export async function enrichEntityFromText(
 				);
 			}
 		} catch (err) {
-			failure = err;
+			if (err instanceof SpendCapError) capped = true;
+			else failure = err;
 			break;
 		}
 	}
@@ -409,20 +434,50 @@ export async function estimateEntityEnrich(
 export async function enrichRequest(
 	db: Database,
 	opts: { userId: string; scope: EnrichScope; entityId: string }
-): Promise<{
+): Promise<(EnrichFingerprint & { messages: ChatMessage[] }) | null> {
+	const fingerprint = await enrichFingerprint(db, opts);
+	if (!fingerprint) return null;
+	return { ...fingerprint, messages: await enrichMessages(db, opts.userId, fingerprint) };
+}
+
+type EnrichFields = Omit<Parameters<typeof buildEnrichMessage>[0], 'hasSummary'>;
+
+type EnrichFingerprint = {
 	kind: 'character' | 'place' | 'lore';
-	messages: ChatMessage[];
+	entityId: string;
+	fields: EnrichFields;
+	snippets: string[];
 	input: string;
-	// The same request's fingerprint as releases up to 3.21.4 stored it.
-	inputAsOf3_21: string;
-} | null> {
-	const entity = await resolveOwnedEntity(db, opts.userId, opts.entityId, (table) => ({
-		universeId: table.universeId,
-		name: entityNameColumn(table),
-		aliases: entityAliasColumn(table),
-		details: table.details,
-		summaryMd: table.summaryMd
-	}));
+	// The same request's fingerprint as releases up to 3.21.4 stored it, with
+	// the entry's aliases and details as they are now, or as given.
+	inputAsOf3_21: (known?: Pick<EnrichFields, 'aliases' | 'details'>) => string;
+	// What is stored with the entry's last read: a fingerprint, an
+	// unusableReplyMark, or null.
+	lastInput: string | null;
+};
+
+// The fingerprint of the request an enrich read would send, without the
+// request itself: whether to ask for a summary is left out of it (see input),
+// so the pass works out which entries changed without that query. type, when
+// the caller knows it, saves looking in every entity table.
+async function enrichFingerprint(
+	db: Database,
+	opts: { userId: string; scope: EnrichScope; entityId: string; type?: EntityType }
+): Promise<EnrichFingerprint | null> {
+	const entity = await resolveOwnedEntity(
+		db,
+		opts.userId,
+		opts.entityId,
+		(table) => ({
+			universeId: table.universeId,
+			name: entityNameColumn(table),
+			aliases: entityAliasColumn(table),
+			details: table.details,
+			summaryMd: table.summaryMd,
+			lastInput: table.assistantEnrichedInput
+		}),
+		opts.type ? [opts.type] : undefined
+	);
 	if (!entity) return null;
 	if ('universeId' in opts.scope && entity.universeId !== opts.scope.universeId) return null;
 	const kind = entity.type === 'lore_entry' ? ('lore' as const) : entity.type;
@@ -435,22 +490,13 @@ export async function enrichRequest(
 		snippetLine(a, universeWide)
 	);
 
-	const fields = {
+	const fields: EnrichFields = {
 		kind,
 		name: entity.name,
 		aliases: entity.aliases ?? [],
 		details: entity.details ?? [],
 		summaryMd: entity.summaryMd
 	};
-	const hasSummary = await summarySuggestionClosed(db, {
-		ownerId: opts.userId,
-		kind,
-		entityId: opts.entityId,
-		summaryMd: entity.summaryMd
-	});
-	const messages: ChatMessage[] = [
-		{ role: 'user', content: buildEnrichMessage({ ...fields, hasSummary }, snippets) }
-	];
 	// Hashed as if nothing were recorded on the entry: accepting what a read
 	// suggested (an alias, a detail, a summary) would otherwise change the next
 	// request, and the same passages would be sent again. An entry is read
@@ -464,30 +510,86 @@ export async function enrichRequest(
 			)
 		}
 	]);
-	return { kind, messages, input, inputAsOf3_21: enrichInputAsOf3_21(fields, snippets) };
+	return {
+		kind,
+		entityId: opts.entityId,
+		fields,
+		snippets,
+		input,
+		inputAsOf3_21: (known) => enrichInputAsOf3_21({ ...fields, ...known }, snippets),
+		lastInput: entity.lastInput
+	};
+}
+
+// The messages of the request a fingerprint stands for.
+async function enrichMessages(
+	db: Database,
+	userId: string,
+	fingerprint: EnrichFingerprint
+): Promise<ChatMessage[]> {
+	const hasSummary = await summarySuggestionClosed(db, {
+		ownerId: userId,
+		kind: fingerprint.kind,
+		entityId: fingerprint.entityId,
+		summaryMd: fingerprint.fields.summaryMd
+	});
+	return [
+		{
+			role: 'user',
+			content: buildEnrichMessage({ ...fingerprint.fields, hasSummary }, fingerprint.snippets)
+		}
+	];
 }
 
 // The enrich fingerprint as releases 3.21.3 and 3.21.4 stored it: the entry's
 // aliases and details were part of it. A read stored by one of them is
 // recognised by this on the first pass after the upgrade and kept without a
-// call. Delete it, and inputAsOf3_21, once upgrades straight from those
-// releases no longer matter.
-function enrichInputAsOf3_21(
-	fields: Omit<Parameters<typeof buildEnrichMessage>[0], 'hasSummary'>,
-	snippets: string[]
-): string {
+// call. Delete it, inputAsOf3_21 and readAsOf3_21InHistory once upgrades
+// straight from those releases no longer matter.
+function enrichInputAsOf3_21(fields: EnrichFields, snippets: string[]): string {
 	return requestHash([
 		{ role: 'user', content: buildEnrichMessage({ ...fields, hasSummary: false }, snippets) }
 	]);
 }
 
-type EnrichRequest = NonNullable<Awaited<ReturnType<typeof enrichRequest>>>;
+// Whether a read stored under the 3.21.4 fingerprint, with the entry's aliases
+// or details edited since, read the request that would be sent now: it
+// matches with the aliases and details of a version in the entry's history.
+// A match means the name and passages are the ones read, which is all
+// today's fingerprint covers.
+const HISTORY_VERSIONS_CHECKED = 50;
+async function readAsOf3_21InHistory(
+	db: Database,
+	type: EntityType,
+	fingerprint: EnrichFingerprint
+): Promise<boolean> {
+	const rows = await db
+		.select({ snapshot: revisions.snapshot })
+		.from(revisions)
+		.where(
+			and(
+				eq(revisions.entityType, type),
+				eq(revisions.entityId, fingerprint.entityId),
+				isNotNull(revisions.snapshot)
+			)
+		)
+		.orderBy(desc(revisions.createdAt))
+		.limit(HISTORY_VERSIONS_CHECKED);
+	return rows.some(
+		({ snapshot }) =>
+			!!snapshot &&
+			fingerprint.inputAsOf3_21({
+				aliases: (type === 'lore_entry' ? snapshot.keywords : snapshot.aliases) ?? [],
+				details: snapshot.details ?? []
+			}) === fingerprint.lastInput
+	);
+}
 
-// Sends a request enrichRequest built and stages what comes back.
+// Sends the request a fingerprint stands for and stages what comes back.
 async function sendEnrichRequest(
 	db: Database,
 	opts: EnrichOptions,
-	request: EnrichRequest,
+	request: EnrichFingerprint & { messages?: ChatMessage[] },
 	deps: GatewayDeps
 ): Promise<EntitySuggestion[]> {
 	const result = await completeDetailed(
@@ -499,19 +601,17 @@ async function sendEnrichRequest(
 			...opts.scope,
 			role: 'utility',
 			enableTools: false,
-			messages: request.messages,
+			messages: request.messages ?? (await enrichMessages(db, opts.userId, request)),
 			maxTokens: MAX_ENRICH_TOKENS,
 			meter: opts.meter,
 			signal: opts.signal
 		},
 		deps
 	);
-	// Cut-off JSON parses to nothing; failing keeps the read from being stored,
-	// so the next pass reads the entity again.
+	// Cut-off JSON parses to nothing; failing keeps the read from being stored
+	// (the pass stores an unusableReplyMark instead).
 	if (result.cutOff) {
-		throw new ReplyCutOffError(
-			'The suggestions were cut off at the reply limit. Raise Longest reply for Background work in its Tune window under Account, Assistant.'
-		);
+		throw new ReplyCutOffError(CUT_OFF_ADVICE);
 	}
 
 	const proposals = parseEnrichResponse(result.content);
@@ -651,6 +751,15 @@ export async function enrichUniverse(
 	let cutOff: string | undefined;
 	let cutOffs = 0;
 
+	// The model and settings the pass's reads go out on, resolved when first
+	// needed.
+	let settings: string | undefined;
+	const replySettings = async () =>
+		(settings ??= roleReplySettings(
+			(await resolveLlmConfig(db, userId, { universeId })).config,
+			'utility'
+		));
+
 	const todo = await entitiesToEnrich(db, userId, universeId);
 	for (const [index, entity] of todo.entries()) {
 		if (signal?.aborted) {
@@ -662,25 +771,39 @@ export async function enrichUniverse(
 			break;
 		}
 		const table = entityTable(entity.type);
+		const scope = { universeId };
+		let request: EnrichFingerprint | null = null;
 		try {
-			const [last] = await db
-				.select({ input: table.assistantEnrichedInput })
-				.from(table)
-				.where(eq(table.id, entity.id));
-			const scope = { universeId };
-			const request = await enrichRequest(db, { userId, scope, entityId: entity.id });
+			request = await enrichFingerprint(db, {
+				userId,
+				scope,
+				entityId: entity.id,
+				type: entity.type
+			});
 			// Deleted since the pass listed it: nothing left to read.
-			if (!last || !request) continue;
-			if (request.input === last.input) {
+			if (!request) continue;
+			const last = request.lastInput;
+			if (request.input === last) {
 				unchanged += 1;
 				continue;
 			}
+			// The same request was cut off at the reply limit on the same model
+			// and settings, and would be again: reported, not sent.
+			if (last !== null && last === unusableReplyMark(request.input, await replySettings())) {
+				failed += 1;
+				cutOff = CUT_OFF_ADVICE;
+				cutOffs += 1;
+				continue;
+			}
 			// A read an earlier release stored: the same request under that
-			// release's fingerprint, or from before fingerprints and nothing it
+			// release's fingerprint (with the aliases and details the entry had
+			// then, from its history), or from before fingerprints and nothing it
 			// read has changed. Kept under today's fingerprint, with no call.
 			if (
-				last.input === request.inputAsOf3_21 ||
-				(last.input === null && (await readBeforeFingerprintsIsCurrent(db, entity, universeId)))
+				(last !== null &&
+					(last === request.inputAsOf3_21() ||
+						(await readAsOf3_21InHistory(db, entity.type, request)))) ||
+				(last === null && (await readBeforeFingerprintsIsCurrent(db, entity, universeId)))
 			) {
 				await db
 					.update(table)
@@ -714,6 +837,10 @@ export async function enrichUniverse(
 				aborted = true;
 				break;
 			}
+			if (err instanceof SpendCapError) {
+				capped = true;
+				break;
+			}
 			// Every later entity would be refused the same way.
 			if (err instanceof NoModelError) {
 				noModel = true;
@@ -729,6 +856,27 @@ export async function enrichUniverse(
 				cutOff = err.message;
 				cutOffs += 1;
 				failedInARow = 0;
+				// Kept from being sent again as it is (see unusableReplyMark). The
+				// entry is not marked read.
+				if (request) {
+					const input = request.input;
+					await replySettings()
+						.then((settings) =>
+							db
+								.update(table)
+								.set({
+									assistantEnrichedInput: unusableReplyMark(input, settings),
+									updatedAt: sql`${table.updatedAt}`
+								})
+								.where(eq(table.id, entity.id))
+						)
+						.catch((markErr) =>
+							logEvent('error', 'assistant.enrich_mark_failed', {
+								entityId: entity.id,
+								...errorFields(markErr)
+							})
+						);
+				}
 			} else {
 				failedInARow += 1;
 				// Only a stop with entities still to read; a pass that failed on its

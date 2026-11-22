@@ -295,10 +295,13 @@ when the provider or the endpoint host changes (another endpoint can serve the
 same model id at another price), so the cap reports the model as unpriced
 rather than metering at a stale figure; typed context windows are kept.
 Claude's cache writes are
-metered at their premium (1.25x, 2x for the one-hour cache) and cache reads at
-a tenth. The tenth applies only to the Claude provider; cached tokens an
-OpenAI-compatible endpoint reports are metered at the full price, since what
-such an endpoint charges for them is not known. Those rates live in one place, `$lib/assistant-cost.ts`, shared by
+metered at their premium (1.25x, 2x for the one-hour cache). Cache reads are
+metered at the rate each preset provider publishes, the dearest across its
+models so a figure never reads low (Claude a tenth, Gemini a quarter,
+DeepSeek 0.26 from its earlier prices, OpenAI a half), or at the per-model `input_cache_read` price
+OpenRouter's discovery reports, carried as `cacheRead` on the price. A custom
+endpoint, or OpenRouter with a typed price, gets the full price for cached
+tokens, since what it charges for them is not known. Those rates live in one place, `$lib/assistant-cost.ts`, shared by
 the meter, the estimate, and the usage list on the account page; each
 `assistant_usage` row stores its cache shares (null on rows from before
 they were kept, which price at the plain rate). A cost figure is only ever shown or enforced when
@@ -987,7 +990,9 @@ suggestion. On top of those:
     through `mapper.prepare`, which lets the server answer others between
     pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (6,250,000, edit
     distance 2,500), compared in one go, and a marker in a stretch past it
-    is detached. The diff alone takes about 0.35 s to give up at that budget
+    is detached by the save and placed again within a minute by the
+    worker's `remap-markers` sweep (`BACKGROUND_DIFF_BUDGET`, edit distance
+    10,000; see `remapPendingMarkers`). The diff alone takes about 0.35 s to give up at that budget
     on prose; whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at
     the 2M cap, and repetitive text can reach about 1.9 s at 2M, as only D
     squared is charged. Main is slower in every case. An edit that was not checked is reported with `notice`: "The
@@ -1186,7 +1191,16 @@ hashes:
   request and sends only those whose hash differs from the stored one. The
   hash covers the entry's name and its passages, not what is recorded on it
   (aliases, details, whether a summary is asked for), so accepting what a
-  read suggested does not buy another read of the same passages.
+  read suggested does not buy another read of the same passages. The pass
+  builds only the fingerprint (entry row and passages); the summary check
+  that shapes the messages runs only for an entry it sends.
+- A reply that cannot be used (an enrich read cut off at the reply limit, a
+  chapter summary that comes back empty) stores an `unusableReplyMark` in
+  place of the fingerprint: the request's hash with the role's model, tuning
+  and extra fields (`roleReplySettings`). The pass skips a request whose mark
+  matches, and an enrich pass still counts it as cut off in its notice; a
+  new request, model, reply limit or setting sends it again. The entry is
+  not marked read and the summary is left as it was.
 
 An arc and a chapter summary read scene summaries, and an Assistant-written
 scene summary is itself only current while its scene has not changed
@@ -1199,8 +1213,13 @@ its summary out of date at once, without waiting for a summaries pass. The
 pass rewrites scene summaries first and chapters from the result, so it
 converges in one run, and a rewritten summary that comes out the same puts
 the arc and chapter back to current. The other readers of scene summaries
-(the outline's scene lines, neighbouring scenes, `list_scenes`, an attached
-story outline, the review survey) still send a scene summary as it is stored.
+(the recap, the focus scene, neighbouring scenes, the outline's scene lines,
+an attached story outline, `list_scenes` and `get_scene`, which MCP clients
+share, and the review survey) send an out-of-date Assistant summary with a
+note in front saying so (`sceneSummaryToSend`, the one source of that note),
+as an out-of-date arc is sent (#1321). The summaries pass clears an Assistant
+summary whose scene has been emptied, under the same compare-and-set as a
+write; the writer's own summary is never labelled or cleared.
 
 So a save runs no Assistant bookkeeping and takes no Assistant lock, the same
 request is never paid for twice, and a change that is undone reads as current
@@ -1223,7 +1242,10 @@ without a call; one the release counted as out of date, or with a scene whose
 own summary was out of date, is rewritten once. An enrich read stored by
 3.21.3 or 3.21.4 carries a fingerprint that covered aliases and details
 (`enrichInputAsOf3_21`): a pass that finds it matching keeps the read under
-today's fingerprint without a call. An enrich read without a fingerprint is
+today's fingerprint without a call. It is also checked with the aliases and
+details of each of the entry's last 50 History versions
+(`readAsOf3_21InHistory`), so an entry edited after that read is adopted too;
+a hash match proves the name and passages are the ones read. An enrich read without a fingerprint is
 adopted without a call when no scene mentioning the entity changed since it
 was written, and sent otherwise. The fifty-years-back times older releases wrote as marks mean
 nothing once a fingerprint is stored.
@@ -1701,10 +1723,13 @@ calls the gateway, which proxies through the egress guard.
   (the saver itself is bound to the scene endpoint, its title and markers,
   so only the bookkeeping is shared). So a save whose answer was lost and a
   save made as the page is left beside one still out are both taken, in
-  either order. Known limit, shared with the scene save: a page-hide save
-  that puts the base text back, arriving before an older save still on its
-  way, lets the older one land after it, since a content hash cannot tell
-  the two apart. Text, a brief, a point of view or a scene line with a null
+  either order. A page-hide save that puts the base text back, arriving
+  before an older save still on its way, is told apart by order, not by
+  hash: each editor copy (draft card, scene editor) names itself and numbers
+  its saves (`save-order.ts`), the row keeps the copy and number that saved
+  last (`save_source`, `save_seq`, on drafts and scenes), and an older save
+  from that copy is answered `superseded` and changes nothing. The hashes
+  are checked for the shape `textHash` writes. Text, a brief, a point of view or a scene line with a null
   character is refused with 400 (`checkNoNull`). A blank PATCH is refused;
   Discard is
   how a draft is dropped. Asking and
@@ -1743,11 +1768,13 @@ calls the gateway, which proxies through the egress guard.
 - [built] Chapter drafts (#1168, step 2): the same queue and table. The
   request (`/api/assistant/draft/chapter`: defaults, `estimate: true`, or
   the request itself) stages one `assistant_drafts` row per chosen scene with
-  `chapter_id` and `position` and queues one job that carries the row ids in
-  order and the chapter brief (`queueAssistantChapterDraft`, one unfinished
-  job per chapter). The estimate is the sum of the scenes' requests, each
-  later one counted with the scene before it, and over the cap it is
-  refused. The job (`runChapterDraft`) makes one `coauthor` request per
+  `chapter_id`, `position` and the chapter brief (`chapter_brief`, so "Try
+  again" on a failed scene starts its form with the chapter brief and the
+  scene's) and queues one job that carries the row ids in order and the
+  chapter brief (`queueAssistantChapterDraft`, one unfinished job per
+  chapter). The estimate is the sum of the scenes' requests, each later one
+  counted with the scene before it (the settings and the scene-independent
+  context are read once for all of them), and over the cap it is refused. The job (`runChapterDraft`) makes one `coauthor` request per
   scene. Each is told the chapter brief, the closing part of the scene
   drafted just before it (it is not in the manuscript, so the context does
   not hold it), and the writer's line for the next scene where the single
@@ -1767,7 +1794,9 @@ calls the gateway, which proxies through the egress guard.
   fails is retried with the job, and the retry carries on from that scene;
   when no retry follows, that scene's row is marked failed and the rest are
   discarded. A row the writer discards mid-run is passed over, and does not
-  stop the job. The job-status poll reports scenes settled out of scenes
+  stop the job; while a scene's request is out the run checks its row every
+  few seconds, and a row discarded meanwhile calls that request off as a
+  writer's stop. The job-status poll reports scenes settled out of scenes
   asked for (`chapterDraftProgress`), which the activity card and the
   Background jobs list show, and the notice says how many scenes were
   drafted and why the run ended when it ended early.

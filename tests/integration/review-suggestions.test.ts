@@ -446,6 +446,29 @@ describe('decideSuggestion', () => {
 		expect(await sceneBody()).not.toContain('lazy dog');
 	});
 
+	it('gives a decided edit that left no text the place it was, for reading order', async () => {
+		const delStart = BODY.indexOf(' over the lazy');
+		const deletion = (await suggest(
+			{ start: delStart, end: delStart + ' over the lazy dog'.length },
+			''
+		)) as { ok: true; suggestionId: string };
+		const insertAt = BODY.indexOf('fox');
+		const insertion = (await suggest({ start: insertAt, end: insertAt }, 'red ')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		await decideSuggestion(db, authorId, storyId, deletion.suggestionId, true);
+		await decideSuggestion(db, authorId, storyId, insertion.suggestionId, false);
+		const views = await listSuggestions(db, storyId);
+		const deleted = views.find((v) => v.id === deletion.suggestionId)!;
+		const rejected = views.find((v) => v.id === insertion.suggestionId)!;
+		// Nothing to mark, but each still has its spot in the text.
+		expect(deleted.anchor).toBeNull();
+		expect(deleted.position).toBe(delStart);
+		expect(rejected.anchor).toBeNull();
+		expect(rejected.position).toBe(insertAt);
+	});
+
 	it('only the owner decides', async () => {
 		const start = BODY.indexOf('quick');
 		const { suggestionId } = (await suggest({ start, end: start + 5 }, 'swift')) as {
@@ -456,6 +479,102 @@ describe('decideSuggestion', () => {
 			ok: false
 		});
 		expect(await sceneBody()).toBe(BODY);
+	});
+});
+
+// Review anchors count characters in the stored text, so a body stored with
+// \r\n (an old import) counts each break as two. The guest review page and
+// the Assistant measure that way; the review centre's editor converts.
+describe('a body stored with Windows line breaks', () => {
+	const CRLF = 'Line one is here.\r\nThe cat sat on the mat.\r\nLine three.';
+	const cat = CRLF.indexOf('cat');
+	beforeEach(async () => {
+		await db.update(scenes).set({ bodyMd: CRLF }).where(eq(scenes.id, sceneId));
+	});
+
+	it('accepts a replacement and an insertion at the stored offsets', async () => {
+		const replace = (await suggest({ start: cat, end: cat + 3 }, 'dog')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		const three = CRLF.indexOf('three');
+		const insert = (await suggest({ start: three, end: three }, 'number ')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		const listed = (await listSuggestions(db, storyId)).find((s) => s.id === replace.suggestionId);
+		expect(listed?.original).toBe('cat');
+		expect(listed?.anchor).toEqual({ start: cat, end: cat + 3 });
+		expect(await decideSuggestion(db, authorId, storyId, replace.suggestionId, true)).toMatchObject(
+			{ ok: true }
+		);
+		expect(await decideSuggestion(db, authorId, storyId, insert.suggestionId, true)).toMatchObject({
+			ok: true
+		});
+		expect(await sceneBody()).toBe(
+			'Line one is here.\r\nThe dog sat on the mat.\r\nLine number three.'
+		);
+	});
+
+	it('accepts at the right place once the writer saved the text with plain newlines', async () => {
+		const { suggestionId } = (await suggest({ start: cat, end: cat + 3 }, 'dog')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		await db
+			.update(scenes)
+			.set({ bodyMd: CRLF.replace(/\r\n/g, '\n') })
+			.where(eq(scenes.id, sceneId));
+		expect(await decideSuggestion(db, authorId, storyId, suggestionId, true)).toMatchObject({
+			ok: true
+		});
+		expect(await sceneBody()).toBe('Line one is here.\nThe dog sat on the mat.\nLine three.');
+	});
+
+	it('accepts a suggestion across a line break once the writer edited the text', async () => {
+		const start = CRLF.indexOf('here.');
+		const { suggestionId } = (await suggest({ start, end: cat }, 'here. The ')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		const edited = CRLF.replace(/\r\n/g, '\n').replace('Line three.', 'Line three, at last.');
+		await db.update(scenes).set({ bodyMd: edited }).where(eq(scenes.id, sceneId));
+		const listed = (await listSuggestions(db, storyId)).find((s) => s.id === suggestionId);
+		expect(listed?.anchor).toEqual({ start, end: edited.indexOf('cat') });
+		expect(await decideSuggestion(db, authorId, storyId, suggestionId, true)).toMatchObject({
+			ok: true
+		});
+		expect(await sceneBody()).toBe(
+			'Line one is here. The cat sat on the mat.\nLine three, at last.'
+		);
+	});
+
+	it('refuses a range that does not hold the text the writer selected', async () => {
+		// Counted with plain newlines: one character short of "cat".
+		const lf = CRLF.replace(/\r\n/g, '\n').indexOf('cat');
+		const result = await createSuggestion(db, {
+			storyId,
+			sceneId,
+			author: { userId: authorId },
+			range: { start: lf, end: lf + 3 },
+			original: 'cat',
+			replacement: 'dog'
+		});
+		expect(result).toMatchObject({ ok: false });
+		expect(await listSuggestions(db, storyId)).toEqual([]);
+	});
+
+	it('takes a selection across a line break, as the editor reads it', async () => {
+		const start = CRLF.indexOf('here.');
+		const result = await createSuggestion(db, {
+			storyId,
+			sceneId,
+			author: { userId: authorId },
+			range: { start, end: cat },
+			original: 'here.\nThe ',
+			replacement: 'here. The '
+		});
+		expect(result).toMatchObject({ ok: true });
 	});
 });
 
@@ -668,6 +787,27 @@ describe('decideSuggestions (several at once)', () => {
 			'rejected',
 			'rejected'
 		]);
+	});
+
+	it('names each changed scene as it goes, so a throw part way loses none', async () => {
+		const fox = await suggestWord('brown fox', 'red vixen');
+		const dog = await suggestWord('lazy dog', 'sleeping hound');
+		const stamps = Object.fromEntries(
+			(await listSuggestions(db, storyId)).map((s) => [s.id, s.stamp])
+		);
+		// The second lookup of what the writer read blows up.
+		const seen = new Proxy(stamps, {
+			get: (target, id: string) => {
+				if (id === dog) throw new Error('boom');
+				return target[id];
+			}
+		}) as Record<string, string>;
+		const changed = new Set<string>();
+		await expect(
+			decideSuggestions(db, authorId, storyId, [fox, dog], true, seen, changed)
+		).rejects.toThrow('boom');
+		expect(await sceneBody()).toBe(BODY.replace('brown fox', 'red vixen'));
+		expect([...changed]).toEqual([sceneId]);
 	});
 
 	it('decides nothing for someone who does not own the story', async () => {

@@ -29,6 +29,7 @@
 		MAX_DRAFT_POV_CHARS,
 		MAX_DRAFT_WORDS,
 		MIN_DRAFT_WORDS,
+		retryBrief,
 		sceneCapAdvice,
 		type SceneDraftDefaults,
 		type SceneDraftEstimate,
@@ -130,6 +131,9 @@
 
 	const label = $derived(sceneTitle ? `"${sceneTitle}"` : 'this scene');
 	const running = $derived(draft?.status === 'pending' || draft?.status === 'running');
+	// A chapter run's card shows the progress and Stop for a scene it is
+	// writing, so the scene's own card stays out of the way until the draft is in.
+	const chapterWriting = $derived(view === 'draft' && running && !!draft?.inChapterRun);
 	// The form asks ("Draft this scene"); a draft under way or written is
 	// named for what it is.
 	const heading = $derived(
@@ -250,12 +254,28 @@
 			onClose?.();
 		}
 	}
-	// While the card says a draft changed or was decided elsewhere, the page
-	// does not also ask before it is left.
+	// Whether the card is on screen: mounted is not enough, since the panel
+	// can be hidden (focus mode, or another tab of a narrow window) or the card
+	// scrolled out of sight.
+	let onScreen = $state(false);
+	$effect(() => {
+		const el = card;
+		if (!el) return;
+		const observer = new IntersectionObserver((entries) => {
+			onScreen = entries.some((entry) => entry.isIntersecting);
+		});
+		observer.observe(el);
+		return () => {
+			observer.disconnect();
+			onScreen = false;
+		};
+	});
+	// While the card says on screen that a draft changed or was decided
+	// elsewhere, the page does not also ask before it is left.
 	$effect(() => {
 		const id =
 			view === 'gone' ? gone?.id : view === 'draft' && changedElsewhere ? draft?.id : undefined;
-		if (!id) return;
+		if (!id || !onScreen) return;
 		conflictShown(id, true);
 		return () => conflictShown(id, false);
 	});
@@ -347,13 +367,16 @@
 	}
 
 	// Opens the brief form with what the scene suggests, or with the brief of a
-	// draft that failed, to try again.
+	// draft that failed, to try again. Only the latest call applies, so words
+	// typed with a second ask while the first is loading are not lost.
+	let opening = 0;
 	async function openForm(typed: string, from?: SceneDraftView) {
+		const mine = ++opening;
 		counts += 1;
 		error = '';
 		estimate = null;
 		if (from) {
-			brief = from.brief;
+			brief = retryBrief(from);
 			targetWords = from.targetWords;
 			pov = from.pov ?? '';
 			view = 'form';
@@ -368,7 +391,7 @@
 				{ ...scope(), defaults: true },
 				'Could not open the draft form.'
 			);
-			if (!alive || view !== 'loading') return;
+			if (!alive || mine !== opening || view !== 'loading') return;
 			if (!response.ok) {
 				error = response.message;
 				brief = typed;
@@ -673,7 +696,7 @@
 	}
 </script>
 
-{#if view !== 'hidden'}
+{#if view !== 'hidden' && !chapterWriting}
 	<div
 		class="assist-card assist-card-stack"
 		bind:this={card}
@@ -778,30 +801,23 @@
 			</p>
 		{:else if draft && running}
 			<p class="assist-card-note" role="status">
-				{#if draft.inChapterRun}
-					This scene is part of a chapter the Assistant is drafting in the background. Its draft
-					shows here when it is written.
-				{:else}
-					The Assistant is writing this draft in the background. You can keep working, and you will
-					be notified when it is ready.
-				{/if}
+				The Assistant is writing this draft in the background. You can keep working, and you will be
+				notified when it is ready.
 			</p>
 			{#if unread}
 				<p class="assist-card-note" role="status">Could not check on this draft. Trying again.</p>
 			{/if}
-			{#if !draft.inChapterRun}
-				<FormStatus block error={job?.stopError} />
-				<div class="assist-card-actions">
-					<button
-						class="btn"
-						type="button"
-						disabled={!job?.stop || job.stopping}
-						onclick={() => job?.stop?.()}
-					>
-						{job?.stopping ? 'Stopping...' : 'Stop'}
-					</button>
-				</div>
-			{/if}
+			<FormStatus block error={job?.stopError} />
+			<div class="assist-card-actions">
+				<button
+					class="btn"
+					type="button"
+					disabled={!job?.stop || job.stopping}
+					onclick={() => job?.stop?.()}
+				>
+					{job?.stopping ? 'Stopping...' : 'Stop'}
+				</button>
+			</div>
 		{:else if draft?.status === 'ready'}
 			{#if draft.note}
 				<p class="assist-card-note">{draft.note}</p>

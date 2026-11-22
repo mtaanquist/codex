@@ -290,6 +290,16 @@ describe('assembleContext', () => {
 		expect(context!.text).not.toContain('Across the stories');
 	});
 
+	it('leaves out an out-of-date arc whose list of stories is empty', async () => {
+		// The 0093 backfill gives an empty list when no story of the universe was
+		// left at upgrade, so what the arc read cannot be checked.
+		await db.update(scenes).set({ summaryMd: 'Alice leaves Bram.' }).where(eq(scenes.id, scene1Id));
+		await db.update(characters).set({ arcSummaryStories: [] }).where(eq(characters.name, 'Alice'));
+		const context = await assembleContext(db, { userId: ownerId, storyId, sceneId: scene1Id });
+		expect(context!.text).toContain('A brave knight.');
+		expect(context!.text).not.toContain('Across the stories');
+	});
+
 	it('includes the current scene body and a member entity with its details and story note', async () => {
 		const context = await assembleContext(db, { userId: ownerId, storyId, sceneId: scene1Id });
 		expect(context!.text).toContain('Alice met Bram by the Aether gate at dawn.');

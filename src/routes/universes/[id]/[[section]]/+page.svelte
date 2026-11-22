@@ -24,7 +24,9 @@
 	// a plain /universes/<slug> is the details. Forms post to the section
 	// they sit on, so a reload lands where the form lives.
 	type Section = 'details' | 'categories' | 'suggestions' | 'assistant' | 'history' | 'export';
-	const waiting = $derived(data.proposals.entities.length + data.proposals.splits.length);
+	const waiting = $derived(
+		data.proposals.entities.length + data.proposals.splits.length + data.proposals.drafts.length
+	);
 	// The Assistant section shows once the Assistant is set up on the account.
 	const NAV: { id: Section; label: string }[] = $derived(
 		[
@@ -415,6 +417,7 @@
 		<UniverseSuggestions
 			entities={data.proposals.entities}
 			splits={data.proposals.splits}
+			drafts={data.proposals.drafts}
 			message={form?.action === 'suggestions' ? (form.message ?? '') : ''}
 			done={form?.action === 'suggestions' && 'done' in form ? form.done : ''}
 		/>

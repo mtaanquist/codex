@@ -20,6 +20,15 @@ export function estimateTokens(text: string): number {
 	return tokensForChars(text.length);
 }
 
+// A token count meant to come out at or above what the endpoint bills, for the
+// spend cap's check before a request is sent. chars/4 runs short on non-English
+// prose and on tokenizers finer than GPT's. UTF-8 bytes over three counts
+// English a third above chars/4 and a CJK character (three bytes) as a whole
+// token, about what tokenizers charge for one.
+export function ceilingTokens(text: string): number {
+	return Math.ceil(Buffer.byteLength(text, 'utf8') / 3);
+}
+
 // A provisional allowance for the persona system message a request carries.
 export const PERSONA_TOKENS = 120;
 

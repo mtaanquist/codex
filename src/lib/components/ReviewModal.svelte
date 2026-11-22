@@ -2,7 +2,7 @@
 	import { NO_PRICE_NOTE, capNotAppliedNote, money, overWarnNote } from '#lib/cost-notes';
 	import { resolve } from '$app/paths';
 	import { modal } from '#lib/modal';
-	import { formatNumber, spentPhrase } from '#lib/format';
+	import { capStopPhrase, formatNumber } from '#lib/format';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import { reviewModal, closeReviewModal } from '#lib/review-modal.svelte';
 	import {
@@ -380,7 +380,7 @@
 							{/if}
 						{:else if progress.capped}
 							<p class="rm-phase">
-								Stopped after {progress.reviewed ?? 0} of {progress.total ?? 0} scenes at {spentPhrase(
+								Stopped after {progress.reviewed ?? 0} of {progress.total ?? 0} scenes, {capStopPhrase(
 									progress.spentUsd ?? 0,
 									progress.spentEstimated
 								)}.

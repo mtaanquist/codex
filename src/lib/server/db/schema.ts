@@ -335,7 +335,12 @@ export const scenes = pgTable(
 		mentionsIndexedAt: timestamp('mentions_indexed_at', { withTimezone: true }),
 		// Soft delete: a deleted scene sits in the story's trash until restored
 		// or deleted for good. Null means live; every live query filters on it.
-		deletedAt: timestamp('deleted_at', { withTimezone: true })
+		deletedAt: timestamp('deleted_at', { withTimezone: true }),
+		// The editor copy that saved last and its save's number (see save-order):
+		// a later save from that copy that arrives after an earlier one is not
+		// undone by it.
+		saveSource: text('save_source'),
+		saveSeq: integer('save_seq')
 	},
 	(table) => [
 		index('scenes_characters_present_gin').using('gin', table.charactersPresent),
@@ -637,7 +642,14 @@ export const entityMentions = pgTable(
 		surroundingText: text('surrounding_text').notNull()
 	},
 	(table) => [
-		index('entity_mentions_target_idx').on(table.targetType, table.targetId),
+		// Ends with source and position so the first mention per (target,
+		// source), which every arc check reads, comes off the index in order.
+		index('entity_mentions_target_idx').on(
+			table.targetType,
+			table.targetId,
+			table.sourceId,
+			table.position
+		),
 		index('entity_mentions_source_idx').on(table.sourceType, table.sourceId)
 	]
 );
@@ -1033,6 +1045,25 @@ export const sceneMarkers = pgTable(
 			.$onUpdate(() => sql`clock_timestamp()`)
 	},
 	(table) => [index('scene_markers_scene_idx').on(table.sceneId)]
+);
+
+// Markers a save could not remap within its time budget (see
+// remapMarkerAnchors). The save detaches them and leaves a row here: the text
+// their anchors were made on and those anchors. The worker's sweep maps them
+// onto the scene's text as it then stands and deletes the row.
+export const markerRemaps = pgTable(
+	'marker_remaps',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		sceneId: uuid('scene_id')
+			.references(() => scenes.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The body the anchors count into, with \r\n as one character.
+		baseBody: text('base_body').notNull(),
+		markers: jsonb('markers').notNull().$type<{ id: string; start: number; end: number }[]>(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [index('marker_remaps_scene_idx').on(table.sceneId)]
 );
 
 // One row per off-site backup attempt, success or failure, so the admin
@@ -1547,6 +1578,9 @@ export type PatternUnitState = {
 		examples: string[];
 		threadId?: string;
 		noteBody?: string;
+		// The scenes the note names, in reading order. Only these get fixes.
+		// Absent in state saved before it was kept.
+		listed?: string[];
 		applied: string[];
 	}[];
 	// A survey that goes part by part (the whole book, chapter by chapter):
@@ -1636,6 +1670,9 @@ export const ASSISTANT_DRAFT_STATUSES = [
 	'failed'
 ] as const;
 
+// Who wrote a draft: the Assistant, or a connected app that staged it.
+export const ASSISTANT_DRAFT_SOURCES = ['assistant', 'app'] as const;
+
 // A scene the Assistant drafted from the writer's brief, staged for the writer
 // to keep or discard: the draft never reaches a scene until the writer accepts
 // it (see scene-drafts.ts). The background job writes text_md and moves the row
@@ -1668,8 +1705,18 @@ export const assistantDrafts = pgTable(
 		textMd: text('text_md').notNull().default(''),
 		status: text('status', { enum: ASSISTANT_DRAFT_STATUSES }).notNull().default('pending'),
 		note: text('note'),
-		// The pg-boss job writing it, for the status poll and Stop.
+		// What the writer said about the whole chapter, on each draft of a
+		// chapter run, so trying one scene again can start from it.
+		chapterBrief: text('chapter_brief'),
+		// The pg-boss job writing it, for the status poll and Stop. An imported
+		// draft has none whoever wrote it, so this does not say who did: source
+		// does.
 		jobId: text('job_id'),
+		source: text('source', { enum: ASSISTANT_DRAFT_SOURCES }).notNull().default('assistant'),
+		// The panel copy that saved the writer's edits last, and its save's
+		// number (see save-order).
+		saveSource: text('save_source'),
+		saveSeq: integer('save_seq'),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		updatedAt: timestamp('updated_at', { withTimezone: true })
 			.notNull()

@@ -6,16 +6,29 @@
 	let {
 		error = null,
 		success = null,
-		block = false
+		block = false,
+		live = false
 	}: {
 		error?: string | null;
 		success?: string | null;
 		// Some rows render the message as a block paragraph rather than inline.
 		block?: boolean;
+		// For a message that changes without a page load (an enhanced form):
+		// the status region stays in the page while empty, so each new message
+		// is read out by screen readers. Implies block.
+		live?: boolean;
 	} = $props();
 </script>
 
-{#if error}
+{#if live}
+	<div role="status">
+		{#if error}
+			<p class="field-hint fs-error">{error}</p>
+		{:else if success}
+			<p class="field-hint fs-ok">{success}</p>
+		{/if}
+	</div>
+{:else if error}
 	{#if block}
 		<p class="field-hint fs-error" role="alert">{error}</p>
 	{:else}

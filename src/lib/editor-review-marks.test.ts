@@ -2,11 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import type { DecorationSet, EditorView } from '@codemirror/view';
 import {
+	anchorsAsShown,
 	buildReviewMarks,
+	remapReviewMarks,
 	removeReviewMarks,
 	reviewMarksExtension,
-	setReviewMarks
+	setReviewMarks,
+	setReviewMarksOn
 } from './editor-review-marks';
+import { toLf } from './line-endings';
 import type { ReviewFilter, ReviewSuggestion, ReviewThread } from './review-ui';
 
 // A flattened view of a decoration, enough to assert against without a DOM.
@@ -235,5 +239,100 @@ describe('review marks field', () => {
 		}).state;
 		expect(handle.anchorOf(viewOf(applied), 'g1')).toBeNull();
 		expect(handle.anchorOf(viewOf(applied), 't1')).toEqual({ start: 8, end: 11 });
+	});
+
+	// #1367: a focus or filter change rebuilds the marks from the anchors the
+	// page loaded with, which do not know about typing since the load.
+	it('remaps a rebuild from the loaded anchors through typing since', () => {
+		const { handle, state, viewOf } = stateWith([thread()], [suggestion()]);
+		const typed = state.update({ changes: { from: 0, to: 0, insert: 'Look. ' } }).state;
+		const base = handle.baseDoc(viewOf(typed));
+		expect(base).toBe(doc);
+		const refocused = typed.update({
+			effects: remapReviewMarks.of(buildReviewMarks([thread()], [suggestion()], ALL, base, 't1'))
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 'g1')).toEqual({ start: 10, end: 13 });
+		expect(handle.anchorOf(viewOf(refocused), 't1')).toEqual({ start: 8, end: 12 });
+	});
+
+	it('keeps a removed suggestion out of a remapped rebuild', () => {
+		const { handle, state, viewOf } = stateWith([], [suggestion()]);
+		const applied = state.update({
+			changes: { from: 4, to: 7, insert: 'dog' },
+			effects: removeReviewMarks.of(['g1'])
+		}).state;
+		// The page data still lists the suggestion as pending until it reloads.
+		const refocused = applied.update({
+			effects: remapReviewMarks.of(
+				buildReviewMarks([], [suggestion()], ALL, handle.baseDoc(viewOf(applied)))
+			)
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 'g1')).toBeNull();
+	});
+
+	it('takes a new base on setReviewMarks', () => {
+		const { handle, state, viewOf } = stateWith([], []);
+		const typed = state.update({ changes: { from: 0, to: 0, insert: 'Look. ' } }).state;
+		const now = typed.doc.toString();
+		// Anchored against the new text: "Look".
+		const fresh = thread({ anchor: { start: 0, end: 4 } });
+		const reset = typed.update({
+			effects: setReviewMarks.of(buildReviewMarks([fresh], [], ALL, now))
+		}).state;
+		expect(handle.baseDoc(viewOf(reset))).toBe(now);
+		const refocused = reset.update({
+			effects: remapReviewMarks.of(buildReviewMarks([fresh], [], ALL, now))
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 't1')).toEqual({ start: 0, end: 4 });
+	});
+
+	// A reload brings the saved text while the editor holds typing past it:
+	// the anchors belong to the saved text, not to what the editor shows.
+	it('maps marks built on the saved text through typing past it', () => {
+		const { handle, state, viewOf } = stateWith([], []);
+		const saved = 'Look. ' + doc;
+		const live = 'Look. Now. ' + doc;
+		const typed = state.update({ changes: { from: 0, to: doc.length, insert: live } }).state;
+		// "cat" in the saved text.
+		const g = suggestion({ anchor: { start: 10, end: 13 } });
+		const set = typed.update({
+			effects: setReviewMarksOn.of({ base: saved, marks: buildReviewMarks([], [g], ALL, saved) })
+		}).state;
+		expect(handle.anchorOf(viewOf(set), 'g1')).toEqual({ start: 15, end: 18 });
+		expect(handle.baseDoc(viewOf(set))).toBe(saved);
+		const more = set.update({ changes: { from: 0, to: 0, insert: 'So. ' } }).state;
+		const refocused = more.update({
+			effects: remapReviewMarks.of(buildReviewMarks([], [g], ALL, handle.baseDoc(viewOf(more))))
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 'g1')).toEqual({ start: 19, end: 22 });
+	});
+
+	// A scene stored with Windows line breaks (an old import) shows with plain
+	// newlines while its anchors count each stored break as two characters: a
+	// mark must not slip for every break before it.
+	it('keeps marks in place over a body stored with Windows line breaks', () => {
+		const stored = 'Line one is here.\r\nThe cat sat on the mat.\r\nThe end.';
+		const handle = reviewMarksExtension({ onFocusMark: () => {}, onGeometry: () => {} });
+		const state = EditorState.create({ doc: stored, extensions: handle.extension });
+		const viewOf = (s: EditorState) => ({ state: s }) as unknown as EditorView;
+		// "cat" in the stored text; 22-25 in the text the editor shows.
+		const g = suggestion({ anchor: { start: 23, end: 26 } });
+		const t = thread({ anchor: { start: stored.indexOf('end'), end: stored.indexOf('end') + 3 } });
+		expect(state.doc.toString().slice(22, 25)).toBe('cat');
+		const set = state.update({
+			effects: setReviewMarksOn.of({
+				base: stored,
+				marks: buildReviewMarks(
+					anchorsAsShown([t], stored),
+					anchorsAsShown([g], stored),
+					ALL,
+					toLf(stored)
+				)
+			})
+		}).state;
+		const end = state.doc.toString().indexOf('end');
+		expect(handle.anchorOf(viewOf(set), 't1')).toEqual({ start: end, end: end + 3 });
+		expect(handle.anchorOf(viewOf(set), 'g1')).toEqual({ start: 22, end: 25 });
+		expect(handle.baseDoc(viewOf(set))).toBe(toLf(stored));
 	});
 });

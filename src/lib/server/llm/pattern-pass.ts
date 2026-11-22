@@ -29,7 +29,7 @@ import {
 import { completeDetailed, type GatewayDeps } from './gateway.ts';
 import { BOOK_PATTERN_CAP, CHAPTER_PATTERN_CAP } from './prompts/review.ts';
 import { logEvent } from '../log.ts';
-import type { SpendMeter } from './spend.ts';
+import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatMessage } from './providers/types.ts';
 
 // The pattern pass of a chapter or whole-story review (#1136), and its
@@ -257,7 +257,6 @@ type Request = {
 
 // One survey request with one corrective retry. Throws when the reply is
 // unreadable twice.
-class SurveyCapped extends Error {}
 
 async function surveyOnce(
 	db: Database,
@@ -280,7 +279,7 @@ async function surveyOnce(
 	if (parsed) return parsed;
 	if (!askAgain)
 		throw new Error('The pattern search did not answer with the JSON it was asked for.');
-	if (req.meter?.capReached) throw new SurveyCapped();
+	if (req.meter?.capReached) throw new SpendCapError();
 	// The retry repeats the text in the same first message, so a provider that
 	// caches the prompt prefix reads it from cache rather than paying for it again.
 	const retry = await completeDetailed(
@@ -310,7 +309,7 @@ const widestFirst = (patterns: FoundPattern[]) =>
 	[...patterns].sort((a, b) => b.sceneIds.length - a.sceneIds.length);
 
 // Surveys one part in chunks of the budget (or in one request for a book that
-// fits). Throws SurveyCapped when the spend cap stopped it.
+// fits). Throws SpendCapError when the spend cap stopped it.
 async function surveyPart(
 	db: Database,
 	req: Request & { budgetTokens: number },
@@ -325,7 +324,7 @@ async function surveyPart(
 	const found: FoundPattern[][] = [];
 	for (const [i, chunk] of chunks.entries()) {
 		req.signal?.throwIfAborted();
-		if (req.meter?.capReached) throw new SurveyCapped();
+		if (req.meter?.capReached) throw new SpendCapError();
 		const content = buildPatternSurveyMessage(chunk, {
 			scope: unit.scope,
 			cap,
@@ -361,7 +360,7 @@ async function surveyUnit(
 			try {
 				found = await surveyPart(db, req, unit, unit.scenes, open, [], deps);
 			} catch (err) {
-				if (err instanceof SurveyCapped || req.signal?.aborted || !unit.chapters) throw err;
+				if (err instanceof SpendCapError || req.signal?.aborted || !unit.chapters) throw err;
 				logEvent('info', 'assistant.patterns.book_fallback', {
 					storyId: req.storyId,
 					error: err instanceof Error ? err.message : String(err)
@@ -389,7 +388,7 @@ async function surveyUnit(
 					const more = await surveyPart(db, req, unit, part, open, known, deps);
 					partial.found = mergePatterns([partial.found, more]);
 				} catch (err) {
-					if (err instanceof SurveyCapped || req.signal?.aborted) throw err;
+					if (err instanceof SpendCapError || req.signal?.aborted) throw err;
 					failures.push({
 						message: `The search for repeated habits skipped "${part[0]?.chapterTitle ?? 'a chapter'}": ${err instanceof Error ? err.message : String(err)}`
 					});
@@ -404,7 +403,7 @@ async function surveyUnit(
 			found = await surveyPart(db, req, unit, unit.scenes, open, [], deps);
 		}
 	} catch (err) {
-		if (err instanceof SurveyCapped) return null;
+		if (err instanceof SpendCapError) return null;
 		throw err;
 	}
 	const known = new Set(unit.scenes.map((s) => s.id));
@@ -500,6 +499,7 @@ async function ensureNote(
 	if (!threadId) return 'failed';
 	pattern.threadId = threadId;
 	pattern.noteBody = body;
+	pattern.listed = live;
 	return created.ok ? 'created' : 'reused';
 }
 
@@ -625,16 +625,22 @@ export async function runPatternPass(
 					if (!gone) {
 						failures.push({ message: `The note for "${pattern.name}" could not be left.` });
 					}
-					// Not retried: the scenes are marked so a resumed run moves on.
-					pattern.applied = [...pattern.sceneIds];
+					// The scenes are left unmarked: a continued run tries the note
+					// again, and one left then (scenes restored) still gets its fixes.
+					await save();
+					continue;
 				}
 				await save();
-				if (!pattern.threadId) continue;
 			}
-			const fixIn = patternLiveScenes(
-				pattern.sceneIds,
-				unit.scenes.map((s) => s.id)
-			);
+			// Only the scenes the note names get fixes. A scene restored from the
+			// trash after the note was left is not in it. State saved before the
+			// note's scenes were kept falls back to the pattern's live scenes.
+			const fixIn =
+				pattern.listed ??
+				patternLiveScenes(
+					pattern.sceneIds,
+					unit.scenes.map((s) => s.id)
+				);
 			for (const sceneId of fixIn) {
 				if (pattern.applied.includes(sceneId)) continue;
 				// Only a scene that was asked about counts toward the limit, so one
@@ -696,6 +702,11 @@ export async function runPatternPass(
 					}
 				} catch (err) {
 					if (opts.signal?.aborted) throw err;
+					// Left unmarked, so a continued run asks about this scene again.
+					if (err instanceof SpendCapError) {
+						capped = true;
+						break units;
+					}
 					failures.push({
 						sceneId,
 						message: `The fixes for "${pattern.name}" could not be suggested here: ${err instanceof Error ? err.message : String(err)}`

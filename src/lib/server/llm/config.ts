@@ -26,6 +26,7 @@ import {
 	type TuningMap
 } from '../../assistant-tuning.ts';
 import type { ChatModelInfo, ChatModelSettings } from '../../assistant-chat.ts';
+import type { TokenPrice } from '../../assistant-cost.ts';
 
 // The Assistant's per-account and per-story configuration. The reserved
 // users.llm_config and stories.llm_config jsonb columns hold this; both are
@@ -182,7 +183,7 @@ function normaliseUsd(raw: unknown): number | undefined {
 
 export type ModelContextMap = Record<string, number>;
 
-export type ModelPricing = Record<string, { prompt: number; completion: number }>;
+export type ModelPricing = Record<string, TokenPrice>;
 
 export const CACHE_TTLS = ['5m', '1h'] as const;
 export type CacheTtl = (typeof CACHE_TTLS)[number];
@@ -198,11 +199,21 @@ function normalisePricing(raw: unknown): ModelPricing | undefined {
 	const out: ModelPricing = {};
 	for (const [model, value] of Object.entries(raw as Record<string, unknown>)) {
 		if (!value || typeof value !== 'object') continue;
-		const { prompt, completion } = value as { prompt?: unknown; completion?: unknown };
+		const { prompt, completion, cacheRead } = value as {
+			prompt?: unknown;
+			completion?: unknown;
+			cacheRead?: unknown;
+		};
 		if (typeof prompt !== 'number' || typeof completion !== 'number') continue;
 		if (!Number.isFinite(prompt) || !Number.isFinite(completion)) continue;
 		if (prompt < 0 || completion < 0) continue;
-		out[model] = { prompt, completion };
+		// A cache read price that is not a real figure is dropped, leaving the
+		// provider's rate (see cacheReadRate) rather than the price.
+		const read =
+			typeof cacheRead === 'number' && Number.isFinite(cacheRead) && cacheRead >= 0
+				? { cacheRead }
+				: {};
+		out[model] = { prompt, completion, ...read };
 	}
 	return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -617,6 +628,17 @@ export function roleExtraParams(
 
 // The reply length the writer set for this role, in tokens; undefined leaves
 // the surface's own figure in place.
+// What a role's reply depends on besides the request: its model, and its
+// tuning and extra fields (reply length, thinking, effort). See
+// unusableReplyMark.
+export function roleReplySettings(config: ResolvedConfig, role: AssistantRole): string {
+	return JSON.stringify([
+		pickModel(config, role),
+		config.tuning[role] ?? {},
+		roleExtraParams(config, role) ?? {}
+	]);
+}
+
 export function roleMaxTokens(config: ResolvedConfig, role: AssistantRole): number | undefined {
 	return config.tuning[role]?.maxTokens;
 }

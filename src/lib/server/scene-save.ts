@@ -4,6 +4,7 @@ import { scenes } from './db/schema.ts';
 import { remapMarkerAnchors, updateMarkerAnchors } from './markers.ts';
 import { recordRevision } from './revisions.ts';
 import { inLiveStory } from './universe-scope.ts';
+import { supersededSave, type SaveOrder } from '#lib/save-order';
 import { textHash } from '#lib/text-hash';
 import { wordCount } from '#lib/word-count';
 
@@ -19,12 +20,16 @@ export type SceneSave = {
 	// The writer chose to keep this version over a newer one. The stored text
 	// is kept in History first.
 	overwrite: boolean;
+	// Which editor copy is saving, and which of its saves this is (see
+	// save-order). Null for a save that is not an editor's autosave.
+	order?: SaveOrder | null;
 };
 
 export type SceneSaveResult =
 	// bodyChanged is false when the stored text already matched, so the caller
-	// can skip the mention rebuild.
-	| { ok: true; wordCount: number; bodyChanged: boolean }
+	// can skip the mention rebuild. superseded: a later save from the same
+	// editor copy landed first, so this older one changed nothing.
+	| { ok: true; wordCount: number; bodyChanged: boolean; superseded?: true }
 	| { ok: false; conflict: { bodyMd: string; title: string | null } }
 	| { ok: false; missing: true };
 
@@ -40,13 +45,27 @@ export async function saveSceneBody(
 ): Promise<SceneSaveResult> {
 	return await db.transaction(async (tx) => {
 		const [current] = await tx
-			.select({ bodyMd: scenes.bodyMd, title: scenes.title })
+			.select({
+				bodyMd: scenes.bodyMd,
+				title: scenes.title,
+				saveSource: scenes.saveSource,
+				saveSeq: scenes.saveSeq
+			})
 			.from(scenes)
 			// Checked again under the lock: a merge or trash that held it first
 			// may have binned the scene since the caller's ownership check.
 			.where(and(eq(scenes.id, sceneId), isNull(scenes.deletedAt), inLiveStory(scenes.storyId)))
 			.for('update');
 		if (!current) return { ok: false as const, missing: true as const };
+		if (supersededSave(current, save.order)) {
+			return {
+				ok: true as const,
+				wordCount: wordCount(current.bodyMd),
+				bodyChanged: false,
+				superseded: true as const
+			};
+		}
+		const order = save.order;
 		const bodyChanged = current.bodyMd !== save.bodyMd;
 		if (save.baseHashes && bodyChanged && !save.baseHashes.includes(textHash(current.bodyMd))) {
 			return {
@@ -59,6 +78,15 @@ export async function saveSceneBody(
 		// it and the anchors have nothing to move through, so only a new title
 		// is worth a write.
 		if (!bodyChanged) {
+			// The order is kept even so: this save may be the one that put the
+			// text back, with an older one still on its way. Not through the
+			// query builder, which would stamp updated_at, the prose clock.
+			if (order && current.title === save.title) {
+				await tx.execute(sql`
+					update scenes set save_source = ${order.source}, save_seq = ${order.seq}
+					where id = ${sceneId}
+				`);
+			}
 			if (current.title !== save.title) {
 				// Mentions read only the body, so an index that was current stays
 				// current; one already behind keeps its pending rebuild. One
@@ -67,6 +95,8 @@ export async function saveSceneBody(
 				await tx.execute(sql`
 					update scenes set
 						title = ${save.title},
+						save_source = coalesce(${order?.source ?? null}, scenes.save_source),
+						save_seq = coalesce(${order?.seq ?? null}::integer, scenes.save_seq),
 						updated_at = t.at,
 						touched_at = t.at,
 						mentions_indexed_at = case
@@ -85,7 +115,12 @@ export async function saveSceneBody(
 		}
 		await tx
 			.update(scenes)
-			.set({ title: save.title, bodyMd: save.bodyMd, wordCount: count })
+			.set({
+				title: save.title,
+				bodyMd: save.bodyMd,
+				wordCount: count,
+				...(order ? { saveSource: order.source, saveSeq: order.seq } : {})
+			})
 			.where(eq(scenes.id, sceneId));
 		await recordRevision(tx, 'scene', sceneId, save.bodyMd);
 		// A save without anchors (the review centre's) still moves the text

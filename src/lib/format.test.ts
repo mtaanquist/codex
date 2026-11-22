@@ -10,7 +10,8 @@ import {
 	narrowWeekday,
 	relativeShort,
 	dayKey,
-	spentPhrase
+	spentPhrase,
+	capStopPhrase
 } from './format';
 
 // Local-time dates, so the output does not depend on the runner's timezone.
@@ -121,5 +122,14 @@ describe('spentPhrase', () => {
 		expect(spentPhrase(1.2)).toBe('about $1.20');
 		expect(spentPhrase(1.2, true)).toBe('about $1.20 (estimated)');
 		expect(spentPhrase(0.01234, false, 4)).toBe('about $0.0123');
+	});
+});
+
+describe('capStopPhrase', () => {
+	it('says the job stopped before the cap, not at it', () => {
+		expect(capStopPhrase(1.7)).toBe(
+			'before the next request could take it past your spend cap, having spent about $1.70'
+		);
+		expect(capStopPhrase(1.7, true)).toMatch(/about \$1\.70 \(estimated\)$/);
 	});
 });

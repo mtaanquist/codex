@@ -152,7 +152,7 @@ function markLastBlock(messages: { role: string; content: unknown }[], cache: Ca
 // name released after this was written fails safe rather than with a 400.
 const WEB_SEARCH_FILTERING = /claude-(opus-(5|4-8|4-7|4-6)|sonnet-(5|4-6))/;
 // A ceiling on searches per turn, so a canon check cannot run up a bill.
-const WEB_SEARCH_MAX_USES = 5;
+export const WEB_SEARCH_MAX_USES = 5;
 
 function webSearchTool(model: string): Record<string, unknown> {
 	return {
@@ -347,8 +347,11 @@ function parseUsage(raw: unknown): TokenUsage | undefined {
 type StreamProgress = {
 	outputChars: number;
 	// Server tool results (web search) are billed as input, but only
-	// message_delta's running totals report them.
+	// message_delta's running totals report them. deltaInput is set once a
+	// message_delta has reported an input count; until then the results are
+	// estimated from their characters.
 	resultChars: number;
+	deltaInput: boolean;
 	sawDelta: boolean;
 	sawThinking: boolean;
 	thinkingChars: number;
@@ -383,7 +386,8 @@ function partialUsage(
 ): TokenUsage | undefined {
 	const started = promptTotal(raw);
 	if (!Number.isFinite(started)) return undefined;
-	const prompt = progress.sawDelta ? started : started + tokensForChars(progress.resultChars);
+	const guessed = unreportedResults(progress);
+	const prompt = started + guessed;
 	const reported = Number(raw.output_tokens);
 	const counted = Number.isFinite(reported) ? reported : 0;
 	const completion = progress.sawDelta
@@ -395,8 +399,13 @@ function partialUsage(
 		completionTokens: completion,
 		...cacheShares(raw),
 		...(searches > 0 ? { webSearchRequests: searches } : {}),
-		...(progress.sawDelta ? {} : { estimated: true })
+		...(progress.sawDelta && guessed === 0 ? {} : { estimated: true })
 	};
+}
+
+// The tokens of the search results no message_delta has counted yet.
+function unreportedResults(progress: StreamProgress): number {
+	return progress.deltaInput ? 0 : tokensForChars(progress.resultChars);
 }
 
 const INPUT_USAGE_KEYS = new Set([
@@ -485,9 +494,14 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 	let completionTokens: number | undefined;
 	let searches = 0;
 	let streamedChars = 0;
+	// Search results streamed, and whether message_delta has counted them (see
+	// unreportedResults).
+	let resultChars = 0;
+	let deltaInput = false;
 	let finishReason: FinishReason | undefined;
 	const usage = (): StreamEvent | undefined => {
-		const prompt = promptTotal(input);
+		const guessed = deltaInput ? 0 : tokensForChars(resultChars);
+		const prompt = promptTotal(input) + guessed;
 		const promptTokens = Number.isFinite(prompt) ? prompt : undefined;
 		if (promptTokens === undefined && completionTokens === undefined) return undefined;
 		return {
@@ -497,7 +511,7 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 				completionTokens: completionTokens ?? tokensForChars(streamedChars),
 				...cacheShares(input),
 				...(searches > 0 ? { webSearchRequests: searches } : {}),
-				...(completionTokens === undefined ? { estimated: true } : {})
+				...(completionTokens === undefined || guessed > 0 ? { estimated: true } : {})
 			}
 		};
 	};
@@ -508,13 +522,21 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 				delta?: { type?: unknown; text?: unknown; thinking?: unknown; stop_reason?: unknown };
 				message?: { usage?: Block };
 				usage?: Block;
+				content_block?: { type?: unknown };
 				error?: { message?: unknown };
 			};
 			if (frame.type === 'message_start') {
 				Object.assign(input, frame.message?.usage);
 				continue;
 			}
+			if (frame.type === 'content_block_start') {
+				if (frame.content_block?.type === 'web_search_tool_result') {
+					resultChars += JSON.stringify(frame.content_block).length;
+				}
+				continue;
+			}
 			if (frame.type === 'message_delta') {
+				if (Number(frame.usage?.input_tokens) > 0) deltaInput = true;
 				const output = Number(frame.usage?.output_tokens);
 				if (Number.isFinite(output)) completionTokens = output;
 				if (frame.usage) searches = webSearches(frame.usage) || searches;
@@ -598,6 +620,7 @@ async function assembleMessage(
 	const progress: StreamProgress = {
 		outputChars: 0,
 		resultChars: 0,
+		deltaInput: false,
 		sawDelta: false,
 		sawThinking: false,
 		thinkingChars: 0,
@@ -613,6 +636,14 @@ async function assembleMessage(
 				Number.isFinite(reported) ? reported : 0,
 				estimatedOutput(progress, false)
 			);
+			message.estimated = true;
+		}
+		// Not checked against the live API: whether message_delta always repeats
+		// the input after a web search. When it does not, the results are counted
+		// from their characters, so a capped run cannot pass the cap on them.
+		const guessed = unreportedResults(progress);
+		if (guessed > 0) {
+			usage.input_tokens = count(usage.input_tokens) + guessed;
 			message.estimated = true;
 		}
 		return message;
@@ -713,6 +744,7 @@ async function assembleFrames(
 				) {
 					progress.sawDelta = true;
 				}
+				if (Number(frame.usage?.input_tokens) > 0) progress.deltaInput = true;
 				if (delta?.stop_reason) stopReason = delta.stop_reason;
 				mergeDeltaUsage(usage, frame.usage);
 				break;

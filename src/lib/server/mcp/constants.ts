@@ -15,6 +15,10 @@ export const CODE_TTL_MS = MINUTE;
 export const ACCESS_TOKEN_TTL_MS = HOUR;
 // Sliding: each refresh issues a new refresh token with a fresh lifetime.
 export const REFRESH_TOKEN_TTL_MS = 30 * DAY;
+// A refresh token spent this recently may be presented again (an app that
+// refreshes twice at once, or retries after losing the reply) and gets a new
+// pair; any later reuse is treated as theft and ends the connection.
+export const REFRESH_REUSE_GRACE_MS = MINUTE;
 
 // A personal access token: how long it may live, and the choice offered
 // first. It has no refresh token, so this is its whole life.
@@ -33,6 +37,9 @@ export const LAST_USED_REFRESH_MS = 5 * MINUTE;
 export const CLIENT_DOCUMENT_TTL_MS = DAY;
 export const CLIENT_DOCUMENT_MAX_BYTES = 64 * 1024;
 export const CLIENT_DOCUMENT_TIMEOUT_MS = 5000;
+// A document that could not be fetched, or did not qualify, is not asked for
+// again for this long; meanwhile the copy last checked, if any, stands.
+export const CLIENT_DOCUMENT_RETRY_MS = MINUTE;
 
 // Clean-up windows (see purgeExternalAccess).
 export const UNUSED_CLIENT_RETENTION = '24 hours';
@@ -103,6 +110,12 @@ export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
 export const APP_DIFF_BUDGET: DiffBudget = { perPair: 400_000, total: 400_000, floor: 4_000 };
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
+// Requests with a malformed token (not shaped like one this server issues),
+// per address per minute. Past this they get 429 instead of 401. A token of
+// the issued shape is never counted, found or not: guessing one is not
+// feasible, and an app's old token must get the 401 that makes it refresh.
+// The token endpoint allows the same number.
+export const FAILED_BEARER_PER_MINUTE = TOKEN_PER_MINUTE;
 
 // Clients cut a tool result off at about 150,000 characters, so results stay
 // under that with room for the JSON around a scene's text.

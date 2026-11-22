@@ -17,14 +17,18 @@
 	import { mentionExtensions, type MentionEntity } from '#lib/editor-mentions';
 	import { landsWhilePaused, pausedExtension } from '#lib/editor-paused';
 	import {
+		anchorsAsShown,
 		buildReviewMarks,
+		remapReviewMarks,
 		removeReviewMarks,
 		reviewMarksExtension,
-		setReviewMarks,
+		setReviewMarksOn,
 		type ReviewMarksHandle
 	} from '#lib/editor-review-marks';
 	import { createAutosave, type SaveStatus } from '#lib/autosave';
 	import { createSceneSaver, type SceneConflict } from '#lib/scene-saver';
+	import { textHash } from '#lib/text-hash';
+	import { showsText, storedOffset, toLf } from '#lib/line-endings';
 	import {
 		toggleCommandMarkers as toggleCommandMarkersView,
 		toggleNonPrintingMarks
@@ -32,6 +36,8 @@
 	import {
 		nudgeMarkers,
 		isWholeSceneNote,
+		insertionFits,
+		isServerChange,
 		authorColor,
 		suggestionAuthor,
 		threadAuthor,
@@ -109,6 +115,23 @@
 	// own typing. Seeded from the initial prop on purpose.
 	// svelte-ignore state_referenced_locally
 	let appliedBody = scene.bodyMd;
+	// The scene.bodyMd the sync below last saw. Only a new value is the server's
+	// change: a save moves appliedBody on while the prop stays stale until the
+	// page data reloads, and a focus or filter change must not then put the
+	// stale text back.
+	// svelte-ignore state_referenced_locally
+	let seenBody = scene.bodyMd;
+	// The fingerprints of every text the editor has held as the server's this
+	// session, so a reload that read the scene before a later save landed
+	// does not put the older text back over the writer's.
+	// Plain bookkeeping, not rendered.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const heldBodies = new Set<string>();
+	function settle(body: string) {
+		appliedBody = body;
+		heldBodies.add(textHash(body));
+	}
+	settle(appliedBody);
 
 	// Set when a save was refused because the scene changed elsewhere.
 	let conflict = $state<SceneConflict | null>(null);
@@ -126,7 +149,7 @@
 			await saver.save({ keepalive, title: scene.title, bodyMd: body });
 			// What we just persisted is now the server's truth, so the external
 			// sync below does not mistake it for someone else's change.
-			appliedBody = body;
+			settle(body);
 		}
 	});
 
@@ -135,13 +158,14 @@
 		if (!view || !conflict || paused) return;
 		const newer = conflict.bodyMd;
 		saver.adopt(newer);
-		appliedBody = newer;
+		settle(newer);
 		view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newer } });
 		void autosave.flush();
 	}
 
 	function keepMine() {
 		if (!conflict || paused) return;
+		heldBodies.add(textHash(conflict.bodyMd));
 		saver.keepMine(conflict.bodyMd);
 		void autosave.flush();
 	}
@@ -214,17 +238,32 @@
 			// server replaced the whole range, so widen back to it. When the text
 			// there is not what the suggestion replaced, the same change cannot
 			// be made here.
-			const { original } = suggestion;
+			// Counted the way the editor reads line breaks.
+			const original = toLf(suggestion.original);
 			const from = mark.start - (original.length - original.trimStart().length);
 			const to = mark.end + (original.length - original.trimEnd().length);
 			if (from < 0 || to > view.state.doc.length || view.state.sliceDoc(from, to) !== original) {
 				applied = false;
 				continue;
 			}
-			// An insertion has no text to check its place against. Over unsaved
-			// typing it is left out, and the save check reports the difference,
-			// rather than risk it landing in the wrong place.
-			if (original === '' && !wasClean) {
+			const insert = replacements[id] ?? suggestion.replacement;
+			// An insertion has no text of its own to check its place against.
+			// Over unsaved typing it lands only when it was the one change, made
+			// on the text this editor last saved, and the text around the mark
+			// still reads as it did there. Otherwise it is left out, and the save
+			// check reports the difference, rather than risk it landing in the
+			// wrong place.
+			if (
+				original === '' &&
+				!wasClean &&
+				!(
+					ids.length === 1 &&
+					accepted &&
+					!conflict &&
+					textHash(appliedBody) === accepted.baseHash &&
+					insertionFits(appliedBody, view.state.doc.toString(), accepted.bodyMd, from, insert)
+				)
+			) {
 				applied = false;
 				continue;
 			}
@@ -237,7 +276,7 @@
 			syncingFromServer = wasClean;
 			try {
 				view.dispatch({
-					changes: { from, to, insert: replacements[id] ?? suggestion.replacement },
+					changes: { from, to, insert },
 					effects: removeReviewMarks.of([id]),
 					annotations: landsWhilePaused.of(true)
 				});
@@ -254,7 +293,7 @@
 		if (
 			wasClean &&
 			saver.knows(accepted.baseHash) &&
-			view.state.doc.toString() !== accepted.bodyMd
+			!showsText(view.state.doc.toString(), accepted.bodyMd)
 		) {
 			syncingFromServer = true;
 			try {
@@ -269,16 +308,37 @@
 		}
 		// With unsaved typing and a change that could not be made here, the save
 		// check is left alone: the next save reports the difference.
-		if (applied) saver.rebase(accepted.bodyMd, accepted.baseHash);
+		if (applied && saver.knows(accepted.baseHash)) {
+			saver.rebase(accepted.bodyMd, accepted.baseHash);
+			settle(accepted.bodyMd);
+		}
 	}
 
+	// The scene body the marks were last built from. The anchors in the page
+	// data belong to scene.bodyMd, which an autosave does not refresh, so the
+	// marks are built against it and mapped through any typing the editor
+	// holds past it; until it changes, against the text they were last set on.
+	// They count a stored \r\n as two characters and the editor as one, so
+	// they are moved across first.
+	let markedBody: string | null = null;
 	function rebuildMarks() {
-		if (!view) return;
-		view.dispatch({
-			effects: setReviewMarks.of(
-				buildReviewMarks(threads, suggestions, filter, view.state.doc.toString(), focusedId)
-			)
-		});
+		if (!view || !handle) return;
+		const doc = view.state.doc.toString();
+		const build = (text: string) =>
+			buildReviewMarks(
+				anchorsAsShown(threads, scene.bodyMd),
+				anchorsAsShown(suggestions, scene.bodyMd),
+				filter,
+				text,
+				focusedId
+			);
+		if (showsText(doc, scene.bodyMd) || scene.bodyMd !== markedBody) {
+			markedBody = scene.bodyMd;
+			const base = toLf(scene.bodyMd);
+			view.dispatch({ effects: setReviewMarksOn.of({ base, marks: build(base) }) });
+		} else {
+			view.dispatch({ effects: remapReviewMarks.of(build(handle.baseDoc(view))) });
+		}
 	}
 
 	// ---- margin rail + floating selection toolbar, positioned from CM ----
@@ -342,22 +402,29 @@
 	}
 
 	// A new comment or edit anchors against the saved text, so flush first; the
-	// offsets we captured then line up with the body the server holds.
-	async function startComment() {
-		if (!sel) return;
+	// offsets we captured then line up with the body the server holds, once
+	// counted the way it stores line breaks (see storedOffset).
+	async function flushedSelection() {
+		if (!sel) return null;
 		const captured = sel;
 		sel = null;
 		window.getSelection()?.removeAllRanges();
 		await autosave.flush();
-		onStartComment({ start: captured.start, end: captured.end, text: captured.text });
+		const stored = view && showsText(view.state.doc.toString(), appliedBody) ? appliedBody : null;
+		if (!stored) return captured;
+		return {
+			start: storedOffset(stored, captured.start),
+			end: storedOffset(stored, captured.end),
+			text: captured.text
+		};
+	}
+	async function startComment() {
+		const captured = await flushedSelection();
+		if (captured) onStartComment(captured);
 	}
 	async function startSuggest() {
-		if (!sel) return;
-		const captured = sel;
-		sel = null;
-		window.getSelection()?.removeAllRanges();
-		await autosave.flush();
-		onStartSuggest({ start: captured.start, end: captured.end, text: captured.text });
+		const captured = await flushedSelection();
+		if (captured) onStartSuggest(captured);
 	}
 
 	// Rebuild marks (with the focus highlight baked in) on every data, filter, or
@@ -372,9 +439,13 @@
 		void filter;
 		void focusedId;
 		if (!view) return;
-		if (incoming !== appliedBody) {
-			if (!autosave.isDirty()) {
-				if (view.state.doc.toString() !== incoming) {
+		const changed = isServerChange(incoming, seenBody, appliedBody, (body) =>
+			heldBodies.has(textHash(body))
+		);
+		seenBody = incoming;
+		if (changed) {
+			if (!autosave.hasUnsaved()) {
+				if (!showsText(view.state.doc.toString(), incoming)) {
 					// The server's own text, so it lands even while typing is paused,
 					// and it is not an edit to save: a save queued for it would be
 					// refused when a second change lands before it goes.
@@ -390,11 +461,11 @@
 				}
 				// Only once the editor shows it, or the next save would build on
 				// text the writer never saw.
-				if (view.state.doc.toString() === incoming) saver.adopt(incoming);
+				if (showsText(view.state.doc.toString(), incoming)) saver.adopt(incoming);
 			}
-			// With unsaved edits the next save is refused as a conflict, and the
-			// banner lets the author choose.
-			appliedBody = incoming;
+			// With unsaved edits, a save still on its way included (#1374), the
+			// save is refused as a conflict, and the banner lets the author choose.
+			settle(incoming);
 		}
 		rebuildMarks();
 		recomputeGeometry();

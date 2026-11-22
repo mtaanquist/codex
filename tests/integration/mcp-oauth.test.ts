@@ -15,6 +15,7 @@ import {
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase } from './test-db';
 import { sentToken } from './token-helpers';
+import { hashToken } from '../../src/lib/server/tokens';
 
 // The OAuth server behind external access, against a real database: the code
 // and token rules, the two switches, revocation with the account's other
@@ -42,11 +43,13 @@ const { changePassword } = await import('#lib/server/account');
 const { requestPasswordReset, resetPassword } = await import('#lib/server/password-reset');
 const { scheduleAccountDeletion } = await import('#lib/server/account-deletion');
 const { setUserSuspended } = await import('#lib/server/admin');
-const { findClient, registerClient } = await import('#lib/server/mcp/clients');
+const { findClient, registerClient, resetClientDocumentFailures } =
+	await import('#lib/server/mcp/clients');
 const {
 	createAuthorizationCode,
 	createPersonalToken,
 	exchangeCode,
+	issuedTokenShape,
 	listGrants,
 	listPersonalTokens,
 	purgeExternalAccess,
@@ -56,7 +59,7 @@ const {
 	revokeGrant,
 	revokeToken
 } = await import('#lib/server/mcp/oauth');
-const { MAX_PERSONAL_TOKENS } = await import('#lib/server/mcp/constants');
+const { MAX_PERSONAL_TOKENS, REFRESH_REUSE_GRACE_MS } = await import('#lib/server/mcp/constants');
 const { mcpInstanceEnabled, saveMcpInstanceEnabled, setMcpAccountEnabled } =
 	await import('#lib/server/mcp/settings');
 const { checkAuthorizeRequest } = await import('#lib/server/mcp/authorize');
@@ -160,6 +163,7 @@ beforeEach(async () => {
 	await pool.query('truncate table users, oauth_clients cascade');
 	await pool.query(`delete from app_settings where key = 'mcp'`);
 	resetRateLimits();
+	resetClientDocumentFailures();
 	alice = await addUser('alice@example.com');
 	bob = await addUser('bob@example.com');
 	sessionOf.clear();
@@ -189,6 +193,31 @@ describe('exchanging a code', () => {
 		const bobs = await connect(bob);
 		expect((await resolveBearer(db, bobs.accessToken))?.userId).toBe(bob);
 		expect((await resolveBearer(db, tokens.accessToken))?.userId).toBe(alice);
+	});
+
+	it('issues every kind of credential in the shape the endpoint recognises', async () => {
+		const code = await codeFor(alice);
+		const exchanged = await exchange(code);
+		if (!exchanged.ok) throw new Error('exchange failed');
+		const { accessToken, refreshToken } = exchanged.tokens;
+		const personal = await createPersonalToken(db, {
+			userId: alice,
+			name: 'Night Script',
+			permissions: ['read'],
+			expiresInDays: 90
+		});
+		if (!personal.ok) throw new Error(personal.reason);
+		for (const value of [code, accessToken, refreshToken, personal.token]) {
+			expect(issuedTokenShape(value)).toBe(true);
+		}
+		for (const value of [
+			'',
+			'cdx_at_nope',
+			`cdx_xx_${'A'.repeat(43)}`,
+			`cdx_at_${'A'.repeat(42)}!`
+		]) {
+			expect(issuedTokenShape(value)).toBe(false);
+		}
 	});
 
 	it('stores only hashes', async () => {
@@ -272,10 +301,62 @@ describe('refreshing', () => {
 			refreshTokens(db, { refreshToken, clientId: client.clientId });
 		const second = await refresh(first.refreshToken);
 		expect(second.ok).toBe(true);
+		// Spent long enough ago that it is no retry.
+		await db
+			.update(apiTokens)
+			.set({ usedAt: new Date(Date.now() - REFRESH_REUSE_GRACE_MS - 1000) })
+			.where(eq(apiTokens.tokenHash, hashToken(first.refreshToken)));
 		expect(await refresh(first.refreshToken)).toEqual({ ok: false });
 		if (!second.ok) return;
 		expect(await resolveBearer(db, second.tokens.accessToken)).toBeNull();
 		expect(await refresh(second.tokens.refreshToken)).toEqual({ ok: false });
+	});
+
+	it('lets an app retry a refresh whose reply it lost, without disconnecting it', async () => {
+		const first = await connect(alice);
+		const refresh = (refreshToken: string) =>
+			refreshTokens(db, { refreshToken, clientId: client.clientId });
+		const lost = await refresh(first.refreshToken);
+		const retried = await refresh(first.refreshToken);
+		expect(lost.ok && retried.ok).toBe(true);
+		if (!lost.ok || !retried.ok) return;
+		expect(retried.tokens.refreshToken).not.toBe(lost.tokens.refreshToken);
+		for (const pair of [lost.tokens, retried.tokens]) {
+			expect((await resolveBearer(db, pair.accessToken))?.userId).toBe(alice);
+		}
+		expect(await resolveBearer(db, first.accessToken)).toBeNull();
+		expect((await refresh(retried.tokens.refreshToken)).ok).toBe(true);
+	});
+
+	it('lets two simultaneous refreshes of one token both through', async () => {
+		const first = await connect(alice);
+		const results = await Promise.all(
+			[1, 2].map(() =>
+				refreshTokens(db, { refreshToken: first.refreshToken, clientId: client.clientId })
+			)
+		);
+		for (const result of results) {
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect((await resolveBearer(db, result.tokens.accessToken))?.userId).toBe(alice);
+		}
+	});
+
+	it('does not revive a refresh token that was handed back, even a moment ago', async () => {
+		const first = await connect(alice);
+		await revokeToken(db, first.accessToken);
+		expect(
+			await refreshTokens(db, { refreshToken: first.refreshToken, clientId: client.clientId })
+		).toEqual({ ok: false });
+	});
+
+	it('still checks the client on a retry', async () => {
+		const other = await newClient(['https://other.example/cb'], 'Other');
+		const first = await connect(alice);
+		await refreshTokens(db, { refreshToken: first.refreshToken, clientId: client.clientId });
+		expect(
+			await refreshTokens(db, { refreshToken: first.refreshToken, clientId: other.clientId })
+		).toEqual({ ok: false });
 	});
 
 	it('refuses another client, an expired token and an access token', async () => {
@@ -888,9 +969,58 @@ describe('clients', () => {
 			throw new Error('unreachable');
 		};
 		expect(await findClient(db, URL_ID, failing)).toBeNull();
+		resetClientDocumentFailures();
 		const first = await findClient(db, URL_ID, async () => doc());
 		await db.update(oauthClients).set({ fetchedAt: new Date(Date.now() - 2 * 86400_000) });
 		expect((await findClient(db, URL_ID, failing))?.id).toBe(first?.id);
+	});
+
+	it('does not fetch a failing document again for a minute', async () => {
+		const realNow = Date.now;
+		let clock = realNow();
+		const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+		try {
+			const unreachable = vi.fn(async () => {
+				throw new Error('unreachable');
+			});
+			expect(await findClient(db, URL_ID, unreachable)).toBeNull();
+			expect(await findClient(db, URL_ID, unreachable)).toBeNull();
+			expect(unreachable).toHaveBeenCalledTimes(1);
+			clock += 61_000;
+			const working = vi.fn(async () => doc());
+			expect(await findClient(db, URL_ID, working)).toMatchObject({ clientName: 'Desk' });
+
+			// A stale copy that can no longer be fetched still stands meanwhile.
+			clock += 2 * 86400_000;
+			expect(await findClient(db, URL_ID, unreachable)).toMatchObject({ clientName: 'Desk' });
+			expect(await findClient(db, URL_ID, working)).toMatchObject({ clientName: 'Desk' });
+			expect(unreachable).toHaveBeenCalledTimes(2);
+			expect(working).toHaveBeenCalledTimes(1);
+
+			// A document that stopped qualifying lets nobody in, and is not asked
+			// for again until the minute is up.
+			clock += 61_000;
+			const other = vi.fn(async () => doc({ client_id: 'https://desk.example/other.json' }));
+			expect(await findClient(db, URL_ID, other)).toBeNull();
+			expect(await findClient(db, URL_ID, working)).toBeNull();
+			expect(working).toHaveBeenCalledTimes(1);
+			clock += 61_000;
+			expect(await findClient(db, URL_ID, working)).toMatchObject({ clientName: 'Desk' });
+		} finally {
+			now.mockRestore();
+		}
+	});
+
+	it('shares one fetch between attempts that come at once', async () => {
+		let answer!: (value: unknown) => void;
+		const fetchDocument = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+		const attempts = Array.from({ length: 5 }, () => findClient(db, URL_ID, fetchDocument));
+		await vi.waitFor(() => expect(fetchDocument).toHaveBeenCalled());
+		answer(doc());
+		const clients = await Promise.all(attempts);
+		expect(new Set(clients.map((found) => found?.id)).size).toBe(1);
+		expect(clients[0]).toMatchObject({ clientName: 'Desk' });
+		expect(fetchDocument).toHaveBeenCalledTimes(1);
 	});
 
 	it('refuses a document that names another address or does not qualify', async () => {
@@ -1006,6 +1136,31 @@ describe('clean-up', () => {
 		expect(
 			(await refreshTokens(db, { refreshToken: tokens.refreshToken, clientId: client.clientId })).ok
 		).toBe(true);
+	});
+
+	it('tells the writer to add the app again once its record was cleared away', async () => {
+		await connect(alice);
+		const [grant] = await listGrants(db, alice);
+		await revokeGrant(db, alice, grant.id);
+		await pool.query(`update oauth_grants set revoked_at = now() - interval '31 days'`);
+		await purgeExternalAccess(db);
+		// The app comes back with the client_id it kept.
+		const check = await checkAuthorizeRequest(
+			db,
+			(name) =>
+				({
+					response_type: 'code',
+					client_id: client.clientId,
+					redirect_uri: REDIRECT,
+					code_challenge: CHALLENGE,
+					code_challenge_method: 'S256'
+				})[name as string] ?? null,
+			ORIGIN
+		);
+		expect(check).toMatchObject({ kind: 'invalid' });
+		expect(check.kind === 'invalid' && check.message).toContain(
+			'remove the Codex connector and add it again'
+		);
 	});
 
 	// A client nobody has used yet is due to go, but a writer is connecting it
@@ -1245,6 +1400,41 @@ describe('the instance switch', () => {
 
 		await saveMcpInstanceEnabled(db, true);
 		expect((await resolveBearer(db, tokens.accessToken))?.userId).toBe(alice);
+	});
+});
+
+describe('Connected apps while the instance switch is off', () => {
+	type Loaded = { externalAccess: { available: boolean; shown: boolean; apps: unknown[] } };
+	const loadApps = async (userId: string) => {
+		try {
+			return (await accountPage.load({
+				locals: {
+					user: { id: userId, email: 'x@example.com', displayName: 'X', role: 'user' },
+					session: { id: sessionOf.get(userId) ?? 's' }
+				},
+				params: { section: 'apps' },
+				url: new URL(`${ORIGIN}/account/apps`)
+			} as never)) as Loaded;
+		} catch (err) {
+			if (isHttpError(err)) return err.status;
+			throw err;
+		}
+	};
+
+	it('stays for a writer with an app to disconnect, and lets them disconnect it', async () => {
+		const tokens = await connect(alice);
+		await saveMcpInstanceEnabled(db, false);
+		expect(await loadApps(alice)).toMatchObject({
+			externalAccess: { available: false, shown: true, apps: [{ host: 'app.example' }] }
+		});
+		// Nothing to disconnect: the section is not there.
+		expect(await loadApps(bob)).toBe(404);
+
+		const [grant] = await listGrants(db, alice);
+		await accountPage.actions.revokeApp(accountEvent(alice, { grantId: grant.id }) as never);
+		expect(await loadApps(alice)).toBe(404);
+		await saveMcpInstanceEnabled(db, true);
+		expect(await resolveBearer(db, tokens.accessToken)).toBeNull();
 	});
 });
 
