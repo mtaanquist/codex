@@ -54,13 +54,14 @@ export async function keepEditorFocus<T>(work: () => Promise<T>): Promise<T> {
 }
 
 function restore(taken: { el: HTMLElement; ranges: Range[] } | null) {
-	if (!taken || !taken.el.isConnected) return;
+	// Without the caret a bare focus() can land at the start of the text, so
+	// restore both or neither.
+	if (!taken || !taken.el.isConnected || taken.ranges.length === 0) return;
 	const active = document.activeElement;
 	if (active && active !== document.body) return;
 	const selection = document.getSelection();
-	if (selection && taken.ranges.length > 0) {
-		selection.removeAllRanges();
-		for (const range of taken.ranges) selection.addRange(range);
-	}
+	if (!selection) return;
+	selection.removeAllRanges();
+	for (const range of taken.ranges) selection.addRange(range);
 	taken.el.focus({ preventScroll: true });
 }
