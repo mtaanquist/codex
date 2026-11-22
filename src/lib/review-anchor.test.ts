@@ -1030,6 +1030,54 @@ describe('review findings, round 10', () => {
 	});
 });
 
+// A body stored with \r\n (an old import) is saved back with plain newlines
+// once the writer edits it in the editor. That change of line endings is not
+// an edit, so it must not cost a short line its comments.
+describe('a body whose line breaks became plain newlines', () => {
+	const lines = [
+		'The rain had not stopped for three days on the coast.',
+		'"Yes."',
+		'"No, not yet."',
+		'She walked down to the harbour alone after supper.',
+		'Wait.',
+		'The boats were tied up and nobody was about.'
+	];
+	const base = lines.join('\r\n\r\n') + '\r\n';
+	const current = lines.join('\n\n').replace('alone after', 'alone, after') + '\n';
+	const shortLines = ['"Yes."', '"No, not yet."', 'Wait.'];
+
+	it('keeps comments and suggestions on short lines', () => {
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		for (const words of [...shortLines, 'harbour', 'nobody was about.']) {
+			const at = base.indexOf(words);
+			const range = mapper.range(base, current, at, at + words.length);
+			expect({ words, got: quote(current, range) }).toEqual({ words, got: words });
+			const placed = placeSuggestion(mapper, base, current, at, at + words.length);
+			expect({ words, got: quote(current, placed) }).toEqual({ words, got: words });
+			expect(mapper.unchecked(base, current, at, at + words.length)).toBe(false);
+		}
+	});
+
+	it('maps points and marker ends through the old line breaks', () => {
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		for (const words of shortLines) {
+			const at = base.indexOf(words);
+			expect(mapper.point(base, current, at)).toBe(current.indexOf(words));
+			expect(quote(current, mapper.ends(base, current, at, at + words.length))).toBe(words);
+		}
+		// Between \r and \n: the newline that replaced them.
+		const gap = base.indexOf('\r\n"Yes."') + 1;
+		expect(mapper.point(base, current, gap)).toBe(current.indexOf('\n"Yes."'));
+	});
+
+	it('maps a range across a line break onto the newline text', () => {
+		const from = base.indexOf('Wait.');
+		const to = base.indexOf('nobody');
+		const range = createAnchorMapper(WRITER_DIFF_BUDGET).range(base, current, from, to);
+		expect(quote(current, range)).toBe('Wait.\n\nThe boats were tied up and ');
+	});
+});
+
 describe('placeSuggestion', () => {
 	const place = (base: string, current: string, start: number, end: number) =>
 		placeSuggestion(createAnchorMapper(WRITER_DIFF_BUDGET), base, current, start, end);

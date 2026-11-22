@@ -1,4 +1,5 @@
 import { diffChars, type ChangeObject } from 'diff';
+import { toLf } from './line-endings';
 
 // Re-anchors review threads, suggestions and to-do markers after the text
 // changed. An anchor pins a [start, end) range (or a point) against the text
@@ -908,26 +909,56 @@ export type AnchorMapper = {
 	spent(): number;
 };
 
+// A body stored with \r\n (an old import) is saved back with plain newlines
+// once the writer edits it, since the editor reads either as one line break.
+// That is not an edit, but compared as one it leaves every line between two
+// \r deletions, and so every short line, in a run too short to count. So
+// when the base has \r and the current text has none, the base is compared
+// as plain newlines, and offsets in it are moved across as lfOffset does.
+type Entry = { found: Comparison; at: (offset: number) => number };
+function lfView(baseText: string, currentText: string): { text: string; at: Entry['at'] } {
+	if (!baseText.includes('\r') || currentText.includes('\r'))
+		return { text: baseText, at: (offset) => offset };
+	// Where each \r that starts a \r\n stands; a lone \r becomes \n in place.
+	const dropped: number[] = [];
+	for (let i = baseText.indexOf('\r\n'); i !== -1; i = baseText.indexOf('\r\n', i + 2))
+		dropped.push(i);
+	return {
+		text: toLf(baseText),
+		at(offset) {
+			let low = 0;
+			let high = dropped.length;
+			while (low < high) {
+				const mid = (low + high) >> 1;
+				if (dropped[mid] < offset) low = mid + 1;
+				else high = mid;
+			}
+			return offset - low;
+		}
+	};
+}
+
 // `support` false maps without the SUPPORT rule, as main does; only the tests
 // use it, to measure what the rule costs.
 export function createAnchorMapper(budget: DiffBudget, support = true): AnchorMapper {
 	let spent = 0;
 	// Nested by base text then current text, so neither key has to be
 	// concatenated into a third copy of the scene.
-	const cache = new Map<string, Map<string, Comparison>>();
+	const cache = new Map<string, Map<string, Entry>>();
 	const cached = (baseText: string, currentText: string) => cache.get(baseText)?.get(currentText);
-	const compare = (baseText: string, currentText: string): Comparison => {
-		let found = cached(baseText, currentText);
-		if (!found) {
+	const compare = (baseText: string, currentText: string): Entry => {
+		let entry = cached(baseText, currentText);
+		if (!entry) {
+			const view = lfView(baseText, currentText);
 			const allowance = Math.max(budget.floor, Math.min(budget.perPair, budget.total - spent));
-			const result = compareTexts(baseText, currentText, allowance);
-			found = result.found;
+			const result = compareTexts(view.text, currentText, allowance);
+			entry = { found: result.found, at: view.at };
 			spent += result.used;
 			let byCurrent = cache.get(baseText);
 			if (!byCurrent) cache.set(baseText, (byCurrent = new Map()));
-			byCurrent.set(currentText, found);
+			byCurrent.set(currentText, entry);
 		}
-		return found;
+		return entry;
 	};
 	const valid = (baseText: string, start: number, end: number) =>
 		start >= 0 && end <= baseText.length && start <= end;
@@ -935,23 +966,27 @@ export function createAnchorMapper(budget: DiffBudget, support = true): AnchorMa
 		range(baseText, currentText, start, end) {
 			if (start < 0 || end > baseText.length || start >= end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapEnds(compare(baseText, currentText), currentText, start, end, false, support);
+			const { found, at } = compare(baseText, currentText);
+			return mapEnds(found, currentText, at(start), at(end), false, support);
 		},
 		point(baseText, currentText, position) {
 			if (position < 0 || position > baseText.length) return null;
 			if (baseText === currentText) return position;
-			const span = spanAt(compare(baseText, currentText).spans, position, 'point');
+			const { found, at } = compare(baseText, currentText);
+			const span = spanAt(found.spans, at(position), 'point');
 			if (!span || (support && !span.firm && span.length < SUPPORT)) return null;
-			return through(span, position);
+			return through(span, at(position));
 		},
 		ends(baseText, currentText, start, end) {
 			if (!valid(baseText, start, end) || start === end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapEnds(compare(baseText, currentText), currentText, start, end, true, support);
+			const { found, at } = compare(baseText, currentText);
+			return mapEnds(found, currentText, at(start), at(end), true, support);
 		},
 		unchecked(baseText, currentText, start, end) {
 			if (!valid(baseText, start, end) || baseText === currentText) return false;
-			const found = compare(baseText, currentText);
+			const { found, at } = compare(baseText, currentText);
+			[start, end] = [at(start), at(end)];
 			if (start === end) {
 				return spanAt(found.spans, start, 'point') === null && inGap(found, start, 'point');
 			}

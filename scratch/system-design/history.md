@@ -1214,10 +1214,13 @@ sixth commit narrowed it. What the code does now:
   detached on the fourth commit); "hard" to "Mara" detaches it (only a
   chance "ar" is shared), where main keeps it on "Mara"; a range with an
   edit inside it and others within a few letters
-  of its ends is lost more often than on main (above); a whole-text conversion
-  between CRLF and LF loses comments and suggestions on lines of ten
-  characters or fewer, which main keeps (markers are mapped on LF text and
-  are not affected).
+  of its ends is lost more often than on main (above). A whole-text conversion
+  from CRLF to LF lost comments and suggestions on lines of ten characters
+  or fewer (each such line sat in a kept run between two `\r` deletions, too
+  short to count); since #1361 a base with `\r` is compared as `toLf(base)`
+  when the current text has no `\r`, offsets moved across as `lfOffset`
+  does. The reverse (LF base, CRLF current) is not handled: the editor
+  never saves `\r`. Markers are mapped on LF text and were not affected.
 
 ## MCP endpoint, review round 5 (2026-11-22)
 
