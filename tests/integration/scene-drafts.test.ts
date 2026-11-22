@@ -366,6 +366,14 @@ describe('the estimate', () => {
 		expect(estimate!.estCostUsd).toBeCloseTo(estimate!.estTokens * 0.001 + 1800 * 0.002, 6);
 	});
 
+	it('counts a non-English brief high enough for the cap (#1331)', async () => {
+		const english = await estimateSceneDraft(db, input({ brief: 'word '.repeat(600) }));
+		const cjk = await estimateSceneDraft(db, input({ brief: '\u6587'.repeat(3000) }));
+		// The same number of characters, but each CJK one is about a token, where
+		// chars/4 would count a quarter of one.
+		expect(cjk!.estTokens - english!.estTokens).toBeGreaterThan(1900);
+	});
+
 	it('says where a shorter reply length would stop the draft', async () => {
 		await saveAccountLlmConfig(db, ownerId, {
 			enabled: true,
