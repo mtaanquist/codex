@@ -251,12 +251,28 @@
 			onClose?.();
 		}
 	}
-	// While the card says a draft changed or was decided elsewhere, the page
-	// does not also ask before it is left.
+	// Whether the card is on screen: mounted is not enough, since the panel
+	// can be hidden (focus mode, or another tab of a narrow window) or the card
+	// scrolled out of sight.
+	let onScreen = $state(false);
+	$effect(() => {
+		const el = card;
+		if (!el) return;
+		const observer = new IntersectionObserver((entries) => {
+			onScreen = entries.some((entry) => entry.isIntersecting);
+		});
+		observer.observe(el);
+		return () => {
+			observer.disconnect();
+			onScreen = false;
+		};
+	});
+	// While the card says on screen that a draft changed or was decided
+	// elsewhere, the page does not also ask before it is left.
 	$effect(() => {
 		const id =
 			view === 'gone' ? gone?.id : view === 'draft' && changedElsewhere ? draft?.id : undefined;
-		if (!id) return;
+		if (!id || !onScreen) return;
 		conflictShown(id, true);
 		return () => conflictShown(id, false);
 	});

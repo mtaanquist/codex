@@ -1706,10 +1706,13 @@ calls the gateway, which proxies through the egress guard.
   (the saver itself is bound to the scene endpoint, its title and markers,
   so only the bookkeeping is shared). So a save whose answer was lost and a
   save made as the page is left beside one still out are both taken, in
-  either order. Known limit, shared with the scene save: a page-hide save
-  that puts the base text back, arriving before an older save still on its
-  way, lets the older one land after it, since a content hash cannot tell
-  the two apart. Text, a brief, a point of view or a scene line with a null
+  either order. A page-hide save that puts the base text back, arriving
+  before an older save still on its way, is told apart by order, not by
+  hash: each editor copy (draft card, scene editor) names itself and numbers
+  its saves (`save-order.ts`), the row keeps the copy and number that saved
+  last (`save_source`, `save_seq`, on drafts and scenes), and an older save
+  from that copy is answered `superseded` and changes nothing. The hashes
+  are checked for the shape `textHash` writes. Text, a brief, a point of view or a scene line with a null
   character is refused with 400 (`checkNoNull`). A blank PATCH is refused;
   Discard is
   how a draft is dropped. Asking and
@@ -1748,11 +1751,13 @@ calls the gateway, which proxies through the egress guard.
 - [built] Chapter drafts (#1168, step 2): the same queue and table. The
   request (`/api/assistant/draft/chapter`: defaults, `estimate: true`, or
   the request itself) stages one `assistant_drafts` row per chosen scene with
-  `chapter_id` and `position` and queues one job that carries the row ids in
-  order and the chapter brief (`queueAssistantChapterDraft`, one unfinished
-  job per chapter). The estimate is the sum of the scenes' requests, each
-  later one counted with the scene before it, and over the cap it is
-  refused. The job (`runChapterDraft`) makes one `coauthor` request per
+  `chapter_id`, `position` and the chapter brief (`chapter_brief`, so "Try
+  again" on a failed scene starts its form with the chapter brief and the
+  scene's) and queues one job that carries the row ids in order and the
+  chapter brief (`queueAssistantChapterDraft`, one unfinished job per
+  chapter). The estimate is the sum of the scenes' requests, each later one
+  counted with the scene before it (the settings and the scene-independent
+  context are read once for all of them), and over the cap it is refused. The job (`runChapterDraft`) makes one `coauthor` request per
   scene. Each is told the chapter brief, the closing part of the scene
   drafted just before it (it is not in the manuscript, so the context does
   not hold it), and the writer's line for the next scene where the single
@@ -1772,7 +1777,9 @@ calls the gateway, which proxies through the egress guard.
   fails is retried with the job, and the retry carries on from that scene;
   when no retry follows, that scene's row is marked failed and the rest are
   discarded. A row the writer discards mid-run is passed over, and does not
-  stop the job. The job-status poll reports scenes settled out of scenes
+  stop the job; while a scene's request is out the run checks its row every
+  few seconds, and a row discarded meanwhile calls that request off as a
+  writer's stop. The job-status poll reports scenes settled out of scenes
   asked for (`chapterDraftProgress`), which the activity card and the
   Background jobs list show, and the notice says how many scenes were
   drafted and why the run ended when it ended early.

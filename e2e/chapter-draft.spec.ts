@@ -1,7 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import pg from 'pg';
 import { e2eDatabaseUrl } from './database';
-import { gotoReady } from './navigate';
+import { gotoReady, waitForHydration } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 import { openRowMenu } from './context-menu';
 
@@ -17,16 +17,10 @@ async function sql(text: string, values: unknown[]): Promise<void> {
 	}
 }
 
-// #1168, step 2: the Assistant drafts a chapter scene by scene. Counting the
-// cost and asking for the run go through the real endpoints; the background
-// job has no model to call, so the drafts' rows are then marked written as the
-// job would leave them, and the job's status is stubbed. The form's scene
-// list, reading the drafts back, and keeping each one are real too.
-test('a chapter draft is costed first, and each drafted scene is kept on its own', async ({
-	page
-}) => {
+// A story with one chapter of two empty scenes, open in Write, with a model
+// chosen for Write so the drafts can be counted. Resolves to the story's slug.
+async function chapterOfTwo(page: Page, stamp: number): Promise<string> {
 	await gotoReady(page, '/');
-	const stamp = Date.now();
 	await pickFromLibraryMenu(page, 'New universe');
 	await page.getByLabel('New universe').fill(`Rivermen ${stamp}`);
 	await page.getByRole('button', { name: 'Create universe' }).click();
@@ -41,11 +35,32 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 	await expect(page.locator('.scene-row')).toHaveCount(1);
 	await page.getByRole('button', { name: 'New scene' }).click();
 	await expect(page.locator('.scene-row')).toHaveCount(2);
-	// A model for Write, so the drafts can be counted.
 	await sql(
 		`update stories set llm_config = '{"models":{"coauthor":"e2e-model"}}' where slug = $1`,
 		[`flight-${stamp}`]
 	);
+	return `flight-${stamp}`;
+}
+
+async function openChapterForm(page: Page) {
+	await openRowMenu(page, page.locator('.chapter-row').first());
+	await page.locator('.row-menu').getByRole('menuitem', { name: 'Assistant' }).hover();
+	await page
+		.locator('.row-submenu')
+		.getByRole('menuitem', { name: 'Draft this chapter...' })
+		.click();
+}
+
+// #1168, step 2: the Assistant drafts a chapter scene by scene. Counting the
+// cost and asking for the run go through the real endpoints; the background
+// job has no model to call, so the drafts' rows are then marked written as the
+// job would leave them, and the job's status is stubbed. The form's scene
+// list, reading the drafts back, and keeping each one are real too.
+test('a chapter draft is costed first, and each drafted scene is kept on its own', async ({
+	page
+}) => {
+	const stamp = Date.now();
+	await chapterOfTwo(page, stamp);
 
 	const asked: { brief?: string; scenes?: { brief: string }[] }[] = [];
 	let chapterId = '';
@@ -76,12 +91,7 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 	});
 
 	// Asked for from the chapter's own menu.
-	await openRowMenu(page, page.locator('.chapter-row').first());
-	await page.locator('.row-menu').getByRole('menuitem', { name: 'Assistant' }).hover();
-	await page
-		.locator('.row-submenu')
-		.getByRole('menuitem', { name: 'Draft this chapter...' })
-		.click();
+	await openChapterForm(page);
 
 	const card = page.getByRole('group', { name: 'Chapter draft' });
 	await card.getByLabel('What happens in this chapter').fill('Ilse flees across the river.');
@@ -143,4 +153,92 @@ test('a chapter draft is costed first, and each drafted scene is kept on its own
 	await page.reload();
 	await expect(page.locator('.scene-row')).toHaveCount(3);
 	await expect(card).toHaveCount(0);
+});
+
+// #1334: the chapter card while its run is under way. The job is the test's
+// to answer for, and the drafts are written into the database one by one, as
+// the job would write them.
+test('a chapter draft under way shows its progress and can be stopped', async ({ page }) => {
+	const stamp = Date.now();
+	const slug = await chapterOfTwo(page, stamp);
+	let draftIds: string[] = [];
+	let chapterId = '';
+	await page.route('**/api/assistant/draft/chapter', async (route) => {
+		if (route.request().method() !== 'POST') return route.continue();
+		const body = route.request().postDataJSON() as {
+			defaults?: boolean;
+			estimate?: boolean;
+			chapterId: string;
+		};
+		if (body.defaults || body.estimate) return route.continue();
+		chapterId = body.chapterId;
+		const response = await route.fetch();
+		draftIds = ((await response.json()) as { draftIds: string[] }).draftIds;
+		await route.fulfill({ response });
+	});
+	let job: Record<string, unknown> = { state: 'running', phase: 'scenes', completed: 0, total: 2 };
+	await page.route('**/api/assistant/job-status*', (route) => route.fulfill({ json: job }));
+	let stopped = false;
+	await page.route('**/api/assistant/job-stop', async (route) => {
+		stopped = true;
+		await sql(
+			`update assistant_drafts set status = 'discarded',
+			   note = 'The chapter draft ended before it reached this scene, so it was not drafted.'
+			 where id = any($1::uuid[]) and status in ('pending', 'running')`,
+			[draftIds]
+		);
+		job = { state: 'stopped', phase: 'scenes', completed: 2, total: 2 };
+		await route.fulfill({ json: { ok: true } });
+	});
+
+	await openChapterForm(page);
+	const card = page.getByRole('group', { name: 'Chapter draft' });
+	await card.getByLabel('What happens in this chapter').fill('Ilse flees across the river.');
+	await card.getByRole('button', { name: 'Check the cost' }).click();
+	await expect(card.getByRole('button', { name: 'Draft the chapter' })).toBeVisible();
+	await page.waitForTimeout(1100);
+	await card.getByRole('button', { name: 'Draft the chapter' }).click();
+
+	// Both scenes wait; nothing can be opened yet, and the run can be stopped.
+	await expect(card).toContainText(
+		'drafting these scenes in the background, one at a time: 0 of 2'
+	);
+	await expect(card.getByRole('listitem')).toHaveCount(2);
+	await expect(card.getByRole('listitem').first()).toContainText('Waiting');
+	await expect(card.getByRole('link')).toHaveCount(0);
+	await expect(card.getByRole('button', { name: 'Stop' })).toBeVisible();
+	await expect(card).toContainText('Stopping keeps the scenes already drafted.');
+	// After a reload, both cards come back: the open scene's own card says it is
+	// part of the run, with no Stop of its own.
+	await page.reload();
+	await waitForHydration(page);
+	await page.getByRole('tab', { name: 'Assistant' }).click();
+	await expect(card).toContainText('0 of 2');
+	const sceneCard = page.getByRole('group', { name: 'Scene draft' });
+	await expect(sceneCard).toContainText(
+		'This scene is part of a chapter the Assistant is drafting'
+	);
+	await expect(sceneCard.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+
+	// The first scene is written: the list follows with no reload.
+	await sql(
+		`update assistant_drafts set status = 'ready', text_md = 'Drafted scene 1.' where id = $1`,
+		[draftIds[0]]
+	);
+	job = { state: 'running', phase: 'scenes', completed: 1, total: 2 };
+	await expect(card).toContainText('1 of 2', { timeout: 15_000 });
+	await expect(card.getByRole('link')).toHaveCount(1);
+	await expect(card.getByRole('listitem').first()).toContainText('Ready');
+
+	// Stop keeps the scene already drafted and drops the other.
+	await card.getByRole('button', { name: 'Stop' }).click();
+	await expect.poll(() => stopped).toBe(true);
+	await expect(card).toContainText('Open each scene to read its draft', { timeout: 15_000 });
+	await expect(card.getByRole('button', { name: 'Stop' })).toHaveCount(0);
+	// The scene dropped by the stop leaves the list; the drafted one stays.
+	await expect(card.getByRole('listitem')).toHaveCount(1);
+	await expect(card.getByRole('link')).toHaveCount(1);
+	await gotoReady(page, `/stories/${slug}?draftChapter=${chapterId}`);
+	await expect(card.getByRole('listitem')).toHaveCount(1);
+	await expect(card.getByRole('listitem')).toContainText('Ready');
 });
