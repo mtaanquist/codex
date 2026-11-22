@@ -139,6 +139,19 @@ export default async function globalSetup() {
 			JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9/v1' })
 		]
 	);
+	// An account with the Assistant on for the prices journey, which rewrites
+	// its endpoint, prices and usage rows; the spec seeds each test itself.
+	await pool.query(
+		`insert into users (email, display_name, password_hash, role, email_verified_at, approved_at, llm_config)
+		 values ($1, 'Prices Tester', $2, 'user', now(), now(), $3)
+		 on conflict (email) do update set password_hash = excluded.password_hash,
+		   llm_config = excluded.llm_config`,
+		[
+			'prices-e2e@example.com',
+			passwordHash,
+			JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9/v1' })
+		]
+	);
 	// A standing invite code for the invited sign-up journey; resetting the use
 	// count keeps repeated runs valid.
 	await pool.query(

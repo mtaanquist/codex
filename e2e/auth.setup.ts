@@ -5,7 +5,8 @@ import { expect, test as setup } from '@playwright/test';
 // specs were spending sixteen attempts against.
 for (const [email, path] of [
 	['e2e@example.com', 'e2e/.auth/e2e.json'],
-	['assistant-e2e@example.com', 'e2e/.auth/assistant.json']
+	['assistant-e2e@example.com', 'e2e/.auth/assistant.json'],
+	['prices-e2e@example.com', 'e2e/.auth/prices.json']
 ]) {
 	setup(`sign in as ${email}`, async ({ page }) => {
 		await page.goto('/login');

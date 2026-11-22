@@ -347,6 +347,7 @@ describe('the guided pass over a pattern note', () => {
 			status: string;
 			followsId: string | null;
 			createdAt: string;
+			position: number | null;
 		}> = {}
 	) => ({
 		id,
@@ -402,6 +403,19 @@ describe('the guided pass over a pattern note', () => {
 			['s1', 's2']
 		);
 		expect(edits.map((s) => s.id)).toEqual(['first', 'accepted', 'rejected', 'late']);
+	});
+
+	it('keeps a decided edit with nothing left to mark in its reading place', () => {
+		const edits = patternEdits(
+			[
+				edit('late', 's1', 40),
+				edit('deleted', 's1', null, { status: 'accepted', position: 20 }),
+				edit('first', 's1', 10)
+			],
+			'note',
+			['s1']
+		);
+		expect(edits.map((s) => s.id)).toEqual(['first', 'deleted', 'late']);
 	});
 
 	it("puts follow-ups after the note's own edits, oldest first", () => {
