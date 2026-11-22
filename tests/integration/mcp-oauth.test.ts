@@ -1007,6 +1007,29 @@ describe('clean-up', () => {
 			(await refreshTokens(db, { refreshToken: tokens.refreshToken, clientId: client.clientId })).ok
 		).toBe(true);
 	});
+
+	// A client nobody has used yet is due to go, but a writer is connecting it
+	// right now: the clean-up leaves it alone, and neither of the two fails.
+	it('runs beside a code being exchanged without either failing', async () => {
+		for (let round = 0; round < 20; round++) {
+			await pool.query('truncate table oauth_clients cascade');
+			client = await newClient();
+			await pool.query(
+				`update oauth_clients set created_at = now() - interval '2 days' where id = $1`,
+				[client.id]
+			);
+			const code = await codeFor(alice);
+			const [exchanged, purged] = await Promise.allSettled([
+				exchange(code),
+				purgeExternalAccess(db)
+			]);
+			expect(purged.status).toBe('fulfilled');
+			expect(exchanged).toMatchObject({ status: 'fulfilled', value: { ok: true } });
+		}
+		// Once connected, the client is in use and stays.
+		await purgeExternalAccess(db);
+		expect(await db.select({ id: oauthClients.id }).from(oauthClients)).toHaveLength(1);
+	});
 });
 
 // ============ The routes ============

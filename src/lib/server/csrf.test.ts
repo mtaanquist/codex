@@ -54,4 +54,14 @@ describe('isForbiddenCrossSiteForm', () => {
 		expect(check({ pathname: '/oauth/token/', origin: null })).toBe(true);
 		expect(check({ pathname: '/oauth/register' })).toBe(true);
 	});
+
+	it('leaves the MCP endpoint to answer for itself, body or none', () => {
+		for (const method of ['POST', 'DELETE']) {
+			expect(check({ pathname: '/api/mcp', method, contentType: null, origin: null })).toBe(false);
+			expect(check({ pathname: '/api/mcp', method })).toBe(false);
+		}
+		// A page of the app keeps the stricter rule for a request with no type.
+		expect(check({ method: 'DELETE', contentType: null, origin: null })).toBe(true);
+		expect(check({ pathname: '/api/mcp/', contentType: null, origin: null })).toBe(true);
+	});
 });
