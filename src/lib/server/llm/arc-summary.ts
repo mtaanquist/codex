@@ -123,6 +123,10 @@ export async function summariseCharacterArc(
 	return { outcome: 'written' };
 }
 
+// staleSummaryStories: see ArcRequest. A refresh before their summaries pass
+// is out of date again once that pass runs.
+export type PlanArc = { summaryMd: string | null; stale: boolean; staleSummaryStories: string[] };
+
 // The arc for a Plan page's selected entity: its stored text and whether it is
 // out of date, for a character; null for anything else.
 export async function planArc(
@@ -137,7 +141,7 @@ export async function planArc(
 			arcSummaryInput?: string | null;
 		};
 	} | null
-): Promise<{ summaryMd: string | null; stale: boolean } | null> {
+): Promise<PlanArc | null> {
 	if (resolved?.kind !== 'character') return null;
 	const { entity } = resolved;
 	const stored = {
@@ -145,9 +149,11 @@ export async function planArc(
 		arcSummaryInput: entity.arcSummaryInput ?? null
 	};
 	// An arc never written has nothing to be out of date.
-	if (!stored.arcSummaryMd) return { summaryMd: null, stale: false };
+	if (!stored.arcSummaryMd) return { summaryMd: null, stale: false, staleSummaryStories: [] };
+	const request = await arcRequest(db, entity);
 	return {
 		summaryMd: stored.arcSummaryMd,
-		stale: !arcIsCurrent(stored, await arcRequest(db, entity))
+		stale: !arcIsCurrent(stored, request),
+		staleSummaryStories: request?.staleSummaryStories ?? []
 	};
 }

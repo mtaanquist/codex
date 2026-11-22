@@ -1029,6 +1029,10 @@ export type SuggestionView = {
 	// been rewritten, which also blocks accepting it.
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Where it sits in the current text, for reading order: the anchor's
+	// start, or for a decided edit that left nothing to mark (an accepted
+	// deletion, a rejected insertion) the spot it was at. Null when lost.
+	position: number | null;
 	// The passage lies in a part of the scene that was not compared with the
 	// version it was made on (comparing would have cost too much), so a
 	// missing anchor does not mean the passage is gone.
@@ -1150,6 +1154,11 @@ export async function listSuggestions(
 			status: row.suggestion.status,
 			anchor,
 			anchorLost: row.suggestion.status === 'pending' && anchor === null,
+			position:
+				anchor?.start ??
+				(row.suggestion.status === 'pending'
+					? null
+					: mapper.point(row.baseBody, row.currentBody, rangeStart)),
 			...(row.suggestion.status === 'pending' &&
 			anchor === null &&
 			mapper.unchecked(row.baseBody, row.currentBody, rangeStart, rangeEnd)

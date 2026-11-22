@@ -34,7 +34,7 @@ describe('requestCostUsd', () => {
 				completionTokens: 0,
 				cachedPromptTokens: 800
 			},
-			true
+			'anthropic'
 		);
 		expect(cost).toBeCloseTo(200 * 0.001 + 800 * 0.001 * 0.1, 10);
 	});
@@ -50,7 +50,7 @@ describe('requestCostUsd', () => {
 				cacheWriteTokens: 400,
 				cacheWrite1hTokens: 100
 			},
-			true
+			'anthropic'
 		);
 		expect(cost).toBeCloseTo(0.001 * (100 + 500 * 0.1 + 300 * 1.25 + 100 * 2), 10);
 	});
@@ -66,7 +66,7 @@ describe('requestCostUsd', () => {
 				cacheWriteTokens: 500,
 				cacheWrite1hTokens: 900
 			},
-			true
+			'anthropic'
 		);
 		expect(cost).toBeCloseTo(0.001 * (60 * 0.1 + 40 * 2), 10);
 	});
@@ -80,30 +80,38 @@ describe('requestCostUsd', () => {
 				completionTokens: 0,
 				cachedPromptTokens: 500
 			},
-			true
+			'anthropic'
 		);
 		expect(cost).toBeCloseTo(100 * 0.001 * 0.1, 10);
 	});
 
-	it('gives cached tokens no discount on any other provider', () => {
+	it('gives cached tokens no discount on a provider with no known rate', () => {
 		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 800 };
 		expect(requestCostUsd(pricing, 'priced', usage)).toBeCloseTo(1000 * 0.001, 10);
-		expect(requestCostUsd(pricing, 'priced', usage, false)).toBeCloseTo(1000 * 0.001, 10);
+		expect(requestCostUsd(pricing, 'priced', usage, 'custom')).toBeCloseTo(1000 * 0.001, 10);
 	});
 });
 
 describe('SpendMeter', () => {
-	it('meters cached tokens at a tenth only for Claude', () => {
+	it('meters cached tokens at the rate of the provider', () => {
 		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 900 };
 		const other = new SpendMeter({ pricing, capUsd: 1 });
 		other.record('priced', usage);
 		expect(other.spentUsd).toBeCloseTo(1, 10);
 		expect(other.capReached).toBe(true);
 
-		const claude = new SpendMeter({ pricing, capUsd: 1, claude: true });
+		const claude = new SpendMeter({ pricing, capUsd: 1, provider: 'anthropic' });
 		claude.record('priced', usage);
 		expect(claude.spentUsd).toBeCloseTo(0.19, 10);
 		expect(claude.capReached).toBe(false);
+
+		const openai = new SpendMeter({ pricing, capUsd: 1, provider: 'openai' });
+		openai.record('priced', usage);
+		expect(openai.spentUsd).toBeCloseTo(0.55, 10);
+
+		const custom = new SpendMeter({ pricing, capUsd: 1, provider: 'custom' });
+		custom.record('priced', usage);
+		expect(custom.spentUsd).toBeCloseTo(1, 10);
 	});
 
 	it('accrues cost and reaches the cap', () => {

@@ -25,7 +25,8 @@ import type {
 	ProviderResponse
 } from '../../src/lib/server/llm/providers/types';
 
-const { saveAccountLlmConfig, saveModelPricing } = await import('../../src/lib/server/llm/config');
+const { saveAccountLlmConfig, saveModelPricing, saveStoryLlmOverride } =
+	await import('../../src/lib/server/llm/config');
 const { reviewStoryScenes } = await import('../../src/lib/server/llm/scene-review');
 const { loadReviewRun } = await import('../../src/lib/server/review-runs');
 const { estimateStoryReview, wholeBookCheck } = await import('../../src/lib/server/llm/estimate');
@@ -519,7 +520,7 @@ describe('the chapter pattern pass', () => {
 		expect(edits.map((e) => e.sceneId).sort()).toEqual([sceneIds[0], sceneIds[1]].sort());
 	});
 
-	it('fixes a scene restored from the trash when the run is continued', async () => {
+	it('fixes only the scenes the note lists when the run is continued', async () => {
 		const controller = new AbortController();
 		const first = patternProvider(async (messages) => {
 			if (isSurvey(messages)) {
@@ -541,8 +542,10 @@ describe('the chapter pattern pass', () => {
 			{ provider: second.provider }
 		);
 		expect(second.seen.some(isSurvey)).toBe(false);
+		// The note was left while the second scene was in the trash, so it does
+		// not list it, and the restored scene gets no fix.
 		const edits = await db.select({ sceneId: reviewSuggestions.sceneId }).from(reviewSuggestions);
-		expect(edits.map((e) => e.sceneId).sort()).toEqual([sceneIds[0], sceneIds[1]].sort());
+		expect(edits.map((e) => e.sceneId)).toEqual([sceneIds[0]]);
 	});
 
 	it('keeps each fix in the scene it was asked about', async () => {
@@ -741,6 +744,26 @@ describe('the whole-book pattern pass', () => {
 			[sceneIds[0], sceneIds[1], sceneIds[3], sceneIds[4]].sort()
 		);
 		expect(edits.every((e) => e.link === notes[0].id)).toBe(true);
+	});
+
+	it('sends nothing more once the story is muted mid-run (#1322)', async () => {
+		await addSecondChapter();
+		await windowOf(1_000_000);
+		const { provider, seen } = bookProvider();
+		const muting: Provider = {
+			...provider,
+			async respond(...args) {
+				const reply = await provider.respond(...args);
+				if (seen.length === 1) await saveStoryLlmOverride(db, storyId, { enabled: false });
+				return reply;
+			}
+		};
+		await reviewStoryScenes(db, { userId, storyId, patterns: 'book' }, { provider: muting }).catch(
+			() => undefined
+		);
+		// The survey that was in flight, and nothing after it.
+		expect(seen).toHaveLength(1);
+		expect(isBookSurvey(seen[0])).toBe(true);
 	});
 
 	it('goes chapter by chapter when the book does not fit, carrying patterns forward', async () => {

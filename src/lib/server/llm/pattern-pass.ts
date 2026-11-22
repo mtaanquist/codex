@@ -499,6 +499,7 @@ async function ensureNote(
 	if (!threadId) return 'failed';
 	pattern.threadId = threadId;
 	pattern.noteBody = body;
+	pattern.listed = live;
 	return created.ok ? 'created' : 'reused';
 }
 
@@ -631,10 +632,15 @@ export async function runPatternPass(
 				}
 				await save();
 			}
-			const fixIn = patternLiveScenes(
-				pattern.sceneIds,
-				unit.scenes.map((s) => s.id)
-			);
+			// Only the scenes the note names get fixes. A scene restored from the
+			// trash after the note was left is not in it. State saved before the
+			// note's scenes were kept falls back to the pattern's live scenes.
+			const fixIn =
+				pattern.listed ??
+				patternLiveScenes(
+					pattern.sceneIds,
+					unit.scenes.map((s) => s.id)
+				);
 			for (const sceneId of fixIn) {
 				if (pattern.applied.includes(sceneId)) continue;
 				// Only a scene that was asked about counts toward the limit, so one

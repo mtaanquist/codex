@@ -354,7 +354,7 @@ describe('per-run spend cap (#549)', () => {
 		expect(run?.completed ?? []).toHaveLength(0);
 	});
 
-	it('stops on a price the writer typed, with nothing discovered (#1274)', async () => {
+	it('stops on a price the writer typed, with nothing discovered', async () => {
 		const storyId = await seedStory(3);
 		await configure({
 			spendCapUsd: 1.5,

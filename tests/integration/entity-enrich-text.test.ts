@@ -430,6 +430,35 @@ describe('a text too long for one request', () => {
 		expect(pendingAtSecondCall).toBe(2);
 	});
 
+	it('leaves a story muted while earlier parts are read out of the later parts (#1322)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const later = await makeStory('The Quiet Book');
+		await writeScenes(later, [long('THREE'), 'Bram in the open.']);
+		const other = await makeStory('The Open Book');
+		await writeScenes(other, ['Bram in the OPEN-BOOK.']);
+		const muting: GatewayDeps = {
+			...deps,
+			provider: {
+				...stubProvider,
+				async respond(...args) {
+					if (prompts.length === 0) await saveStoryLlmOverride(db, later, { enabled: false });
+					return stubProvider.respond(...args);
+				}
+			}
+		};
+		const result = await enrichEntityFromText(
+			db,
+			{ userId: ownerId, scope: { universeId }, entityId: bram, mode: 'scenes' },
+			muting
+		);
+		expect(prompts).toHaveLength(2);
+		expect(prompts[0]).toContain('Bram ONE');
+		expect(prompts.join('\n')).not.toContain('Bram THREE');
+		expect(prompts.join('\n')).not.toContain('Bram in the open.');
+		expect(prompts[1]).toContain('OPEN-BOOK');
+		expect(result.partial).toBeUndefined();
+	});
+
 	it('says how to fix it when a later part is cut off at the reply limit', async () => {
 		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
 		cutOffCalls = [2];

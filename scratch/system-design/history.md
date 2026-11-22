@@ -38,6 +38,58 @@ accept, a sentence moved past a lightly edited paragraph (the single
 sentence pair splits the gap, so the paragraph is unmatched on both sides
 and nothing marks the stretch), and the two budget limits.
 
+Fingerprint low findings, wave 2 (2026-11-22, `fix/fingerprint-lows` on
+`staging/bug-fixes`, part of #1322, after #1392). A cut-off enrich read and
+an empty chapter summary stored nothing, so every pass paid for the same
+request again. They now store `unusableReplyMark` in the fingerprint column:
+a distinct `unusable:` hash of the request plus the role's model, tuning and
+extra fields, so it never reads as a read, and a new limit or model is
+worth another try. Storing the plain fingerprint was rejected: it would mark
+an unread entry read. The 3.21.4 enrich fingerprint covered aliases and
+details, so an entry edited after its read matched neither formula; the
+entry's History snapshots supply the aliases and details it had, and a hash
+match is proof, so no time heuristic was needed (coalesced autosaves can
+lose the version, and then it is read once, as before). The pass now builds
+only the fingerprint, with the entity type known and the stored input in
+the same select. The arc check's first-mention query reads off a widened
+`entity_mentions_target_idx` (target type, target, source, position;
+0103): on 2,000 scenes and 50 arcs the median check went from about 250
+to 200 ms locally, the rest being the 20,000 first-mention rows it joins and
+moves. Sampling in SQL to move fewer rows was left out: any drift from
+`sampleEvenly` would change every stored arc fingerprint. A universe-wide "Suggest details" checks each
+part's stories before sending, since the gateway only checks a story's mute
+on a story-scoped request; the whole-book review was already safe (each
+call is story-scoped) and now has a test. The arc section names stories
+with out-of-date scene summaries, so the writer runs Update summaries
+before refreshing.
+
+Cache read rates per provider (2026-11-22, `fix/cache-read-rates` on
+`staging/bug-fixes`, #1372). Cached tokens on every provider but Claude were
+metered at the full price, so an OpenAI or Gemini figure read high and a cap
+stopped early. `cacheReadRate` is now keyed by the provider id: the preset
+providers whose adapters report cached tokens get their published rate, the
+dearest across their models so a figure still never reads low (OpenAI a half,
+since gpt-4o caches at a half and newer models lower; Gemini a quarter;
+DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with
+`prompt_cache_hit_tokens` now read as the cached share where
+`prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
+no one rate fits; its discovery reports `input_cache_read` per model, which is
+carried as an optional `cacheRead` on the price itself and wins over any rate.
+A custom endpoint and a typed price keep the full-rate fallback. The rates
+were set from the providers' published price lists as known at the time; the
+build environment could not reach them to re-check.
+
+Guided pass lows, rest (2026-11-22, `fix/guided-pass-lows` on
+`staging/bug-fixes`, #1317). An accepted deletion has nothing to mark, so its
+anchor is null and `patternEdits` put it after the pending edits of its scene.
+A zero-width anchor would have drawn empty marks, so the suggestion view now
+carries a separate `position`: the anchor's start, or for a decided edit with
+no text left (an accepted deletion, a rejected insertion) the mapped point
+where it was. The pass sorts by that. A restarted pass counts only what is
+left and says "N done earlier" under the count; following "Follows an earlier
+change" puts a "Back to the current change" button on that card (Escape was
+not used, as it already closes things on the review page).
+
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried
 the bare classes `left` and `right`, so the panes' own `.left` and `.right`
@@ -50,6 +102,20 @@ had already focused the next card; the card (or the end of the pass) is
 focused again when focus fell to the page. The return-to cookie is only set
 for a request with `Sec-Fetch-Dest: document` (or none), and `?pass=` is
 taken off the address with a shallow replace once read.
+
+Spend cap counts the prompt high (2026-11-22, `fix/spend-cap-estimate-margin`,
+#1331): the cap check counted the prompt at chars/4, which runs short on
+non-English prose (a CJK character is about a token, not a quarter), so a
+request just under the cap could be billed just over it. Every cap check now
+counts the prompt with `ceilingTokens` (UTF-8 bytes / 3): a third above chars/4
+for English and a token per CJK character, where a flat multiplier on chars/4
+would have to be about 4x to cover CJK and would then overcount English badly.
+The provider's own token counting was not used: only Claude has an endpoint
+for it, and it would add a request before every send. `ceilingPromptTokens` in
+the gateway is the one count; drafting's check and its up-front estimate use it
+too, with the real persona message in place of the flat `PERSONA_TOKENS`. The
+budgets (context assembly, the context guard) keep chars/4, since an
+overcount there only trims context.
 
 Spend cap held before every request (2026-11-22, `fix/assistant-retry-cap`,
 #1331): the background jobs checked `capReached` (spend at or over the cap)

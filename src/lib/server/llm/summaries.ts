@@ -12,6 +12,8 @@ import { buildSceneSummaryMessage } from './prompts/summary.ts';
 import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import type { ChatMessage } from './providers/types.ts';
+import { resolveLlmConfig, roleReplySettings } from './config.ts';
+import { unusableReplyMark } from './request-hash.ts';
 import { storyIsLive } from '../universe-scope.ts';
 import { summaryIsCurrent, type SceneSummarySource } from '../summary-currency.ts';
 import {
@@ -35,7 +37,8 @@ import {
 // A chapter summary reads other rows (its scenes' summaries), so it is stored
 // with the fingerprint of the request it was written from (summary_input) and
 // is out of date when the request that would be sent now differs (see
-// chapter-summary-request.ts). No save marks it.
+// chapter-summary-request.ts). No save marks it. One that came back empty is
+// stored as an unusableReplyMark instead, so it is not asked for again as is.
 
 const MAX_SUMMARY_TOKENS = 200;
 
@@ -291,6 +294,15 @@ export async function summariseStory(
 		}
 	}
 
+	// The model and settings the chapter requests go out on, resolved when
+	// first needed.
+	let settings: string | undefined;
+	const replySettings = async () =>
+		(settings ??= roleReplySettings(
+			(await resolveLlmConfig(db, userId, storyId)).config,
+			'utility'
+		));
+
 	for (const chapter of noModel || disabled ? [] : chapterRows) {
 		if (signal?.aborted) break;
 		if (meter.capReached) {
@@ -317,13 +329,26 @@ export async function summariseStory(
 		) {
 			continue;
 		}
+		// The same request came back empty on the same model and settings.
+		const emptyMark = unusableReplyMark(request.input, await replySettings());
+		if (chapter.summaryInput === emptyMark) continue;
 		try {
 			const text = await generate(
 				db,
 				{ userId, storyId, messages: request.messages, meter, signal },
 				deps
 			);
-			if (!text) continue;
+			if (!text) {
+				// Kept from being sent again as it is (see unusableReplyMark). The
+				// summary is left as it was, under the same checks as a write.
+				await db.execute(sql`
+					update chapters set summary_input = ${emptyMark}
+					where id = ${chapter.id}
+						and summary_md is not distinct from ${chapter.summaryMd}
+						and summary_generated_at is not distinct from ${chapter.generatedAtText}::timestamptz
+				`);
+				continue;
+			}
 			// Stored with the fingerprint of the request that was sent, so a scene
 			// added, removed, moved or summarised again while the model was writing
 			// leaves the summary out of date. The checks keep a summary the writer

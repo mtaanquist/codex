@@ -516,6 +516,10 @@
 	const passOpen = $derived(
 		pass ? passEdits.filter((s) => s.status === 'pending' && !pass!.done.has(s.id)) : []
 	);
+	// Decided before this pass started, so left out of its count.
+	const passEarlier = $derived(
+		pass ? passEdits.filter((s) => s.status !== 'pending' && !pass!.done.has(s.id)).length : 0
+	);
 	const passStep = $derived(
 		pass ? (passOpen.find((s) => s.id === pass!.currentId) ?? passOpen[0] ?? null) : null
 	);
@@ -870,6 +874,7 @@
 						rereading={rereading.has(pass.threadId)}
 						position={pass.done.size + 1}
 						total={pass.done.size + passOpen.length}
+						earlier={passEarlier}
 						onAccepted={passAccepted}
 						onSkip={(id) => {
 							pass?.skipped.add(id);

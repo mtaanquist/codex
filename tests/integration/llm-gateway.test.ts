@@ -2263,6 +2263,33 @@ describe('gateway request retries', () => {
 		expect(await usageRows()).toHaveLength(0);
 	});
 
+	it('counts a non-English prompt high enough for the cap (#1331)', async () => {
+		await configure(true);
+		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
+		const prompted = (text: string) =>
+			completeDetailed(
+				db,
+				{
+					userId,
+					role: 'chat',
+					messages: [{ role: 'user', content: text }],
+					maxTokens: 1,
+					meter: new SpendMeter({
+						pricing: { 'chat-model': { prompt: 0.001, completion: 0 } },
+						capUsd: 2
+					})
+				},
+				{ provider: anthropicProvider, http: endpoint.http, sleep: noSleep }
+			);
+		// 3000 CJK characters are about 3000 tokens ($3), not the 750 that
+		// chars/4 gives ($0.75), so the request is held.
+		await expect(prompted('\u6587'.repeat(3000))).rejects.toThrow(SpendCapError);
+		expect(endpoint.calls()).toBe(0);
+		// The same length in English is about 750 tokens, and it is sent.
+		await expect(prompted('word '.repeat(600))).rejects.toThrow(/Endpoint returned 529/);
+		expect(endpoint.calls()).toBeGreaterThan(0);
+	});
+
 	it('leaves the ceiling to a caller that holds its own', async () => {
 		await configure(true);
 		const endpoint = scriptedHttp(() => ({ type: 'text/event-stream', body: billedFailure }));
