@@ -18,6 +18,7 @@ import type { EntityDetail } from '#lib/entity-snapshot';
 import { storyAssistantOn } from '../../universe-scope.ts';
 import { arcIsCurrent, arcRequests } from '../arc-request.ts';
 import { chapterSummaryToSend } from '../chapter-summary-request.ts';
+import { sceneSummaryToSend } from '../../summary-currency.ts';
 
 // The deterministic "what is in scope" queries that feed context assembly. Each
 // returns plain typed data; the rendering and budgeting live in assemble.ts.
@@ -133,7 +134,8 @@ export async function sceneNeighbourhood(
 			id: scenes.id,
 			title: scenes.title,
 			summaryMd: scenes.summaryMd,
-			globalPosition: scenes.globalPosition
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt
 		})
 		.from(scenes)
 		.where(and(eq(scenes.storyId, storyId), isNull(scenes.deletedAt)))
@@ -146,20 +148,36 @@ export async function sceneNeighbourhood(
 			id: scenes.id,
 			title: scenes.title,
 			summaryMd: scenes.summaryMd,
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt,
 			bodyMd: scenes.bodyMd,
 			wordCount: scenes.wordCount
 		})
 		.from(scenes)
 		.where(eq(scenes.id, sceneId));
 
+	const neighbour = (i: number, side: NeighbourScene['side']): NeighbourScene => ({
+		id: ordered[i].id,
+		title: ordered[i].title,
+		summaryMd: sceneSummaryToSend(ordered[i]),
+		side
+	});
 	const neighbours: NeighbourScene[] = [];
-	for (let i = Math.max(0, index - window); i < index; i++) {
-		neighbours.push({ ...ordered[i], side: 'before' });
-	}
-	for (let i = index + 1; i <= Math.min(ordered.length - 1, index + window); i++) {
-		neighbours.push({ ...ordered[i], side: 'after' });
-	}
-	return { current: current ?? null, neighbours };
+	for (let i = Math.max(0, index - window); i < index; i++) neighbours.push(neighbour(i, 'before'));
+	for (let i = index + 1; i <= Math.min(ordered.length - 1, index + window); i++)
+		neighbours.push(neighbour(i, 'after'));
+	return {
+		current: current
+			? {
+					id: current.id,
+					title: current.title,
+					summaryMd: sceneSummaryToSend(current),
+					bodyMd: current.bodyMd,
+					wordCount: current.wordCount
+				}
+			: null,
+		neighbours
+	};
 }
 
 export type PrecedingScene = { title: string | null; bodyMd: string };
@@ -257,7 +275,7 @@ export async function storySkeleton(
 		const summary: SceneSummary = {
 			id: scene.id,
 			title: scene.title,
-			summaryMd: scene.summaryMd,
+			summaryMd: sceneSummaryToSend(scene),
 			status: scene.status
 		};
 		if (scene.chapterId) {
@@ -359,15 +377,22 @@ export async function scenesUpTo(
 			id: scenes.id,
 			title: scenes.title,
 			summaryMd: scenes.summaryMd,
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt,
 			bodyMd: scenes.bodyMd,
 			status: scenes.status
 		})
 		.from(scenes)
 		.where(and(eq(scenes.storyId, storyId), isNull(scenes.deletedAt)))
 		.orderBy(asc(scenes.globalPosition));
-	if (!sceneId) return ordered;
-	const index = ordered.findIndex((s) => s.id === sceneId);
-	return index === -1 ? ordered : ordered.slice(0, index + 1);
+	const index = sceneId ? ordered.findIndex((s) => s.id === sceneId) : -1;
+	return (index === -1 ? ordered : ordered.slice(0, index + 1)).map((scene) => ({
+		id: scene.id,
+		title: scene.title,
+		summaryMd: sceneSummaryToSend(scene),
+		bodyMd: scene.bodyMd,
+		status: scene.status
+	}));
 }
 
 export type ScopeEntity = {
