@@ -570,9 +570,12 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 				? claudeEffort(req.role, model, resolved.config.tuning[req.role])
 				: undefined
 		),
-		extraParams: req.boundedReply
-			? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
-			: roleExtraParams(resolved.config, req.role),
+		// A run held to a spend cap is checked at the reply limit (see
+		// wouldPassCap), so an extra parameter must not raise or multiply it.
+		extraParams:
+			req.boundedReply || req.meter?.capUsd !== undefined
+				? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
+				: roleExtraParams(resolved.config, req.role),
 		webSearch: await webSearchAllowed(db, resolved.config, req),
 		cacheTtl: resolved.config.cacheTtl,
 		claude: adapterKind(resolved.config.provider) === 'anthropic',

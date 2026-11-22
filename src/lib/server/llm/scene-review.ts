@@ -686,7 +686,7 @@ async function refreshSummaries(
 }
 
 export const SUMMARIES_CAPPED_MESSAGE =
-	'The spend cap was reached while the summaries were being brought up to date.';
+	'Bringing the summaries up to date stopped before the next request could take it past your spend cap.';
 
 // How a standalone continuity review went: how many scenes were in scope, how
 // many notes it staged, and whether the pass ran at all (it is skipped when

@@ -76,7 +76,7 @@ import { purgeExternalAccess } from '../lib/server/mcp/oauth.ts';
 import { insertNotifications } from '../lib/server/notify-core.ts';
 import { storyIsLive } from '../lib/server/universe-scope.ts';
 import { shouldNotifyWriter, withJobRunSignal } from './job-guard.ts';
-import { spentPhrase } from '../lib/format.ts';
+import { capStopPhrase } from '../lib/format.ts';
 
 // The job handlers, kept apart from index.ts (which owns the pg-boss
 // connection, queue setup and schedules) so tests can run them directly.
@@ -262,7 +262,7 @@ export function createHandlers(deps: WorkerDeps) {
 			}
 			title =
 				result.outcome === 'capped'
-					? `The Assistant did not write the arc for ${character.name}: this job reached the spend cap at ${spentPhrase(result.spentUsd ?? 0)}. Raise the cap in settings, then ${ARC_AGAIN}.`
+					? `The Assistant did not write the arc for ${character.name}: it stopped ${capStopPhrase(result.spentUsd ?? 0)}. Raise the cap in settings, then ${ARC_AGAIN}.`
 					: result.outcome === 'empty'
 						? `The Assistant found no scenes that mention ${character.name}, so there is no arc to write yet.`
 						: `The Assistant wrote the arc for ${character.name}.`;
@@ -361,7 +361,7 @@ export function createHandlers(deps: WorkerDeps) {
 			const staged = result.suggestions.length;
 			const left = staged > 0 ? `, with ${count(staged)} left on the entry` : '';
 			if (result.capped) {
-				title = `The Assistant stopped reading for details about ${name} at ${spentPhrase(result.spentUsd ?? 0)}${left}. Raise the cap in settings, then ${DETAILS_AGAIN}.`;
+				title = `The Assistant stopped reading for details about ${name} ${capStopPhrase(result.spentUsd ?? 0)}${left}. Raise the cap in settings, then ${DETAILS_AGAIN}.`;
 			} else if (result.partial) {
 				title = `The Assistant stopped partway through reading for details about ${name}${left}. ${result.partialNote ?? `To read the rest, ${DETAILS_AGAIN}.`}`;
 			} else if (result.scenes === 0) {
@@ -776,7 +776,7 @@ export function createHandlers(deps: WorkerDeps) {
 							title = `The Assistant left ${result.notes} continuity note${result.notes === 1 ? '' : 's'} across "${universe.name}".`;
 						}
 						if (result.capped) {
-							title = `The continuity pass on "${universe.name}" stopped at ${spentPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. Raise the cap in settings or run the review again to continue.`;
+							title = `The continuity pass on "${universe.name}" stopped ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. Raise the cap in settings or run the review again to continue.`;
 						}
 						const problem = firstFailure(result.failures);
 						if (problem) title += ` ${problem}`;
@@ -831,7 +831,7 @@ export function createHandlers(deps: WorkerDeps) {
 						// The capped wording replaces the outcome line, so it is built
 						// before the suffixes rather than over the top of them.
 						if (result.capped) {
-							title = `The continuity pass on "${story.title}" stopped at ${spentPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. Raise the cap in settings or run the review again to continue.`;
+							title = `The continuity pass on "${story.title}" stopped ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. Raise the cap in settings or run the review again to continue.`;
 						} else if (!result.ran) {
 							title = `"${story.title}" needs at least two scenes for a continuity pass.`;
 						} else if (result.notes === 0) {
@@ -873,7 +873,7 @@ export function createHandlers(deps: WorkerDeps) {
 					);
 					const problem = firstFailure(result.failures);
 					if (result.capped) {
-						title = `The review of "${story.title}" stopped after ${result.reviewed} of ${result.total} scenes at ${spentPhrase(result.spentUsd ?? 0, result.spentEstimated)}. Raise the cap in settings or run the review again to continue.`;
+						title = `The review of "${story.title}" stopped after ${result.reviewed} of ${result.total} scenes, ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}. Raise the cap in settings or run the review again to continue.`;
 					} else if (result.aborted) {
 						title = `The review of "${story.title}" was stopped before it finished.`;
 					} else if (result.reviewed === 0 && result.failed > 0) {
@@ -955,7 +955,7 @@ export function createHandlers(deps: WorkerDeps) {
 					title = `The Assistant stopped summarising "${story.title}" before it finished, after ${written} ${written === 1 ? 'summary' : 'summaries'}.`;
 				}
 				if (result.capped) {
-					title = `The Assistant stopped summarising "${story.title}" at ${spentPhrase(result.spentUsd ?? 0, result.spentEstimated)}, after ${written} ${written === 1 ? 'summary' : 'summaries'}. Raise the cap in settings or run it again to continue.`;
+					title = `The Assistant stopped summarising "${story.title}" after ${written} ${written === 1 ? 'summary' : 'summaries'}, ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}. Raise the cap in settings or run it again to continue.`;
 				}
 				if (result.capNotApplied) title += ` ${result.capNotApplied}`;
 				await notifyWriter(job.name, job, userId, 'assistant_summaries', {
@@ -1053,8 +1053,8 @@ export function createHandlers(deps: WorkerDeps) {
 					}
 				}
 				if (result.capped) {
-					const spent = spentPhrase(result.spentUsd ?? 0, result.spentEstimated);
-					title = `The Assistant stopped reading the entries in "${name}" at ${spent}${left}. Raise the cap in settings or run it again to continue.`;
+					const stop = capStopPhrase(result.spentUsd ?? 0, result.spentEstimated);
+					title = `The Assistant stopped reading the entries in "${name}" ${stop}${left}. Raise the cap in settings or run it again to continue.`;
 				}
 				if (result.capNotApplied) title += ` ${result.capNotApplied}`;
 				await notifyWriter(ASSISTANT_ENRICH_QUEUE, job, userId, 'assistant_enrich', {

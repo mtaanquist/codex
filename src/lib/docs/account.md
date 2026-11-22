@@ -195,7 +195,9 @@ contacts a model on its own.
   a Rubber duck request would send, so it checks the endpoint settings and that
   role's own together. Codex sets the model,
   messages, tools, reply length, and streaming itself, so those cannot be
-  overridden. This does not show on the Claude provider, which is driven by the
+  overridden. When a spend cap is set, background work and drafts also leave out
+  any setting here that changes how long a reply can be or asks for several
+  replies at once, so the cap holds. This does not show on the Claude provider, which is driven by the
   thinking and effort settings instead.
 - **Effort (Claude only)**: with the Claude provider, a role's Tune window also
   has an effort list. Effort sets how hard the model works on each request, from low (fast and

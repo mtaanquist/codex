@@ -291,6 +291,15 @@ describe('gateway gating', () => {
 			stubDeps
 		);
 		expect(captured?.extraParams).toBeUndefined();
+		// Nor a run held to a spend cap, which is checked at the reply limit (#1331).
+		await complete(
+			db,
+			{ userId, role: 'chat', messages: [], meter: new SpendMeter({ capUsd: 5 }) },
+			stubDeps
+		);
+		expect(captured?.extraParams).toBeUndefined();
+		await complete(db, { userId, role: 'chat', messages: [], meter: new SpendMeter({}) }, stubDeps);
+		expect(captured?.extraParams).toEqual({ max_completion_tokens: 900, n: 2 });
 	});
 
 	it('offers the provider web search only on an established universe, when opted in', async () => {
