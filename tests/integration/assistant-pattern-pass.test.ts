@@ -462,6 +462,36 @@ describe('the chapter pattern pass', () => {
 		expect(await db.select({ id: reviewThreads.id }).from(reviewThreads)).toHaveLength(0);
 	});
 
+	it('leaves the note and its fixes when a dropped habit is restored before the run goes on', async () => {
+		const controller = new AbortController();
+		const first = patternProvider(async (messages) => {
+			if (isSurvey(messages)) {
+				await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, sceneIds[0]));
+				await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, sceneIds[1]));
+			} else if (!isApply(messages)) controller.abort();
+		});
+		const stopped = await reviewStoryScenes(
+			db,
+			{ userId, storyId, patterns: 'chapter', jobId: 'dropped-1', signal: controller.signal },
+			{ provider: first.provider }
+		);
+		expect(stopped.aborted).toBe(true);
+		expect(await db.select({ id: reviewThreads.id }).from(reviewThreads)).toHaveLength(0);
+		await db.update(scenes).set({ deletedAt: null });
+
+		const second = patternProvider();
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, patterns: 'chapter', jobId: 'dropped-1' },
+			{ provider: second.provider }
+		);
+		expect(second.seen.some(isSurvey)).toBe(false);
+		// The note is not left without the fixes it describes.
+		expect(await db.select({ id: reviewThreads.id }).from(reviewThreads)).toHaveLength(1);
+		const edits = await db.select({ sceneId: reviewSuggestions.sceneId }).from(reviewSuggestions);
+		expect(edits.map((e) => e.sceneId).sort()).toEqual([sceneIds[0], sceneIds[1]].sort());
+	});
+
 	it('fixes a scene restored from the trash when the run is continued', async () => {
 		const controller = new AbortController();
 		const first = patternProvider(async (messages) => {

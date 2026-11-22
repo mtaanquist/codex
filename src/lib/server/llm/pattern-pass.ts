@@ -625,11 +625,12 @@ export async function runPatternPass(
 					if (!gone) {
 						failures.push({ message: `The note for "${pattern.name}" could not be left.` });
 					}
-					// Not retried: the scenes are marked so a resumed run moves on.
-					pattern.applied = [...pattern.sceneIds];
+					// The scenes are left unmarked: a continued run tries the note
+					// again, and one left then (scenes restored) still gets its fixes.
+					await save();
+					continue;
 				}
 				await save();
-				if (!pattern.threadId) continue;
 			}
 			const fixIn = patternLiveScenes(
 				pattern.sceneIds,
