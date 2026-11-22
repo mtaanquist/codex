@@ -228,19 +228,17 @@ test('a chapter draft under way shows its progress and can be stopped', async ({
 	const sceneCard = page.getByRole('group', { name: 'Scene draft' });
 	await expect(sceneCard).toHaveCount(0);
 
-	// The open scene is written: the list follows with no reload.
+	// The first scene is written (a run goes in order): the list follows with
+	// no reload, and the open scene's card stays hidden while it waits.
 	await sql(
-		`update assistant_drafts set status = 'ready', text_md = 'Drafted scene 2.' where id = $1`,
-		[draftIds[OPEN_SCENE]]
+		`update assistant_drafts set status = 'ready', text_md = 'Drafted scene 1.' where id = $1`,
+		[draftIds[0]]
 	);
 	job = { state: 'running', phase: 'scenes', completed: 1, total: 2 };
 	await expect(card).toContainText('1 of 2', { timeout: 15_000 });
 	await expect(card.getByRole('link')).toHaveCount(1);
-	await expect(card.getByRole('listitem').nth(OPEN_SCENE)).toContainText('Ready');
-	// The open scene's own card shows its draft once it is written.
-	await expect(sceneCard.getByRole('textbox')).toHaveValue('Drafted scene 2.', {
-		timeout: 15_000
-	});
+	await expect(card.getByRole('listitem').first()).toContainText('Ready');
+	await expect(sceneCard).toHaveCount(0);
 
 	// Stop keeps the scene already drafted and drops the other.
 	await card.getByRole('button', { name: 'Stop' }).click();
