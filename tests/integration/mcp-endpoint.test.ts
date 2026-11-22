@@ -251,7 +251,12 @@ async function buildWorld(name: string): Promise<World> {
 
 // ============ Talking to the endpoint ============
 
-type Init = { token?: string; headers?: Record<string, string>; method?: string };
+type Init = {
+	token?: string;
+	headers?: Record<string, string>;
+	method?: string;
+	address?: string;
+};
 
 function send(body: unknown, init: Init = {}): Promise<Response> {
 	const url = new URL(`${ORIGIN}/api/mcp`);
@@ -267,7 +272,8 @@ function send(body: unknown, init: Init = {}): Promise<Response> {
 		}
 	});
 	const handler = route[method as 'POST' | 'GET' | 'DELETE'];
-	return handler({ request, url } as never) as Promise<Response>;
+	const address = init.address ?? '203.0.113.1';
+	return handler({ request, url, getClientAddress: () => address } as never) as Promise<Response>;
 }
 
 // The JSON-RPC answer, whether it came as plain JSON or as one event.
@@ -3630,6 +3636,29 @@ describe('limits', () => {
 		expect(last).toBe(429);
 		expect((await send(list, { token: bob.token })).status).toBe(200);
 	}, 30_000);
+
+	it('shuts out an address that keeps sending bad tokens, before looking them up', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 120; i++) {
+			expect((await send(list, { token: `cdx_at_guess${i}` })).status).toBe(401);
+		}
+		const lookups = vi.spyOn(db, 'select');
+		const blocked = await send(list, { token: 'cdx_at_one_more' });
+		expect(blocked.status).toBe(429);
+		expect(Number(blocked.headers.get('retry-after'))).toBeGreaterThan(0);
+		expect(lookups).not.toHaveBeenCalled();
+		lookups.mockRestore();
+		// Another address is not affected, and good tokens from it still work.
+		expect((await send(list, { token: alice.token, address: '198.51.100.7' })).status).toBe(200);
+	});
+
+	it('does not count good tokens against the address', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 150; i++) {
+			expect((await send(list, { token: alice.token })).status).toBe(200);
+		}
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(401);
+	});
 
 	it('gives staging a tighter budget of its own', async () => {
 		let staged = 0;
