@@ -1112,6 +1112,31 @@ describe('clean-up', () => {
 		).toBe(true);
 	});
 
+	it('tells the writer to add the app again once its record was cleared away', async () => {
+		await connect(alice);
+		const [grant] = await listGrants(db, alice);
+		await revokeGrant(db, alice, grant.id);
+		await pool.query(`update oauth_grants set revoked_at = now() - interval '31 days'`);
+		await purgeExternalAccess(db);
+		// The app comes back with the client_id it kept.
+		const check = await checkAuthorizeRequest(
+			db,
+			(name) =>
+				({
+					response_type: 'code',
+					client_id: client.clientId,
+					redirect_uri: REDIRECT,
+					code_challenge: CHALLENGE,
+					code_challenge_method: 'S256'
+				})[name as string] ?? null,
+			ORIGIN
+		);
+		expect(check).toMatchObject({ kind: 'invalid' });
+		expect(check.kind === 'invalid' && check.message).toContain(
+			'remove the Codex connector and add it again'
+		);
+	});
+
 	// A client nobody has used yet is due to go, but a writer is connecting it
 	// right now: the clean-up leaves it alone, and neither of the two fails.
 	it('runs beside a code being exchanged without either failing', async () => {

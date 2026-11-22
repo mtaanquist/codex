@@ -76,6 +76,7 @@ const {
 const {
 	decideEntityProposal,
 	decideSplitProposal,
+	countProposals,
 	listProposals,
 	stageEntityProposal,
 	MAX_ENTITY_PROPOSALS_WAITING,
@@ -3105,6 +3106,30 @@ describe('stage_scene_draft', () => {
 		// The writer sees it where a draft of the Assistant's shows.
 		const shown = await sceneDraftFor(db, alice.userId, alice.sceneId);
 		expect(shown).toMatchObject({ status: 'ready', textMd: DRAFT });
+	});
+
+	it('is listed and counted under the universes suggestions until the scene goes', async () => {
+		await stage(alice);
+		await call(alice, 'suggest_entity', {
+			universeId: alice.universeId,
+			kind: 'character',
+			name: 'Old Marit',
+			description: 'The lamplighter on the quay.'
+		});
+		const { drafts } = await listProposals(db, alice.userId, alice.universeId);
+		expect(drafts).toEqual([
+			expect.objectContaining({
+				storyId: alice.storyId,
+				sceneId: alice.sceneId,
+				note: `Drafted by ${APP}.`
+			})
+		]);
+		expect(await countProposals(db, alice.userId)).toEqual(new Map([[alice.universeId, 2]]));
+		expect(await countProposals(db, bob.userId)).toEqual(new Map());
+		// A draft on a scene in the trash waits for no one.
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, alice.sceneId));
+		expect((await listProposals(db, alice.userId, alice.universeId)).drafts).toEqual([]);
+		expect(await countProposals(db, alice.userId)).toEqual(new Map([[alice.universeId, 1]]));
 	});
 
 	it('stages nothing outside the writers own open stories', async () => {

@@ -51,6 +51,14 @@ test('a writer accepts one suggested entry and dismisses another', async ({ page
 		await pool.end();
 	}
 
+	// The library says something is waiting, and leads to it.
+	await gotoReady(page, '/');
+	const waiting = page.getByRole('link', { name: `2 suggestions waiting in ${name}` });
+	await expect(waiting).toHaveText('2 suggestions');
+	await waiting.click();
+	await expect(page).toHaveURL(`/universes/suggest-${stamp}/suggestions`);
+	await expect(page.getByText('No drafts from apps are waiting.')).toBeVisible();
+
 	// The link an app hands the writer names the universe by its id.
 	await gotoReady(page, `/universes/${universeId}/suggestions`);
 	await expect(page.getByRole('link', { name: 'Suggestions (2)' })).toBeVisible();
@@ -83,4 +91,8 @@ test('a writer accepts one suggested entry and dismisses another', async ({ page
 	await gotoReady(page, `/universes/suggest-${stamp}/plan`);
 	await expect(page.locator('.ent-row', { hasText: 'Old Marit' })).toBeVisible();
 	await expect(page.locator('.ent-row', { hasText: 'Saltmere' })).toHaveCount(0);
+
+	// With nothing left, the library shows no count.
+	await gotoReady(page, '/');
+	await expect(page.getByRole('link', { name: `waiting in ${name}` })).toHaveCount(0);
 });

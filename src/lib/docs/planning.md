@@ -34,7 +34,7 @@ When you have set up the Assistant on your account page, an entry's page shows "
 
 ## Suggested entries and scene splits
 
-Your Assistant, or an app you connected on your account page, can suggest a character, place or lore entry that your writing mentions but your universe does not have yet. A connected app can also propose splitting a scene in two. Both wait for you in the universe's settings: open the universe's settings and select Suggestions. The link shows a number when something is waiting.
+Your Assistant, or an app you connected on your account page, can suggest a character, place or lore entry that your writing mentions but your universe does not have yet. A connected app can also propose splitting a scene in two. Both wait for you in the universe's settings: open the universe's settings and select Suggestions. When something is waiting, the link shows a number, and your library shows how many suggestions are waiting beside the universe's name; select that count to go straight to them. Drafts a connected app wrote for a scene are counted and listed there too, with a link to open each one on its scene.
 
 Each suggested entry shows its name, what kind of entry it is, who suggested it, and a short description and where it was seen when those were given. Select Accept to add it to the universe, with the description as its summary; you can then open it in Plan and change anything. A lore entry is filed under your first category, so add a category first if the universe has none. Select Dismiss to drop the suggestion; a dismissed name is not suggested again.
 

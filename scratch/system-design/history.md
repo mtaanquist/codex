@@ -30,7 +30,13 @@ switch is off for a writer with apps or tokens left, since turning access
 back on would let them in again; it shows only the lists and their
 Disconnect and Revoke buttons. Suggestion decisions are enhanced forms that
 move focus to the next row (or the list heading) and announce the outcome
-through `FormStatus live`. The axe pass now leaves a comment and a
+through `FormStatus live`. On Mads's decisions: the 30-day clean-up of
+self-registered clients stays, and the consent page's unknown-client error
+now tells the writer to remove and re-add the connector; a count chip beside
+each universe in the library (`countProposals`, now one grouped count per
+universe covering entries, splits and app drafts) links to Suggestions,
+which lists app drafts too. No bell notification. The axe pass now leaves a
+comment and a
 suggested edit on its story: it found the margin markers focusable inside
 the `aria-hidden` rail (now `tabindex="-1"`, the cards are the keyboard
 path) and struck text at 3.6:1 under a comment; struck text is muted rather

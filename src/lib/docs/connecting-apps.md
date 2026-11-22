@@ -51,7 +51,7 @@ Nothing the app leaves changes your writing until you decide.
 - **Suggested characters, places and lore entries**, and **proposals to split a scene in two**, are in the universe's settings under Suggestions. See [Planning your world](/docs/planning).
 - **A draft the app wrote for a scene** waits on that scene. Open the scene and select the Assistant tab on the right to read it, change it, and keep or discard it. A universe holds up to 20 drafts from apps at a time; keep or discard some to make room for more. See [Writing in the editor](/docs/editor).
 
-Each of these shows the name of the app that left it.
+Each of these shows the name of the app that left it. When an app has left a suggested entry, a proposed split or a draft, your library shows how many are waiting beside the universe's name. Select it to see them under Suggestions.
 
 ## Disconnect an app
 
@@ -71,7 +71,7 @@ A tool that cannot open the Codex page to ask for access can use a personal acce
 
 - **"Connected apps" is missing from your account page, or says access is turned off.** The person who runs your Codex has turned this off. Ask them to turn it on.
 - **The app says it cannot reach the address.** Apps that run on the internet, including Claude on the web and the Claude desktop app, connect from their own servers, not from your computer. They can only reach a Codex that has a public web address starting with `https://`. A Codex that you open at `localhost`, or at an address that only works at home, cannot be reached by them. If you run Codex yourself, see [Running Codex yourself](/docs/selfhosting).
-- **The Codex page shows an error instead of asking you to allow the app.** Remove the connector in the app and add it again with the address copied from Connected apps. If the page says "This request cannot be answered", the app sent a request Codex could not use; select the link to return to the app, or go to your library if you did not start this yourself.
+- **The Codex page shows an error instead of asking you to allow the app.** Remove the connector in the app and add it again with the address copied from Connected apps. This also happens when you reconnect an app you disconnected more than a month ago: Codex has cleared away its record, and the app has to be added again. If the page says "This request cannot be answered", the app sent a request Codex could not use; select the link to return to the app, or go to your library if you did not start this yourself.
 - **The app stopped working.** Check "Apps with access". If the app is not listed, it was disconnected, for example by a password change. Connect it again.
 - **The app cannot see one of your stories.** Check that the Assistant is not turned off for that story, and that the story is not in the trash.
 - **The app says there are too many calls.** Wait a minute and ask again. Codex limits how fast an app may work.
