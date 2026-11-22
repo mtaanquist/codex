@@ -939,21 +939,65 @@ suggestion. On top of those:
     "Too many calls at once. Try again." `search_text` runs its queries one
     after another here (the command palette runs them side by side), and
     `get_review_note` places only the requested note's edits in the scene.
-    Placing an edit is a character diff, and it runs in the server's one
-    thread, so it is bounded everywhere (`createAnchorMapper(budget)` in
-    `review-anchor.ts`): the start and the end the two texts share are set
-    aside by plain comparison and only the middle is diffed, and each
-    request has a `DiffBudget` (the longest middle one pair may have, the
-    most edits one diff looks through, and a total for every pair the
-    request compares). An app's call has `APP_DIFF_BUDGET` (500 edits, about
-    25 ms); the writer's pages, the in-app Assistant, accepting a suggestion
-    and the marker remap on save have `WRITER_DIFF_BUDGET` (2000 edits,
-    about half a second at most). Past the budget an edit is placed only in
-    the shared start or end, and is otherwise reported with `notice`: "The
+    Placing an edit compares two versions of the scene, and that runs in
+    the server's one thread, so it is bounded everywhere
+    (`createAnchorMapper(budget)` in `review-anchor.ts`). Every line, and
+    every sentence not inside such a line, that is the same in both
+    versions, stands once in each whole text and has at least 16 visible
+    characters maps to its copy wherever it now stands. The paired lines in
+    the same order in both (the set with the most text), then the paired
+    sentences in order inside each gap, split the texts into gaps; what is
+    left of each gap, with the moved units cut out, is compared with the
+    character diff main used, after setting aside the start the two sides
+    share; an insertion or deletion is moved along the text it repeats to a
+    line break, a sentence end or a space where it can be (diff-match-patch's
+    lossless cleanup), so a paragraph put in before one starting with the
+    same letter is put in at the line break. An end mapped through that diff
+    counts only if it rests on a run of at least 12 shared characters;
+    otherwise the anchor is lost. A range whose two ends map through
+    different runs is lost if a run starting between them came from outside
+    it (a moved sentence carried past). A marker's end whose own character
+    is in no run may rest on the run just outside it, and one in a run too
+    short to count may too when what was typed between holds no white space
+    ("of" to "long" takes "long", as main's marker rule does); if both ends
+    rest outside, some run of the marker's own text that would hold an end
+    must be left. A marker whose first or last word was deleted or replaced,
+    or an inner word deleted, with a word or two typed beside it, can take
+    in the typed text where main gives null (143 in 121 seeds of the
+    property test, bounded there; never an accept). This costs
+    ranges with several edits close together: on natural prose, one with an
+    edit inside it and two or three more nearby is lost about 2.2 to 2.8% of
+    the time (main less), and of all ranges in an edited paragraph 0.44% of
+    comments and 0.39% of markers are lost; on the property test's generated
+    prose, 5 to 9% and about 4%. A request has a
+    `DiffBudget` in edit units of character diff (about D squared for edit
+    distance D; `perPair`, `total`, and a `floor` every pair may spend even
+    once the total is used up). The line and sentence passes are not
+    charged, so the same texts give the same result however busy the
+    server is. A stretch whose diff runs past the budget is recorded as not
+    checked, which is not the same as gone (`mapper.unchecked`). An app's
+    call has `APP_DIFF_BUDGET` (400,000 units, about 25 ms of character
+    diff; floor 4,000). The uncharged line and sentence passes grow with the
+    scene: at the 2,000,000 character cap one comparison holds the thread
+    for 100 to 230 ms, and about 300 ms (app) to 350 ms (writer) after the
+    whole draft was replaced;
+    the writer's pages, the in-app Assistant, accepting a suggestion and
+    the export have `WRITER_DIFF_BUDGET` (1,000,000 a pair, about 55 ms;
+    10,000,000 a mapper; floor 40,000), and a page compares its pairs
+    through `mapper.prepare`, which lets the server answer others between
+    pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (6,250,000, edit
+    distance 2,500), compared in one go, and a marker in a stretch past it
+    is detached. The diff alone takes about 0.35 s to give up at that budget
+    on prose; whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at
+    the 2M cap, and repetitive text can reach about 1.9 s at 2M, as only D
+    squared is charged. Main is slower in every case. An edit that was not checked is reported with `notice`: "The
     text has changed since; the edit may no longer apply." A follow-up
-    `suggest_edit` past it is refused as "can no longer be found", the
-    in-app re-read skips the edit, and the review page shows the suggestion
-    as changed since (it can be read and rejected, not accepted).
+    `suggest_edit` that cannot be placed is refused as "can no longer be
+    found", the in-app re-read skips the edit, and the review page shows the
+    suggestion as "This could not be checked against the current text. It
+    can only be rejected." (or as changed, when its text is gone). A
+    suggestion is accepted only where its original text starts at the
+    mapped start or ends at the mapped end, never found by a search.
   - The per-minute budgets (per connection, per writer, and for requests of
     any kind) count the calls of the last sixty seconds
     (`slidingRateLimit`), so a burst across a minute boundary gets no more

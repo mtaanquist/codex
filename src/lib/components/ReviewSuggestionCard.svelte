@@ -176,7 +176,10 @@
 
 	{#if pending && suggestion.anchorLost}
 		<div class="rv-anchor-lost">
-			<Icon name="close" size={12} /> The text changed since; this can only be rejected.
+			<Icon name="close" size={12} />
+			{suggestion.anchorNotSought
+				? 'This could not be checked against the current text. It can only be rejected.'
+				: 'The text changed since; this can only be rejected.'}
 		</div>
 	{/if}
 

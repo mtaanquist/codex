@@ -68,7 +68,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			restrictToMentioned: false
 		}),
 		listTrashedScenes(db, story.id),
-		listThreads(db, story.id, anchors.range, { userId: locals.user!.id }),
+		listThreads(db, story.id, anchors, { userId: locals.user!.id }),
 		listSuggestions(db, story.id, { userId: locals.user!.id }, anchors),
 		storyPreferences(db, locals.user!.id, story.id),
 		storyPageSetup(db, story.id),

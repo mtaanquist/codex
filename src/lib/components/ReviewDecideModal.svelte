@@ -177,9 +177,11 @@
 												<span class="rv-diff-ins">{s.replacement}</span>{/if}
 										</span>
 										<span class="choice-hint">
-											{s.reviewerName}{s.anchorLost
-												? ' - the text changed since; this can only be rejected'
-												: ''}
+											{s.reviewerName}{s.anchorNotSought
+												? ' - this could not be checked against the current text; it can only be rejected'
+												: s.anchorLost
+													? ' - the text changed since; this can only be rejected'
+													: ''}
 										</span>
 									</span>
 								</label>

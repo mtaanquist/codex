@@ -37,6 +37,7 @@ import { recordRevision } from './revisions.ts';
 import { remapMarkerAnchors } from './markers.ts';
 import {
 	createAnchorMapper,
+	placeSuggestion,
 	WRITER_DIFF_BUDGET,
 	type AnchorMapper,
 	type DiffBudget
@@ -643,6 +644,14 @@ export type ThreadView = {
 	// and for anchors that no longer fit (anchorLost says which).
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Lost because that part of the scene was not compared with the version
+	// the comment was made on (comparing would have cost too much), not
+	// because the words are gone.
+	anchorNotSought?: true;
+	// What the anchor pointed at when the comment was made, for an anchor
+	// that is lost; only when asked for (the export), as the pages that show
+	// threads to a guest must not show text the writer has since rewritten.
+	originalText?: string;
 	resolvedAt: Date | null;
 	createdAt: Date;
 	comments: {
@@ -676,18 +685,23 @@ function ownsComment(
 
 // Threads for a set of scenes, with comments and attribution, anchors
 // re-mapped against the current scene text by the caller-supplied mapper
-// (kept injectable so the pure logic stays unit-tested in review-anchor).
+// (kept injectable so the pure logic stays unit-tested in review-anchor). A
+// plain function maps ranges only, and never reports a range as unchecked.
 export async function listThreads(
 	db: Database,
 	storyId: string,
-	mapAnchor: (
-		baseText: string,
-		currentText: string,
-		start: number,
-		end: number
-	) => { start: number; end: number } | null,
-	viewer?: ReviewViewer
+	mapAnchor:
+		| (Pick<AnchorMapper, 'range' | 'unchecked'> & Partial<Pick<AnchorMapper, 'prepare'>>)
+		| ((
+				baseText: string,
+				currentText: string,
+				start: number,
+				end: number
+		  ) => { start: number; end: number } | null),
+	viewer?: ReviewViewer,
+	opts?: { originalText?: boolean }
 ): Promise<ThreadView[]> {
+	const mapper = typeof mapAnchor === 'function' ? { range: mapAnchor } : mapAnchor;
 	const threadRows = await db
 		.select({
 			thread: reviewThreads,
@@ -722,14 +736,35 @@ export async function listThreads(
 		? await assistantDisplayName(db, storyId)
 		: 'Assistant';
 
+	// Compared up front, letting the server answer others between pairs, so a
+	// page of many threads does not hold the thread for all of them at once.
+	if ('prepare' in mapper && mapper.prepare) {
+		await mapper.prepare(
+			threadRows.flatMap((row) =>
+				row.baseBody ? [[row.baseBody, row.currentBody] as [string, string]] : []
+			)
+		);
+	}
+
 	return threadRows.map((row) => {
 		let anchor: { start: number; end: number } | null = null;
 		let anchorLost = false;
-		if (row.thread.anchorStart !== null && row.thread.anchorEnd !== null) {
+		const lost: Pick<ThreadView, 'anchorNotSought' | 'originalText'> = {};
+		const { anchorStart, anchorEnd } = row.thread;
+		if (anchorStart !== null && anchorEnd !== null) {
 			anchor = row.baseBody
-				? mapAnchor(row.baseBody, row.currentBody, row.thread.anchorStart, row.thread.anchorEnd)
+				? mapper.range(row.baseBody, row.currentBody, anchorStart, anchorEnd)
 				: null;
 			anchorLost = anchor === null;
+			if (anchorLost && row.baseBody) {
+				if (opts?.originalText) lost.originalText = row.baseBody.slice(anchorStart, anchorEnd);
+				if (
+					'unchecked' in mapper &&
+					mapper.unchecked(row.baseBody, row.currentBody, anchorStart, anchorEnd)
+				) {
+					lost.anchorNotSought = true;
+				}
+			}
 		}
 		return {
 			id: row.thread.id,
@@ -737,6 +772,7 @@ export async function listThreads(
 			suggestionId: row.thread.suggestionId,
 			anchor,
 			anchorLost,
+			...lost,
 			resolvedAt: row.thread.resolvedAt,
 			createdAt: row.thread.createdAt,
 			comments: commentRows
@@ -769,6 +805,10 @@ export function suggestionStamp(replacement: string): string {
 	return createHash('sha256').update(replacement).digest('base64url');
 }
 export const SUGGESTION_CHANGED = 'This suggestion changed. Read it again.';
+// A suggestion in a part of the scene too costly to compare with the version
+// it was made on.
+export const NOT_CHECKED =
+	'This could not be checked against the current text. It can only be rejected.';
 
 // A reviewer proposes replacing [start, end) of the scene's current text with
 // the replacement (equal offsets insert, an empty replacement deletes). The
@@ -988,8 +1028,9 @@ export type SuggestionView = {
 	// been rewritten, which also blocks accepting it.
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
-	// Set by a bounded mapper only: the scene changed too much to look for the
-	// passage, so a missing anchor does not mean the passage is gone.
+	// The passage lies in a part of the scene that was not compared with the
+	// version it was made on (comparing would have cost too much), so a
+	// missing anchor does not mean the passage is gone.
 	anchorNotSought?: true;
 	// The Assistant pattern note this edit belongs to, if any.
 	patternThreadId: string | null;
@@ -1000,35 +1041,6 @@ export type SuggestionView = {
 	createdAt: Date;
 	decidedAt: Date | null;
 };
-
-// Re-anchors the proposed range onto the current text: a real range maps
-// through the mapper's range, a pure insertion point through its point.
-// Unlike a comment anchor, a suggestion replaces the range wholesale, so the
-// range must still hold exactly the text it was proposed against: an edit
-// inside it (which the mapper tolerates by stretching or shrinking) would be
-// silently overwritten on accept, so it counts as lost. A character diff can
-// also stretch the range over an insertion just outside it ("She walked in."
-// -> "She slowly walked in." maps "walked in" to "wly walked in"), so the
-// original is looked for inside the stretched range before giving up.
-function mapSuggestionRange(
-	mapper: AnchorMapper,
-	baseText: string,
-	currentText: string,
-	start: number,
-	end: number
-): { start: number; end: number } | null {
-	if (start === end) {
-		const point = mapper.point(baseText, currentText, start);
-		return point === null ? null : { start: point, end: point };
-	}
-	const range = mapper.range(baseText, currentText, start, end);
-	if (!range) return null;
-	const original = baseText.slice(start, end);
-	if (currentText.slice(range.start, range.end) === original) return range;
-	const at = currentText.indexOf(original, range.start);
-	if (at === -1 || at + original.length > range.end) return null;
-	return { start: at, end: at + original.length };
-}
 
 // Where a decided suggestion now sits, so the Done view can point at it: the
 // accepted replacement (the new text it left behind) or the rejected original
@@ -1094,13 +1106,15 @@ export async function listSuggestions(
 	const assistantName = rows.some((r) => r.suggestion.assistant)
 		? await assistantDisplayName(db, storyId)
 		: 'Assistant';
+	// Compared up front, letting the server answer others between pairs.
+	await mapper.prepare(rows.map((row) => [row.baseBody, row.currentBody] as [string, string]));
 	return rows.map((row) => {
 		const { rangeStart, rangeEnd } = row.suggestion;
 		// A pending suggestion anchors to where it would apply; a decided one
 		// anchors to where it now sits, so the Done view can point at it.
 		const anchor =
 			row.suggestion.status === 'pending'
-				? mapSuggestionRange(mapper, row.baseBody, row.currentBody, rangeStart, rangeEnd)
+				? placeSuggestion(mapper, row.baseBody, row.currentBody, rangeStart, rangeEnd)
 				: decidedAnchor(
 						mapper,
 						row.suggestion.status,
@@ -1137,7 +1151,7 @@ export async function listSuggestions(
 			anchorLost: row.suggestion.status === 'pending' && anchor === null,
 			...(row.suggestion.status === 'pending' &&
 			anchor === null &&
-			mapper.gaveUp(row.baseBody, row.currentBody)
+			mapper.unchecked(row.baseBody, row.currentBody, rangeStart, rangeEnd)
 				? { anchorNotSought: true as const }
 				: {}),
 			patternThreadId: row.suggestion.patternThreadId,
@@ -1856,10 +1870,11 @@ export async function decideSuggestion(
 				return { ok: false, reason: 'Write the wording to use, or skip this change.' };
 			}
 			const replacement = override !== undefined ? override : current.replacement;
-			// Against the text just read under the lock. Past the mapper's
-			// budget the edit is not placed, and so cannot be accepted: the
-			// lock is held meanwhile, and the writer's own save waits on it.
-			const anchor = mapSuggestionRange(
+			// Against the text just read under the lock. An edit in a part of
+			// the scene the mapper did not compare is not placed, and so cannot
+			// be accepted: the lock is held meanwhile, and the writer's own
+			// save waits on it.
+			const anchor = placeSuggestion(
 				mapper,
 				row.baseBody,
 				scene.bodyMd,
@@ -1869,7 +1884,14 @@ export async function decideSuggestion(
 			if (!anchor) {
 				return {
 					ok: false,
-					reason: 'The text this suggestion applies to has changed; it can only be rejected.'
+					reason: mapper.unchecked(
+						row.baseBody,
+						scene.bodyMd,
+						row.suggestion.rangeStart,
+						row.suggestion.rangeEnd
+					)
+						? NOT_CHECKED
+						: 'The text this suggestion applies to has changed; it can only be rejected.'
 				};
 			}
 			const newBody =

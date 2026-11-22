@@ -1023,6 +1023,202 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 6 (2026-11-22)
+
+Part of #1175, branch `fix/mcp-review-6` on `staging/mcp-endpoint`. No
+migration.
+
+The round 5 budget counted `middle + edits^2` and gave up on the whole pair
+past it, so any large edit (a name replaced everywhere, a tenth of the
+paragraphs rewritten) lost every anchor: markers were saved as detached and
+review cards said "changed" for text that was merely not compared. The first
+round 6 commit replaced it with a levelled comparison (own Myers over token
+ids, step caps, alike and near-identical line pairing, move detection, a
+`slid` step, and `findWords` for markers on save). Review found that it
+lost markers in a paragraph that was split or joined (H1), could store a
+marker on the same words in another paragraph (H2), lost markers when many
+short paragraphs changed (H3), could accept onto another copy of a short
+line (M1, M2), and held the thread too long on a page of many threads (L1).
+The second commit rebuilt `review-anchor.ts` on unique lines and sentences;
+the eighth review of that found anchors stored on unrelated text, a moved
+and respaced paragraph losing its anchors, and budgets that depended on
+wall time. The third commit fixed those. The ninth review found that its
+support rule's "12 of them inside the range" lost anchors through ordinary
+edits inside a range when another edit sat in the same sentence (H1), and
+that a range whose ends mapped through a moved sentence and the text before
+it stretched over everything between (M1). The fourth commit fixed those.
+The tenth review found that a marker with both ends resting outside it was
+kept on a one-letter chance run of its own text (M1), that the asynchronous
+`finish` on save reached only edit distance about 2,500 in its 3 s while
+holding the scene's row (M3), and that resting an end outside when its own
+character was still in a short run let a marker grow over a word typed
+after it (L1). The fifth commit fixed those; its check found that the L1
+fix detached markers main's marker rule places exactly right, and the
+sixth commit narrowed it. What the code does now:
+
+- Identity: every line, and every sentence not inside such a line, that is
+  the same in both texts, stands once in each whole text and has at least
+  16 visible characters maps to its copy wherever it now stands, in order
+  or not. Sentence uniqueness is counted over the whole text, so a copy
+  inside a paired line disqualifies it.
+- Gaps: the paired lines in the same order in both (heaviest increasing
+  subsequence), then the paired sentences in order inside each line gap,
+  split the texts into gaps. What is left of a gap, with the moved units
+  cut out of both sides, goes to `diffChars` as main calls it, after
+  setting aside the shared start; the shared end is set aside only if the
+  diff fails (setting it aside first picked the other reading of an
+  insertion next to it). Lone insertions and deletions are slid so kept
+  runs join (diff-match-patch's shift step, same cost): "the lantern" to
+  "the old lantern" keeps "lantern" whole. Then each lone insertion or
+  deletion is moved along the text it repeats to the best place to start
+  and end (diff-match-patch's cleanupSemanticLossless: blank line, line
+  break, sentence end, space), staying put unless another place scores
+  higher; the shared start gives up its last letters only where that puts
+  the edit at a line break, so it otherwise maps as on main. Without this a
+  paragraph put in before one starting with the same letter ("Door ..."
+  before "Dark ...", or a copy of the paragraph before) left the "D" in the
+  shared start and a range on "Dark ..." stretched over the new paragraph
+  (main does the same). A version that also refused shifts in the slide
+  step that worsened the boundary was tried and dropped: it only moved
+  ties into the support rule's count and lost slightly more.
+- Support: an end mapped through a kept run of the diff counts only if the
+  run has at least 12 characters; paired units, a gap's shared start or
+  end, and the readings of a pure insertion or deletion count as they are.
+  Otherwise the anchor is lost (null, not unchecked). The third commit also
+  required 12 of the run's characters inside the range; the ninth review
+  measured that losing 472 of 674 ranges with a typo inside and three
+  other edits in the paragraph (main 8), so it was removed. A marker end
+  whose own character is in no run at all may rest on the run just outside
+  it (firm or 12 long); one whose character is in a run too short to count
+  may do so only when what was typed between that outside run and its own
+  run holds no white space (the edge word changed, not a word typed beside
+  it). Both ends may rest outside only if some of the marker's own text is
+  left in a run that would hold an end (so "hard" is not stored on "Mara"
+  through their shared "ar"). The fourth commit rested an end in a short
+  run whatever was typed, which let "always her through!" grow over
+  "brisk" typed after it (main's marker rule, a point per end, keeps "hor
+  through!"; this now detaches it). The fifth commit first took that back
+  entirely, which detached markers main places exactly right: "of" to
+  "long" and "only" to "slowly", where main's marker rule stores "long his
+  face Esk" and "slowly quiet bridge on" (2 of the 40 markers in the
+  restore case). The no-white-space condition keeps those, as main does,
+  and keeps "brisk" out. A point needs a firm run or one of 12.
+- Stretch: a range whose ends map through different runs is lost if a run
+  starting in [from, to) in the current text starts outside the range in
+  the base (a moved or deleted-and-retyped unit carried past it). Of the
+  two rules the review offered, this one, because it names exactly what
+  must not happen (text from outside the range inside the result) and
+  leaves alone a range both of whose ends are in moved units that kept
+  their order. A span starting exactly at `from` counts: a start resting
+  on the run before it, or on the later reading, does not make it the
+  start's own (seed 124 of the property test).
+- N = 12, measured again after the H1 change with the property test's new
+  rounds (below) over seeds 1 to 60 and 100 to 160. Results on text sharing
+  nothing with their range: N = 10 gives 19 and 8 misplaced, 12 gives 4
+  (seed 38: a rewritten paragraph keeps "almost through" and its last word,
+  14 shared characters of which 7 lie inside the range, the case the
+  in-range clause refused), 15 gives none; main gives 50,573 of about 3.7
+  million. Ranges main places correctly that are lost: with edits spread
+  over the scene 193 of 743,427 (0.03%); with clustered edits 4.1% (3.5%
+  to 5.1% a seed) at 12 and 5.9% at 15. The spread-out rounds alone
+  understated the cost: the 0.28% the third commit reported came from
+  rounds where two edits rarely fall within 12 characters of each other.
+  These are on the property test's generated prose, which has a small
+  vocabulary and so more chance runs; on natural prose the review measured
+  2.2 to 2.8% lost for an edit inside a range with two or three nearby
+  (main lower), and 0.44% of comments and 0.39% of markers over all ranges
+  in an edited paragraph (generated prose: 5 to 9% and about 4%), both
+  measured on the fourth commit. For the edit at a range of 2 to 10 words with two or three more in its
+  sentence or paragraph, ranges placed where they belong (ours, main): a
+  typo inside 5,539 and 6,085 of 6,109, a word added inside 6,299 and
+  6,668 of 6,683, a word removed inside 5,150 and 5,454 of 5,466; beside
+  the range, ours places as many or more than main (a word added beside:
+  6,013 and 5,426 of 6,042). Results holding 20 or more characters from
+  outside their range: none in rounds without a move (main 127), none after
+  a move (main 2,778), 42 after a sentence was deleted and typed again
+  elsewhere (main 2,067), 34 of them where main's result for the same range
+  is null or stays on the range (see known limits).
+- Budgets in edit units of character diff, about D * D for edit distance D
+  (measured 55 to 65 ns a unit past D = 400, plus about 3 ms per 40,000
+  characters diffed), charged only for the diff, so the same texts give the
+  same result however loaded the server is: `WRITER_DIFF_BUDGET` 1,000,000
+  a pair (about 55 ms), 10,000,000 a mapper, floor 40,000;
+  `APP_DIFF_BUDGET` 400,000, floor 4,000; `SAVE_DIFF_BUDGET` 6,250,000. No
+  wall-clock bound is left.
+- Pages call `mapper.prepare`, which yields with `setImmediate` between
+  pairs.
+- Markers on save: one synchronous comparison under `SAVE_DIFF_BUDGET`
+  (edit distance 2,500) while the save holds the scene's row; a marker in a
+  stretch past it is detached. The fourth commit had a 1,000,000 budget and
+  then compared such a stretch again with `diffChars` in callback mode for
+  up to 3 s. That mode waits about 1 ms per edit step, so in 3 s it reached
+  only edit distance about 2,500: a rewritten paragraph of about 2,100
+  characters before a marked sentence with a typo in it gave a 3 s save
+  (900 to 1,600 characters: 1.5 to 2.2 s). Measured here on prose, the
+  diff alone gives up at D = 2,500 in about 0.35 s; the whole comparison
+  takes about 0.22 s for that case (keeps the marker), 0.29 s for 2,400
+  characters (past the budget, detached), 0.4 to 0.5 s to give up on a
+  120,000 or 500,000 character scene replaced outright, and up to about
+  0.75 to 0.8 s at 2M. Only D squared is charged, so repetitive text can
+  take longer for the same units (the review measured about 1.9 s at 2M).
+  Main is slower in every one of these cases.
+- `placeSuggestion` keeps the start-or-end rule (M2).
+- Tests: a seeded property test against a ground-truth character map and
+  main's mapper (`tests/main-anchor-oracle.ts`) asserts no misplaced range
+  on unique text in any round (moves included), untouched unique lines and
+  sentences always placed wherever they stand, nothing placed on unrelated
+  text, no result stretched over 20 or more characters from outside it
+  (after a move, none where main's result for the same range is not; after
+  a sentence typed again, such cases listed and at most 8 a seed), and
+  main's correct placements kept except those the support rule refuses
+  (counted). Each round also has a clustered-edit case (an edit inside or
+  beside a range and two or three more in its sentence or paragraph),
+  where nothing is held out: what main places and this does not is counted
+  as the support rule's (under 6% a seed) or as a tie, an equally short
+  alignment main happened to share with the truth (under 0.05%; at most 48
+  in a seed). A clustered result that takes in a word typed beyond the
+  range's own text where main's does not is counted apart, as misplaced,
+  and listed in the output (143 over the 121 seeds, at most 17 a seed,
+  nearly all markers; bounded by the test). Most are a marker whose first
+  or last word was deleted or replaced, with a word typed beside it
+  ("Your snow bright, Mara, his" to "Your brisk bright, Mara,"). Seed 113's
+  are an inner word deleted and a word typed just after the marker ("every
+  carried or dark." to "every or idle dark.": the marker gives "every or
+  idle", main null), and it can be more than one word ("every or pale
+  idle"). Before the tenth review these went uncounted, as most have no
+  true position. The narrowed L1 rule added 9 (134 before), all a first
+  word replaced by a typed word sharing a letter, the same case as "of" to
+  "long". None of this touches an accept. The
+  rounds also delete a sentence and type it again elsewhere. Seeds 1 to 60
+  and 100 to 160 pass except seed 38, on the unrelated-text check (above);
+  CI runs seed 51.
+- Known limits that stay: a copy of the original made right next to it can
+  receive the accept when the original was edited (the text is identical;
+  main refuses); the line and sentence passes are not budgeted, so one
+  comparison at the 2M scene cap holds the thread for 100 to 230 ms, about
+  300 ms (app budget) to 350 ms (writer budget) after the whole draft was
+  replaced (a whole-draft replacement at 2M on save takes about 0.8 s in
+  all); a paragraph whose only sentence changed, with every line around it
+  rewritten, is not found; after a sentence is deleted and typed again
+  elsewhere, with the paragraph between them lightly edited, a range or
+  marker can stretch over that paragraph where main returns null
+  (generated prose 16 results against main's 1,078, natural prose 7
+  against 543, in the review's measurement; never an accept); a marker
+  whose first or last word was deleted or replaced, or an inner word
+  deleted, with a word (or two) typed beside it, can take in the typed
+  text where main gives null (143 in the property test, above; never an
+  accept); a marker whose word was replaced outright depends on what the
+  two words share: "harbour" to "harvest" keeps it on "harvest" (the
+  "har" joins the text before) and "slowly" to "quickly" on "quickly" (the
+  "ly" joins the text after), as on main (the review saw the second
+  detached on the fourth commit); "hard" to "Mara" detaches it (only a
+  chance "ar" is shared), where main keeps it on "Mara"; a range with an
+  edit inside it and others within a few letters
+  of its ends is lost more often than on main (above); a whole-text conversion
+  between CRLF and LF loses comments and suggestions on lines of ten
+  characters or fewer, which main keeps (markers are mapped on LF text and
+  are not affected).
+
 ## MCP endpoint, review round 5 (2026-11-22)
 
 Part of #1175, branch `fix/mcp-review-5` on `staging/mcp-endpoint`. No

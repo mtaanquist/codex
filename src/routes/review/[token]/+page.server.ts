@@ -103,7 +103,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		canSuggest: resolved.invitation.canSuggest,
 		chapters: content.chapters,
 		scenes,
-		threads: await listThreads(db, storyId, anchors.range, { reviewerId: reviewer.id }),
+		threads: await listThreads(db, storyId, anchors, { reviewerId: reviewer.id }),
 		suggestions: await listSuggestions(db, storyId, { reviewerId: reviewer.id }, anchors),
 		mentionEntities: mentions.entities,
 		mentionMembers: mentions.storyMembers,

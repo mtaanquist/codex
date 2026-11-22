@@ -92,6 +92,9 @@ export type ReviewThread = {
 	suggestionId: string | null;
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Lost only because that part of the scene could not be compared with
+	// the version it was made on.
+	anchorNotSought?: boolean;
 	resolvedAt: Date | string | null;
 	createdAt: Date | string;
 	comments: ReviewComment[];
@@ -114,6 +117,9 @@ export type ReviewSuggestion = {
 	status: 'pending' | 'accepted' | 'rejected';
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Lost only because that part of the scene could not be compared with
+	// the version it was made on.
+	anchorNotSought?: boolean;
 	// The Assistant pattern note this edit belongs to, if any.
 	patternThreadId: string | null;
 	// The edit whose re-read after an accept staged this one, if any.
