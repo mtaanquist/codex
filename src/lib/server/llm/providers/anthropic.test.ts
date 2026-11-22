@@ -833,7 +833,7 @@ describe('anthropicProvider.respond over a stream', () => {
 		}
 	});
 
-	it('carries the cache shares on what a failed stream was billed (#1274)', async () => {
+	it('carries the cache shares on what a failed stream was billed', async () => {
 		const http: HttpRequest = async () =>
 			sseResponse([
 				start({
@@ -943,6 +943,79 @@ describe('anthropicProvider.respond over a stream', () => {
 		expect(billedUsage(err)).toEqual({
 			promptTokens: 9 + Math.ceil(JSON.stringify(result).length / 4),
 			completionTokens: 1,
+			estimated: true
+		});
+	});
+
+	// Whether the live API repeats the input totals on message_delta after a web
+	// search has not been checked against a real call. Both shapes are covered:
+	// a finished stream whose message_delta leaves the input out still counts
+	// the search results it streamed, as an estimate.
+	const searchResult = {
+		type: 'web_search_tool_result',
+		tool_use_id: 's1',
+		content: [
+			{ type: 'web_search_result', url: 'http://x', title: 'T', encrypted_content: 'e'.repeat(400) }
+		]
+	};
+	const searchTurn = (deltaUsage: Record<string, unknown>) => [
+		start({ input_tokens: 9, output_tokens: 1 }),
+		frame({
+			type: 'content_block_start',
+			index: 0,
+			content_block: { type: 'server_tool_use', id: 's1', name: 'web_search', input: {} }
+		}),
+		frame({ type: 'content_block_stop', index: 0 }),
+		frame({ type: 'content_block_start', index: 1, content_block: searchResult }),
+		frame({ type: 'content_block_stop', index: 1 }),
+		frame({ type: 'content_block_start', index: 2, content_block: { type: 'text', text: '' } }),
+		frame({ type: 'content_block_delta', index: 2, delta: { type: 'text_delta', text: 'ok' } }),
+		frame({ type: 'content_block_stop', index: 2 }),
+		...end('end_turn', deltaUsage)
+	];
+
+	it('takes the search results from message_delta when it reports the input', async () => {
+		const http: HttpRequest = async () =>
+			sseResponse(
+				searchTurn({
+					input_tokens: 2500,
+					output_tokens: 5,
+					server_tool_use: { web_search_requests: 1 }
+				})
+			);
+		const result = await anthropicProvider.respond(req, conn, http);
+		expect(result.usage).toEqual({
+			promptTokens: 2500,
+			completionTokens: 5,
+			webSearchRequests: 1
+		});
+	});
+
+	it('estimates the search results when message_delta leaves the input out', async () => {
+		const http: HttpRequest = async () =>
+			sseResponse(searchTurn({ output_tokens: 5, server_tool_use: { web_search_requests: 1 } }));
+		const result = await anthropicProvider.respond(req, conn, http);
+		expect(result.usage).toEqual({
+			promptTokens: 9 + Math.ceil(JSON.stringify(searchResult).length / 4),
+			completionTokens: 5,
+			webSearchRequests: 1,
+			estimated: true
+		});
+	});
+
+	it('estimates the search results of a stream that failed after a message_delta with no input', async () => {
+		const frames = searchTurn({ output_tokens: 5 });
+		// Drop message_stop and end on an error instead.
+		frames.splice(
+			-1,
+			1,
+			frame({ type: 'error', error: { type: 'overloaded_error', message: 'x' } })
+		);
+		const http: HttpRequest = async () => sseResponse(frames);
+		const err = await anthropicProvider.respond(req, conn, http).catch((e: unknown) => e);
+		expect(billedUsage(err)).toEqual({
+			promptTokens: 9 + Math.ceil(JSON.stringify(searchResult).length / 4),
+			completionTokens: 5,
 			estimated: true
 		});
 	});
@@ -1282,6 +1355,39 @@ describe('anthropicProvider.chatStream', () => {
 			},
 			{ type: 'done', finishReason: 'stop' }
 		]);
+	});
+
+	it('estimates the search results when message_delta leaves the input out', async () => {
+		const data = (obj: unknown) => `data: ${JSON.stringify(obj)}\n`;
+		const result = {
+			type: 'web_search_tool_result',
+			tool_use_id: 's1',
+			content: [{ type: 'web_search_result', url: 'http://x', encrypted_content: 'e'.repeat(400) }]
+		};
+		const frames = [
+			data({ type: 'message_start', message: { usage: { input_tokens: 9 } } }),
+			data({ type: 'content_block_start', index: 0, content_block: result }),
+			data({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } }),
+			data({
+				type: 'message_delta',
+				delta: { stop_reason: 'end_turn' },
+				usage: { output_tokens: 12, server_tool_use: { web_search_requests: 1 } }
+			}),
+			data({ type: 'message_stop' })
+		];
+		const http: HttpRequest = async () => sseResponse(frames);
+		const events = await drain(
+			anthropicProvider.chatStream({ model: 'claude-x', messages: [], maxTokens: 16 }, conn, http)
+		);
+		expect(events).toContainEqual({
+			type: 'usage',
+			usage: {
+				promptTokens: 9 + Math.ceil(JSON.stringify(result).length / 4),
+				completionTokens: 12,
+				webSearchRequests: 1,
+				estimated: true
+			}
+		});
 	});
 
 	it('carries a max_tokens stop reason on the done frame as length', async () => {

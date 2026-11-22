@@ -1,4 +1,4 @@
-# about: A server-side web search, billed per search
+# about: A server-side web search, billed per search; message_delta leaves the input out, so the results are estimated
 # outcome: reply
 # text: It rained.
 # finish: stop
