@@ -110,10 +110,11 @@ export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
 export const APP_DIFF_BUDGET: DiffBudget = { perPair: 400_000, total: 400_000, floor: 4_000 };
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
-// Requests with a token this server never issued, per address per minute.
-// Past this they get 429 instead of 401; valid tokens from the address still
-// work, and a known token that expired or was revoked still gets 401 and is
-// not counted. The token endpoint allows the same number.
+// Requests with a malformed token (not shaped like one this server issues),
+// per address per minute. Past this they get 429 instead of 401. A token of
+// the issued shape is never counted, found or not: guessing one is not
+// feasible, and an app's old token must get the 401 that makes it refresh.
+// The token endpoint allows the same number.
 export const FAILED_BEARER_PER_MINUTE = TOKEN_PER_MINUTE;
 
 // Clients cut a tool result off at about 150,000 characters, so results stay

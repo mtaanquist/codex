@@ -49,6 +49,7 @@ const {
 	createAuthorizationCode,
 	createPersonalToken,
 	exchangeCode,
+	issuedTokenShape,
 	listGrants,
 	listPersonalTokens,
 	purgeExternalAccess,
@@ -192,6 +193,31 @@ describe('exchanging a code', () => {
 		const bobs = await connect(bob);
 		expect((await resolveBearer(db, bobs.accessToken))?.userId).toBe(bob);
 		expect((await resolveBearer(db, tokens.accessToken))?.userId).toBe(alice);
+	});
+
+	it('issues every kind of credential in the shape the endpoint recognises', async () => {
+		const code = await codeFor(alice);
+		const exchanged = await exchange(code);
+		if (!exchanged.ok) throw new Error('exchange failed');
+		const { accessToken, refreshToken } = exchanged.tokens;
+		const personal = await createPersonalToken(db, {
+			userId: alice,
+			name: 'Night Script',
+			permissions: ['read'],
+			expiresInDays: 90
+		});
+		if (!personal.ok) throw new Error(personal.reason);
+		for (const value of [code, accessToken, refreshToken, personal.token]) {
+			expect(issuedTokenShape(value)).toBe(true);
+		}
+		for (const value of [
+			'',
+			'cdx_at_nope',
+			`cdx_xx_${'A'.repeat(43)}`,
+			`cdx_at_${'A'.repeat(42)}!`
+		]) {
+			expect(issuedTokenShape(value)).toBe(false);
+		}
 	});
 
 	it('stores only hashes', async () => {

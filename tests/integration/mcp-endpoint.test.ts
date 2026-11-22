@@ -57,6 +57,7 @@ const {
 	createPersonalToken,
 	exchangeCode,
 	listPersonalTokens,
+	purgeExternalAccess,
 	resolveBearer,
 	revokeAllGrants,
 	revokeGrant
@@ -3713,6 +3714,23 @@ describe('limits', () => {
 			expect((await send(list, { token: bob.token })).status).toBe(401);
 		}
 		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(401);
+	});
+
+	it('answers 401 with the challenge to a token the daily clean-up removed, even from a busy address', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		await db
+			.update(apiTokens)
+			.set({ expiresAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) })
+			.where(eq(apiTokens.userId, alice.userId));
+		await purgeExternalAccess(db);
+		for (let i = 0; i < 120; i++) await send(list, { token: `cdx_at_guess${i}` });
+		const purged = await send(list, { token: alice.token });
+		expect(purged.status).toBe(401);
+		expect(purged.headers.get('www-authenticate')).toContain('error="invalid_token"');
+		// Any token of the shape this server issues is answered the same way.
+		const wellFormed = await send(list, { token: `cdx_pat_${'A'.repeat(43)}` });
+		expect(wellFormed.status).toBe(401);
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
 	});
 
 	it('does not count good tokens against the address', async () => {

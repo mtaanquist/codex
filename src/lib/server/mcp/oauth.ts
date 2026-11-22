@@ -455,16 +455,14 @@ export async function resolveBearer(db: Database, token: string): Promise<Bearer
 	};
 }
 
-// Whether a token that resolveBearer refused was one this server issued (an
-// access, refresh or personal token, expired, rotated or revoked) rather than
-// a guess. Expired rows stay until the daily clean-up.
-export async function knownBearer(db: Database, token: string): Promise<boolean> {
-	if (!token) return false;
-	const [row] = await db
-		.select({ id: apiTokens.id })
-		.from(apiTokens)
-		.where(eq(apiTokens.tokenHash, hashToken(token)));
-	return Boolean(row);
+// Whether a token has the shape of one this server issues (any kind): a known
+// prefix and 32 random bytes in base64url. An unknown token of this shape is
+// an old one whose row the daily clean-up removed, not a feasible guess.
+const ISSUED_SHAPE = new RegExp(
+	`^(?:${[ACCESS_PREFIX, REFRESH_PREFIX, CODE_PREFIX, PERSONAL_PREFIX].join('|')})[A-Za-z0-9_-]{43}$`
+);
+export function issuedTokenShape(token: string): boolean {
+	return ISSUED_SHAPE.test(token);
 }
 
 // Whether a connection a request was let in on is still good: its token and
