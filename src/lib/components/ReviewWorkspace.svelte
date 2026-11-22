@@ -615,9 +615,8 @@
 	}
 
 	async function rereadAfter(suggestionId: string) {
-		const current = pass;
-		if (!current) return;
-		const threadId = current.threadId;
+		if (!pass) return;
+		const threadId = pass.threadId;
 		const card = startActivity('Re-reading the last change');
 		rereadCards.add(card);
 		countRereading(threadId, 1);
@@ -626,6 +625,8 @@
 		// staged nothing, so there is nothing to load.
 		let answered = false;
 		let ids: string[] = [];
+		// Whether the card is still up: Stop clears it.
+		let shown: boolean;
 		try {
 			const response = await fetch('/api/assistant/pattern-reread', {
 				method: 'POST',
@@ -649,15 +650,22 @@
 			ok = false;
 		} finally {
 			countRereading(threadId, -1);
-			rereadCards.delete(card);
+			shown = rereadCards.delete(card);
 		}
-		if (destroyed || pass !== current) {
+		// Said to any pass on the same note, also one stopped and started again
+		// while this ran; its card went at Stop, so a new one says the outcome.
+		if (destroyed || pass?.threadId !== threadId) {
 			dismissActivity(card);
 			return;
 		}
-		if (!ok) resolveActivity(card, { state: 'failed', label: 'Could not re-read the last change' });
-		else if (ids.length > 0) resolveActivity(card, { state: 'done', label: 'Follow-up added' });
-		else dismissActivity(card);
+		const outcome = !ok
+			? ({ state: 'failed', label: 'Could not re-read the last change' } as const)
+			: ids.length > 0
+				? ({ state: 'done', label: 'Follow-up added' } as const)
+				: null;
+		if (!outcome) dismissActivity(card);
+		else if (shown) resolveActivity(card, outcome);
+		else flashActivity(outcome.state, outcome.label);
 	}
 
 	function startComment(sel: { start: number; end: number; text: string }) {

@@ -2179,6 +2179,7 @@ export async function clearReviews(
 			.select({
 				id: reviewSuggestions.id,
 				status: reviewSuggestions.status,
+				followsId: reviewSuggestions.followsSuggestionId,
 				fresh: after(reviewSuggestions.createdAt)
 			})
 			.from(reviewSuggestions)
@@ -2221,12 +2222,23 @@ export async function clearReviews(
 				.filter((thread) => thread.suggestionId)
 				.map((thread) => [thread.suggestionId!, thread.id])
 		);
-		const goingSuggestions = suggestions
-			.filter((suggestion) => scope === 'all' || suggestion.status !== 'pending')
-			.filter((suggestion) => !suggestion.fresh)
-			.filter((suggestion) => !newSince.has(discussed.get(suggestion.id) ?? ''))
-			.map((suggestion) => suggestion.id);
-		const going = new Set(goingSuggestions);
+		const going = new Set(
+			suggestions
+				.filter((suggestion) => scope === 'all' || suggestion.status !== 'pending')
+				.filter((suggestion) => !suggestion.fresh)
+				.filter((suggestion) => !newSince.has(discussed.get(suggestion.id) ?? ''))
+				.map((suggestion) => suggestion.id)
+		);
+		// An edit that stays keeps the edit it follows, and so on back along the
+		// chain: deleting it would null the link that marks the one staying as a
+		// follow-up.
+		const byId = new Map(suggestions.map((suggestion) => [suggestion.id, suggestion]));
+		for (const suggestion of suggestions) {
+			if (going.has(suggestion.id)) continue;
+			let followed = suggestion.followsId;
+			while (followed && going.delete(followed)) followed = byId.get(followed)?.followsId ?? null;
+		}
+		const goingSuggestions = [...going];
 		const goingThreads = threads
 			.filter((thread) =>
 				thread.suggestionId
