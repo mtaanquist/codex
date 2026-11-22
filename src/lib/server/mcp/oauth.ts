@@ -18,6 +18,7 @@ import {
 	MAX_PERSONAL_TOKENS,
 	PERSONAL_TOKEN_EXPIRY_DAYS,
 	PERSONAL_TOKEN_HOST,
+	REFRESH_REUSE_GRACE_MS,
 	REFRESH_TOKEN_TTL_MS,
 	REVOKED_CLIENT_RETENTION,
 	SPENT_CODE_RETENTION,
@@ -290,8 +291,12 @@ export async function exchangeCode(
 }
 
 // Exchanges a refresh token for a new pair. The old refresh token is spent in
-// the same transaction; presenting a spent or revoked one again means it was
-// copied, so every token descended from the same code is revoked.
+// the same transaction. Presenting a revoked one, or one spent longer ago than
+// the grace window, means it was copied, so every token descended from the
+// same code is revoked. Within the window a spent token gets another new pair
+// and leaves the first one live: an app that refreshes twice at once, or
+// retries after losing the reply, would otherwise be disconnected
+// (OAuth 2.0 Security BCP, RFC 9700 section 4.14.2).
 export async function refreshTokens(
 	db: Database,
 	input: { refreshToken: string; clientId: string }
@@ -310,15 +315,21 @@ export async function refreshTokens(
 		const usable = await accountUsable(tx, owner.userId, true);
 		await lockFamily(tx, owner.familyId);
 		const [row] = await tx
-			.select({ token: apiTokens, grant: oauthGrants, client: oauthClients })
+			.select({
+				token: apiTokens,
+				grant: oauthGrants,
+				client: oauthClients,
+				// Against the database clock, which stamped usedAt.
+				retry: sql<boolean>`coalesce(${apiTokens.usedAt} > now() - make_interval(secs => ${REFRESH_REUSE_GRACE_MS / 1000}), false)`
+			})
 			.from(apiTokens)
 			.innerJoin(oauthGrants, eq(apiTokens.grantId, oauthGrants.id))
 			.innerJoin(oauthClients, eq(oauthGrants.clientId, oauthClients.id))
 			.where(isRefresh)
 			.for('update', { of: apiTokens });
 		if (!row) return { ok: false };
-		const { token, grant, client } = row;
-		if (token.usedAt || token.revokedAt) {
+		const { token, grant, client, retry } = row;
+		if (token.revokedAt || (token.usedAt && !retry)) {
 			await revokeFamily(tx, token.familyId);
 			return { ok: false };
 		}
@@ -330,21 +341,25 @@ export async function refreshTokens(
 		) {
 			return { ok: false };
 		}
-		await tx
-			.update(apiTokens)
-			.set({ usedAt: sql`now()` })
-			.where(eq(apiTokens.id, token.id));
-		// The access token this refresh token came with is replaced too.
-		await tx
-			.update(apiTokens)
-			.set({ revokedAt: sql`now()` })
-			.where(
-				and(
-					eq(apiTokens.familyId, token.familyId),
-					eq(apiTokens.kind, 'access'),
-					isNull(apiTokens.revokedAt)
-				)
-			);
+		// A retry leaves alone the pair the first use issued, which the app
+		// may already be using.
+		if (!token.usedAt) {
+			await tx
+				.update(apiTokens)
+				.set({ usedAt: sql`now()` })
+				.where(eq(apiTokens.id, token.id));
+			// The access token this refresh token came with is replaced too.
+			await tx
+				.update(apiTokens)
+				.set({ revokedAt: sql`now()` })
+				.where(
+					and(
+						eq(apiTokens.familyId, token.familyId),
+						eq(apiTokens.kind, 'access'),
+						isNull(apiTokens.revokedAt)
+					)
+				);
+		}
 		const tokens = await issueTokens(tx, {
 			userId: token.userId,
 			grantId: grant.id,
