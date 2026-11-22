@@ -77,6 +77,14 @@ export function slidingRateLimit(
 	return { allowed: true, remaining: limit - times.length, retryAfterSeconds: 0 };
 }
 
+// Takes back a call slidingRateLimit let through at `at`, for a call that was
+// then turned away before it did anything (a later limit, a full queue).
+export function refundSlidingRateLimit(key: string, at: number): void {
+	const times = logs.get(key);
+	const index = times ? times.lastIndexOf(at) : -1;
+	if (index >= 0) times!.splice(index, 1);
+}
+
 // Per-user write budgets, keyed by user id. Autosave is debounced on the
 // client, so even heavy multi-editor writing stays well under WRITE_PER_MINUTE;
 // the cap only slows a client hammering the write endpoints in a loop. Uploads

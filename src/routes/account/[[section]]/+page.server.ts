@@ -153,9 +153,14 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	)
 		error(404, 'Not found');
 	const user = locals.user!;
-	// Connected apps exists only while the instance allows outside apps.
+	// Connected apps is there while the instance allows outside apps. While the
+	// admin has them turned off it stays for a writer with apps or tokens left
+	// to disconnect, since turning access back on lets those in again.
 	const externalAccessAvailable = await mcpInstanceEnabled(db);
-	if (params.section === 'apps' && !externalAccessAvailable) error(404, 'Not found');
+	const apps = await listGrants(db, user.id);
+	const tokens = await listPersonalTokens(db, user.id);
+	const externalAccessShown = externalAccessAvailable || apps.length + tokens.length > 0;
+	if (params.section === 'apps' && !externalAccessShown) error(404, 'Not found');
 	const sessionId = locals.session!.id;
 	const [profile] = await db
 		.select({
@@ -231,9 +236,10 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		myInvites: await listUserInviteCodes(db, user.id),
 		externalAccess: {
 			available: externalAccessAvailable,
+			shown: externalAccessShown,
 			enabled: await mcpAccountEnabled(db, user.id),
-			apps: externalAccessAvailable ? await listGrants(db, user.id) : [],
-			tokens: externalAccessAvailable ? await listPersonalTokens(db, user.id) : [],
+			apps,
+			tokens,
 			tokenExpiryDays: [...PERSONAL_TOKEN_EXPIRY_DAYS],
 			tokenDefaultDays: PERSONAL_TOKEN_DEFAULT_DAYS,
 			// Making a token asks for a code as well when two-factor is on.

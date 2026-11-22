@@ -38,6 +38,35 @@ accept, a sentence moved past a lightly edited paragraph (the single
 sentence pair splits the gap, so the paragraph is unmatched on both sides
 and nothing marks the stretch), and the two budget limits.
 
+MCP endpoint low findings, second pass (2026-11-22,
+`fix/mcp-endpoint-lows-2` on `staging/bug-fixes`, #1360). A call turned
+away before it did anything (a full reading or staging queue, or the
+writer's budget when the app's own had room) now gives back the stamps it
+took, through `refundSlidingRateLimit`; before, an app retrying into a busy
+queue spent its minute without one call running. Staging "busy" is now an
+error result like reading "busy". Client metadata documents that could not
+be fetched, or did not qualify, are not fetched again for a minute
+(`CLIENT_DOCUMENT_RETRY_MS`), kept in memory like the rate limits: an
+unreachable host keeps the copy already checked, a disqualified document
+lets nobody in. A minute keeps a fixed document usable at once while
+capping a failing one at one fetch a minute; fetches of one address at once
+share one request. Connected apps stays on the account page while the admin
+switch is off for a writer with apps or tokens left, since turning access
+back on would let them in again; it shows only the lists and their
+Disconnect and Revoke buttons. Suggestion decisions are enhanced forms that
+move focus to the next row (or the list heading) and announce the outcome
+through `FormStatus live`. On Mads's decisions: the 30-day clean-up of
+self-registered clients stays, and the consent page's unknown-client error
+now tells the writer to remove and re-add the connector; a count chip beside
+each universe in the library (`countProposals`, now one grouped count per
+universe covering entries, splits and app drafts) links to Suggestions,
+which lists app drafts too. No bell notification. The axe pass now leaves a
+comment and a
+suggested edit on its story: it found the margin markers focusable inside
+the `aria-hidden` rail (now `tabindex="-1"`, the cards are the keyboard
+path) and struck text at 3.6:1 under a comment; struck text is muted rather
+than faint, and full strength where a comment's tint is laid over it.
+
 Fingerprint low findings, wave 2 (2026-11-22, `fix/fingerprint-lows` on
 `staging/bug-fixes`, part of #1322, after #1392). A cut-off enrich read and
 an empty chapter summary stored nothing, so every pass paid for the same
