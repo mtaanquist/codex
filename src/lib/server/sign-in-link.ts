@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { users } from './db/schema.ts';
-import { consumeToken, NO_USER, reserveToken, revokeTokens } from './tokens.ts';
+import { consumeToken, NO_USER, peekToken, reserveToken, revokeTokens } from './tokens.ts';
 
 // Short, because the link signs in on its own: it stands in for the password.
 export const SIGN_IN_LINK_TTL_MINUTES = 15;
@@ -41,6 +41,18 @@ export async function requestSignInLink(db: Database, email: string): Promise<st
 			? reserveToken(tx, user.id, 'sign_in', SIGN_IN_LINK_TTL_MINUTES)
 			: null;
 	});
+}
+
+// Checks a sign-in link without spending it and returns the email of the
+// account it would sign in to, or null when redeeming it would fail.
+export async function peekSignInLink(db: Database, token: string): Promise<string | null> {
+	const userId = await peekToken(db, 'sign_in', token);
+	if (!userId) return null;
+	const [user] = await db
+		.select({ ...GATES, email: users.email })
+		.from(users)
+		.where(eq(users.id, userId));
+	return user && maySignIn(user) ? user.email : null;
 }
 
 // Spends a sign-in link and returns the account it proves, or null for a link
