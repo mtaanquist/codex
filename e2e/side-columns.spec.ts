@@ -98,6 +98,13 @@ test('side columns resize by drag and keyboard, and remember the width', async (
 	await left.dblclick({ position: { x: 2, y: 100 } });
 	expect(await width(page, '.pane.right')).toBeCloseTo(312, 0);
 	expect(await width(page, '.pane.left')).toBeCloseTo(264, 0);
+
+	// At phone width the columns are tabs, with nothing to resize (#1360). Plan
+	// keeps its left column on screen there, so its handle is the one to check.
+	await page.setViewportSize({ width: 390, height: 800 });
+	await gotoReady(page, `${new URL(page.url()).pathname}/plan`);
+	await expect(page.locator('.pane.left')).toBeVisible();
+	await expect(left).toBeHidden();
 });
 
 // A stored width carries its own floor and cap, which may be hand-edited or

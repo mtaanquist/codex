@@ -153,6 +153,32 @@ test('the author works through a pattern note across two scenes', async ({ page 
 // The suggestion is revised while the writer is rewording it. The accept is
 // refused; the card then shows the new wording above theirs, keeps what they
 // typed, and keeps the keyboard in the pass.
+// #1360: the Accept button goes with its step, so the keyboard moves on to
+// the next step, and to the end of the pass after the last one, rather than
+// dropping to the page once the page's data is read again.
+test('focus moves on through the pass after each accept', async ({ page }) => {
+	await openNote(page);
+	const note = page.locator('.rv-card').filter({ hasText: 'Pattern note (POV epithets)' });
+	await note.getByRole('button', { name: 'Work through this (2)' }).click();
+	const pass = page.locator('.review-panel');
+	await expect(pass.getByText('1 of 2')).toBeVisible();
+	// Held, not just reached: the drop came once the page's data was read
+	// again after the accept, so each check waits for that read and a render.
+	const accept = async () => {
+		const reread = page.waitForResponse((r) => r.url().includes('__data.json'));
+		await pass.getByRole('button', { name: 'Accept', exact: true }).click();
+		await reread;
+		await page.evaluate(
+			() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+		);
+	};
+	await accept();
+	await expect(pass.locator('.pp-para')).toContainText('looked back.');
+	await expect(pass.locator('.pp-card[aria-current="step"]')).toBeFocused();
+	await accept();
+	await expect(pass.locator('.pp-end')).toBeFocused();
+});
+
 test('an edit revised while the writer rewords it shows the new wording', async ({ page }) => {
 	const { name } = await openNote(page);
 	const note = page.locator('.rv-card').filter({ hasText: 'Pattern note (POV epithets)' });
@@ -234,10 +260,16 @@ test('a link from a connected app opens the pass on its note', async ({ page }) 
 	await expect(pass.locator('.inspector-kind')).toHaveText('POV epithets');
 	await expect(pass.getByText('1 of 2')).toBeVisible();
 	await expect(pass.locator('.pp-para')).toContainText('crossed the ford.');
+	// The link's marker leaves the address once the pass is open, so a reload
+	// after the pass is stopped does not start it again.
+	await expect(page).not.toHaveURL(/[?&]pass=/);
 
 	// Stopping shows the note under the app's name, with the same way back in.
 	await pass.getByRole('button', { name: 'Stop' }).click();
 	const note = page.locator('.rv-card').filter({ hasText: 'Pattern note (POV epithets)' });
+	await gotoReady(page, page.url());
+	await expect(note.getByRole('button', { name: 'Work through this (2)' })).toBeVisible();
+	await expect(pass.locator('.inspector-kind')).toHaveCount(0);
 	await expect(note).toContainText('Writing Desk');
 	// However long the name, the "App" chip and the app's address stay in
 	// view inside the card, and the name is what gets cut.

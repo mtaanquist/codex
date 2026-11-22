@@ -27,7 +27,11 @@ function request(
 	path: string,
 	cookie?: string,
 	origin = 'http://localhost',
-	{ method = 'GET', isDataRequest = false } = {}
+	{
+		method = 'GET',
+		isDataRequest = false,
+		headers = {}
+	}: { method?: string; isDataRequest?: boolean; headers?: Record<string, string> } = {}
 ) {
 	const resolve = vi.fn(async () => new Response('ok'));
 	const cookies = {
@@ -39,7 +43,7 @@ function request(
 	const url = new URL(`${origin}${path}`);
 	const event = {
 		url,
-		request: new Request(url, { method }),
+		request: new Request(url, { method, headers }),
 		isDataRequest,
 		isRemoteRequest: false,
 		cookies,
@@ -143,6 +147,29 @@ describe('handle without a session', () => {
 			(err) => isRedirect(err) && err.location === '/login'
 		);
 	});
+
+	// #1360: only the writer's own visit to the consent page is remembered for
+	// after sign-in. An image or a script on another site that loads the page
+	// must not choose where the writer lands.
+	it.each([
+		['a page navigation', { 'sec-fetch-mode': 'navigate' }, true],
+		['a browser that sends no fetch metadata', {}, true],
+		['an embedded load', { 'sec-fetch-mode': 'no-cors' }, false],
+		['a script fetch', { 'sec-fetch-mode': 'cors' }, false]
+	])(
+		'remembers the consent page only for a navigation: %s',
+		async (_label, headers, remembered) => {
+			const { event, resolve } = request('/oauth/authorize?client_id=a', undefined, undefined, {
+				headers
+			});
+			const response: Response = await handle({ event, resolve } as never);
+			expect(response.status).toBe(303);
+			expect(response.headers.get('location')).toBe('/login');
+			const cookie = response.headers.get('set-cookie');
+			if (remembered) expect(cookie).toMatch(/^return_to=\/oauth\/authorize\?client_id=a;/);
+			else expect(cookie).toBeNull();
+		}
+	);
 });
 
 describe('security headers', () => {

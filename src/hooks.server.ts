@@ -7,6 +7,7 @@ import { assertOriginConfigured, publicOrigin } from '#lib/server/origin';
 import { dev } from '$app/env';
 import { isForbiddenCrossSiteForm } from '#lib/server/csrf';
 import {
+	isPageNavigation,
 	isReturnablePath,
 	rememberReturnTo,
 	returnToForForm,
@@ -119,7 +120,10 @@ async function redirectFromHook(
 	}
 	const headers = new Headers({ location });
 	// A page that has to survive sign-in is remembered for afterwards.
-	const returnTo = location === '/login' ? rememberReturnTo(event.cookies, event.url) : null;
+	const returnTo =
+		location === '/login' && isPageNavigation(event.request)
+			? rememberReturnTo(event.cookies, event.url)
+			: null;
 	if (returnTo) headers.append('set-cookie', returnTo);
 	// The stale-session delete is only applied by SvelteKit on its own
 	// responses, so it is carried here by hand.

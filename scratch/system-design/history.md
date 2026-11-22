@@ -13,6 +13,19 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
+`staging/bug-fixes`, part of #1360). The side-column resize handle carried
+the bare classes `left` and `right`, so the panes' own `.left` and `.right`
+rules (later in theme.css, same specificity) gave it `display: flex`, a
+background and a border, and beat the narrow-window rule that hides it; it
+showed on Plan at 390 px. The modifiers are now `pane-resizer-left` and
+`pane-resizer-right`. The guided pass lost focus after a successful accept
+because the form's `update()` re-reads the page data after the step effect
+had already focused the next card; the card (or the end of the pass) is
+focused again when focus fell to the page. The return-to cookie is only set
+for a request with `Sec-Fetch-Mode: navigate` (or none), and `?pass=` is
+taken off the address with a shallow replace once read.
+
 Small non-Assistant polish (2026-11-20, staging branch
 `staging/non-assistant-polish`, lanes #1278 to #1284): six backlog issues.
 `resolvePlanEntity` is one select with a left join per entity table instead
