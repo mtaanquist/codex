@@ -14,6 +14,7 @@ import {
 } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
+import { OUT_OF_DATE_SCENE_SUMMARY_NOTE } from '../../src/lib/server/summary-currency';
 
 process.env.APP_SECRET = process.env.APP_SECRET || 'continuity-test-secret';
 
@@ -317,6 +318,18 @@ describe('reviewUniverseContinuity', () => {
 		expect(survey).toContain('Story: First Light');
 		expect(survey).toContain('Story: Second Dawn');
 		expect(survey).toContain('Gate (id:');
+	});
+
+	it('labels an Assistant scene summary written before the scene last changed', async () => {
+		await seedStory('First Light', ['Gate', 'Road'], 1);
+		await pool.query(
+			`update scenes set summary_generated_at = updated_at - interval '1 minute' where title = 'Gate'`
+		);
+		const { provider, seen } = recordingProvider();
+		await reviewUniverseContinuity(db, { userId, universeId }, { provider });
+		const survey = userText(seen[0]);
+		expect(survey).toContain(`${OUT_OF_DATE_SCENE_SUMMARY_NOTE} Summary of Gate.`);
+		expect(survey).not.toContain(`${OUT_OF_DATE_SCENE_SUMMARY_NOTE} Summary of Road.`);
 	});
 
 	it('stages a thread on the owning story even when launched at the universe', async () => {

@@ -28,6 +28,7 @@ import {
 	type UniverseScope
 } from './sources.ts';
 import { reviewMentionData } from '../../mention-entities.ts';
+import { OUT_OF_DATE_SCENE_SUMMARY_NOTE } from '../../summary-currency.ts';
 import type { MentionEntity } from '#lib/editor-mentions';
 
 // Assemble the world context for a request, in tiers, against a token budget.
@@ -188,11 +189,14 @@ async function gatherSceneTiers(
 			? await precedingSceneBody(db, scope.storyId, options.sceneId)
 			: null;
 	// What a 'keyword' lore entry matches against: the writer's focus, the
-	// current scene, neighbour summaries, and the in-scope entity names.
+	// current scene, neighbour summaries, and the in-scope entity names. The
+	// out-of-date note is left out, so its words match no keyword.
 	const scopeText = [
 		options.focusText ?? '',
 		neighbourhood.current?.bodyMd ?? '',
-		...neighbourhood.neighbours.map((n) => n.summaryMd ?? ''),
+		...neighbourhood.neighbours.map(
+			(n) => n.summaryMd?.replace(OUT_OF_DATE_SCENE_SUMMARY_NOTE, '') ?? ''
+		),
 		...entityNames
 	].join('\n');
 	const lore = tierWanted(options.includeTiers, 'lore')

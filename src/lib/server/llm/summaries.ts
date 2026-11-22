@@ -176,7 +176,23 @@ export async function summariseStory(
 			capped = true;
 			break;
 		}
-		if (blank(scene.bodyMd)) continue;
+		if (blank(scene.bodyMd)) {
+			// An Assistant summary of a scene since emptied tells of text that is
+			// gone. Cleared under the same checks as a write, so text typed or a
+			// summary given since the read keeps the row as it is. The writer's
+			// own summary (no summary_generated_at) stays.
+			if (scene.summaryGeneratedAt && scene.summaryMd !== null) {
+				await db.execute(sql`
+					update scenes set summary_md = null, summary_generated_at = null
+					where id = ${scene.id}
+						and updated_at = ${scene.updatedAtText}::timestamptz
+						and summary_md is not distinct from ${scene.summaryMd}
+						and summary_generated_at = ${scene.generatedAtText}::timestamptz
+						and deleted_at is null
+				`);
+			}
+			continue;
+		}
 		const changedSince = scene.summaryGeneratedAt
 			? !summaryIsCurrent(scene.summaryGeneratedAt, scene.updatedAt)
 			: false;

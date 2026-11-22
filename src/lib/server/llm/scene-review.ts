@@ -52,7 +52,11 @@ import {
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
-import { summaryIsCurrent } from '../summary-currency.ts';
+import {
+	sceneSummaryToSend,
+	summaryIsCurrent,
+	type SceneSummarySource
+} from '../summary-currency.ts';
 import { completeDetailed, type GatewayDeps } from './gateway.ts';
 import { modelContextWindow, resolveLlmConfig, type ResolvedConfig } from './config.ts';
 import { CAP_NOT_APPLIED_MESSAGE, SpendCapError, spentFields, type SpendMeter } from './spend.ts';
@@ -555,11 +559,13 @@ async function storySurveyScenes(
 	userId: string,
 	storyId: string
 ): Promise<SurveyScene[]> {
-	return db
+	const rows = await db
 		.select({
 			id: scenes.id,
 			title: scenes.title,
 			summaryMd: scenes.summaryMd,
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt,
 			bodyMd: scenes.bodyMd
 		})
 		.from(scenes)
@@ -573,6 +579,18 @@ async function storySurveyScenes(
 			)
 		)
 		.orderBy(asc(scenes.globalPosition));
+	return rows.map(surveyScene);
+}
+
+// A scene as the survey lists it, with an out-of-date summary labelled.
+function surveyScene(row: SceneSummarySource & Omit<SurveyScene, 'summaryMd'>): SurveyScene {
+	return {
+		id: row.id,
+		title: row.title,
+		summaryMd: sceneSummaryToSend(row),
+		bodyMd: row.bodyMd,
+		storyTitle: row.storyTitle
+	};
 }
 
 // The cross-scene pass of a full story review: the two-stage continuity run
@@ -631,16 +649,17 @@ async function staleSummaryCount(db: Database, userId: string, storyId: string):
 				isNull(scenes.deletedAt)
 			)
 		);
-	return rows.filter(
-		(row) =>
-			Boolean(row.bodyMd && row.bodyMd.trim()) &&
-			needsSummary({
-				summaryMd: row.summaryMd,
-				summaryGeneratedAt: row.summaryGeneratedAt,
-				changedSince: row.summaryGeneratedAt
-					? !summaryIsCurrent(row.summaryGeneratedAt, row.updatedAt)
-					: false
-			})
+	return rows.filter((row) =>
+		!row.bodyMd?.trim()
+			? // The pass clears an Assistant summary of an emptied scene.
+				row.summaryGeneratedAt !== null && row.summaryMd !== null
+			: needsSummary({
+					summaryMd: row.summaryMd,
+					summaryGeneratedAt: row.summaryGeneratedAt,
+					changedSince: row.summaryGeneratedAt
+						? !summaryIsCurrent(row.summaryGeneratedAt, row.updatedAt)
+						: false
+				})
 	).length;
 }
 
@@ -894,26 +913,30 @@ export async function reviewUniverseContinuity(
 	const meter = await jobSpendMeter(db, { userId: opts.userId, jobId: opts.jobId });
 	// Ordered by story, then story order within it, so the survey listing groups
 	// each story's scenes together.
-	const rows = await db
-		.select({
-			id: scenes.id,
-			title: scenes.title,
-			summaryMd: scenes.summaryMd,
-			bodyMd: scenes.bodyMd,
-			storyTitle: stories.title
-		})
-		.from(scenes)
-		.innerJoin(stories, eq(scenes.storyId, stories.id))
-		.where(
-			and(
-				eq(stories.universeId, opts.universeId),
-				eq(stories.ownerId, opts.userId),
-				storyIsLive(),
-				storyAssistantOn(),
-				isNull(scenes.deletedAt)
+	const rows = (
+		await db
+			.select({
+				id: scenes.id,
+				title: scenes.title,
+				summaryMd: scenes.summaryMd,
+				summaryGeneratedAt: scenes.summaryGeneratedAt,
+				updatedAt: scenes.updatedAt,
+				bodyMd: scenes.bodyMd,
+				storyTitle: stories.title
+			})
+			.from(scenes)
+			.innerJoin(stories, eq(scenes.storyId, stories.id))
+			.where(
+				and(
+					eq(stories.universeId, opts.universeId),
+					eq(stories.ownerId, opts.userId),
+					storyIsLive(),
+					storyAssistantOn(),
+					isNull(scenes.deletedAt)
+				)
 			)
-		)
-		.orderBy(asc(stories.title), asc(scenes.globalPosition));
+			.orderBy(asc(stories.title), asc(scenes.globalPosition))
+	).map(surveyScene);
 	run.state.total = rows.length;
 	if (rows.length < 2) {
 		run.state.phase = 'done';
