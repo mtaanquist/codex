@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	rateLimit,
+	refundSlidingRateLimit,
 	resetRateLimits,
 	slidingRateLimit,
 	uploadLimit,
@@ -38,6 +39,22 @@ describe('rateLimit', () => {
 });
 
 describe('slidingRateLimit', () => {
+	it('gives back a refunded call, and only that one', () => {
+		const key = 'calls:refund';
+		expect(slidingRateLimit(key, 2, 1000, 0).allowed).toBe(true);
+		expect(slidingRateLimit(key, 2, 1000, 100).allowed).toBe(true);
+		expect(slidingRateLimit(key, 2, 1000, 200).allowed).toBe(false);
+		refundSlidingRateLimit(key, 100);
+		// A stamp that was never let through changes nothing.
+		refundSlidingRateLimit(key, 200);
+		refundSlidingRateLimit('calls:other', 0);
+		expect(slidingRateLimit(key, 2, 1000, 300).allowed).toBe(true);
+		expect(slidingRateLimit(key, 2, 1000, 400).allowed).toBe(false);
+		// The call at 0 still counts until it is a window old.
+		expect(slidingRateLimit(key, 2, 1000, 999).allowed).toBe(false);
+		expect(slidingRateLimit(key, 2, 1000, 1000).allowed).toBe(true);
+	});
+
 	it('allows up to the limit, then blocks until the oldest call is a window old', () => {
 		const key = 'calls:a';
 		expect(slidingRateLimit(key, 2, 1000, 0).allowed).toBe(true);

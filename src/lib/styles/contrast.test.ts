@@ -242,6 +242,29 @@ describe('token contrast', () => {
 				}
 			});
 
+			// Struck text of a suggested deletion is muted on its own tint, and
+			// full strength where a comment's tint (at its hover strength) is
+			// laid over it too.
+			it('keeps struck text at AA, on its own and under a comment', () => {
+				const review = readFileSync(join(process.cwd(), 'src/lib/styles/review.css'), 'utf8');
+				expect(review).not.toMatch(/\.rv-del[^{]*\{[^}]*color: var\(--text-faint\)/);
+				expect(review).toMatch(/\.rv-comment \.rv-del-t,[^{]*\{\s*color: var\(--text\);/);
+				for (const cat of CATS) {
+					for (const [surface, bg] of surfaces) {
+						const alone = blend(hex(tokens, cat), bg, MAX_MARK_TINT / 100);
+						const both = blend(hex(tokens, cat), blend(hex(tokens, cat), bg, 0.09), 0.26);
+						expect(
+							contrastRatio(hex(tokens, '--text-muted'), alone),
+							`${cat} on ${surface}`
+						).toBeGreaterThanOrEqual(AA_TEXT);
+						expect(
+							contrastRatio(hex(tokens, '--text'), both),
+							`${cat} on ${surface} under a comment`
+						).toBeGreaterThanOrEqual(AA_TEXT);
+					}
+				}
+			});
+
 			it('gives white initials AA on every author fill', () => {
 				for (const cat of CATS) {
 					const fill = mixWithBlack(hex(tokens, cat), AUTHOR_FILL_SHARE / 100);

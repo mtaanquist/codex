@@ -43,7 +43,8 @@ const { changePassword } = await import('#lib/server/account');
 const { requestPasswordReset, resetPassword } = await import('#lib/server/password-reset');
 const { scheduleAccountDeletion } = await import('#lib/server/account-deletion');
 const { setUserSuspended } = await import('#lib/server/admin');
-const { findClient, registerClient } = await import('#lib/server/mcp/clients');
+const { findClient, registerClient, resetClientDocumentFailures } =
+	await import('#lib/server/mcp/clients');
 const {
 	createAuthorizationCode,
 	createPersonalToken,
@@ -161,6 +162,7 @@ beforeEach(async () => {
 	await pool.query('truncate table users, oauth_clients cascade');
 	await pool.query(`delete from app_settings where key = 'mcp'`);
 	resetRateLimits();
+	resetClientDocumentFailures();
 	alice = await addUser('alice@example.com');
 	bob = await addUser('bob@example.com');
 	sessionOf.clear();
@@ -941,9 +943,58 @@ describe('clients', () => {
 			throw new Error('unreachable');
 		};
 		expect(await findClient(db, URL_ID, failing)).toBeNull();
+		resetClientDocumentFailures();
 		const first = await findClient(db, URL_ID, async () => doc());
 		await db.update(oauthClients).set({ fetchedAt: new Date(Date.now() - 2 * 86400_000) });
 		expect((await findClient(db, URL_ID, failing))?.id).toBe(first?.id);
+	});
+
+	it('does not fetch a failing document again for a minute', async () => {
+		const realNow = Date.now;
+		let clock = realNow();
+		const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+		try {
+			const unreachable = vi.fn(async () => {
+				throw new Error('unreachable');
+			});
+			expect(await findClient(db, URL_ID, unreachable)).toBeNull();
+			expect(await findClient(db, URL_ID, unreachable)).toBeNull();
+			expect(unreachable).toHaveBeenCalledTimes(1);
+			clock += 61_000;
+			const working = vi.fn(async () => doc());
+			expect(await findClient(db, URL_ID, working)).toMatchObject({ clientName: 'Desk' });
+
+			// A stale copy that can no longer be fetched still stands meanwhile.
+			clock += 2 * 86400_000;
+			expect(await findClient(db, URL_ID, unreachable)).toMatchObject({ clientName: 'Desk' });
+			expect(await findClient(db, URL_ID, working)).toMatchObject({ clientName: 'Desk' });
+			expect(unreachable).toHaveBeenCalledTimes(2);
+			expect(working).toHaveBeenCalledTimes(1);
+
+			// A document that stopped qualifying lets nobody in, and is not asked
+			// for again until the minute is up.
+			clock += 61_000;
+			const other = vi.fn(async () => doc({ client_id: 'https://desk.example/other.json' }));
+			expect(await findClient(db, URL_ID, other)).toBeNull();
+			expect(await findClient(db, URL_ID, working)).toBeNull();
+			expect(working).toHaveBeenCalledTimes(1);
+			clock += 61_000;
+			expect(await findClient(db, URL_ID, working)).toMatchObject({ clientName: 'Desk' });
+		} finally {
+			now.mockRestore();
+		}
+	});
+
+	it('shares one fetch between attempts that come at once', async () => {
+		let answer!: (value: unknown) => void;
+		const fetchDocument = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+		const attempts = Array.from({ length: 5 }, () => findClient(db, URL_ID, fetchDocument));
+		await vi.waitFor(() => expect(fetchDocument).toHaveBeenCalled());
+		answer(doc());
+		const clients = await Promise.all(attempts);
+		expect(new Set(clients.map((found) => found?.id)).size).toBe(1);
+		expect(clients[0]).toMatchObject({ clientName: 'Desk' });
+		expect(fetchDocument).toHaveBeenCalledTimes(1);
 	});
 
 	it('refuses a document that names another address or does not qualify', async () => {
@@ -1298,6 +1349,41 @@ describe('the instance switch', () => {
 
 		await saveMcpInstanceEnabled(db, true);
 		expect((await resolveBearer(db, tokens.accessToken))?.userId).toBe(alice);
+	});
+});
+
+describe('Connected apps while the instance switch is off', () => {
+	type Loaded = { externalAccess: { available: boolean; shown: boolean; apps: unknown[] } };
+	const loadApps = async (userId: string) => {
+		try {
+			return (await accountPage.load({
+				locals: {
+					user: { id: userId, email: 'x@example.com', displayName: 'X', role: 'user' },
+					session: { id: sessionOf.get(userId) ?? 's' }
+				},
+				params: { section: 'apps' },
+				url: new URL(`${ORIGIN}/account/apps`)
+			} as never)) as Loaded;
+		} catch (err) {
+			if (isHttpError(err)) return err.status;
+			throw err;
+		}
+	};
+
+	it('stays for a writer with an app to disconnect, and lets them disconnect it', async () => {
+		const tokens = await connect(alice);
+		await saveMcpInstanceEnabled(db, false);
+		expect(await loadApps(alice)).toMatchObject({
+			externalAccess: { available: false, shown: true, apps: [{ host: 'app.example' }] }
+		});
+		// Nothing to disconnect: the section is not there.
+		expect(await loadApps(bob)).toBe(404);
+
+		const [grant] = await listGrants(db, alice);
+		await accountPage.actions.revokeApp(accountEvent(alice, { grantId: grant.id }) as never);
+		expect(await loadApps(alice)).toBe(404);
+		await saveMcpInstanceEnabled(db, true);
+		expect(await resolveBearer(db, tokens.accessToken)).toBeNull();
 	});
 });
 

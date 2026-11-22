@@ -61,13 +61,15 @@ To disconnect every app at once, turn off "Allow other apps to connect". To use 
 
 Changing or resetting your password also disconnects every app. Access stays on, so afterwards you only need to connect each app again.
 
+If the person who runs your Codex has turned off access for apps, no app can connect or read anything. Connected apps still lists the apps and tokens you had, so you can disconnect them. If access is turned on again, the ones you leave work again.
+
 ## For a script or tool of your own
 
 A tool that cannot open the Codex page to ask for access can use a personal access token instead. See "Personal access tokens" in [Your account](/docs/account).
 
 ## If the app cannot connect
 
-- **"Connected apps" is missing from your account page.** The person who runs your Codex has turned this off. Ask them to turn it on.
+- **"Connected apps" is missing from your account page, or says access is turned off.** The person who runs your Codex has turned this off. Ask them to turn it on.
 - **The app says it cannot reach the address.** Apps that run on the internet, including Claude on the web and the Claude desktop app, connect from their own servers, not from your computer. They can only reach a Codex that has a public web address starting with `https://`. A Codex that you open at `localhost`, or at an address that only works at home, cannot be reached by them. If you run Codex yourself, see [Running Codex yourself](/docs/selfhosting).
 - **The Codex page shows an error instead of asking you to allow the app.** Remove the connector in the app and add it again with the address copied from Connected apps. If the page says "This request cannot be answered", the app sent a request Codex could not use; select the link to return to the app, or go to your library if you did not start this yourself.
 - **The app stopped working.** Check "Apps with access". If the app is not listed, it was disconnected, for example by a password change. Connect it again.

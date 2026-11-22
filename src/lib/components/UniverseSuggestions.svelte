@@ -1,5 +1,8 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import type { SubmitFunction } from '$app/forms';
 	import { resolve } from '$app/paths';
+	import { enhance } from '#lib/enhance';
 	import { withQuery } from '#lib/href';
 	import FormStatus from './FormStatus.svelte';
 	import type { EntityProposalView, SplitProposalView } from '#lib/server/proposals';
@@ -20,6 +23,28 @@
 		done?: string;
 	} = $props();
 
+	// A decision takes its row away. Focus goes to the row that takes its
+	// place (or the one before, once the last is gone), and to the list's
+	// heading once the list is empty, so a keyboard or screen reader user
+	// carries on from where they were.
+	const decide: SubmitFunction = ({ formElement }) => {
+		const block = formElement.closest('.admin-block');
+		const row = formElement.closest('.list-row');
+		const index = row ? Array.from(block?.querySelectorAll('.list-row') ?? []).indexOf(row) : -1;
+		return async ({ result, update }) => {
+			await update();
+			await tick();
+			const lost = !document.activeElement || document.activeElement === document.body;
+			if (result.type !== 'success' && !lost) return;
+			const rows = block?.querySelectorAll<HTMLElement>('.list-row') ?? [];
+			const next = rows[index] ?? rows[rows.length - 1];
+			const target =
+				next?.querySelector<HTMLElement>('button') ??
+				block?.querySelector<HTMLElement>('.admin-block-title');
+			target?.focus();
+		};
+	};
+
 	const KIND: Record<EntityProposalView['kind'], string> = {
 		character: 'Character',
 		place: 'Place',
@@ -27,11 +52,11 @@
 	};
 </script>
 
-<FormStatus block error={message || null} success={done || null} />
+<FormStatus live error={message || null} success={done || null} />
 
 <div class="admin-block">
 	<div class="admin-block-head">
-		<h2 class="admin-block-title">Suggested entries</h2>
+		<h2 class="admin-block-title" tabindex="-1">Suggested entries</h2>
 		<p class="admin-block-sub">
 			Characters, places and lore entries that your Assistant or a connected app found in your
 			writing. Accept one to add it to this universe, or dismiss it. Nothing is added until you
@@ -59,7 +84,7 @@
 								<div class="list-sub">Seen in: {entry.seenIn}</div>
 							{/if}
 						</div>
-						<form method="POST" action="?/decideEntity" class="list-actions">
+						<form method="POST" action="?/decideEntity" class="list-actions" use:enhance={decide}>
 							<input type="hidden" name="id" value={entry.id} />
 							<button
 								type="submit"
@@ -85,7 +110,7 @@
 
 <div class="admin-block">
 	<div class="admin-block-head">
-		<h2 class="admin-block-title">Proposed scene splits</h2>
+		<h2 class="admin-block-title" tabindex="-1">Proposed scene splits</h2>
 		<p class="admin-block-sub">
 			Places where a connected app thinks a scene should become two. Select "Split here" to split
 			the scene at the quoted words, or dismiss the proposal. The scene stays as it is until you
@@ -119,7 +144,7 @@
 							{/if}
 							<div class="list-sub">The new scene would start at: "{split.before}"</div>
 						</div>
-						<form method="POST" action="?/decideSplit" class="list-actions">
+						<form method="POST" action="?/decideSplit" class="list-actions" use:enhance={decide}>
 							<input type="hidden" name="id" value={split.id} />
 							<button
 								type="submit"

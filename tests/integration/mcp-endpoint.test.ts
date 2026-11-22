@@ -85,8 +85,12 @@ const { discardSceneDraft, sceneDraftFor } = await import('#lib/server/scene-dra
 const { saveSceneBody } = await import('#lib/server/scene-save');
 const { readGate, stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
 const { reanchorRange } = await import('#lib/review-anchor');
-const { MAX_APP_DRAFTS_WAITING, MAX_STAGING_CALLS_WAITING, TOOL_RESULT_MAX_CHARS } =
-	await import('#lib/server/mcp/constants');
+const {
+	MAX_APP_DRAFTS_WAITING,
+	MAX_READ_CALLS_WAITING,
+	MAX_STAGING_CALLS_WAITING,
+	TOOL_RESULT_MAX_CHARS
+} = await import('#lib/server/mcp/constants');
 const route = await import('../../src/routes/api/mcp/+server');
 
 const ORIGIN = 'http://localhost';
@@ -3676,6 +3680,71 @@ describe('limits', () => {
 		expect((await comment(alice, { comment: 'One more.' })).text).toMatch(/^Too many calls/);
 		// Reading is counted apart.
 		expect((await call(alice, 'list_universes')).isError).toBe(false);
+	});
+
+	it('does not count a call turned away because too many were running', async () => {
+		// Fill the writer's reading line: two running and every waiting place.
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const held = Array.from({ length: 2 + MAX_READ_CALLS_WAITING }, () =>
+			readGate.run(alice.userId, () => gate)
+		);
+		for (let i = 0; i < 130; i++) {
+			expect((await call(alice, 'list_universes')).text).toBe('Too many calls at once. Try again.');
+		}
+		open();
+		await Promise.all(held);
+		for (let i = 0; i < 120; i++) {
+			expect((await call(alice, 'list_universes')).isError).toBe(false);
+		}
+		expect((await call(alice, 'list_universes')).text).toMatch(/^Too many calls\. Wait/);
+	});
+
+	it('does not count a staging call turned away while others held its turn', async () => {
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const held = Array.from({ length: 1 + MAX_STAGING_CALLS_WAITING }, () =>
+			stagingGate.run(alice.userId, () => gate)
+		);
+		for (let i = 0; i < 40; i++) {
+			expect(await comment(alice, { comment: `Busy ${i}.` })).toEqual({
+				text: 'Another call is still running. Try again.',
+				isError: true
+			});
+		}
+		open();
+		await Promise.all(held);
+		let staged = 0;
+		for (let i = 0; i < 31; i++) {
+			if (!(await comment(alice, { comment: `Note number ${i}.` })).isError) staged++;
+		}
+		expect(staged).toBe(30);
+	});
+
+	it('does not spend a connections budget on calls the writers budget refused', async () => {
+		const second = await connect(alice.userId, 'Second');
+		const third = await connect(alice.userId, 'Third');
+		let clock = performance.now();
+		const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+		try {
+			for (let i = 0; i < 120; i++) await call(alice, 'list_universes');
+			for (let i = 0; i < 120; i++) await call(second, 'list_universes');
+			// Later in the minute the writer's budget is still spent, so the third
+			// app's calls are refused.
+			clock += 50_000;
+			for (let i = 0; i < 120; i++) {
+				expect((await call(third, 'list_universes')).text).toMatch(/^Too many calls\. Wait/);
+			}
+			// Once the writer's budget comes back, the third app has its own whole.
+			clock += 11_000;
+			let allowed = 0;
+			for (let i = 0; i < 120; i++) {
+				if (!(await call(third, 'list_universes')).isError) allowed++;
+			}
+			expect(allowed).toBe(120);
+		} finally {
+			now.mockRestore();
+		}
 	});
 
 	it('marks the connection as used', async () => {

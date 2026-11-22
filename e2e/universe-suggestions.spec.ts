@@ -64,14 +64,20 @@ test('a writer accepts one suggested entry and dismisses another', async ({ page
 	);
 	await expect(marit).toContainText('Seen in: The Quay');
 
-	await marit.getByRole('button', { name: 'Accept Old Marit' }).click();
-	await expect(page.getByRole('status')).toContainText('Added to this universe.');
+	// The outcome is read out from a status region that was already in the
+	// page, and focus moves on to the next suggestion.
+	const status = page.getByRole('status').filter({ hasText: /./ });
+	await marit.getByRole('button', { name: 'Accept Old Marit' }).press('Enter');
+	await expect(status).toContainText('Added to this universe.');
 	await expect(page.locator('.list-row', { hasText: 'Old Marit' })).toHaveCount(0);
 	await expect(page.getByRole('link', { name: 'Suggestions (1)' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Accept Saltmere' })).toBeFocused();
 
+	// Deciding the last one leaves focus on the list's heading.
 	await page.getByRole('button', { name: 'Dismiss Saltmere' }).click();
-	await expect(page.getByRole('status')).toContainText('Dismissed.');
+	await expect(status).toContainText('Dismissed.');
 	await expect(page.getByText('No suggested entries are waiting.')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Suggested entries' })).toBeFocused();
 
 	// The accepted entry is in Plan with its description; the dismissed one is not.
 	await gotoReady(page, `/universes/suggest-${stamp}/plan`);

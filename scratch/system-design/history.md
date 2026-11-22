@@ -13,6 +13,29 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+MCP endpoint low findings, second pass (2026-11-22,
+`fix/mcp-endpoint-lows-2` on `staging/bug-fixes`, #1360). A call turned
+away before it did anything (a full reading or staging queue, or the
+writer's budget when the app's own had room) now gives back the stamps it
+took, through `refundSlidingRateLimit`; before, an app retrying into a busy
+queue spent its minute without one call running. Staging "busy" is now an
+error result like reading "busy". Client metadata documents that could not
+be fetched, or did not qualify, are not fetched again for a minute
+(`CLIENT_DOCUMENT_RETRY_MS`), kept in memory like the rate limits: an
+unreachable host keeps the copy already checked, a disqualified document
+lets nobody in. A minute keeps a fixed document usable at once while
+capping a failing one at one fetch a minute; fetches of one address at once
+share one request. Connected apps stays on the account page while the admin
+switch is off for a writer with apps or tokens left, since turning access
+back on would let them in again; it shows only the lists and their
+Disconnect and Revoke buttons. Suggestion decisions are enhanced forms that
+move focus to the next row (or the list heading) and announce the outcome
+through `FormStatus live`. The axe pass now leaves a comment and a
+suggested edit on its story: it found the margin markers focusable inside
+the `aria-hidden` rail (now `tabindex="-1"`, the cards are the keyboard
+path) and struck text at 3.6:1 under a comment; struck text is muted rather
+than faint, and full strength where a comment's tint is laid over it.
+
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried
 the bare classes `left` and `right`, so the panes' own `.left` and `.right`
