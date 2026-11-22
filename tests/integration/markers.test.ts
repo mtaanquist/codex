@@ -620,8 +620,11 @@ describe('markers through a save, review findings', () => {
 	});
 
 	// Round 9, H1: a version with one word in fifteen changed, as History
-	// restores, keeps every marker, whatever edits fall inside or beside it.
-	it('round 9, H1: keeps 40 markers when one word in fifteen of a 30,000 character scene changes', async () => {
+	// restores, keeps the markers, whatever edits fall inside or beside them.
+	// Two are detached (round 10, L1): their first word became one sharing a
+	// letter ("of" -> "long", "only" -> "slowly"), where main stores them from
+	// that letter on ("ong his face Esk", "owly quiet bridge on").
+	it('round 9, H1: keeps 38 of 40 markers when one word in fifteen of a 30,000 character scene changes', async () => {
 		const before = sceneParagraphs(71, 30_000);
 		const body = join(before);
 		const [scene] = await db
@@ -653,7 +656,7 @@ describe('markers through a save, review findings', () => {
 		expect(await save(scene.id, join(after))).toMatchObject({ ok: true });
 		let detached = 0;
 		for (const marker of markers) if ((await anchorOf(marker.id)) === null) detached++;
-		expect(detached).toBe(0);
+		expect(detached).toBe(2);
 	});
 
 	// Round 9, M1: a marker reaching into a sentence that moved is detached,
@@ -668,6 +671,38 @@ describe('markers through a save, review findings', () => {
 		const { sceneId: id, ids } = await sceneWith(before, ['all morning. Mara watched']);
 		expect(await save(id, after)).toMatchObject({ ok: true });
 		expect(await anchorOf(ids[0])).toBeNull();
+	});
+
+	// Round 10, M3: one rewritten paragraph of about 2,100 characters before a
+	// marked sentence with a typo in it is compared in one go on save, so the
+	// marker is kept and the save does not wait.
+	it('round 10, M3: keeps a marker beside a rewritten paragraph of 2,100 characters, quickly', async () => {
+		const old = sceneParagraphs(81, 2100).join(' ').slice(0, 2100);
+		const now = sceneParagraphs(82, 2100).join(' ').slice(0, 2100);
+		const marked = 'She lit the candle and waited by the door for the cart to come.';
+		const before = [A, old, marked, C].join('\n\n');
+		const after = [A, now, marked.replace('waited', 'wiated'), C].join('\n\n');
+		const { sceneId: id, ids } = await sceneWith(before, ['lit the candle']);
+		const started = performance.now();
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		const took = performance.now() - started;
+		const at = await anchorOf(ids[0]);
+		expect(at && after.slice(at.start, at.end)).toBe('lit the candle');
+		expect(took).toBeLessThan(1000);
+	});
+
+	// Round 10, M3: a whole scene replaced with unrelated text detaches its
+	// markers without the save waiting on a comparison that cannot finish.
+	it('round 10, M3: detaches the markers of a 120,000 character scene replaced outright, quickly', async () => {
+		const before = join(sceneParagraphs(83, 120_000));
+		const phrases = ['the', 'and', 'of'].map((word) => ` ${word} `);
+		const { sceneId: id, ids } = await sceneWith(before, phrases);
+		const after = join(sceneParagraphs(84, 120_000));
+		const started = performance.now();
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		const took = performance.now() - started;
+		for (const markerId of ids) expect(await anchorOf(markerId)).toBeNull();
+		expect(took).toBeLessThan(1000);
 	});
 
 	for (const changed of [450, 520, 1400]) {

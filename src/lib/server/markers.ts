@@ -5,7 +5,7 @@ import { ownedScene } from './scene-access.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findTodoLines } from '#lib/todo-markers';
 import { toLf } from '#lib/line-endings';
-import { createAnchorMapper, SAVE_DIFF_BUDGET, SAVE_FINISH_MS } from '../review-anchor.ts';
+import { createAnchorMapper, SAVE_DIFF_BUDGET } from '../review-anchor.ts';
 import type { ActionFailure } from './action-result.ts';
 
 // A selection turned into a checkable marker. Anchors are clamped to the
@@ -123,15 +123,11 @@ export async function updateMarkerAnchors(
 // \r\n as one character, as the editor does, so the comparison runs on that
 // text.
 //
-// The comparison runs under SAVE_DIFF_BUDGET. Where a marker lies in a
-// stretch it did not compare (pages replaced with nothing in common), that
-// stretch is compared again by finish(), which lets the server answer others
-// while it works, for up to SAVE_FINISH_MS of wall time; the save holds the
-// scene's row meanwhile. If the stretch is still not compared after that,
-// the marker loses its anchor. Each end of a marker is stored only where it
-// rests on text both versions share (see SUPPORT in review-anchor.ts);
-// otherwise the marker loses its anchor, as one whose words were deleted
-// does.
+// The comparison runs under SAVE_DIFF_BUDGET, in one go. A marker in a
+// stretch that would cost more to compare loses its anchor. Each end of a
+// marker is stored only where it rests on text both versions share (see
+// SUPPORT in review-anchor.ts); otherwise the marker loses its anchor, as one
+// whose words were deleted does.
 export async function remapMarkerAnchors(
 	db: Database,
 	sceneId: string,
@@ -153,11 +149,6 @@ export async function remapMarkerAnchors(
 	const anchored = markers.flatMap(({ id, anchorStart: start, anchorEnd: end }) =>
 		start === null || end === null ? [] : [{ id, start, end }]
 	);
-	const unsought = anchored
-		.filter(({ start, end }) => !mapper.ends(oldBody, newBody, start, end))
-		.flatMap(({ start, end }) => [start, end])
-		.filter((at) => mapper.unchecked(oldBody, newBody, at, at));
-	if (unsought.length > 0) await mapper.finish(oldBody, newBody, unsought, SAVE_FINISH_MS);
 	const moved: { id: string; anchorStart: number; anchorEnd: number }[] = [];
 	const lost: string[] = [];
 	for (const marker of anchored) {

@@ -956,9 +956,14 @@ suggestion. On top of those:
     counts only if it rests on a run of at least 12 shared characters;
     otherwise the anchor is lost. A range whose two ends map through
     different runs is lost if a run starting between them came from outside
-    it (a moved sentence carried past). This costs ranges with several edits
-    close together: one with an edit inside it and two or three more in its
-    sentence or paragraph is lost 7% of the time (main: 0.3%). A request has a
+    it (a moved sentence carried past). A marker's end whose own character
+    is in no run may rest on the run just outside it; if both do, some run
+    of the marker's own text that would hold an end must be left. This costs
+    ranges with several edits close together: on natural prose, one with an
+    edit inside it and two or three more nearby is lost about 2.2 to 2.8% of
+    the time (main less), and of all ranges in an edited paragraph 0.44% of
+    comments and 0.39% of markers are lost; on the property test's generated
+    prose, 5 to 9% and about 4%. A request has a
     `DiffBudget` in edit units of character diff (about D squared for edit
     distance D; `perPair`, `total`, and a `floor` every pair may spend even
     once the total is used up). The line and sentence passes are not
@@ -974,10 +979,11 @@ suggestion. On top of those:
     the export have `WRITER_DIFF_BUDGET` (1,000,000 a pair, about 55 ms;
     10,000,000 a mapper; floor 40,000), and a page compares its pairs
     through `mapper.prepare`, which lets the server answer others between
-    pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (1,000,000), and
-    a stretch holding a marker that it did not compare is compared again
-    with the diff's asynchronous mode for up to three seconds of wall time
-    (`SAVE_FINISH_MS`) before the marker is detached. An edit that was not checked is reported with `notice`: "The
+    pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (6,250,000, edit
+    distance 2,500: about 0.25 s for a rewritten paragraph of 2,100
+    characters beside a marked sentence, about 0.4 to 0.5 s to give up on a
+    scene replaced outright, 0.8 s at the 2M cap), compared in one go, and a
+    marker in a stretch past it is detached. An edit that was not checked is reported with `notice`: "The
     text has changed since; the edit may no longer apply." A follow-up
     `suggest_edit` that cannot be placed is refused as "can no longer be
     found", the in-app re-read skips the edit, and the review page shows the
