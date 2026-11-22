@@ -1052,7 +1052,9 @@ kept on a one-letter chance run of its own text (M1), that the asynchronous
 `finish` on save reached only edit distance about 2,500 in its 3 s while
 holding the scene's row (M3), and that resting an end outside when its own
 character was still in a short run let a marker grow over a word typed
-after it (L1). The fifth commit fixed those. What the code does now:
+after it (L1). The fifth commit fixed those; its check found that the L1
+fix detached markers main's marker rule places exactly right, and the
+sixth commit narrowed it. What the code does now:
 
 - Identity: every line, and every sentence not inside such a line, that is
   the same in both texts, stands once in each whole text and has at least
@@ -1087,16 +1089,20 @@ after it (L1). The fifth commit fixed those. What the code does now:
   measured that losing 472 of 674 ranges with a typo inside and three
   other edits in the paragraph (main 8), so it was removed. A marker end
   whose own character is in no run at all may rest on the run just outside
-  it (firm or 12 long), and both ends only if some of the marker's own text
-  is left in a run that would hold an end (so "hard" is not stored on
-  "Mara" through their shared "ar"). The fourth commit also rested an end
-  whose character was in a run too short to count; that let "always her
-  through!" grow over "brisk" typed after it (main keeps "...hor
-  through!"), so it was taken back. The cost: a marker whose first word
-  became one sharing a letter is detached ("of" to "long", "only" to
-  "slowly": 2 of the 40 markers in the restore case, which main stores
-  from that letter on, "ong his face Esk"). A point needs a firm run or
-  one of 12.
+  it (firm or 12 long); one whose character is in a run too short to count
+  may do so only when what was typed between that outside run and its own
+  run holds no white space (the edge word changed, not a word typed beside
+  it). Both ends may rest outside only if some of the marker's own text is
+  left in a run that would hold an end (so "hard" is not stored on "Mara"
+  through their shared "ar"). The fourth commit rested an end in a short
+  run whatever was typed, which let "always her through!" grow over
+  "brisk" typed after it (main's marker rule, a point per end, keeps "hor
+  through!"; this now detaches it). The fifth commit first took that back
+  entirely, which detached markers main places exactly right: "of" to
+  "long" and "only" to "slowly", where main's marker rule stores "long his
+  face Esk" and "slowly quiet bridge on" (2 of the 40 markers in the
+  restore case). The no-white-space condition keeps those, as main does,
+  and keeps "brisk" out. A point needs a firm run or one of 12.
 - Stretch: a range whose ends map through different runs is lost if a run
   starting in [from, to) in the current text starts outside the range in
   the base (a moved or deleted-and-retyped unit carried past it). Of the
@@ -1121,8 +1127,8 @@ after it (L1). The fifth commit fixed those. What the code does now:
   vocabulary and so more chance runs; on natural prose the review measured
   2.2 to 2.8% lost for an edit inside a range with two or three nearby
   (main lower), and 0.44% of comments and 0.39% of markers over all ranges
-  in an edited paragraph (generated prose: 5 to 9% and about 4%). The
-  tenth review's changes left these counts as they were. For the edit at a range of 2 to 10 words with two or three more in its
+  in an edited paragraph (generated prose: 5 to 9% and about 4%), both
+  measured on the fourth commit. For the edit at a range of 2 to 10 words with two or three more in its
   sentence or paragraph, ranges placed where they belong (ours, main): a
   typo inside 5,539 and 6,085 of 6,109, a word added inside 6,299 and
   6,668 of 6,683, a word removed inside 5,150 and 5,454 of 5,466; beside
@@ -1148,10 +1154,14 @@ after it (L1). The fifth commit fixed those. What the code does now:
   up to 3 s. That mode waits about 1 ms per edit step, so in 3 s it reached
   only edit distance about 2,500: a rewritten paragraph of about 2,100
   characters before a marked sentence with a typo in it gave a 3 s save
-  (900 to 1,600 characters: 1.5 to 2.2 s). Measured here, the comparison
-  now takes about 0.22 s for that case (keeps the marker), 0.29 s for 2,400
-  characters (past the budget, detached), and 0.4 to 0.5 s to give up on a
-  120,000 or 500,000 character scene replaced outright (0.8 s at 2M).
+  (900 to 1,600 characters: 1.5 to 2.2 s). Measured here on prose, the
+  diff alone gives up at D = 2,500 in about 0.35 s; the whole comparison
+  takes about 0.22 s for that case (keeps the marker), 0.29 s for 2,400
+  characters (past the budget, detached), 0.4 to 0.5 s to give up on a
+  120,000 or 500,000 character scene replaced outright, and up to about
+  0.75 to 0.8 s at 2M. Only D squared is charged, so repetitive text can
+  take longer for the same units (the review measured about 1.9 s at 2M).
+  Main is slower in every one of these cases.
 - `placeSuggestion` keeps the start-or-end rule (M2).
 - Tests: a seeded property test against a ground-truth character map and
   main's mapper (`tests/main-anchor-oracle.ts`) asserts no misplaced range
@@ -1167,10 +1177,18 @@ after it (L1). The fifth commit fixed those. What the code does now:
   as the support rule's (under 6% a seed) or as a tie, an equally short
   alignment main happened to share with the truth (under 0.05%; at most 48
   in a seed). A clustered result that takes in a word typed beyond the
-  range's own text where main's does not is counted apart, as misplaced
-  (134 over the 121 seeds, at most 17 a seed, listed in the output); before
-  the tenth review these went uncounted, as most have no true position (the
-  range's first or last word was deleted). The
+  range's own text where main's does not is counted apart, as misplaced,
+  and listed in the output (143 over the 121 seeds, at most 17 a seed,
+  nearly all markers; bounded by the test). Most are a marker whose first
+  or last word was deleted or replaced, with a word typed beside it
+  ("Your snow bright, Mara, his" to "Your brisk bright, Mara,"). Seed 113's
+  are an inner word deleted and a word typed just after the marker ("every
+  carried or dark." to "every or idle dark.": the marker gives "every or
+  idle", main null), and it can be more than one word ("every or pale
+  idle"). Before the tenth review these went uncounted, as most have no
+  true position. The narrowed L1 rule added 9 (134 before), all a first
+  word replaced by a typed word sharing a letter, the same case as "of" to
+  "long". None of this touches an accept. The
   rounds also delete a sentence and type it again elsewhere. Seeds 1 to 60
   and 100 to 160 pass except seed 38, on the unrelated-text check (above);
   CI runs seed 51.
@@ -1186,16 +1204,16 @@ after it (L1). The fifth commit fixed those. What the code does now:
   marker can stretch over that paragraph where main returns null
   (generated prose 16 results against main's 1,078, natural prose 7
   against 543, in the review's measurement; never an accept); a marker
-  whose first or last word was deleted, with a word typed beside it, can
-  take in the typed word where main gives null (134 in the property test,
-  above); a marker whose word was replaced outright depends on what the
+  whose first or last word was deleted or replaced, or an inner word
+  deleted, with a word (or two) typed beside it, can take in the typed
+  text where main gives null (143 in the property test, above; never an
+  accept); a marker whose word was replaced outright depends on what the
   two words share: "harbour" to "harvest" keeps it on "harvest" (the
   "har" joins the text before) and "slowly" to "quickly" on "quickly" (the
   "ly" joins the text after), as on main (the review saw the second
   detached on the fourth commit); "hard" to "Mara" detaches it (only a
-  chance "ar" is shared), where main keeps it on "Mara"; a marker
-  whose first word became one sharing a letter is detached ("of" to
-  "long"); a range with an edit inside it and others within a few letters
+  chance "ar" is shared), where main keeps it on "Mara"; a range with an
+  edit inside it and others within a few letters
   of its ends is lost more often than on main (above); a whole-text conversion
   between CRLF and LF loses comments and suggestions on lines of ten
   characters or fewer, which main keeps (markers are mapped on LF text and

@@ -620,11 +620,10 @@ describe('markers through a save, review findings', () => {
 	});
 
 	// Round 9, H1: a version with one word in fifteen changed, as History
-	// restores, keeps the markers, whatever edits fall inside or beside them.
-	// Two are detached (round 10, L1): their first word became one sharing a
-	// letter ("of" -> "long", "only" -> "slowly"), where main stores them from
-	// that letter on ("ong his face Esk", "owly quiet bridge on").
-	it('round 9, H1: keeps 38 of 40 markers when one word in fifteen of a 30,000 character scene changes', async () => {
+	// restores, keeps every marker, whatever edits fall inside or beside it.
+	// Two have a first word that became one sharing a letter ("of" -> "long",
+	// "only" -> "slowly"); they take the new word, as main's marker rule does.
+	it('round 9, H1: keeps 40 markers when one word in fifteen of a 30,000 character scene changes', async () => {
 		const before = sceneParagraphs(71, 30_000);
 		const body = join(before);
 		const [scene] = await db
@@ -656,7 +655,7 @@ describe('markers through a save, review findings', () => {
 		expect(await save(scene.id, join(after))).toMatchObject({ ok: true });
 		let detached = 0;
 		for (const marker of markers) if ((await anchorOf(marker.id)) === null) detached++;
-		expect(detached).toBe(2);
+		expect(detached).toBe(0);
 	});
 
 	// Round 9, M1: a marker reaching into a sentence that moved is detached,

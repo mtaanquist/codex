@@ -21,6 +21,17 @@ import {
 import { wholeTextPoint, wholeTextRange, wholeTextSpans } from '../../tests/main-anchor-oracle';
 import { APP_DIFF_BUDGET } from './server/mcp/constants';
 
+// Main's two rules: a comment maps as a range; a marker maps each end as a
+// point (the earlier run winning where two meet).
+const mainCommentOf = (base: string, current: string, start: number, end: number) =>
+	wholeTextRange(wholeTextSpans(base, current), base.length, start, end);
+function mainMarkerOf(base: string, current: string, start: number, end: number) {
+	const spans = wholeTextSpans(base, current);
+	const from = wholeTextPoint(spans, base.length, start);
+	const to = wholeTextPoint(spans, base.length, end);
+	return from !== null && to !== null && from < to ? { start: from, end: to } : null;
+}
+
 const BASE = 'The quick brown fox jumps over the lazy dog.';
 // Anchor "brown fox" = [10, 19).
 const START = BASE.indexOf('brown');
@@ -835,8 +846,6 @@ describe('review findings, round 9', () => {
 	const before = 'The kettle was cold when she came down to the kitchen.';
 	const after = 'They set out before the bell rang for the morning office.';
 	const was = 'Mara walked slowly down to the old harbour and waited there for the boat.';
-	const mainOf = (base: string, current: string, start: number, end: number) =>
-		wholeTextRange(wholeTextSpans(base, current), base.length, start, end);
 
 	// H1: an edit inside a range, with two more in the same sentence.
 	it('H1: keeps a range through an edit inside it when its sentence has other edits', () => {
@@ -862,7 +871,8 @@ describe('review findings, round 9', () => {
 			const current = [before, now, after].join('\n\n');
 			const at = base.indexOf(words);
 			const end = at + words.length;
-			expect(quote(current, mainOf(base, current, at, end))).toBe(want);
+			expect(quote(current, mainCommentOf(base, current, at, end))).toBe(want);
+			expect(quote(current, mainMarkerOf(base, current, at, end))).toBe(want);
 			const range = createAnchorMapper(WRITER_DIFF_BUDGET).range(base, current, at, end);
 			const ends = createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end);
 			expect({ now, range: quote(current, range), ends: quote(current, ends) }).toEqual({
@@ -884,7 +894,8 @@ describe('review findings, round 9', () => {
 			'evening with the letter. He did not speak at all. Mara watched the rain against the window.';
 		const at = base.indexOf('all morning. Mara watched');
 		const end = at + 'all morning. Mara watched'.length;
-		expect(mainOf(base, current, at, end)).toBeNull();
+		expect(mainCommentOf(base, current, at, end)).toBeNull();
+		expect(mainMarkerOf(base, current, at, end)).toBeNull();
 		for (const mapper of [
 			createAnchorMapper(WRITER_DIFF_BUDGET),
 			createAnchorMapper(SAVE_DIFF_BUDGET)
@@ -903,15 +914,27 @@ describe('review findings, round 9', () => {
 
 	// Found by the clustered edits and seeds 1 to 60 and 100 to 160 of the
 	// property test.
-	it('a marker whose first word became one sharing a letter is detached', () => {
-		// "of" became "long" and kept its "o", a run too short to count. An
-		// end whose own character is in a run never rests outside it (round 10,
-		// L1), so the marker is detached; main stores it from the "o" on.
-		const base = 'Under morning table after of his face Esk that. Never or before.';
-		const current = 'Under morning table after long his face Esk that. Never or before.';
-		const at = base.indexOf('of his face Esk');
-		expect(quote(current, mainOf(base, current, at, at + 15))).toBe('ong his face Esk');
-		expect(createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, at + 15)).toBeNull();
+	it('a marker whose first word became one sharing a letter takes the new word', () => {
+		// "of" became "long" and kept its "o", a run too short to count; the
+		// letters typed before it hold no space, so the start rests on the
+		// text before the word, as main's marker rule (a point per end) does.
+		const cases: [string, string, string, string][] = [
+			[
+				'Under morning table after of his face Esk that. Never or before.',
+				'of',
+				'long',
+				'of his face Esk'
+			],
+			['Mara stood only quiet bridge on the river.', 'only', 'slowly', 'only quiet bridge on']
+		];
+		for (const [base, word, now, marked] of cases) {
+			const current = base.replace(word, now);
+			const at = base.indexOf(marked);
+			const want = marked.replace(word, now);
+			expect(quote(current, mainMarkerOf(base, current, at, at + marked.length))).toBe(want);
+			const ends = createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, at + marked.length);
+			expect(quote(current, ends)).toBe(want);
+		}
 		// A marker on one word replaced outright, sharing only a chance "r"
 		// with it, is detached rather than stored on the new word.
 		const was = 'Boat before nearly my turned grey waited your field heavy her sudden!';
@@ -954,8 +977,6 @@ describe('review findings, round 9', () => {
 describe('review findings, round 10', () => {
 	const before = 'The kettle was cold when she came down to the kitchen.';
 	const after = 'They set out before the bell rang for the morning office.';
-	const mainOf = (base: string, current: string, start: number, end: number) =>
-		wholeTextRange(wholeTextSpans(base, current), base.length, start, end);
 	const NEWTON = [
 		'The smallest Particles of Matter may cohere by the strongest Attractions, and compose bigger Particles of weaker Virtue; and many of these may cohere and compose bigger Particles whose Virtue is still weaker.',
 		'And so on for divers Successions, until the Progression end in the biggest Particles on which the Operations in Chymistry, and the Colours of natural Bodies depend, and which by cohering compose Bodies of a sensible Magnitude.',
@@ -989,16 +1010,21 @@ describe('review findings, round 10', () => {
 		}
 	});
 
-	// L1: an end whose own character is still in a run never rests on the
-	// run outside it, so the marker does not grow over a word typed after it.
-	it('L1: does not grow a marker over a word typed after it when its last letter is still there', () => {
+	// L1: an end whose own character is in a run too short to count rests on
+	// the run outside it only when what was typed between holds no space, so
+	// the marker does not grow over a word typed before or after it.
+	it('L1: does not grow a marker over a word typed beside it when its edge letter is still there', () => {
 		const was = 'She said it always her through!';
 		const base = [before, was, after].join('\n\n');
-		const current = [before, 'She said it always hor through! brisk', after].join('\n\n');
-		for (const words of ['always her through!', 'her through!']) {
+		for (const [now, words, main] of [
+			['She said it always hor through! brisk', 'always her through!', 'always hor through!'],
+			['She said it always hor through! brisk', 'her through!', 'hor through!'],
+			['She said it brisk hor through!', 'her through!', 'hor through!']
+		]) {
+			const current = [before, now, after].join('\n\n');
 			const at = base.indexOf(words);
 			const end = at + words.length;
-			expect(quote(current, mainOf(base, current, at, end))).toBe(words.replace('her', 'hor'));
+			expect(quote(current, mainMarkerOf(base, current, at, end))).toBe(main);
 			expect(createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end)).toBeNull();
 		}
 	});
@@ -1804,11 +1830,14 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 		// Known limits, listed for review. A sentence deleted and typed again
 		// elsewhere, with the paragraph between lightly edited, can leave a
 		// range stretched over that paragraph where main gives null: 34 over
-		// the 121 seeds (8 more where main stretches too). A marker whose first
-		// or last word was deleted, with a word typed beside it, rests on the
-		// text outside and takes in the typed word where main's ends give null
-		// (or stay on the range): 134 over the 121 seeds, nearly all markers
-		// (22,599 more where main's grows too).
+		// the 121 seeds (8 more where main stretches too). A result can take in
+		// a word typed beside it where main's (a point per end for a marker)
+		// gives null or stays on the range: 143 over the 121 seeds, nearly all
+		// markers. Most have a first or last word deleted or replaced and a
+		// word typed beside it ("Your snow bright, Mara, his" to "Your brisk
+		// bright, Mara,"); seed 113's have an inner word deleted and a word, or
+		// two, typed just after ("every carried or dark." to "every or idle
+		// dark." gives "every or idle"). Never an accept.
 		if (stretchedAlone.Retyped.length)
 			console.log('stretched where main is not', stretchedAlone.Retyped);
 		if (grown.length) console.log('grown over typed text where main is not', grown);

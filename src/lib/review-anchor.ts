@@ -83,9 +83,12 @@ export const WRITER_DIFF_BUDGET: DiffBudget = {
 // The marker remap on save: one pair, D = 2500, compared in the save's
 // transaction while it holds the scene's row. Enough for a rewritten
 // paragraph of about 2,100 characters beside a marked sentence that also
-// changed. Measured on prose: about 0.25 s for D = 2300, and about 0.35 s to
-// give up at D = 2500 when the texts have nothing in common. A marker in a
-// stretch past it loses its anchor.
+// changed. The diff alone, on prose: about 0.25 s for D = 2300, and about
+// 0.35 s to give up at D = 2500 when the texts have nothing in common.
+// Whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at the 2M cap;
+// only D squared is charged, so repetitive text can reach about 1.9 s at
+// 2M. Main is slower in every case. A marker in a stretch past it loses its
+// anchor.
 export const SAVE_DIFF_BUDGET: DiffBudget = { perPair: 6_250_000, total: 6_250_000, floor: 0 };
 
 // A line or sentence is paired only if it has at least this many characters
@@ -758,32 +761,50 @@ const through = (span: Span, position: number) => span.current + position - span
 // the span just outside it, if that span is firm or holds SUPPORT
 // characters, so an edit right at an edge stretches or shrinks the range
 // instead of losing it. An end whose character is in a span too short to
-// count is lost, not rested outside: resting it would let the range grow
-// over text typed beyond it. The start moves to the later reading when
-// there is one further on that still leaves a range.
-function mapEnds(found: Comparison, start: number, end: number, loose: boolean, support: boolean) {
+// count may do so only when what was typed between the two spans holds no
+// white space ("of" became "long" and kept its "o"): the edge word changed,
+// rather than a word typed beside it, which the range would grow over. The
+// start moves to the later reading when there is one further on that still
+// leaves a range.
+function mapEnds(
+	found: Comparison,
+	current: string,
+	start: number,
+	end: number,
+	loose: boolean,
+	support: boolean
+) {
 	const firm = (span: Span) => !support || span.firm || span.length >= SUPPORT;
+	const typedWord = (from: number, to: number) => /\s/.test(current.slice(from, to));
 	let from: number | null = null;
 	let outside = 0;
 	const first = spanAt(found.spans, start, 'start');
 	const late = found.late.length ? spanAt(found.late, start, 'start') : null;
-	if (first) {
-		if (firm(first)) from = through(first, start);
-	} else if (late) from = through(late, start);
+	if (first && firm(first)) from = through(first, start);
+	else if (!first && late) from = through(late, start);
 	else if (loose) {
 		const before = spanAt(found.spans, start, 'end');
-		if (before && before.base + before.length === start && firm(before)) {
+		if (
+			before &&
+			before.base + before.length === start &&
+			firm(before) &&
+			!(first && typedWord(through(before, start), first.current))
+		) {
 			from = through(before, start);
 			outside++;
 		}
 	}
 	let to: number | null = null;
 	const last = spanAt(found.spans, end, 'end');
-	if (last) {
-		if (firm(last)) to = through(last, end);
-	} else if (loose) {
+	if (last && firm(last)) to = through(last, end);
+	else if (loose) {
 		const after = spanAt(found.spans, end, 'start');
-		if (after && after.base === end && firm(after)) {
+		if (
+			after &&
+			after.base === end &&
+			firm(after) &&
+			!(last && typedWord(last.current + last.length, after.current))
+		) {
 			to = through(after, end);
 			outside++;
 		}
@@ -914,7 +935,7 @@ export function createAnchorMapper(budget: DiffBudget, support = true): AnchorMa
 		range(baseText, currentText, start, end) {
 			if (start < 0 || end > baseText.length || start >= end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapEnds(compare(baseText, currentText), start, end, false, support);
+			return mapEnds(compare(baseText, currentText), currentText, start, end, false, support);
 		},
 		point(baseText, currentText, position) {
 			if (position < 0 || position > baseText.length) return null;
@@ -926,7 +947,7 @@ export function createAnchorMapper(budget: DiffBudget, support = true): AnchorMa
 		ends(baseText, currentText, start, end) {
 			if (!valid(baseText, start, end) || start === end) return null;
 			if (baseText === currentText) return { start, end };
-			return mapEnds(compare(baseText, currentText), start, end, true, support);
+			return mapEnds(compare(baseText, currentText), currentText, start, end, true, support);
 		},
 		unchecked(baseText, currentText, start, end) {
 			if (!valid(baseText, start, end) || baseText === currentText) return false;

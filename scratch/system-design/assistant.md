@@ -957,8 +957,14 @@ suggestion. On top of those:
     otherwise the anchor is lost. A range whose two ends map through
     different runs is lost if a run starting between them came from outside
     it (a moved sentence carried past). A marker's end whose own character
-    is in no run may rest on the run just outside it; if both do, some run
-    of the marker's own text that would hold an end must be left. This costs
+    is in no run may rest on the run just outside it, and one in a run too
+    short to count may too when what was typed between holds no white space
+    ("of" to "long" takes "long", as main's marker rule does); if both ends
+    rest outside, some run of the marker's own text that would hold an end
+    must be left. A marker whose first or last word was deleted or replaced,
+    or an inner word deleted, with a word or two typed beside it, can take
+    in the typed text where main gives null (143 in 121 seeds of the
+    property test, bounded there; never an accept). This costs
     ranges with several edits close together: on natural prose, one with an
     edit inside it and two or three more nearby is lost about 2.2 to 2.8% of
     the time (main less), and of all ranges in an edited paragraph 0.44% of
@@ -980,10 +986,11 @@ suggestion. On top of those:
     10,000,000 a mapper; floor 40,000), and a page compares its pairs
     through `mapper.prepare`, which lets the server answer others between
     pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (6,250,000, edit
-    distance 2,500: about 0.25 s for a rewritten paragraph of 2,100
-    characters beside a marked sentence, about 0.4 to 0.5 s to give up on a
-    scene replaced outright, 0.8 s at the 2M cap), compared in one go, and a
-    marker in a stretch past it is detached. An edit that was not checked is reported with `notice`: "The
+    distance 2,500), compared in one go, and a marker in a stretch past it
+    is detached. The diff alone takes about 0.35 s to give up at that budget
+    on prose; whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at
+    the 2M cap, and repetitive text can reach about 1.9 s at 2M, as only D
+    squared is charged. Main is slower in every case. An edit that was not checked is reported with `notice`: "The
     text has changed since; the edit may no longer apply." A follow-up
     `suggest_edit` that cannot be placed is refused as "can no longer be
     found", the in-app re-read skips the edit, and the review page shows the
