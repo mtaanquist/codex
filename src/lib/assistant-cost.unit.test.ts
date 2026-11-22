@@ -50,7 +50,7 @@ describe('usageCostUsd', () => {
 		expect(usageCostUsd(price, usage, 'anthropic')).toBeCloseTo(withRead(0.1), 10);
 		expect(usageCostUsd(price, usage, 'openai')).toBeCloseTo(withRead(0.5), 10);
 		expect(usageCostUsd(price, usage, 'gemini')).toBeCloseTo(withRead(0.25), 10);
-		expect(usageCostUsd(price, usage, 'deepseek')).toBeCloseTo(withRead(0.1), 10);
+		expect(usageCostUsd(price, usage, 'deepseek')).toBeCloseTo(withRead(0.26), 10);
 	});
 
 	it('gives a cache read no discount on a provider with no known rate', () => {

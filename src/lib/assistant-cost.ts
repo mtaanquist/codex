@@ -23,15 +23,19 @@ export type CostedUsage = {
 // and who publish one rate. Where a provider's models differ, the dearest
 // fraction is used, so a figure can read high but never low, and a cap never
 // stops late. Claude: a tenth. OpenAI: from a tenth to a half by model.
-// Gemini: a quarter, or less on newer models. DeepSeek: a tenth. Any other
+// Gemini: a quarter, or less on newer models. DeepSeek: a tenth now, about
+// 0.26 on its earlier prices ($0.07 hit / $0.27 miss). Any other
 // endpoint (a gateway or a custom server) can charge anything up to the full
 // price, so its cached tokens get no discount, unless the price itself says
 // what a cache read costs (TokenPrice.cacheRead).
+// These ratios are deliberately the highest known for each provider, so the
+// spend cap never undercounts. Do not lower one to a provider's current rate
+// unless no model or price list it still serves charges more.
 const CACHE_READ_RATES = new Map<string, number>([
 	['anthropic', 0.1],
 	['openai', 0.5],
 	['gemini', 0.25],
-	['deepseek', 0.1]
+	['deepseek', 0.26]
 ]);
 const UNKNOWN_CACHE_READ_RATE = 1;
 

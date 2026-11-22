@@ -297,8 +297,8 @@ rather than metering at a stale figure; typed context windows are kept.
 Claude's cache writes are
 metered at their premium (1.25x, 2x for the one-hour cache). Cache reads are
 metered at the rate each preset provider publishes, the dearest across its
-models so a figure never reads low (Claude and DeepSeek a tenth, Gemini a
-quarter, OpenAI a half), or at the per-model `input_cache_read` price
+models so a figure never reads low (Claude a tenth, Gemini a quarter,
+DeepSeek 0.26 from its earlier prices, OpenAI a half), or at the per-model `input_cache_read` price
 OpenRouter's discovery reports, carried as `cacheRead` on the price. A custom
 endpoint, or OpenRouter with a typed price, gets the full price for cached
 tokens, since what it charges for them is not known. Those rates live in one place, `$lib/assistant-cost.ts`, shared by

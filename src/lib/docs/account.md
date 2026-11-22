@@ -235,8 +235,8 @@ Your words are sent only to the endpoint you set here.
   details, earlier turns) and bill it far cheaper on reuse. With the Claude
   provider, text sent for the first time is billed a little higher so it can
   be reused. The cost in the list and the spend cap count reused text at the
-  rate the provider publishes: a tenth of the price on Claude and DeepSeek, a
-  quarter on Gemini, and half on ChatGPT. Some models charge less than that, so
+  rate the provider publishes: a tenth of the price on Claude, about a quarter on
+  Gemini and DeepSeek, and half on ChatGPT. Some models charge less than that, so
   the cost shown can run a little above what you were charged. With OpenRouter,
   reused text is counted at the price OpenRouter lists for the model, when
   you use the prices it reports. With a custom endpoint, or a price you typed

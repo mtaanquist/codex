@@ -20,7 +20,7 @@ stopped early. `cacheReadRate` is now keyed by the provider id: the preset
 providers whose adapters report cached tokens get their published rate, the
 dearest across their models so a figure still never reads low (OpenAI a half,
 since gpt-4o caches at a half and newer models lower; Gemini a quarter;
-DeepSeek a tenth, with `prompt_cache_hit_tokens` now read as the cached share
+DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with `prompt_cache_hit_tokens` now read as the cached share
 where `prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
 no one rate fits; its discovery reports `input_cache_read` per model, which is
 carried as an optional `cacheRead` on the price itself and wins over any rate.
