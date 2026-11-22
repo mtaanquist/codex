@@ -1137,6 +1137,27 @@ describe('a body whose line breaks became plain newlines', () => {
 		const range = createAnchorMapper(WRITER_DIFF_BUDGET).range(base, current, from, to);
 		expect(quote(current, range)).toBe('Wait.\n\nThe boats were tied up and ');
 	});
+
+	// The suggestion's original holds \r\n; the text it now sits in does not.
+	it('places a suggestion across a line break on the newline text', () => {
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		const from = base.indexOf('Wait.');
+		const to = base.indexOf('nobody');
+		const placed = placeSuggestion(mapper, base, current, from, to);
+		expect(quote(current, placed)).toBe('Wait.\n\nThe boats were tied up and ');
+		const edge = base.indexOf('"Yes."');
+		const across = placeSuggestion(mapper, base, current, edge, edge + 13);
+		expect(quote(current, across)).toBe('"Yes."\n\n"No');
+	});
+
+	it('still refuses a suggestion across a line break whose words changed', () => {
+		const edited = current.replace('Wait.', 'Hold on.');
+		const from = base.indexOf('Wait.');
+		const to = base.indexOf('nobody');
+		expect(placeSuggestion(createAnchorMapper(WRITER_DIFF_BUDGET), base, edited, from, to)).toBe(
+			null
+		);
+	});
 });
 
 describe('placeSuggestion', () => {
