@@ -40,6 +40,7 @@ import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
 import { locateQuote } from '#lib/quote-locate';
 import { universeSkeleton, type SceneSummary } from '../context/sources.ts';
+import { sceneSummaryToSend } from '../../summary-currency.ts';
 import type { ProviderToolCall, SplitProposal } from '../providers/types.ts';
 import { findTool } from './registry.ts';
 
@@ -428,6 +429,8 @@ async function loadScene(ctx: ToolContext, sceneId: string) {
 			title: scenes.title,
 			status: scenes.status,
 			summaryMd: scenes.summaryMd,
+			summaryGeneratedAt: scenes.summaryGeneratedAt,
+			updatedAt: scenes.updatedAt,
 			bodyMd: scenes.bodyMd
 		})
 		.from(scenes)
@@ -566,7 +569,7 @@ async function getScene(ctx: ToolContext, sceneId: string): Promise<string> {
 		id: scene.id,
 		title: scene.title,
 		status: scene.status,
-		summary: scene.summaryMd,
+		summary: sceneSummaryToSend(scene),
 		body
 	});
 }

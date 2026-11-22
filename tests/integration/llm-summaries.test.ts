@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -213,6 +213,30 @@ describe('summariseStory', () => {
 		expect(second.summaryGeneratedAt!.getTime()).toBeGreaterThan(
 			first.summaryGeneratedAt!.getTime()
 		);
+	});
+
+	it('clears an Assistant summary once its scene is emptied, and leaves the writer one', async () => {
+		await summariseStory(db, { userId: ownerId, storyId }, deps);
+		expect((await readScene(sceneAId)).summaryMd).toMatch(/^SUMMARY-/);
+
+		await nextMillisecond();
+		await db
+			.update(scenes)
+			.set({ bodyMd: '  ' })
+			.where(inArray(scenes.id, [sceneAId, sceneBId]));
+		const result = await summariseStory(db, { userId: ownerId, storyId }, deps);
+		// Clearing asks the model nothing (the chapter, which read A, is redrafted).
+		expect(result.scenes).toBe(0);
+
+		const a = await readScene(sceneAId);
+		expect(a).toMatchObject({ summaryMd: null, summaryGeneratedAt: null });
+		expect(await readScene(sceneBId)).toMatchObject({
+			summaryMd: 'My own note.',
+			summaryGeneratedAt: null
+		});
+		const callsBefore = calls;
+		await summariseStory(db, { userId: ownerId, storyId }, deps);
+		expect(calls).toBe(callsBefore);
 	});
 
 	it('keeps a summary the writer types while the model is writing one', async () => {
