@@ -1047,6 +1047,25 @@ export const sceneMarkers = pgTable(
 	(table) => [index('scene_markers_scene_idx').on(table.sceneId)]
 );
 
+// Markers a save could not remap within its time budget (see
+// remapMarkerAnchors). The save detaches them and leaves a row here: the text
+// their anchors were made on and those anchors. The worker's sweep maps them
+// onto the scene's text as it then stands and deletes the row.
+export const markerRemaps = pgTable(
+	'marker_remaps',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		sceneId: uuid('scene_id')
+			.references(() => scenes.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The body the anchors count into, with \r\n as one character.
+		baseBody: text('base_body').notNull(),
+		markers: jsonb('markers').notNull().$type<{ id: string; start: number; end: number }[]>(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [index('marker_remaps_scene_idx').on(table.sceneId)]
+);
+
 // One row per off-site backup attempt, success or failure, so the admin
 // page can show whether backups are actually happening. The bucket holds
 // the dumps; this table holds the evidence.

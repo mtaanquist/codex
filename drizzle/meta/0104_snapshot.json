@@ -1,5 +1,5 @@
 {
-	"id": "75ea39cd-f40d-4d69-b7a2-38bba1833091",
+	"id": "35e15da4-0405-4d03-b834-e034eb292bf4",
 	"prevId": "24c698fd-8a1a-4c04-a3a1-b0bb6e486e35",
 	"version": "7",
 	"dialect": "postgresql",
@@ -879,27 +879,9 @@
 					"primaryKey": false,
 					"notNull": false
 				},
-				"chapter_brief": {
-					"name": "chapter_brief",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"job_id": {
 					"name": "job_id",
 					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_source": {
-					"name": "save_source",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_seq": {
-					"name": "save_seq",
-					"type": "integer",
 					"primaryKey": false,
 					"notNull": false
 				},
@@ -3041,6 +3023,77 @@
 					"columns": ["lore_entry_id", "story_id"]
 				}
 			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.marker_remaps": {
+			"name": "marker_remaps",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "uuid",
+					"primaryKey": true,
+					"notNull": true,
+					"default": "gen_random_uuid()"
+				},
+				"scene_id": {
+					"name": "scene_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"base_body": {
+					"name": "base_body",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"markers": {
+					"name": "markers",
+					"type": "jsonb",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "now()"
+				}
+			},
+			"indexes": {
+				"marker_remaps_scene_idx": {
+					"name": "marker_remaps_scene_idx",
+					"columns": [
+						{
+							"expression": "scene_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
+			"foreignKeys": {
+				"marker_remaps_scene_id_scenes_id_fk": {
+					"name": "marker_remaps_scene_id_scenes_id_fk",
+					"tableFrom": "marker_remaps",
+					"tableTo": "scenes",
+					"columnsFrom": ["scene_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
 			"policies": {},
 			"checkConstraints": {},
 			"isRLSEnabled": false
@@ -5860,18 +5913,6 @@
 				"deleted_at": {
 					"name": "deleted_at",
 					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_source": {
-					"name": "save_source",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_seq": {
-					"name": "save_seq",
-					"type": "integer",
 					"primaryKey": false,
 					"notNull": false
 				}

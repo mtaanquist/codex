@@ -14,6 +14,7 @@ import {
 	PURGE_UNIVERSES_QUEUE,
 	SWEEP_DELETED_OBJECTS_QUEUE,
 	RECONCILE_MENTIONS_QUEUE,
+	REMAP_MARKERS_QUEUE,
 	REVIEWER_DIGEST_QUEUE,
 	USER_EXPORT_QUEUE,
 	ASSISTANT_JOB_CONCURRENCY,
@@ -62,6 +63,7 @@ await boss.start();
 await boss.createQueue(MENTIONS_SCENE_QUEUE);
 await boss.createQueue(MENTIONS_UNIVERSE_QUEUE);
 await boss.createQueue(RECONCILE_MENTIONS_QUEUE);
+await boss.createQueue(REMAP_MARKERS_QUEUE);
 await boss.createQueue(EXPORT_ARTIFACTS_QUEUE);
 await boss.createQueue(BACKUP_QUEUE);
 await boss.createQueue(EMAIL_QUEUE);
@@ -97,6 +99,7 @@ const ASSISTANT_WORK_OPTIONS = {
 await boss.work(MENTIONS_SCENE_QUEUE, handlers.mentionsScene);
 await boss.work(MENTIONS_UNIVERSE_QUEUE, handlers.mentionsUniverse);
 await boss.work(RECONCILE_MENTIONS_QUEUE, handlers.reconcileMentions);
+await boss.work(REMAP_MARKERS_QUEUE, handlers.remapMarkers);
 await boss.work(EXPORT_ARTIFACTS_QUEUE, handlers.exportArtifacts);
 await boss.work(MIGRATE_ASSETS_QUEUE, handlers.migrateAssets);
 await boss.work(USER_EXPORT_QUEUE, handlers.userExport);

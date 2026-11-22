@@ -6,6 +6,9 @@
 export const MENTIONS_SCENE_QUEUE = 'mentions-scene';
 export const MENTIONS_UNIVERSE_QUEUE = 'mentions-universe';
 export const RECONCILE_MENTIONS_QUEUE = 'reconcile-mentions';
+// Places markers a save detached past its comparison budget (see
+// remapPendingMarkers in markers.ts).
+export const REMAP_MARKERS_QUEUE = 'remap-markers';
 export const BACKUP_QUEUE = 'run-backup';
 export const EMAIL_QUEUE = 'send-email';
 // Transactional emails that exhaust their retries land here so an operator
