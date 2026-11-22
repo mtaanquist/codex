@@ -37,6 +37,20 @@ focused again when focus fell to the page. The return-to cookie is only set
 for a request with `Sec-Fetch-Dest: document` (or none), and `?pass=` is
 taken off the address with a shallow replace once read.
 
+Spend cap counts the prompt high (2026-11-22, `fix/spend-cap-estimate-margin`,
+#1331): the cap check counted the prompt at chars/4, which runs short on
+non-English prose (a CJK character is about a token, not a quarter), so a
+request just under the cap could be billed just over it. Every cap check now
+counts the prompt with `ceilingTokens` (UTF-8 bytes / 3): a third above chars/4
+for English and a token per CJK character, where a flat multiplier on chars/4
+would have to be about 4x to cover CJK and would then overcount English badly.
+The provider's own token counting was not used: only Claude has an endpoint
+for it, and it would add a request before every send. `ceilingPromptTokens` in
+the gateway is the one count; drafting's check and its up-front estimate use it
+too, with the real persona message in place of the flat `PERSONA_TOKENS`. The
+budgets (context assembly, the context guard) keep chars/4, since an
+overcount there only trims context.
+
 Spend cap held before every request (2026-11-22, `fix/assistant-retry-cap`,
 #1331): the background jobs checked `capReached` (spend at or over the cap)
 only between steps, and the gateway resent a failed attempt the endpoint had

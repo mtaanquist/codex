@@ -20,14 +20,8 @@ import {
 	type SceneDraftEstimate
 } from '../../scene-draft.ts';
 import { wordCount } from '../../word-count.ts';
-import {
-	assembleContext,
-	bodyExcerpt,
-	bodyTail,
-	buildSystemMessage,
-	estimateTokens
-} from './context/assemble.ts';
-import { contextBudgetTokens, PERSONA_TOKENS } from './context/budgets.ts';
+import { assembleContext, bodyExcerpt, bodyTail, buildSystemMessage } from './context/assemble.ts';
+import { contextBudgetTokens } from './context/budgets.ts';
 import {
 	assistantLayout,
 	DEFAULT_SPEND_WARN_USD,
@@ -37,8 +31,10 @@ import {
 } from './config.ts';
 import {
 	AssistantDisabledError,
+	ceilingPromptTokens,
 	completeDetailed,
 	NoModelError,
+	personaMessage,
 	ReplyRefusedError,
 	requestReplyLimit,
 	type GatewayDeps
@@ -362,11 +358,10 @@ export async function estimateSceneDraft(
 
 type DraftRequest = NonNullable<Awaited<ReturnType<typeof sceneDraftRequest>>>;
 
+// Counted high, the way the gateway counts a request for the spend cap, with
+// the persona message it puts in front.
 function requestTokens(request: DraftRequest): number {
-	return (
-		PERSONA_TOKENS +
-		request.messages.reduce((sum, message) => sum + estimateTokens(message.content), 0)
-	);
+	return ceilingPromptTokens([personaMessage(request.config), ...request.messages]);
 }
 
 // The estimate for `scenes` requests of one length that send estTokens between
