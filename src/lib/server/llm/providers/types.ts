@@ -3,6 +3,8 @@
 // endpoints and most hosted providers) and the native Anthropic one, chosen
 // from the provider discriminator on the resolved config (see ./index.ts).
 
+import type { TokenPrice } from '../../../assistant-cost.ts';
+
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export type ChatMessage = {
@@ -266,6 +268,6 @@ export interface Provider {
 // OpenAI-style lists do not).
 export type ModelInfo = {
 	id: string;
-	pricing?: { prompt: number; completion: number };
+	pricing?: TokenPrice;
 	contextLength?: number;
 };

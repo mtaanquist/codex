@@ -1,5 +1,6 @@
 import { usageCostUsd } from '../../assistant-cost.ts';
 import type { ModelPricing } from './config.ts';
+import type { ProviderId } from './providers/presets.ts';
 import type { TokenUsage } from './providers/types.ts';
 
 // What a background run has spent so far, and whether that has passed the
@@ -37,10 +38,10 @@ export function requestCostUsd(
 	pricing: ModelPricing | undefined,
 	model: string,
 	usage: TokenUsage,
-	claude = false
+	provider?: ProviderId
 ): number | undefined {
 	const price = pricing?.[model];
-	return price ? usageCostUsd(price, usage, claude) : undefined;
+	return price ? usageCostUsd(price, usage, provider) : undefined;
 }
 
 // What a stopped run reports it spent: the figure, and whether it includes
@@ -55,7 +56,7 @@ export function spentFields(meter: SpendMeter): { spentUsd: number; spentEstimat
 export class SpendMeter {
 	readonly capUsd: number | undefined;
 	private readonly pricing: ModelPricing | undefined;
-	private readonly claude: boolean;
+	private readonly provider: ProviderId | undefined;
 	private usd: number;
 	private unpriced = false;
 	private unreported = false;
@@ -69,20 +70,20 @@ export class SpendMeter {
 	// already spent, so a retry does not get the whole ceiling again. persist is
 	// handed the running total after every priced request; writes run one after
 	// another, and flush waits for the last.
-	// claude says the requests go to the Claude provider, whose cache read
-	// rate is known; without it cached tokens are metered at the full price.
+	// provider is the one the requests go to, which sets the rate cached
+	// tokens are metered at (see cacheReadRate); without it, the full price.
 	// meterUncapped keeps count with no cap set too, for a job that holds its
 	// spend against the cap in force at each request, which may be set later.
 	constructor(opts: {
 		pricing?: ModelPricing;
-		claude?: boolean;
+		provider?: ProviderId;
 		capUsd?: number;
 		spentUsd?: number;
 		persist?: (spentUsd: number) => Promise<void>;
 		meterUncapped?: boolean;
 	}) {
 		this.pricing = opts.pricing;
-		this.claude = opts.claude ?? false;
+		this.provider = opts.provider;
 		this.capUsd = opts.capUsd;
 		this.usd = opts.spentUsd ?? 0;
 		this.persist = opts.persist;
@@ -102,7 +103,7 @@ export class SpendMeter {
 			this.unreported = true;
 			return;
 		}
-		const cost = requestCostUsd(this.pricing, model, usage, this.claude);
+		const cost = requestCostUsd(this.pricing, model, usage, this.provider);
 		if (cost === undefined) {
 			this.unpriced = true;
 			return;
@@ -150,7 +151,7 @@ export class SpendMeter {
 	wouldPassCap(model: string, usage: TokenUsage): boolean {
 		if (this.capUsd === undefined) return false;
 		if (this.capReached) return true;
-		const cost = requestCostUsd(this.pricing, model, usage, this.claude);
+		const cost = requestCostUsd(this.pricing, model, usage, this.provider);
 		return cost !== undefined && this.usd + cost > this.capUsd + 1e-9;
 	}
 
