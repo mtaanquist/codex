@@ -30,8 +30,10 @@ import { toLf } from './line-endings.ts';
 
 // A stretch of text both versions share: where it starts in each, and its
 // length. Firm when it is a paired unit or the start or end two sides of a
-// gap share; otherwise it is a run the character diff kept.
-type Span = { base: number; current: number; length: number; firm: boolean };
+// gap share; otherwise it is a run the character diff kept. Folded when that
+// run is one diff-match-patch's cleanupSemantic would fold into the edits
+// around it (see folds).
+type Span = { base: number; current: number; length: number; firm: boolean; folded: boolean };
 
 // One side of a gap with the paired units inside it cut out, as one string,
 // and where each of its pieces lies in the text.
@@ -98,20 +100,29 @@ export const SAVE_DIFF_BUDGET: DiffBudget = { perPair: 6_250_000, total: 6_250_0
 // writer deleted it in one place and typed it in another.
 const MIN_ANCHOR = 16;
 
-// An end mapped through a run the character diff kept counts only if that
-// run holds at least this many characters. Two unrelated sentences of prose
+// An end mapped through a run the character diff kept counts only if the
+// run is not one cleanupSemantic folds and holds at least SUPPORT
+// characters, or CLOSE_SUPPORT for an end that lies in the run itself (not
+// one resting on the run beside it, below). Two unrelated sentences of prose
 // share runs of a word and its spaces by chance (" silence ", nine
-// characters). In the property test over seeds 1 to 60 and 100 to 160, 10
-// let 19 results land on text sharing nothing with their range and 12 let
-// 4 (main: 50,573); 15 let none but loses nearly half as many again of
-// the ranges main places correctly. With 12 the cost falls where an end
-// lies in the few letters between two edits. On the test's generated prose,
-// a range with an edit inside it and two or three more nearby is lost 5 to
-// 9% of the time (main: 0.3%), any range in such a paragraph about 4%, and
-// edits spread over the scene cost 0.03%. On natural prose (the review's
-// measurement) the first is 2.2 to 2.8% (main lower), and of all ranges in
-// an edited paragraph 0.44% of comments and 0.39% of markers are lost.
+// characters), and now and then a longer one (seed 38 of the property test:
+// "lmost through ", 14, in a rewritten paragraph). Such a run sits between
+// edits longer than itself, which is what the fold looks for; a run between
+// two typos a few letters apart does not. Measured with the property test
+// over seeds 1 to 60 and 100 to 160 (#1361): the fold alone, with 12, gave
+// the same results as 12 without it except that seed 38's 4 results on text
+// sharing nothing with their range were gone. With the fold, 10 for an end
+// in its own run lets none such through and misplaces nothing more, and
+// loses 2.9% of the clustered ranges main places right (3.7% at most a
+// seed), against 4.1% (5.1%) with 12 alone; 8 let 4 results onto unrelated
+// text and misplaced 66 clustered ones. The losses left fall where an end
+// lies in the few letters between two edits. Points (where an insertion is
+// accepted), placeSuggestion, an end resting outside and the other end of
+// such a range keep 12: a lower one there let a marker grow over a word
+// typed beside it.
 const SUPPORT = 12;
+const CLOSE_SUPPORT = 10;
+const counts = (span: Span, least: number) => span.firm || (!span.folded && span.length >= least);
 
 const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
 const isLowSurrogate = (code: number) => code >= 0xdc00 && code <= 0xdfff;
@@ -337,7 +348,8 @@ function emit(
 	a: number,
 	b: number,
 	length: number,
-	firm: boolean
+	firm: boolean,
+	folded = false
 ) {
 	const [A, B] = sides;
 	while (length > 0) {
@@ -348,7 +360,8 @@ function emit(
 			base: A.real[ka] + a - A.at[ka],
 			current: B.real[kb] + b - B.at[kb],
 			length: n,
-			firm
+			firm,
+			folded
 		});
 		a += n;
 		b += n;
@@ -369,16 +382,56 @@ function diffSpans(into: Span[], diff: ChangeObject<string>[], sides: [Side, Sid
 	let b = a;
 	if (a > 0) emit(into, sides, 0, 0, a, true);
 	const parts = settled.slice(1);
+	const folded = folds(settled);
 	parts.forEach((part, i) => {
 		const length = part.value.length;
 		if (part.added) b += length;
 		else if (part.removed) a += length;
 		else {
-			emit(into, sides, a, b, length, i === parts.length - 1);
+			emit(into, sides, a, b, length, i === parts.length - 1, folded[i + 1]);
 			a += length;
 			b += length;
 		}
 	});
+}
+
+// Which kept runs of a diff diff-match-patch's cleanupSemantic would fold
+// into the edits around them: a run no longer than the insertions or the
+// deletions on its left, and no longer than those on its right (the longer
+// of the two on each side), after which the runs before it are looked at
+// again. What it folds is the chance match two rewritten stretches share; a
+// run between small edits (typos a few letters apart) stays. Only marked:
+// the diff itself is not changed.
+function folds(parts: Part[]): boolean[] {
+	const kept = parts.map((p) => !p.added && !p.removed);
+	const folded = parts.map(() => false);
+	const equalities: number[] = [];
+	let last = -1;
+	let [ins1, del1, ins2, del2] = [0, 0, 0, 0];
+	for (let i = 0; i < parts.length; i++) {
+		const length = parts[i].value.length;
+		if (kept[i] && !folded[i]) {
+			equalities.push(i);
+			[ins1, del1, ins2, del2] = [ins2, del2, 0, 0];
+			last = i;
+			continue;
+		}
+		// A folded run counts as deleted and inserted.
+		if (kept[i] || parts[i].added) ins2 += length;
+		if (kept[i] || parts[i].removed) del2 += length;
+		if (last === -1) continue;
+		const run = parts[last].value.length;
+		if (run <= Math.max(ins1, del1) && run <= Math.max(ins2, del2)) {
+			folded[last] = true;
+			// Drop it and the run before it, which is looked at again.
+			equalities.pop();
+			equalities.pop();
+			i = equalities.length ? equalities[equalities.length - 1] : -1;
+			[ins1, del1, ins2, del2] = [0, 0, 0, 0];
+			last = -1;
+		}
+	}
+	return folded;
 }
 
 // The same diff with each lone insertion or deletion slid along the text it
@@ -645,7 +698,13 @@ class Comparer {
 		);
 		const identity = [...linePairs, ...sentencePairs];
 		for (const [u, v] of identity)
-			this.spans.push({ base: u.start, current: v.start, length: u.end - u.start, firm: true });
+			this.spans.push({
+				base: u.start,
+				current: v.start,
+				length: u.end - u.start,
+				firm: true,
+				folded: false
+			});
 		this.holes = [
 			identity.map((p) => p[0]).sort((x, y) => x.start - y.start),
 			identity.map((p) => p[1]).sort((x, y) => x.start - y.start)
@@ -708,6 +767,7 @@ function tidy(spans: Span[]): Span[] {
 		if (
 			last &&
 			last.firm === span.firm &&
+			last.folded === span.folded &&
 			last.base + last.length === span.base &&
 			last.current + last.length === span.current
 		)
@@ -755,35 +815,43 @@ function spanAt(spans: Span[], position: number, edge: 'start' | 'end' | 'point'
 
 const through = (span: Span, position: number) => span.current + position - span.base;
 
-// A range's two ends. Each end must lie in a span that is firm or holds
-// SUPPORT characters; an end in any other span is lost. A start the early
+// A range's two ends. Each end must lie in a span that counts with
+// CLOSE_SUPPORT; an end in any other span is lost. A start the early
 // reading does not hold may take the later one. With `loose` (a marker's
 // rule), an end whose own character is in no span at all may instead rest on
-// the span just outside it, if that span is firm or holds SUPPORT
-// characters, so an edit right at an edge stretches or shrinks the range
-// instead of losing it. An end whose character is in a span too short to
-// count may do so only when what was typed between the two spans holds no
-// white space ("of" became "long" and kept its "o"): the edge word changed,
-// rather than a word typed beside it, which the range would grow over. The
-// start moves to the later reading when there is one further on that still
-// leaves a range.
+// the span just outside it, if that span counts with SUPPORT, so an edit
+// right at an edge stretches or shrinks the range instead of losing it; the
+// other end's span must then count with SUPPORT too. An end whose character
+// is in a span too short to count may do so only when what was typed between
+// the two spans holds no white space ("of" became "long" and kept its "o"):
+// the edge word changed, rather than a word typed beside it, which the range
+// would grow over. The start moves to the later reading when there is one
+// further on that still leaves a range.
 function mapEnds(
 	found: Comparison,
 	current: string,
 	start: number,
 	end: number,
 	loose: boolean,
-	support: boolean
+	support: boolean,
+	close = CLOSE_SUPPORT
 ) {
-	const firm = (span: Span) => !support || span.firm || span.length >= SUPPORT;
+	const own = (span: Span) => !support || counts(span, close);
+	const firm = (span: Span) => !support || counts(span, SUPPORT);
 	const typedWord = (from: number, to: number) => /\s/.test(current.slice(from, to));
 	let from: number | null = null;
 	let outside = 0;
 	const first = spanAt(found.spans, start, 'start');
 	const late = found.late.length ? spanAt(found.late, start, 'start') : null;
-	if (first && firm(first)) from = through(first, start);
-	else if (!first && late) from = through(late, start);
-	else if (loose) {
+	// The span holding an end in itself, for the check on the other end.
+	let held: Span | null = null;
+	if (first && own(first)) {
+		from = through(first, start);
+		held = first;
+	} else if (!first && late) {
+		from = through(late, start);
+		held = late;
+	} else if (loose) {
 		const before = spanAt(found.spans, start, 'end');
 		if (
 			before &&
@@ -797,8 +865,10 @@ function mapEnds(
 	}
 	let to: number | null = null;
 	const last = spanAt(found.spans, end, 'end');
-	if (last && firm(last)) to = through(last, end);
-	else if (loose) {
+	if (last && own(last)) {
+		to = through(last, end);
+		if (outside) held = last;
+	} else if (loose) {
 		const after = spanAt(found.spans, end, 'start');
 		if (
 			after &&
@@ -811,6 +881,7 @@ function mapEnds(
 		}
 	}
 	if (to === null || from === null) return null;
+	if (outside === 1 && held && !firm(held)) return null;
 	// Both ends resting outside the range: some of its own text must be left,
 	// in a span that would hold an end (a chance letter or two does not).
 	if (outside === 2) {
@@ -879,14 +950,17 @@ function inGap(found: Comparison, position: number, edge: 'start' | 'end' | 'poi
 // to everything that re-anchors, so the cost is per revision rather than per
 // anchor, and the budget is for the whole request.
 export type AnchorMapper = {
+	// With `exact` (placeSuggestion's rule, for an accept), both ends must
+	// lie in spans that count with SUPPORT.
 	range(
 		baseText: string,
 		currentText: string,
 		start: number,
-		end: number
+		end: number,
+		exact?: boolean
 	): { start: number; end: number } | null;
 	// A point maps through the span it lies in (the earlier where two meet,
-	// as on main), which must be firm or hold SUPPORT characters.
+	// as on main), which must count with SUPPORT.
 	point(baseText: string, currentText: string, position: number): number | null;
 	// A range by a marker's rule: an end whose own character is gone may rest
 	// on the shared text just outside it, so an edit right at an edge
@@ -963,18 +1037,19 @@ export function createAnchorMapper(budget: DiffBudget, support = true): AnchorMa
 	const valid = (baseText: string, start: number, end: number) =>
 		start >= 0 && end <= baseText.length && start <= end;
 	return {
-		range(baseText, currentText, start, end) {
+		range(baseText, currentText, start, end, exact = false) {
 			if (start < 0 || end > baseText.length || start >= end) return null;
 			if (baseText === currentText) return { start, end };
 			const { found, at } = compare(baseText, currentText);
-			return mapEnds(found, currentText, at(start), at(end), false, support);
+			const close = exact ? SUPPORT : CLOSE_SUPPORT;
+			return mapEnds(found, currentText, at(start), at(end), false, support, close);
 		},
 		point(baseText, currentText, position) {
 			if (position < 0 || position > baseText.length) return null;
 			if (baseText === currentText) return position;
 			const { found, at } = compare(baseText, currentText);
 			const span = spanAt(found.spans, at(position), 'point');
-			if (!span || (support && !span.firm && span.length < SUPPORT)) return null;
+			if (!span || (support && !counts(span, SUPPORT))) return null;
 			return through(span, at(position));
 		},
 		ends(baseText, currentText, start, end) {
@@ -1048,7 +1123,7 @@ export function placeSuggestion(
 		const point = mapper.point(baseText, currentText, start);
 		return point === null ? null : { start: point, end: point };
 	}
-	const range = mapper.range(baseText, currentText, start, end);
+	const range = mapper.range(baseText, currentText, start, end, true);
 	if (!range) return null;
 	const original = baseText.slice(start, end);
 	if (currentText.slice(range.start, range.end) === original) return range;

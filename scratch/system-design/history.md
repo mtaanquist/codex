@@ -13,6 +13,31 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Review anchor limits (2026-11-22, `fix/review-anchor-limits` on
+`staging/bug-fixes`, part of #1361). The support rule counted only a run's
+length, so a 14-character chance run in a rewritten paragraph held an end
+(property seed 38), while a run of 10 or 11 between two typos did not. A run
+now also has to survive the equality fold of diff-match-patch's
+cleanupSemantic (a run no longer than the edits on both sides of it is
+folded, and the runs before it are looked at again). The fold is only a
+mark: the diff and so every mapping stays as it was. With the fold, 12 alone
+changed nothing over seeds 1 to 60 and 100 to 160 but take away seed 38's 4
+results on unrelated text. An end lying in its own run then needs 10
+characters (`CLOSE_SUPPORT`), which cut the clustered losses from 4.1% to
+2.9% (5.1% to 3.7% at most a seed) and added no misplaced, grown or
+stretched result. 8 was tried: it lost 1.9%, but put 4 results on unrelated
+text (seeds 22 and 45, "Dunmore " in a rewritten sentence) and misplaced 66
+clustered ones. Lowering the length for every use first let markers grow
+over a typed word (+15). An end resting outside, the other end of such a
+marker, points and `placeSuggestion` (`range(..., exact)`) therefore keep
+12. The L1 test's first two cases now land where main's do instead of
+detaching. Left as decisions for the issue: a marker whose edge word or
+whole text was replaced (identical text can come from a word typed beside a
+deleted one), the identical copy beside an edited original taking the
+accept, a sentence moved past a lightly edited paragraph (the single
+sentence pair splits the gap, so the paragraph is unmatched on both sides
+and nothing marks the stretch), and the two budget limits.
+
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried
 the bare classes `left` and `right`, so the panes' own `.left` and `.right`
