@@ -263,7 +263,8 @@ async function respondWithRetry(
 			if (attempt >= RETRY_DELAYS_MS.length || req.signal?.aborted || !isTransientFailure(err)) {
 				throw err;
 			}
-			if (req.mayResend && !req.mayResend()) throw err;
+			// An unbilled failure left the spend where the caller last checked it.
+			if (!mayResend(p, req, request, failedUsage !== undefined)) throw err;
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -273,6 +274,31 @@ async function respondWithRetry(
 			await p.sleep(RETRY_DELAYS_MS[attempt]);
 		}
 	}
+}
+
+// Whether another billed request may go out after one that was billed: a
+// resend after a failure, or a resume after a pause. The caller's own hook
+// decides first; then a run with a spend meter is held to its cap, counting
+// what it has spent plus this request with its reply at the limit. The prompt
+// is counted as written to Claude's cache, the dearest way it can be billed.
+function mayResend(
+	p: Prepared,
+	req: GatewayRequest,
+	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>,
+	billed = true
+): boolean {
+	if (req.mayResend && !req.mayResend()) return false;
+	if (!req.meter || !billed) return true;
+	const promptTokens =
+		conversationTokens(request.messages) +
+		(request.tools ? estimateTokens(JSON.stringify(request.tools)) : 0);
+	const written = p.claude ? promptTokens : 0;
+	return !req.meter.wouldPassCap(p.model, {
+		promptTokens,
+		completionTokens: request.maxTokens,
+		cacheWriteTokens: written,
+		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
+	});
 }
 
 // Parameters that change how much a request can be billed for. A writer's
@@ -393,6 +419,8 @@ type Prepared = {
 	webSearch?: boolean;
 	// The account's prompt cache lifetime (see CompletionRequest.cacheTtl).
 	cacheTtl?: '5m' | '1h';
+	// The requests go to Claude, which bills a cache write above the prompt rate.
+	claude: boolean;
 	// The reply length for this turn: what the writer set for this role, else
 	// what the surface asked for, else the role's default.
 	maxTokens: number;
@@ -541,6 +569,7 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 			: roleExtraParams(resolved.config, req.role),
 		webSearch: await webSearchAllowed(db, resolved.config, req),
 		cacheTtl: resolved.config.cacheTtl,
+		claude: adapterKind(resolved.config.provider) === 'anthropic',
 		maxTokens: requestReplyLimit(
 			resolved.config,
 			req.role,
@@ -678,6 +707,11 @@ async function runAgent(db: Database, p: Prepared, req: GatewayRequest): Promise
 				: roundTokens * 2;
 		let response = await round(roundTokens);
 		if (response.finishReason === 'length') {
+			if (!mayResend(p, req, { messages, maxTokens: retryTokens, tools: p.tools })) {
+				throw new Error(
+					`The model's reply was cut off at the ${roundTokens} token limit, and trying again with more room could pass this job's spend cap. Nothing was applied.`
+				);
+			}
 			response = await round(retryTokens);
 			if (response.finishReason === 'length') {
 				throw new Error(
@@ -689,7 +723,10 @@ async function runAgent(db: Database, p: Prepared, req: GatewayRequest): Promise
 		if (response.finishReason === 'paused') {
 			pauses += 1;
 			if (pauses > MAX_PAUSE_RESUMES) throw new Error(PAUSED_MESSAGE);
-			if (req.mayResend && !req.mayResend()) throw new Error(PAUSED_MESSAGE);
+			const resumed = [...messages, { role: 'assistant' as const, content: response.content }];
+			if (!mayResend(p, req, { messages: resumed, maxTokens: roundTokens, tools: p.tools })) {
+				throw new Error(PAUSED_MESSAGE);
+			}
 			pausedText += response.content;
 			push({ role: 'assistant', content: response.content, raw: response.raw });
 			continue;
@@ -856,7 +893,10 @@ export async function completeDetailed(
 			if (pauses >= MAX_PAUSE_RESUMES) throw new Error(PAUSED_MESSAGE);
 			// A resume is one more billed request, so the caller's ceiling is
 			// asked here as it is before a retry.
-			if (req.mayResend && !req.mayResend()) throw new Error(PAUSED_MESSAGE);
+			const resumed = [...messages, { role: 'assistant' as const, content: response.content }];
+			if (!mayResend(prepared, req, { messages: resumed, maxTokens: prepared.maxTokens })) {
+				throw new Error(PAUSED_MESSAGE);
+			}
 			messages.push({ role: 'assistant', content: response.content, raw: response.raw });
 			continue;
 		}

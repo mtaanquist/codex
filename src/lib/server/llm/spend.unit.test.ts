@@ -117,6 +117,20 @@ describe('SpendMeter', () => {
 		expect(meter.capReached).toBe(true);
 	});
 
+	it('says whether one more request at its reply limit could pass the cap (#1331)', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 0.5 });
+		meter.record('priced', { promptTokens: 100, completionTokens: 10 });
+		// $0.12 spent; this request could cost up to $0.30 more.
+		const next = { promptTokens: 100, completionTokens: 100 };
+		expect(meter.wouldPassCap('priced', next)).toBe(false);
+		expect(meter.wouldPassCap('priced', { ...next, completionTokens: 200 })).toBe(true);
+		// An unpriced model cannot be held to the cap (see notApplied).
+		expect(meter.wouldPassCap('other', { ...next, completionTokens: 1e6 })).toBe(false);
+		expect(new SpendMeter({ pricing }).wouldPassCap('priced', next)).toBe(false);
+		meter.record('priced', { promptTokens: 1000, completionTokens: 0 });
+		expect(meter.wouldPassCap('other', next)).toBe(true);
+	});
+
 	it('does nothing at all without a cap', () => {
 		const meter = new SpendMeter({ pricing });
 		meter.record('other');

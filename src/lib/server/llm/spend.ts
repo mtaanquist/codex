@@ -126,6 +126,16 @@ export class SpendMeter {
 		return this.capUsd !== undefined && this.usd >= this.capUsd;
 	}
 
+	// Whether one more request, at the usage it could bill at most, could take
+	// the run past its ceiling. True at or over the ceiling whatever the model;
+	// otherwise false when the request cannot be priced (see notApplied).
+	wouldPassCap(model: string, usage: TokenUsage): boolean {
+		if (this.capUsd === undefined) return false;
+		if (this.capReached) return true;
+		const cost = requestCostUsd(this.pricing, model, usage, this.claude);
+		return cost !== undefined && this.usd + cost > this.capUsd + 1e-9;
+	}
+
 	// A cap was set, but at least one request could not be priced, so the ceiling
 	// could not be enforced over the whole run.
 	get notApplied(): boolean {
