@@ -1186,7 +1186,16 @@ hashes:
   request and sends only those whose hash differs from the stored one. The
   hash covers the entry's name and its passages, not what is recorded on it
   (aliases, details, whether a summary is asked for), so accepting what a
-  read suggested does not buy another read of the same passages.
+  read suggested does not buy another read of the same passages. The pass
+  builds only the fingerprint (entry row and passages); the summary check
+  that shapes the messages runs only for an entry it sends.
+- A reply that cannot be used (an enrich read cut off at the reply limit, a
+  chapter summary that comes back empty) stores an `unusableReplyMark` in
+  place of the fingerprint: the request's hash with the role's model, tuning
+  and extra fields (`roleReplySettings`). The pass skips a request whose mark
+  matches, and an enrich pass still counts it as cut off in its notice; a
+  new request, model, reply limit or setting sends it again. The entry is
+  not marked read and the summary is left as it was.
 
 An arc and a chapter summary read scene summaries, and an Assistant-written
 scene summary is itself only current while its scene has not changed
@@ -1228,7 +1237,10 @@ without a call; one the release counted as out of date, or with a scene whose
 own summary was out of date, is rewritten once. An enrich read stored by
 3.21.3 or 3.21.4 carries a fingerprint that covered aliases and details
 (`enrichInputAsOf3_21`): a pass that finds it matching keeps the read under
-today's fingerprint without a call. An enrich read without a fingerprint is
+today's fingerprint without a call. It is also checked with the aliases and
+details of each of the entry's last 50 History versions
+(`readAsOf3_21InHistory`), so an entry edited after that read is adopted too;
+a hash match proves the name and passages are the ones read. An enrich read without a fingerprint is
 adopted without a call when no scene mentioning the entity changed since it
 was written, and sent otherwise. The fifty-years-back times older releases wrote as marks mean
 nothing once a fingerprint is stored.

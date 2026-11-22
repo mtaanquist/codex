@@ -13,6 +13,31 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Fingerprint low findings, wave 2 (2026-11-22, `fix/fingerprint-lows` on
+`staging/bug-fixes`, part of #1322, after #1392). A cut-off enrich read and
+an empty chapter summary stored nothing, so every pass paid for the same
+request again. They now store `unusableReplyMark` in the fingerprint column:
+a distinct `unusable:` hash of the request plus the role's model, tuning and
+extra fields, so it never reads as a read, and a new limit or model is
+worth another try. Storing the plain fingerprint was rejected: it would mark
+an unread entry read. The 3.21.4 enrich fingerprint covered aliases and
+details, so an entry edited after its read matched neither formula; the
+entry's History snapshots supply the aliases and details it had, and a hash
+match is proof, so no time heuristic was needed (coalesced autosaves can
+lose the version, and then it is read once, as before). The pass now builds
+only the fingerprint, with the entity type known and the stored input in
+the same select. The arc check's first-mention query reads off a widened
+`entity_mentions_target_idx` (target type, target, source, position;
+0103): on 2,000 scenes and 50 arcs the median check went from about 250
+to 200 ms locally, the rest being the 20,000 first-mention rows it joins and
+moves. Sampling in SQL to move fewer rows was left out: any drift from
+`sampleEvenly` would change every stored arc fingerprint. A universe-wide "Suggest details" checks each
+part's stories before sending, since the gateway only checks a story's mute
+on a story-scoped request; the whole-book review was already safe (each
+call is story-scoped) and now has a test. The arc section names stories
+with out-of-date scene summaries, so the writer runs Update summaries
+before refreshing.
+
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried
 the bare classes `left` and `right`, so the panes' own `.left` and `.right`
