@@ -161,6 +161,15 @@ describe('handle with a session', () => {
 	it('lets a sign-in link through', async () => {
 		expect(await outcome('/login/link?token=abc', 'live-token')).toBe('resolved');
 	});
+
+	it('refuses to use a sign-in link', async () => {
+		const { event, resolve } = request('/login/link?token=abc&/use', 'live-token', undefined, {
+			method: 'POST'
+		});
+		await expect(handle({ event, resolve } as never)).rejects.toSatisfy(
+			(err) => isRedirect(err) && err.location === '/'
+		);
+	});
 });
 
 describe('security headers', () => {

@@ -186,7 +186,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 		AUTH_PATHS.has(event.url.pathname) &&
 		// An emailed sign-in link opened while signed in: the page says which
 		// account is signed in rather than dropping the link without a word.
-		!(event.url.pathname === '/login/link' && event.url.searchParams.has('token'))
+		// Only viewing: using a link still needs a signed-out browser.
+		!(
+			event.url.pathname === '/login/link' &&
+			event.url.searchParams.has('token') &&
+			event.request.method === 'GET'
+		)
 	) {
 		return redirectFromHook(event, '/', false);
 	}
