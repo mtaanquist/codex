@@ -637,7 +637,14 @@ export const entityMentions = pgTable(
 		surroundingText: text('surrounding_text').notNull()
 	},
 	(table) => [
-		index('entity_mentions_target_idx').on(table.targetType, table.targetId),
+		// Ends with source and position so the first mention per (target,
+		// source), which every arc check reads, comes off the index in order.
+		index('entity_mentions_target_idx').on(
+			table.targetType,
+			table.targetId,
+			table.sourceId,
+			table.position
+		),
 		index('entity_mentions_source_idx').on(table.sourceType, table.sourceId)
 	]
 );

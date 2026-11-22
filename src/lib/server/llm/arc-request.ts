@@ -24,7 +24,15 @@ export function sampleEvenly<T>(items: T[], max: number): T[] {
 }
 
 // storyIds are the stories whose scenes the request draws on.
-export type ArcRequest = { messages: ChatMessage[]; input: string; storyIds: string[] };
+// staleSummaryStories are the titles of the stories with a scene read from its
+// passage because the summary the Assistant wrote for it is out of date: a
+// summaries pass in them would change the request.
+export type ArcRequest = {
+	messages: ChatMessage[];
+	input: string;
+	storyIds: string[];
+	staleSummaryStories: string[];
+};
 
 // The request an arc refresh would send for each of these characters as
 // things stand, with its fingerprint, in one read. The scenes are the live
@@ -88,11 +96,12 @@ export async function arcRequests(
 			)
 		)
 		.orderBy(asc(stories.positionInSeries), asc(stories.createdAt), asc(scenes.globalPosition));
-	const found = new Map<string, (ArcScene & { storyId: string })[]>();
+	const found = new Map<string, (ArcScene & { storyId: string; staleSummary: boolean })[]>();
 	for (const row of rows) {
 		// A summary the Assistant wrote before the scene last changed tells an
 		// older scene, so the passage is read instead until it is rewritten.
-		const text = usableSceneSummary(row) || row.snippet.trim();
+		const summary = usableSceneSummary(row);
+		const text = summary || row.snippet.trim();
 		if (!text) continue;
 		let arcScenes = found.get(row.characterId);
 		if (!arcScenes) found.set(row.characterId, (arcScenes = []));
@@ -100,7 +109,8 @@ export async function arcRequests(
 			storyId: row.storyId,
 			storyTitle: row.storyTitle,
 			sceneTitle: row.sceneTitle,
-			text
+			text,
+			staleSummary: !summary && !!row.summaryMd?.trim()
 		});
 	}
 	for (const character of characters) {
@@ -118,7 +128,10 @@ export async function arcRequests(
 		out.set(character.id, {
 			messages,
 			input: requestHash(messages),
-			storyIds: [...new Set(sampled.map((scene) => scene.storyId))]
+			storyIds: [...new Set(sampled.map((scene) => scene.storyId))],
+			staleSummaryStories: [
+				...new Set(sampled.filter((scene) => scene.staleSummary).map((scene) => scene.storyTitle))
+			]
 		});
 	}
 	return out;

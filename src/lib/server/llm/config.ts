@@ -628,6 +628,17 @@ export function roleExtraParams(
 
 // The reply length the writer set for this role, in tokens; undefined leaves
 // the surface's own figure in place.
+// What a role's reply depends on besides the request: its model, and its
+// tuning and extra fields (reply length, thinking, effort). See
+// unusableReplyMark.
+export function roleReplySettings(config: ResolvedConfig, role: AssistantRole): string {
+	return JSON.stringify([
+		pickModel(config, role),
+		config.tuning[role] ?? {},
+		roleExtraParams(config, role) ?? {}
+	]);
+}
+
 export function roleMaxTokens(config: ResolvedConfig, role: AssistantRole): number | undefined {
 	return config.tuning[role]?.maxTokens;
 }

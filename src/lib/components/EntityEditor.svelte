@@ -78,9 +78,19 @@
 		assistantSuggestions?: AssistantSuggestion[];
 		// A character's arc across the universe's stories, written by the
 		// Assistant, and whether a scene that mentions them changed since.
-		arc?: { summaryMd: string | null; stale: boolean } | null;
+		arc?: { summaryMd: string | null; stale: boolean; staleSummaryStories: string[] } | null;
 		onStatus: (status: SaveStatus) => void;
 	} = $props();
+
+	// Scene summaries an arc refresh would read around: updating them after the
+	// refresh puts the arc out of date again.
+	const staleSummaryNote = $derived.by(() => {
+		const titles = arc?.staleSummaryStories ?? [];
+		if (!titles.length) return '';
+		const where = titles.map((title) => `"${title}"`).join(', ');
+		const those = titles.length === 1 ? 'that story' : 'those stories';
+		return `Some scene summaries in ${where} are out of date. Choose Update summaries from the command menu in ${those} before you refresh the arc, or it will be out of date again once they are updated.`;
+	});
 
 	type AssistantSuggestion = {
 		id: string;
@@ -729,6 +739,9 @@
 						Select Refresh arc to write it again from the scenes as they are now.
 					{/if}
 				</p>
+			{/if}
+			{#if assistantEnabled && entity.universeId && staleSummaryNote}
+				<p class="field-hint">{staleSummaryNote}</p>
 			{/if}
 		{:else}
 			<p class="field-hint">
