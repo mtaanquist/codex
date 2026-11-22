@@ -6,7 +6,7 @@ import { GRANTABLE_PERMISSIONS, scopeFromPermissions } from '#lib/mcp-access';
 import { FAILED_BEARER_PER_MINUTE, REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
 import { notFound } from '#lib/server/mcp/http';
 import { protectedResourceUrl } from '#lib/server/mcp/metadata';
-import { resolveBearer } from '#lib/server/mcp/oauth';
+import { knownBearer, resolveBearer } from '#lib/server/mcp/oauth';
 import { serveMcp } from '#lib/server/mcp/server';
 import { mcpInstanceEnabled } from '#lib/server/mcp/settings';
 
@@ -60,9 +60,11 @@ const handle: RequestHandler = async ({ request, url, getClientAddress }) => {
 	const token = bearerToken(request);
 	const identity = await resolveBearer(db, token);
 	if (!identity) {
-		// Bad tokens are limited per address, but only after the lookup: hosted
-		// apps share addresses, so a valid token must never be refused by this.
-		if (token) {
+		// Guessed tokens are limited per address, but only after the lookup:
+		// hosted apps share addresses, so a valid token must never be refused by
+		// this, and a known one that expired or was revoked always gets the 401
+		// that tells its client to refresh or sign in again.
+		if (token && !(await knownBearer(db, token))) {
 			const key = `mcp:bad-token:${getClientAddress()}`;
 			const failures = rateLimit(key, FAILED_BEARER_PER_MINUTE, 60 * 1000);
 			if (!failures.allowed) return tooManyRequests(failures.retryAfterSeconds);
