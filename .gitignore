@@ -34,7 +34,7 @@ playwright-report/
 .claude/worktrees/
 
 # Planning prototype: regenerable from Claude Design, kept out of the repo.
-# The system-design docs under scratch/ are committed; the prototype is not.
+# Design docs live in docs/; scratch/ holds only this local prototype.
 scratch/app-design/
 
 # OS noise
