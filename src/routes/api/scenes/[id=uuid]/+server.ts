@@ -4,7 +4,7 @@ import { db } from '#lib/server/db';
 import { ownedScene } from '#lib/server/scene-access';
 import { queueSceneMentions } from '#lib/server/jobs';
 import { rateLimitWrites } from '#lib/server/write-guard';
-import { checkProseLength, readJson } from '#lib/server/validation';
+import { checkNoNull, checkProseLength, readJson } from '#lib/server/validation';
 import { saveSceneBody } from '#lib/server/scene-save';
 import { setSceneStatus } from '#lib/server/scene-status';
 import { isSceneStatus } from '#lib/scene-status';
@@ -27,6 +27,8 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 		error(400, 'bodyMd must be a string');
 	}
 	checkProseLength(payload.bodyMd);
+	checkNoNull(payload.bodyMd, 'bodyMd');
+	if (typeof payload.title === 'string') checkNoNull(payload.title, 'title');
 	// The editor maps marker anchors through edits; they ride the autosave.
 	// A review save omits markers entirely (the review centre does not load
 	// them): when the field is absent, the stored anchors are mapped through

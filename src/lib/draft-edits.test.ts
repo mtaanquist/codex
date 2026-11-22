@@ -238,6 +238,21 @@ describe('a draft changed in another window', () => {
 		expect(bodies()[1].baseHashes).toEqual([h('From the other window.')]);
 	});
 
+	it('does not ask before the page is left once the writer loads the current text', async () => {
+		answers = [refused(409, 'This draft was changed in another window.')];
+		const edit = edits.draftEdit(id(), stored);
+		edit.onChange = () => {};
+		await type(edit, 'Edited in a window that fell behind.');
+		expect(edit.conflict).toBe(true);
+		expect(leaving()).toBe(true);
+		answers = [ok];
+		edits.adoptStored(edit, { textMd: 'From the other window.' });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(leaving()).toBe(false);
+		// The server already holds that text: nothing is sent.
+		expect(sent).toHaveLength(1);
+	});
+
 	it('with no card showing, keeps the text for the next card and asks before leaving until it is seen', async () => {
 		answers = [refused(409, 'This draft was changed in another window.')];
 		const key = id();
