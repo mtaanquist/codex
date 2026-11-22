@@ -29,10 +29,13 @@ ceiling, which follows the cap in force at each request. A hold inside a
 review's tool loop can stop a scene after some of its notes were staged; the
 scene stays out of `completed`, so a continuation reads it again with those
 notes as prior. The cap tests now report $1 a request as many cheap tokens,
-so a request's own estimate stays a few cents. Left open: writer extra
-parameters past `max_tokens` on unbounded roles, the chars/4 estimate with
-no safety factor, and the capped notice still saying "reached the spend cap
-at about $X" when the stop came below it.
+so a request's own estimate stays a few cents. A request under a capped
+meter drops the writer's reply-size and reply-count extra parameters, as a
+bounded drafting request does, so the reply cannot outgrow the limit the
+check counted. The capped notices share one phrase (`capStopPhrase`): the job
+stopped before the next request could pass the cap, having spent about $X,
+which stays true below the cap. Left open: the chars/4 estimate with no
+safety factor.
 
 Small non-Assistant polish (2026-11-20, staging branch
 `staging/non-assistant-polish`, lanes #1278 to #1284): six backlog issues.
