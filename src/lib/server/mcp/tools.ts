@@ -2,7 +2,7 @@ import { isUuid } from '../../slug.ts';
 import type { McpPermission } from '../../mcp-access.ts';
 import type { Database } from '../auth.ts';
 import { logEvent } from '../log.ts';
-import { slidingRateLimit } from '../rate-limit.ts';
+import { refundSlidingRateLimit, slidingRateLimit } from '../rate-limit.ts';
 import { dispatchToolCall, ownsUniverse } from '../llm/tools/dispatch.ts';
 import { TOOLS, type ToolDef } from '../llm/tools/registry.ts';
 import {
@@ -166,12 +166,21 @@ export async function callMcpTool(
 	const staging = tool.kind === 'write';
 	const perGrant = staging ? STAGING_CALLS_PER_MINUTE : READ_CALLS_PER_MINUTE;
 	const perUser = staging ? STAGING_CALLS_PER_MINUTE_PER_USER : READ_CALLS_PER_MINUTE_PER_USER;
-	const limits = [
-		slidingRateLimit(`mcp:${tool.kind}:grant:${identity.grantId}`, perGrant, windowMs),
-		slidingRateLimit(`mcp:${tool.kind}:user:${identity.userId}`, perUser, windowMs)
-	];
+	const now = performance.now();
+	const budgets = [
+		[`mcp:${tool.kind}:grant:${identity.grantId}`, perGrant],
+		[`mcp:${tool.kind}:user:${identity.userId}`, perUser]
+	] as const;
+	const limits = budgets.map(([key, limit]) => slidingRateLimit(key, limit, windowMs, now));
+	// A call turned away before it did anything (by the other budget, or a
+	// full queue) does not count against either.
+	const refund = () =>
+		budgets.forEach(([key], index) => {
+			if (limits[index].allowed) refundSlidingRateLimit(key, now);
+		});
 	const blocked = limits.find((limit) => !limit.allowed);
 	if (blocked) {
+		refund();
 		return refuse(
 			'rate_limited',
 			`Too many calls. Wait ${blocked.retryAfterSeconds} seconds and try again.`
@@ -236,6 +245,10 @@ export async function callMcpTool(
 		);
 		// The same answer as for a universe that was never the writer's.
 		if (outcome.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);
+		if (outcome.busy) {
+			refund();
+			return refuse('busy', outcome.result);
+		}
 		if (outcome.failed) return failed(outcome.errorCode);
 		log(outcome.staged ? 'staged' : 'ok');
 		return { text: capped(outcome.result), isError: false };
@@ -246,7 +259,10 @@ export async function callMcpTool(
 		// calls take theirs in the dispatcher, around the transaction.
 		return staging ? await run() : await readGate.run(identity.userId, run);
 	} catch (err) {
-		if (err instanceof GateBusyError) return refuse('busy', 'Too many calls at once. Try again.');
+		if (err instanceof GateBusyError) {
+			refund();
+			return refuse('busy', 'Too many calls at once. Try again.');
+		}
 		// The dispatcher catches what its handlers throw; this is for anything
 		// outside it, so no error's own text ever reaches the app.
 		const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;

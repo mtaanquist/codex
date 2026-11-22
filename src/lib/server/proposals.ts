@@ -2,6 +2,7 @@ import { and, asc, count, eq, isNull, sql } from 'drizzle-orm';
 import type { ActionFailure } from './action-result.ts';
 import type { Database } from './auth.ts';
 import {
+	assistantDrafts,
 	characters,
 	entityCategories,
 	entityProposals,
@@ -276,6 +277,31 @@ export type SplitProposalView = {
 	from: string;
 };
 
+// A draft an app staged on a scene, waiting on that scene to be kept or
+// discarded. Listed here too so the writer finds it from the universe.
+export type AppDraftView = {
+	id: string;
+	storyId: string;
+	storyTitle: string;
+	sceneId: string;
+	sceneTitle: string | null;
+	// "Drafted by <app>."
+	note: string | null;
+};
+
+// An app's draft is ready the moment it is staged and has no job; one of the
+// Assistant's always has one. Only drafts on live scenes of live stories wait
+// for anyone (the same rule as the ceiling in stageAppDraft).
+const appDraftWaiting = (ownerId: string) =>
+	and(
+		eq(assistantDrafts.userId, ownerId),
+		eq(assistantDrafts.status, 'ready'),
+		isNull(assistantDrafts.jobId),
+		isNull(scenes.deletedAt),
+		eq(stories.ownerId, ownerId),
+		storyIsLive()
+	);
+
 async function assistantName(db: Database, ownerId: string): Promise<string> {
 	const [row] = await db
 		.select({ llmConfig: users.llmConfig })
@@ -291,7 +317,11 @@ export async function listProposals(
 	db: Database,
 	ownerId: string,
 	universeId: string
-): Promise<{ entities: EntityProposalView[]; splits: SplitProposalView[] }> {
+): Promise<{
+	entities: EntityProposalView[];
+	splits: SplitProposalView[];
+	drafts: AppDraftView[];
+}> {
 	const entityRows = await db
 		.select()
 		.from(entityProposals)
@@ -323,6 +353,20 @@ export async function listProposals(
 			)
 		)
 		.orderBy(asc(sceneSplitProposals.createdAt));
+	const drafts = await db
+		.select({
+			id: assistantDrafts.id,
+			storyId: stories.id,
+			storyTitle: stories.title,
+			sceneId: scenes.id,
+			sceneTitle: scenes.title,
+			note: assistantDrafts.note
+		})
+		.from(assistantDrafts)
+		.innerJoin(scenes, eq(assistantDrafts.sceneId, scenes.id))
+		.innerJoin(stories, eq(scenes.storyId, stories.id))
+		.where(and(appDraftWaiting(ownerId), eq(stories.universeId, universeId)))
+		.orderBy(asc(assistantDrafts.createdAt));
 	const assistant = entityRows.some((row) => row.assistant)
 		? await assistantName(db, ownerId)
 		: 'Assistant';
@@ -345,18 +389,53 @@ export async function listProposals(
 			before: proposal.before,
 			rationale: proposal.rationale,
 			from: proposal.fromName ?? 'A connected app'
-		}))
+		})),
+		drafts
 	};
 }
 
-// How many proposals wait in a universe, for the count beside its link.
-export async function countProposals(
-	db: Database,
-	ownerId: string,
-	universeId: string
-): Promise<number> {
-	const listed = await listProposals(db, ownerId, universeId);
-	return listed.entities.length + listed.splits.length;
+// How many things wait for the writer in each of their universes: suggested
+// entries, proposed splits and drafts from apps, by the rules listProposals
+// lists them by. Universes with nothing waiting are left out.
+export async function countProposals(db: Database, ownerId: string): Promise<Map<string, number>> {
+	const counts = new Map<string, number>();
+	const add = (rows: { universeId: string; n: number }[]) => {
+		for (const { universeId, n } of rows) counts.set(universeId, (counts.get(universeId) ?? 0) + n);
+	};
+	add(
+		await db
+			.select({ universeId: entityProposals.universeId, n: count() })
+			.from(entityProposals)
+			.where(and(eq(entityProposals.ownerId, ownerId), eq(entityProposals.status, 'pending')))
+			.groupBy(entityProposals.universeId)
+	);
+	add(
+		await db
+			.select({ universeId: stories.universeId, n: count() })
+			.from(sceneSplitProposals)
+			.innerJoin(scenes, eq(sceneSplitProposals.sceneId, scenes.id))
+			.innerJoin(stories, eq(scenes.storyId, stories.id))
+			.where(
+				and(
+					eq(sceneSplitProposals.ownerId, ownerId),
+					eq(sceneSplitProposals.status, 'pending'),
+					eq(stories.ownerId, ownerId),
+					storyIsLive(),
+					isNull(scenes.deletedAt)
+				)
+			)
+			.groupBy(stories.universeId)
+	);
+	add(
+		await db
+			.select({ universeId: stories.universeId, n: count() })
+			.from(assistantDrafts)
+			.innerJoin(scenes, eq(assistantDrafts.sceneId, scenes.id))
+			.innerJoin(stories, eq(scenes.storyId, stories.id))
+			.where(appDraftWaiting(ownerId))
+			.groupBy(stories.universeId)
+	);
+	return counts;
 }
 
 const GONE: ActionFailure = {

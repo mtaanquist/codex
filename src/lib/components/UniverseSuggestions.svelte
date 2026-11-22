@@ -1,24 +1,52 @@
 <script lang="ts">
+	import { tick } from 'svelte';
+	import type { SubmitFunction } from '$app/forms';
 	import { resolve } from '$app/paths';
+	import { enhance } from '#lib/enhance';
 	import { withQuery } from '#lib/href';
 	import FormStatus from './FormStatus.svelte';
-	import type { EntityProposalView, SplitProposalView } from '#lib/server/proposals';
+	import type { AppDraftView, EntityProposalView, SplitProposalView } from '#lib/server/proposals';
 
 	// What the Assistant or a connected app proposed for this universe and the
 	// writer has not decided: entries it may be missing, and scene splits. The
 	// forms post to the page's own actions (?/decideEntity, ?/decideSplit).
+	// Drafts from apps are decided on their scene, so they are only listed.
 	let {
 		entities,
 		splits,
+		drafts,
 		message = '',
 		done = ''
 	}: {
 		entities: EntityProposalView[];
 		splits: SplitProposalView[];
+		drafts: AppDraftView[];
 		// The outcome of the last decision.
 		message?: string;
 		done?: string;
 	} = $props();
+
+	// A decision takes its row away. Focus goes to the row that takes its
+	// place (or the one before, once the last is gone), and to the list's
+	// heading once the list is empty, so a keyboard or screen reader user
+	// carries on from where they were.
+	const decide: SubmitFunction = ({ formElement }) => {
+		const block = formElement.closest('.admin-block');
+		const row = formElement.closest('.list-row');
+		const index = row ? Array.from(block?.querySelectorAll('.list-row') ?? []).indexOf(row) : -1;
+		return async ({ result, update }) => {
+			await update();
+			await tick();
+			const lost = !document.activeElement || document.activeElement === document.body;
+			if (result.type !== 'success' && !lost) return;
+			const rows = block?.querySelectorAll<HTMLElement>('.list-row') ?? [];
+			const next = rows[index] ?? rows[rows.length - 1];
+			const target =
+				next?.querySelector<HTMLElement>('button') ??
+				block?.querySelector<HTMLElement>('.admin-block-title');
+			target?.focus();
+		};
+	};
 
 	const KIND: Record<EntityProposalView['kind'], string> = {
 		character: 'Character',
@@ -27,11 +55,11 @@
 	};
 </script>
 
-<FormStatus block error={message || null} success={done || null} />
+<FormStatus live error={message || null} success={done || null} />
 
 <div class="admin-block">
 	<div class="admin-block-head">
-		<h2 class="admin-block-title">Suggested entries</h2>
+		<h2 class="admin-block-title" tabindex="-1">Suggested entries</h2>
 		<p class="admin-block-sub">
 			Characters, places and lore entries that your Assistant or a connected app found in your
 			writing. Accept one to add it to this universe, or dismiss it. Nothing is added until you
@@ -59,7 +87,7 @@
 								<div class="list-sub">Seen in: {entry.seenIn}</div>
 							{/if}
 						</div>
-						<form method="POST" action="?/decideEntity" class="list-actions">
+						<form method="POST" action="?/decideEntity" class="list-actions" use:enhance={decide}>
 							<input type="hidden" name="id" value={entry.id} />
 							<button
 								type="submit"
@@ -85,7 +113,7 @@
 
 <div class="admin-block">
 	<div class="admin-block-head">
-		<h2 class="admin-block-title">Proposed scene splits</h2>
+		<h2 class="admin-block-title" tabindex="-1">Proposed scene splits</h2>
 		<p class="admin-block-sub">
 			Places where a connected app thinks a scene should become two. Select "Split here" to split
 			the scene at the quoted words, or dismiss the proposal. The scene stays as it is until you
@@ -119,7 +147,7 @@
 							{/if}
 							<div class="list-sub">The new scene would start at: "{split.before}"</div>
 						</div>
-						<form method="POST" action="?/decideSplit" class="list-actions">
+						<form method="POST" action="?/decideSplit" class="list-actions" use:enhance={decide}>
 							<input type="hidden" name="id" value={split.id} />
 							<button
 								type="submit"
@@ -136,6 +164,51 @@
 								aria-label="Dismiss the split of {sceneName}">Dismiss</button
 							>
 						</form>
+					</div>
+				{/each}
+			</div>
+		</div>
+	{/if}
+</div>
+
+<div class="admin-block">
+	<div class="admin-block-head">
+		<h2 class="admin-block-title">Scene drafts from apps</h2>
+		<p class="admin-block-sub">
+			Drafts a connected app wrote for a scene. Open the scene to read the draft, then keep or
+			discard it there. The scene stays as it is until you keep the draft.
+		</p>
+	</div>
+	{#if drafts.length === 0}
+		<div class="admin-card">
+			<div class="empty-state tight">
+				<p class="empty-state-text">No drafts from apps are waiting.</p>
+			</div>
+		</div>
+	{:else}
+		<div class="admin-card tight">
+			<div class="attn-list">
+				{#each drafts as draft (draft.id)}
+					{@const sceneName = draft.sceneTitle ?? 'Untitled scene'}
+					<div class="list-row">
+						<div class="list-main">
+							<div class="list-title">
+								{sceneName} in {draft.storyTitle}
+							</div>
+							{#if draft.note}
+								<div class="list-sub">{draft.note}</div>
+							{/if}
+						</div>
+						<div class="list-actions">
+							<a
+								class="btn btn-ghost btn-sm"
+								href={withQuery(resolve('/stories/[id]', { id: draft.storyId }), {
+									scene: draft.sceneId,
+									draft: 'show'
+								})}
+								aria-label="Open the draft for {sceneName}">Open draft</a
+							>
+						</div>
 					</div>
 				{/each}
 			</div>

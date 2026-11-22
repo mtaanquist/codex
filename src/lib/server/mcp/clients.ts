@@ -5,6 +5,7 @@ import { oauthClients } from '../db/schema.ts';
 import { egressHttpRequest } from '../llm/egress.ts';
 import {
 	CLIENT_DOCUMENT_MAX_BYTES,
+	CLIENT_DOCUMENT_RETRY_MS,
 	CLIENT_DOCUMENT_TIMEOUT_MS,
 	CLIENT_DOCUMENT_TTL_MS
 } from './constants.ts';
@@ -74,6 +75,31 @@ export const fetchClientDocument: FetchClientDocument = async (url) => {
 	return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 };
 
+// Documents that could not be fetched or did not qualify, and when they may be
+// tried again, so a failing client is not fetched on every attempt. `keep`:
+// the host could not be reached, so a copy checked before still stands; a
+// document that did not qualify lets nobody in. Fetches of one address
+// already under way are shared. The app runs as one process (see
+// rate-limit.ts), so module-level state is enough.
+const failures = new Map<string, { until: number; keep: boolean }>();
+const fetching = new Map<string, Promise<OauthClient | null>>();
+const FAILED_SWEEP_THRESHOLD = 1000;
+
+function noteFailure(clientId: string, keep: boolean): void {
+	const now = Date.now();
+	if (failures.size >= FAILED_SWEEP_THRESHOLD) {
+		for (const [id, failure] of failures) if (failure.until <= now) failures.delete(id);
+	}
+	if (failures.size < FAILED_SWEEP_THRESHOLD) {
+		failures.set(clientId, { until: now + CLIENT_DOCUMENT_RETRY_MS, keep });
+	}
+}
+
+// Forgets failed fetches. For tests; not used by the app.
+export function resetClientDocumentFailures(): void {
+	failures.clear();
+}
+
 async function clientFromDocument(
 	db: Database,
 	clientId: string,
@@ -86,13 +112,17 @@ async function clientFromDocument(
 	} catch {
 		// The document's host is down or slow. A copy already checked still
 		// stands; an app never seen before cannot be let in on trust.
+		noteFailure(clientId, true);
 		return cached ?? null;
 	}
+	const parsed = parseClientMetadata(doc);
 	// The document must name the address it was fetched from, or anyone could
 	// point at someone else's document.
-	if ((doc as { client_id?: unknown } | null)?.client_id !== clientId) return null;
-	const parsed = parseClientMetadata(doc);
-	if (!parsed.ok) return null;
+	if ((doc as { client_id?: unknown } | null)?.client_id !== clientId || !parsed.ok) {
+		noteFailure(clientId, false);
+		return null;
+	}
+	failures.delete(clientId);
 	const host = new URL(clientId).host;
 	const values = {
 		clientName: parsed.metadata.clientName ?? host,
@@ -118,9 +148,19 @@ export async function findClient(
 	const [stored] = await db.select().from(oauthClients).where(eq(oauthClients.clientId, clientId));
 	if (!isClientIdUrl(clientId)) return stored?.kind === 'dcr' ? stored : null;
 	if (stored && stored.kind !== 'cimd') return null;
-	const fresh =
-		stored?.fetchedAt && Date.now() - stored.fetchedAt.getTime() < CLIENT_DOCUMENT_TTL_MS;
-	return fresh ? stored : clientFromDocument(db, clientId, stored, fetchDocument);
+	const now = Date.now();
+	const fresh = stored?.fetchedAt && now - stored.fetchedAt.getTime() < CLIENT_DOCUMENT_TTL_MS;
+	if (fresh) return stored;
+	// Fetched lately and failed: the answer then still stands.
+	const failure = failures.get(clientId);
+	if (failure && failure.until > now) return failure.keep ? (stored ?? null) : null;
+	const pending = fetching.get(clientId);
+	if (pending) return pending;
+	const fetched = clientFromDocument(db, clientId, stored, fetchDocument).finally(() =>
+		fetching.delete(clientId)
+	);
+	fetching.set(clientId, fetched);
+	return fetched;
 }
 
 // A client already in the table, with no fetch: the token endpoint only ever
