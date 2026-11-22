@@ -24,6 +24,7 @@ import {
 	egressPolicy
 } from './egress.ts';
 import { providerFor } from './providers/index.ts';
+import { WEB_SEARCH_MAX_USES } from './providers/anthropic.ts';
 import { buildPersonaPrompt } from './prompts/persona.ts';
 import { recordAssistantUsage } from './usage.ts';
 import {
@@ -172,6 +173,16 @@ export function ceilingPromptTokens(
 	);
 }
 
+// What one web search's results may add to a request's input, for the spend
+// cap. Results come back inside the reply but bill as input tokens, so a capped
+// request that may search is counted as if it ran every search it is allowed
+// (WEB_SEARCH_MAX_USES), each returning this much.
+const WEB_SEARCH_RESULT_CEILING_TOKENS = 10_000;
+
+function webSearchCeilingTokens(webSearch: boolean | undefined): number {
+	return webSearch ? WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS : 0;
+}
+
 // The persona system message the gateway puts at the front of every turn.
 export function personaMessage(config: {
 	assistantName: string;
@@ -303,7 +314,8 @@ async function respondWithRetry(
 // before every send (a first send, a resend after a failure the endpoint may
 // have billed, a resume, a tool round), so the rule lives here and not in each
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
-// Claude's cache, the dearest way it can be billed. A caller with its own mayResend
+// Claude's cache, the dearest way it can be billed, with the results of every
+// web search the request may run (webSearchCeilingTokens). A caller with its own mayResend
 // hook holds its own ceiling (drafting, against the cap in force at each
 // request).
 function wouldPassCap(
@@ -312,7 +324,8 @@ function wouldPassCap(
 	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
 ): boolean {
 	if (!req.meter || req.mayResend) return false;
-	const promptTokens = ceilingPromptTokens(request.messages, request.tools);
+	const promptTokens =
+		ceilingPromptTokens(request.messages, request.tools) + webSearchCeilingTokens(p.webSearch);
 	const written = p.claude ? promptTokens : 0;
 	return req.meter.wouldPassCap(p.model, {
 		promptTokens,

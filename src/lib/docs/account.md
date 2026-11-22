@@ -249,8 +249,10 @@ Your words are sent only to the endpoint you set here.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
-  searches a request ran. Claude charges for each search on top of tokens; that
-  fee is not in the cost shown here or counted by the spend cap.
+  searches a request ran. The search results count as tokens like the rest of
+  the request, and the spend cap allows for the most a request's searches could
+  add before it sends one. Claude also charges a fee for each search on top of
+  tokens; that fee is not in the cost shown here or counted by the spend cap.
 
 ### Which model to pick for each role
 
