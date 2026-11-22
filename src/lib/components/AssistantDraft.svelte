@@ -347,8 +347,11 @@
 	}
 
 	// Opens the brief form with what the scene suggests, or with the brief of a
-	// draft that failed, to try again.
+	// draft that failed, to try again. Only the latest call applies, so words
+	// typed with a second ask while the first is loading are not lost.
+	let opening = 0;
 	async function openForm(typed: string, from?: SceneDraftView) {
+		const mine = ++opening;
 		counts += 1;
 		error = '';
 		estimate = null;
@@ -368,7 +371,7 @@
 				{ ...scope(), defaults: true },
 				'Could not open the draft form.'
 			);
-			if (!alive || view !== 'loading') return;
+			if (!alive || mine !== opening || view !== 'loading') return;
 			if (!response.ok) {
 				error = response.message;
 				brief = typed;
