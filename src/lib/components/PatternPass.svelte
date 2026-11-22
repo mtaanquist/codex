@@ -24,6 +24,7 @@
 		rereading,
 		position,
 		total,
+		earlier,
 		onAccepted,
 		onSkip,
 		beforeAccept,
@@ -46,6 +47,8 @@
 		rereading: boolean;
 		position: number;
 		total: number;
+		// Edits decided before this pass started, which the count leaves out.
+		earlier: number;
 		onAccepted: (
 			id: string,
 			accepted: { bodyMd: string; baseHash: string } | null,
@@ -148,16 +151,30 @@
 	});
 
 	// A follow-up's link scrolls to the edit it follows and marks it briefly.
+	// That card then offers a way back to the current step until the step
+	// changes or another link is followed.
 	let flashId = $state<string | null>(null);
+	let shownId = $state<string | null>(null);
 	function showOriginal(id: string) {
 		const card = cardOf(id);
 		if (!card) return;
 		card.scrollIntoView({ block: 'center', behavior: reduceMotion() ? 'auto' : 'smooth' });
 		card.focus({ preventScroll: true });
-		flashId = id;
+		flashId = shownId = id;
 		setTimeout(() => {
 			if (flashId === id) flashId = null;
 		}, 1600);
+	}
+	$effect(() => {
+		void stepId;
+		shownId = null;
+	});
+	function backToCurrent() {
+		shownId = null;
+		const card = stepId ? cardOf(stepId) : null;
+		if (!card) return;
+		card.scrollIntoView({ block: 'start', behavior: reduceMotion() ? 'auto' : 'smooth' });
+		card.focus({ preventScroll: true });
 	}
 	const listed = $derived(new Set(edits.map((e) => e.id)));
 
@@ -176,7 +193,8 @@
 		</button>
 		<span class="inspector-kind pp-title">{name}</span>
 		<span class="pp-count" aria-live="polite"
-			>{#if step}{position} of {total}{/if}</span
+			>{#if step}{position} of {total}{#if earlier > 0}<span class="visually-hidden">,</span>
+					<span class="pp-earlier">{earlier} done earlier</span>{/if}{/if}</span
 		>
 	</div>
 	<div class="rv-panel-scroll" bind:this={scroller}>
@@ -349,6 +367,11 @@
 						{#if edit.replacement}<span class="rv-diff-ins">{edit.replacement}</span>{/if}
 					</div>
 					{@render followsLink(edit)}
+					{#if step && shownId === edit.id}
+						<button class="pp-follows" type="button" onclick={backToCurrent}>
+							Back to the current change
+						</button>
+					{/if}
 				</div>
 			{/if}
 		{/each}
@@ -406,6 +429,10 @@
 		font-size: var(--text-meta);
 		color: var(--text-faint);
 		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+	.pp-earlier {
+		display: block;
 	}
 	/* Leaves a little of the card before in view when a step scrolls up. */
 	.pp-card {

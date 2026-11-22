@@ -20,13 +20,25 @@ stopped early. `cacheReadRate` is now keyed by the provider id: the preset
 providers whose adapters report cached tokens get their published rate, the
 dearest across their models so a figure still never reads low (OpenAI a half,
 since gpt-4o caches at a half and newer models lower; Gemini a quarter;
-DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with `prompt_cache_hit_tokens` now read as the cached share
-where `prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
+DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with
+`prompt_cache_hit_tokens` now read as the cached share where
+`prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
 no one rate fits; its discovery reports `input_cache_read` per model, which is
 carried as an optional `cacheRead` on the price itself and wins over any rate.
 A custom endpoint and a typed price keep the full-rate fallback. The rates
 were set from the providers' published price lists as known at the time; the
 build environment could not reach them to re-check.
+
+Guided pass lows, rest (2026-11-22, `fix/guided-pass-lows` on
+`staging/bug-fixes`, #1317). An accepted deletion has nothing to mark, so its
+anchor is null and `patternEdits` put it after the pending edits of its scene.
+A zero-width anchor would have drawn empty marks, so the suggestion view now
+carries a separate `position`: the anchor's start, or for a decided edit with
+no text left (an accepted deletion, a rejected insertion) the mapped point
+where it was. The pass sorts by that. A restarted pass counts only what is
+left and says "N done earlier" under the count; following "Follows an earlier
+change" puts a "Back to the current change" button on that card (Escape was
+not used, as it already closes things on the review page).
 
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried

@@ -222,8 +222,9 @@ Your words are sent only to the endpoint you set here.
 
 - **Estimated rows**: with the Claude provider, when a request fails, or you
   stop it, before the endpoint reports its token counts, Codex estimates them
-  from what had arrived. Those rows say "estimated", and the 30-day total says
-  how many it includes. A request you stopped can cost more than its estimate.
+  from what had arrived. The same happens when a web search's results are not
+  included in the counts the endpoint reports. Those rows say "estimated", and
+  the 30-day total says how many it includes. A request you stopped can cost more than its estimate.
   With other providers, a stopped or failed chat reply shows "token counts
   not reported", and a failed background request is not listed.
 - **Spend cap**: a request that fails partway is counted from what had

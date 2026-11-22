@@ -446,6 +446,29 @@ describe('decideSuggestion', () => {
 		expect(await sceneBody()).not.toContain('lazy dog');
 	});
 
+	it('gives a decided edit that left no text the place it was, for reading order', async () => {
+		const delStart = BODY.indexOf(' over the lazy');
+		const deletion = (await suggest(
+			{ start: delStart, end: delStart + ' over the lazy dog'.length },
+			''
+		)) as { ok: true; suggestionId: string };
+		const insertAt = BODY.indexOf('fox');
+		const insertion = (await suggest({ start: insertAt, end: insertAt }, 'red ')) as {
+			ok: true;
+			suggestionId: string;
+		};
+		await decideSuggestion(db, authorId, storyId, deletion.suggestionId, true);
+		await decideSuggestion(db, authorId, storyId, insertion.suggestionId, false);
+		const views = await listSuggestions(db, storyId);
+		const deleted = views.find((v) => v.id === deletion.suggestionId)!;
+		const rejected = views.find((v) => v.id === insertion.suggestionId)!;
+		// Nothing to mark, but each still has its spot in the text.
+		expect(deleted.anchor).toBeNull();
+		expect(deleted.position).toBe(delStart);
+		expect(rejected.anchor).toBeNull();
+		expect(rejected.position).toBe(insertAt);
+	});
+
 	it('only the owner decides', async () => {
 		const start = BODY.indexOf('quick');
 		const { suggestionId } = (await suggest({ start, end: start + 5 }, 'swift')) as {
