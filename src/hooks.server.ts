@@ -4,6 +4,15 @@ import { db } from '#lib/server/db';
 import { SESSION_COOKIE, validateSession } from '#lib/server/auth';
 import { errorFields, logEvent } from '#lib/server/log';
 import { assertOriginConfigured, publicOrigin } from '#lib/server/origin';
+import { dev } from '$app/env';
+import { isForbiddenCrossSiteForm } from '#lib/server/csrf';
+import {
+	isReturnablePath,
+	rememberReturnTo,
+	returnToForForm,
+	storeReturnTo
+} from '#lib/server/return-to';
+import { AUTHORIZE_FIELDS } from '#lib/server/mcp/authorize';
 
 export const init: ServerInit = () => {
 	assertOriginConfigured();
@@ -37,6 +46,24 @@ const PUBLIC_PATHS = new Set([
 	// Liveness probe for the reverse proxy and orchestrators; no auth.
 	'/healthz'
 ]);
+// Routes that other programs call with their own credential, or with none:
+// the MCP endpoint (bearer token only, checked by the route itself) and
+// the OAuth endpoints an outside app talks to before and after a writer allows
+// it. The session cookie is not read for these at all, so a browser session
+// can never stand in for the credential they ask for.
+const NO_SESSION_PATHS = new Set(['/api/mcp', '/oauth/register', '/oauth/token', '/oauth/revoke']);
+const NO_SESSION_PREFIXES = [
+	'/.well-known/oauth-authorization-server',
+	'/.well-known/oauth-protected-resource'
+];
+
+function ignoresSession(pathname: string): boolean {
+	return (
+		NO_SESSION_PATHS.has(pathname) ||
+		NO_SESSION_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'))
+	);
+}
+
 // Pages a signed-in user has no reason to see; bounce them home instead.
 const AUTH_PATHS = new Set(['/login', '/login/link', '/signup']);
 // Reader pages are public; assets and export downloads check publication
@@ -61,16 +88,39 @@ function setSecurityHeaders(headers: Headers, url: URL) {
 	}
 }
 
+async function postedReturnTo(event: RequestEvent): Promise<string | null> {
+	try {
+		const form = await event.request.clone().formData();
+		return returnToForForm(event.url.pathname, form, AUTHORIZE_FIELDS);
+	} catch {
+		// Not a form.
+		return null;
+	}
+}
+
 // A redirect thrown from handle bypasses resolve, so it would leave without
 // the headers above. A page navigation gets a plain 303 built here instead.
 // Data, remote and form-action requests still throw: SvelteKit answers those
 // with JSON its client reads, which a plain 303 would break.
-function redirectFromHook(event: RequestEvent, location: string, staleCookie: boolean): Response {
+async function redirectFromHook(
+	event: RequestEvent,
+	location: string,
+	staleCookie: boolean
+): Promise<Response> {
 	const method = event.request.method;
 	if (event.isDataRequest || event.isRemoteRequest || (method !== 'GET' && method !== 'HEAD')) {
+		// An answer on the consent page from a writer whose sign-in has ended:
+		// the app's request is in the form, so it is remembered from there and
+		// the writer comes back to the page after signing in.
+		if (location === '/login' && method === 'POST' && isReturnablePath(event.url.pathname)) {
+			storeReturnTo(event.cookies, await postedReturnTo(event));
+		}
 		redirect(303, location);
 	}
 	const headers = new Headers({ location });
+	// A page that has to survive sign-in is remembered for afterwards.
+	const returnTo = location === '/login' ? rememberReturnTo(event.cookies, event.url) : null;
+	if (returnTo) headers.append('set-cookie', returnTo);
 	// The stale-session delete is only applied by SvelteKit on its own
 	// responses, so it is carried here by hand.
 	if (staleCookie) {
@@ -86,6 +136,30 @@ function redirectFromHook(event: RequestEvent, location: string, staleCookie: bo
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
 	event.locals.session = null;
+
+	// SvelteKit's own check is off (see vite.config.ts); like it, this one
+	// only runs outside the dev server.
+	if (
+		!dev &&
+		isForbiddenCrossSiteForm({
+			method: event.request.method,
+			contentType: event.request.headers.get('content-type'),
+			origin: event.request.headers.get('origin'),
+			selfOrigin: event.url.origin,
+			pathname: event.url.pathname
+		})
+	) {
+		const message = `Cross-site ${event.request.method} form submissions are forbidden`;
+		const headers = new Headers({ 'content-type': 'text/plain' });
+		setSecurityHeaders(headers, event.url);
+		return new Response(message, { status: 403, headers });
+	}
+
+	if (ignoresSession(event.url.pathname)) {
+		const response = await resolve(event);
+		setSecurityHeaders(response.headers, event.url);
+		return response;
+	}
 
 	const token = event.cookies.get(SESSION_COOKIE);
 	let staleCookie = false;

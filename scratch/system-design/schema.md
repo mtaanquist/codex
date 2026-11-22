@@ -107,6 +107,63 @@ webauthn_credentials (
 )
 ```
 
+Outside apps connect through OAuth (see Access for outside apps in `design.md`). `users.mcp_enabled` (default false) is the account switch. Codes and tokens are stored only as hashes; permissions live on the grant, so a change to a grant applies to tokens already issued.
+
+```sql
+oauth_clients (
+  id            uuid primary key,
+  client_id     text unique not null,    -- a generated id (self-registered) or the https URL of the client's metadata document
+  kind          text not null,           -- 'dcr' | 'cimd' | 'personal' (stands for one personal access token; client_name is the token's name)
+  client_name   text not null,           -- what the app calls itself
+  host          text not null,           -- what was checked: the host of the client_id URL, or of the first redirect address
+  redirect_uris text[] not null,         -- https, or http on this computer only
+  created_at    timestamptz not null,
+  fetched_at    timestamptz              -- cimd: when the document was last read (re-read after a day)
+)
+
+oauth_grants (
+  id            uuid primary key,
+  user_id       uuid references users(id) on delete cascade not null,
+  client_id     uuid references oauth_clients(id) on delete cascade not null,
+  permissions   text[] not null,         -- 'read' | 'suggest' | 'apply'
+  redirect_host text,                    -- self-registered clients: the host the last code was sent to; null means the client's host stands
+  created_at    timestamptz not null,
+  last_used_at  timestamptz,
+  revoked_at    timestamptz              -- one live grant per (user, client): unique where revoked_at is null
+)
+
+oauth_codes (
+  id             uuid primary key,
+  code_hash      text unique not null,
+  user_id        uuid references users(id) on delete cascade not null,
+  client_id      uuid references oauth_clients(id) on delete cascade not null,
+  permissions    text[] not null,
+  redirect_uri   text not null,
+  code_challenge text not null,          -- PKCE, S256
+  expires_at     timestamptz not null,   -- one minute
+  used_at        timestamptz,            -- single use; a second use revokes family_id
+  family_id      uuid,                   -- the token family the code was exchanged for
+  created_at     timestamptz not null
+)
+
+api_tokens (
+  id            uuid primary key,
+  user_id       uuid references users(id) on delete cascade not null,
+  grant_id      uuid references oauth_grants(id) on delete cascade,
+  kind          text not null,           -- 'access' (1 hour) | 'refresh' (30 days, replaced on each use) | 'personal' (30, 90 or 365 days, no refresh)
+  token_hash    text unique not null,
+  family_id     uuid not null,           -- every token descended from one code exchange
+  expires_at    timestamptz not null,
+  used_at       timestamptz,             -- refresh: set when it is exchanged; using it again revokes the family
+  revoked_at    timestamptz,
+  created_at    timestamptz not null
+)
+```
+
+The daily session clean-up also deletes expired tokens, spent codes, clients that no writer connected within 24 hours of registering, and clients whose grants have all been revoked for 30 days. Deleting a client deletes its grants.
+
+A personal access token is one `api_tokens` row of kind `personal` under a grant of its own, on an `oauth_clients` row of kind `personal` that carries the name the writer gave it (`client_id` is `personal:<uuid>`, `host` is the fixed text `personal token`, no redirect addresses). That makes it a connection like any other: the grant holds its permissions and last-used time, revoking the grant ends it, and notes left with it are attributed and counted by client the way an app's are. The OAuth routes never resolve a `personal` client. When the token row expires and is cleaned up, the clean-up revokes its grant.
+
 ### Plans and entitlements
 
 A plan is a named bundle of entitlements. Entitlements are key/value rows, so a new limit or capability can be added without a schema change. Self-host seeds a single default plan that grants everything; the hosted service can define more.
@@ -518,8 +575,11 @@ review_comments (
   author_reviewer_id uuid references reviewers(id),  -- an invited reviewer
   body_md            text not null,
   created_at         timestamptz not null,
-  updated_at         timestamptz not null
-  -- exactly one of author_user_id / author_reviewer_id is set
+  updated_at         timestamptz not null,
+  client_id          uuid references oauth_clients(id) on delete set null,  -- an outside app as author (#1175)
+  client_name        text,                   -- the app's name, copied when the note was staged
+  client_host        text                    -- its checked host, copied too; set means "an app wrote this"
+  -- one author: author_user_id, author_reviewer_id, the Assistant (the assistant flag), or an app (client_host)
 )
 
 review_suggestions (
@@ -535,11 +595,17 @@ review_suggestions (
   pattern_thread_id  uuid references review_threads(id) on delete set null,  -- the Assistant pattern note this edit fixes
   decided_by_user_id uuid references users(id),
   decided_at         timestamptz,
-  created_at         timestamptz not null
+  revised_at         timestamptz,            -- when its author last revised the replacement; an app revises once per writer reply
+  created_at         timestamptz not null,
+  client_id          uuid references oauth_clients(id) on delete set null,  -- as on review_comments
+  client_name        text,
+  client_host        text
 )
 ```
 
 Key points:
+
+- **Notes from an outside app.** An app the owner connected stages comments and suggestions under its own name, not the Assistant's. The name and host are copied onto the row, so the note still says who left it after the client row is pruned (which only sets `client_id` null). `client_id` is what the app's own rules key on: a repeat of its own note is dropped, it revises only its own pending suggestion, and its waiting notes per scene are counted against a ceiling.
 
 - **No direct guest writes.** A reviewer never edits `body_md`. Their changes are `review_suggestions` the author accepts or rejects one at a time, which is what makes them attributable and reversible.
 - **Attribution across users and guests.** Every comment and suggestion points at the person who made it (a `reviewers` row, or a user for the owner), so the author can always see which edits came from whom.
@@ -547,6 +613,51 @@ Key points:
 - **Guests are personal data.** Reviewer rows and their contributions fall under the cascade and erasure rules; revoking an invitation or deleting the story removes them.
 
 This supersedes the single-row annotation placeholder that earlier drafts reserved for a reviewer role.
+
+### Proposals from the Assistant and connected apps
+
+Two things a program may propose that are not notes on a scene. Both wait in the universe's settings under Suggestions until the owner decides (`src/lib/server/proposals.ts`).
+
+```sql
+entity_proposals (
+  id             uuid primary key,
+  owner_id       uuid not null references users(id) on delete cascade,
+  universe_id    uuid not null references universes(id) on delete cascade,
+  kind           text not null,             -- 'character' | 'place' | 'lore'
+  name           text not null,
+  description_md text,                      -- becomes the entry's summary on accept
+  seen_in        text,                      -- where in the text, in the suggester's words
+  assistant      boolean not null default false,
+  client_id      uuid references oauth_clients(id) on delete set null,
+  from_name      text,                      -- the app's label, copied when staged
+  status         text not null default 'pending',  -- 'pending' | 'accepted' | 'dismissed'
+  entity_id      uuid,                      -- the entry an accept created
+  decided_at     timestamptz,
+  created_at     timestamptz not null
+)
+
+scene_split_proposals (
+  id          uuid primary key,
+  owner_id    uuid not null references users(id) on delete cascade,
+  story_id    uuid not null references stories(id) on delete cascade,
+  scene_id    uuid not null references scenes(id) on delete cascade,
+  before      text not null,                -- the exact words the new scene would open with
+  rationale   text not null default '',
+  client_id   uuid references oauth_clients(id) on delete set null,
+  from_name   text,
+  status      text not null default 'pending',  -- 'pending' | 'confirmed' | 'dismissed'
+  decided_at  timestamptz,
+  created_at  timestamptz not null
+)
+```
+
+Partial unique indexes hold the rules that two calls sent together could otherwise both pass (migration 0100): one pending `entity_proposals` row for `(universe_id, lower(name))`, and one pending `scene_split_proposals` row for `(scene_id, client_id, md5(before))`; the passage is hashed because it can be longer than an index entry. `review_suggestions` has the same for an app's follow-ups: one row for `(follows_suggestion_id, client_id)` where both are set. Both proposal tables are indexed on `client_id`, and `scene_split_proposals` on `scene_id`, for the foreign-key checks on delete.
+
+Key points:
+
+- **Nothing is created by staging.** An accepted entity proposal inserts the character, place or lore entry the way the app does for the owner; a confirmed split runs the normal scene split after locating `before` in the story as it then stands.
+- **A dismissed entity name stays dismissed.** Dismissed rows are kept so the same name is not suggested again in that universe.
+- **Only apps store split proposals.** The in-app Assistant's split proposal is a card in its chat and has no row.
 
 ---
 

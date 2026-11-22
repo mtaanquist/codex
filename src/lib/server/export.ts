@@ -471,6 +471,11 @@ export type ExportReviewThread = {
 	// whole-scene comments and for anchors that no longer fit.
 	excerpt: string | null;
 	anchorLost: boolean;
+	// Lost because that part of the scene could not be compared with the
+	// version the thread was made on, not because the words are gone.
+	anchorNotSought?: boolean;
+	// What a lost anchor pointed at when the thread was made.
+	originalText?: string | null;
 	comments: { authorName: string; isOwner: boolean; createdAt: Date; body: string }[];
 };
 export type ReviewLoader = (storyId: string) => Promise<ExportReviewThread[]>;
@@ -480,10 +485,21 @@ function reviewsMarkdown(threads: ExportReviewThread[]): string {
 	for (const thread of threads) {
 		const state = thread.resolved ? 'resolved' : 'open';
 		lines.push(`## ${thread.sceneTitle ?? 'Untitled scene'} (${state})`, '');
+		const quote = (text: string) => {
+			for (const excerptLine of text.split('\n')) lines.push(`> ${excerptLine}`);
+		};
 		if (thread.excerpt) {
-			for (const excerptLine of thread.excerpt.split('\n')) lines.push(`> ${excerptLine}`);
+			quote(thread.excerpt);
 		} else if (thread.anchorLost) {
-			lines.push('> The text this thread pointed at has since changed.');
+			lines.push(
+				thread.anchorNotSought
+					? '> This could not be checked against the current text.'
+					: '> The text this thread pointed at has since changed.'
+			);
+			if (thread.originalText) {
+				lines.push('>', '> It read:', '>');
+				quote(thread.originalText);
+			}
 		} else {
 			lines.push('> On the whole scene.');
 		}

@@ -1,8 +1,9 @@
 # Your account
 
 Open your account page from the avatar menu at the top right of any page. Its
-sections are Profile, Security, Assistant, Display, Editor, Notifications, and
-Page setup, plus Invites once an admin has given you invites. Changes save on their own:
+sections are Profile, Security, Connected apps, Assistant, Display, Editor,
+Notifications, and Page setup, plus Invites once an admin has given you invites.
+Connected apps is missing when the person who runs your Codex has turned it off. Changes save on their own:
 a choice saves as soon as you make it, and a text field saves when you leave it.
 A "Saved." note confirms each save.
 
@@ -346,6 +347,100 @@ How the writing area works, as your personal defaults.
 What reaches you, and where: the bell in the top bar, email, both, or neither,
 for each kind of event. Emails arrive batched, so a busy hour sends one message.
 
+## Connected apps
+
+An AI app you already use can read your writing in Codex and leave suggestions
+for you. It can never change, delete or publish your text. Nothing can connect
+until you turn this on. For a walk through connecting an app for the first
+time, and what to do when it does not work, see
+[Connecting an app](/docs/connecting-apps).
+
+To connect an app:
+
+1. Open Connected apps. Under "Allow other apps to connect", type your
+   password, and the code from your authenticator app if you use two-factor
+   authentication, then select "Turn on access for apps".
+2. Copy the address shown under "Address to give the app".
+3. In the app, add a custom connector (some apps call it a remote MCP server)
+   and paste the address.
+4. The app opens a Codex page. Sign in if asked, check the name and the web
+   address of the app, choose what it may do, and select Allow. Select "Do not
+   allow" if you did not start this yourself.
+
+What you can allow:
+
+- **Read your writing**: your universes, stories, scenes and entries. This is
+  always included. A story where you have turned the Assistant off stays hidden
+  from apps too.
+- **Leave suggestions and comments**: suggested edits and comments that wait for
+  you in Review, where you accept or reject each one. The app can also suggest
+  a character, place or lore entry your universe does not have yet, propose
+  splitting a scene in two, and hand you a draft it wrote for a scene. None of
+  these changes your writing until you say so.
+
+Where to find what an app left:
+
+- Suggested edits and comments are in the story's Review.
+- Suggested entries and proposed scene splits are in the universe's settings,
+  under Suggestions. Select Accept to add an entry or Dismiss to drop it, and
+  "Split here" to split a scene or Dismiss to leave it whole. See
+  [Planning your world](/docs/planning).
+- A draft waits on its scene. Open the scene and select the Assistant tab on
+  the right to read it, change it, and keep or discard it, the same way as a
+  draft from the Assistant. The card says which app wrote it. A scene holds
+  one waiting draft at a time, so an app cannot leave another until you have
+  decided.
+
+Suggested edits, suggested entries, proposed splits and waiting drafts are not
+part of your export. What you accepted or kept is, because it is then part of
+your writing. Review comments are exported with the story they are on.
+
+A connected app is also given ready-made prompts for the work the Assistant
+does in Codex: review, copyedit, continuity review, pattern pass, write,
+rewrite, draft, draft a chapter, catch me up, a character or place sheet, and
+search. Where an app shows them depends on the app; look for a list of prompts
+or commands from Codex, pick one, and fill in what it asks for. You can also
+ask the app in your own words.
+
+"Apps with access" lists every connected app with what it may do and when it
+was last used. Select Disconnect to stop one at once. Turning off "Allow other
+apps to connect" disconnects them all, and so does changing or resetting your
+password. Turning it off does not ask for your password; turning it on again
+does. To use an app again afterwards, connect it again.
+
+### Personal access tokens
+
+Most apps connect by opening a Codex page where you allow them. A script or
+tool of your own that cannot open that page can use a personal access token
+instead. A token works like a password for the address under "Address to give
+the app", so treat it like one.
+
+To make a token:
+
+1. Open Connected apps and make sure "Allow other apps to connect" is on. If
+   it is off, turn it on with your password as described above.
+2. Under "Personal access tokens", type a name for the tool that will use it.
+   Suggestions and comments left with the token are shown under this name.
+3. Leave "Leave suggestions and comments" ticked if the tool should be able to
+   leave them, or untick it to let the tool read only.
+4. Choose how long the token lasts. It stops working after that, and you make
+   a new one.
+5. Type your password, and the code from your authenticator app if you use
+   two-factor authentication, then select "Create token". Each code works
+   once. If you have just used one to turn access on, wait for the app to show
+   the next.
+6. Copy the token and store it somewhere safe. It is shown once and cannot be
+   shown again.
+
+In your tool, give the address as the server and send the token as a bearer
+token.
+
+The list shows each token with what it may do, when it expires and when it was
+last used. Select Revoke to stop one at once. If you lose a token or think
+someone else has it, revoke it and make a new one. Turning off "Allow other
+apps to connect" revokes every token, and so does changing or resetting your
+password.
+
 ## Page setup
 
 How print and PDF output is typeset: page size, margins, font, paragraph style,
@@ -363,6 +458,8 @@ with a "use my account setting" option.
 The Security section has two ways to take your work with you. Export prepares a
 single zip of everything you own: every universe, story, scene, entity, note,
 and uploaded image, all as markdown. It is built in the background and appears
-ready to download a moment later (a bell notification tells you when). Delete
+ready to download a moment later (a bell notification tells you when). Review
+comments are in the zip. Suggested edits that are still waiting are not, nor
+are suggested entries, proposed scene splits or drafts you have not kept. Delete
 removes your account and everything in it. See
 [keeping your account secure](/docs/security) for both.

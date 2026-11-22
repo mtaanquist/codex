@@ -571,6 +571,12 @@ Three words, three meanings; keep them straight:
 
 A thing that is both a label and a control is a chip, not a pill.
 
+An author's name on a review card is `.rv-who-line`: the name
+(`.rv-who-name`, which is the part that truncates) and the role chip
+(`.rv-role`, which never shrinks). An app's host goes on its own line under
+it (`.rv-who-host`) and wraps instead of being cut. Do not put the chip
+inside the truncating element.
+
 The remaining scoped spellings (`.role-tag`, `.nav-badge`, `.tfa-badge`,
 ...) are legacy; do not add new ones.
 
@@ -597,7 +603,8 @@ The remaining scoped spellings (`.role-tag`, `.nav-badge`, `.tfa-badge`,
   container query and `data-label` cells (the admin accounts table) rather
   than scrolling, since a scroll wrapper clips the row menus.
 - Icon-led row lists: `.list-row` with `.list-ic`, `.list-main`,
-  `.list-title`, `.list-sub`, `.list-actions`.
+  `.list-title`, `.list-sub`, `.list-actions`. A long title (a web address,
+  say) wraps anywhere, so its end is always shown.
 - Destructive settings rows: `.danger-group`/`.danger-row`.
 - Outline rows (chapters, scenes, entities) share the row CSS in
   `theme.css` (`.chapter-row`, `.scene-row`, `.ent-row`) at `--row-h`.

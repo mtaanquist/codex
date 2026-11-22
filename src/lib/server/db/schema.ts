@@ -93,7 +93,11 @@ export const users = pgTable('users', {
 	// window. The account is suspended for the duration so it cannot be used.
 	deletionScheduledAt: timestamp('deletion_scheduled_at', { withTimezone: true }),
 	// Updated on successful sign-in; useful for stale-account cleanup.
-	lastLoginAt: timestamp('last_login_at', { withTimezone: true })
+	lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+	// The account's own switch for access by outside apps (the MCP endpoint
+	// and its OAuth sign-in). Off until the writer turns it on; separate from
+	// the Assistant toggle in llm_config.
+	mcpEnabled: boolean('mcp_enabled').notNull().default(false)
 });
 
 // Server-side session rows so sessions can be listed and revoked; the cookie
@@ -1244,6 +1248,15 @@ export const reviewComments = pgTable(
 		// display name is resolved live from the owner's assistant config, so a
 		// rename relabels past comments on the fly.
 		assistant: boolean('assistant').notNull().default(false),
+		// An outside app as a fourth author (both FK authors null, assistant
+		// false, client_host set). The name and host are copied when the note is
+		// staged, so it still says who left it after the client row is pruned,
+		// which sets client_id null.
+		clientId: uuid('client_id').references((): AnyPgColumn => oauthClients.id, {
+			onDelete: 'set null'
+		}),
+		clientName: text('client_name'),
+		clientHost: text('client_host'),
 		bodyMd: text('body_md').notNull(),
 		createdAt: timestamp('created_at', { withTimezone: true })
 			.notNull()
@@ -1253,7 +1266,11 @@ export const reviewComments = pgTable(
 			.defaultNow()
 			.$onUpdate(() => sql`clock_timestamp()`)
 	},
-	(table) => [index('review_comments_thread_idx').on(table.threadId)]
+	(table) => [
+		index('review_comments_thread_idx').on(table.threadId),
+		// Every client delete checks this foreign key.
+		index('review_comments_client_idx').on(table.clientId)
+	]
 );
 
 // A proposed edit: replace [range_start, range_end) of the scene's body with
@@ -1277,6 +1294,15 @@ export const reviewSuggestions = pgTable(
 		// The Assistant as a third author (both FK authors null, this true);
 		// mirrors review_comments. The owner still accepts or rejects it.
 		assistant: boolean('assistant').notNull().default(false),
+		// An outside app as a fourth author (both FK authors null, assistant
+		// false, client_host set). The name and host are copied when the note is
+		// staged, so it still says who left it after the client row is pruned,
+		// which sets client_id null.
+		clientId: uuid('client_id').references((): AnyPgColumn => oauthClients.id, {
+			onDelete: 'set null'
+		}),
+		clientName: text('client_name'),
+		clientHost: text('client_host'),
 		// The text the range was placed against.
 		baseRevisionId: uuid('base_revision_id')
 			.references(() => revisions.id)
@@ -1306,6 +1332,9 @@ export const reviewSuggestions = pgTable(
 			.default('pending'),
 		decidedByUserId: uuid('decided_by_user_id').references(() => users.id),
 		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		// When its author last revised the replacement. An app gets one revision
+		// for each thing the writer says in the edit's discussion.
+		revisedAt: timestamp('revised_at', { withTimezone: true }),
 		createdAt: timestamp('created_at', { withTimezone: true })
 			.notNull()
 			.default(sql`clock_timestamp()`)
@@ -1316,7 +1345,16 @@ export const reviewSuggestions = pgTable(
 		index('review_suggestions_base_revision_idx').on(table.baseRevisionId),
 		index('review_suggestions_pattern_thread_idx').on(table.patternThreadId),
 		// Every suggestion delete checks this foreign key.
-		index('review_suggestions_follows_idx').on(table.followsSuggestionId)
+		index('review_suggestions_follows_idx').on(table.followsSuggestionId),
+		// Every client delete checks this foreign key, and the ceiling on an
+		// app's waiting notes counts by it.
+		index('review_suggestions_client_idx').on(table.clientId),
+		// An app stages one follow-up to an accepted edit, whatever becomes of
+		// it. The check before the insert cannot hold that for two calls sent
+		// together; this does.
+		uniqueIndex('review_suggestions_client_follow_up_idx')
+			.on(table.followsSuggestionId, table.clientId)
+			.where(sql`${table.followsSuggestionId} is not null and ${table.clientId} is not null`)
 	]
 );
 
@@ -1714,4 +1752,204 @@ export const webauthnCredentials = pgTable(
 		lastUsedAt: timestamp('last_used_at', { withTimezone: true })
 	},
 	(table) => [index('webauthn_credentials_user_idx').on(table.userId)]
+);
+
+// ============ External access (OAuth for the MCP endpoint) ============
+// See #lib/server/mcp. Every secret here (codes, tokens) is stored as a hash.
+
+// An app that may ask a writer for access. 'dcr' rows come from dynamic client
+// registration and carry a generated client_id; 'cimd' rows cache a client ID
+// metadata document, and their client_id is the document's URL. All clients are
+// public (no secret): PKCE is what binds a code to the app that asked for it.
+// A 'personal' row stands for one personal access token: it carries the name
+// the writer gave the token, so notes left with it are attributed and scoped
+// the way an app's are. It has no redirect URIs and the OAuth routes never
+// resolve it.
+export const oauthClients = pgTable('oauth_clients', {
+	id: uuid('id').primaryKey().defaultRandom(),
+	clientId: text('client_id').notNull().unique(),
+	kind: text('kind', { enum: ['dcr', 'cimd', 'personal'] }).notNull(),
+	// What the app calls itself. Self-asserted, so it is always shown with host.
+	clientName: text('client_name').notNull(),
+	// The part of the client we can vouch for: the host of the client_id URL
+	// for 'cimd', the host of the first redirect URI for 'dcr'.
+	host: text('host').notNull(),
+	redirectUris: text('redirect_uris').array().notNull(),
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	// When the metadata document was last fetched ('cimd' only).
+	fetchedAt: timestamp('fetched_at', { withTimezone: true })
+});
+
+// A writer's standing permission for one client: the row the Account page
+// lists and revokes. permissions holds 'read', 'suggest' and 'apply'; tokens
+// carry none of their own, so changing or revoking the grant takes effect on
+// the next request.
+export const oauthGrants = pgTable(
+	'oauth_grants',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		clientId: uuid('client_id')
+			.references(() => oauthClients.id, { onDelete: 'cascade' })
+			.notNull(),
+		permissions: text('permissions').array().notNull(),
+		// For a self-registered client, the host of the redirect address the
+		// last code went to: such a client may list this computer and one
+		// remote host, and the grant is shown under the one that was used.
+		// Null otherwise, and the client's own host stands.
+		redirectHost: text('redirect_host'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true })
+	},
+	(table) => [
+		// One live grant per writer and client; a revoked one stays as a record.
+		uniqueIndex('oauth_grants_live_idx')
+			.on(table.userId, table.clientId)
+			.where(sql`${table.revokedAt} is null`),
+		index('oauth_grants_client_idx').on(table.clientId)
+	]
+);
+
+// A one-time authorization code, alive for about a minute between the consent
+// page and the client's token request.
+export const oauthCodes = pgTable(
+	'oauth_codes',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		codeHash: text('code_hash').notNull().unique(),
+		userId: uuid('user_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		clientId: uuid('client_id')
+			.references(() => oauthClients.id, { onDelete: 'cascade' })
+			.notNull(),
+		permissions: text('permissions').array().notNull(),
+		redirectUri: text('redirect_uri').notNull(),
+		codeChallenge: text('code_challenge').notNull(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+		// The token family the code was exchanged for, so a replayed code can
+		// take back what the first use issued.
+		familyId: uuid('family_id'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [index('oauth_codes_expires_idx').on(table.expiresAt)]
+);
+
+// Bearer credentials for the MCP endpoint. Each resolves to exactly one user.
+// An OAuth grant issues 'access' and 'refresh' rows; a refresh token is spent
+// when it is exchanged (used_at) and replaced, and every token descended from
+// one code shares a family_id, so presenting a spent refresh token revokes the
+// whole family.
+export const apiTokens = pgTable(
+	'api_tokens',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		userId: uuid('user_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		grantId: uuid('grant_id').references(() => oauthGrants.id, { onDelete: 'cascade' }),
+		// 'personal' is a personal access token: long-lived, no refresh token.
+		kind: text('kind', { enum: ['access', 'refresh', 'personal'] }).notNull(),
+		tokenHash: text('token_hash').notNull().unique(),
+		familyId: uuid('family_id').notNull(),
+		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+		usedAt: timestamp('used_at', { withTimezone: true }),
+		revokedAt: timestamp('revoked_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('api_tokens_user_idx').on(table.userId),
+		index('api_tokens_grant_idx').on(table.grantId),
+		index('api_tokens_family_idx').on(table.familyId),
+		index('api_tokens_expires_idx').on(table.expiresAt)
+	]
+);
+
+// A new entry the Assistant or a connected app thinks the universe is missing:
+// a character, place or lore entry. Nothing is created until the writer
+// accepts it in the universe's Suggestions; accepting creates the entry the
+// way the app creates any other and records which one (entity_id). from_name
+// is the app's label, copied when it was staged, so it reads the same after
+// the client row is pruned; the Assistant's is resolved live and stores none.
+export const entityProposals = pgTable(
+	'entity_proposals',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		ownerId: uuid('owner_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		universeId: uuid('universe_id')
+			.references(() => universes.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind', { enum: ['character', 'place', 'lore'] }).notNull(),
+		name: text('name').notNull(),
+		descriptionMd: text('description_md'),
+		// Where in the text it was seen, in the suggester's words.
+		seenIn: text('seen_in'),
+		assistant: boolean('assistant').notNull().default(false),
+		clientId: uuid('client_id').references(() => oauthClients.id, { onDelete: 'set null' }),
+		fromName: text('from_name'),
+		status: text('status', { enum: ['pending', 'accepted', 'dismissed'] })
+			.notNull()
+			.default('pending'),
+		entityId: uuid('entity_id'),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('entity_proposals_universe_idx').on(table.universeId, table.status),
+		// One waiting suggestion for a name in a universe, whoever sent it, even
+		// when two arrive together.
+		uniqueIndex('entity_proposals_pending_name_idx')
+			.on(table.universeId, sql`lower(${table.name})`)
+			.where(sql`${table.status} = 'pending'`),
+		// Every client delete checks this foreign key.
+		index('entity_proposals_client_idx').on(table.clientId)
+	]
+);
+
+// A scene split a connected app proposed. An app has no chat to show a
+// proposal card in, so the proposal is stored and the writer confirms or
+// dismisses it in the universe's Suggestions. Confirming locates the passage
+// again in the story as it then stands and runs the normal split.
+export const sceneSplitProposals = pgTable(
+	'scene_split_proposals',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		ownerId: uuid('owner_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		storyId: uuid('story_id')
+			.references(() => stories.id, { onDelete: 'cascade' })
+			.notNull(),
+		sceneId: uuid('scene_id')
+			.references(() => scenes.id, { onDelete: 'cascade' })
+			.notNull(),
+		// The exact words the new scene would open with.
+		before: text('before').notNull(),
+		rationale: text('rationale').notNull().default(''),
+		clientId: uuid('client_id').references(() => oauthClients.id, { onDelete: 'set null' }),
+		fromName: text('from_name'),
+		status: text('status', { enum: ['pending', 'confirmed', 'dismissed'] })
+			.notNull()
+			.default('pending'),
+		decidedAt: timestamp('decided_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		index('scene_split_proposals_story_idx').on(table.storyId, table.status),
+		// One waiting proposal from an app for a split point of a scene, even
+		// when two arrive together. The passage is hashed because it can be
+		// longer than an index entry may be.
+		uniqueIndex('scene_split_proposals_pending_idx')
+			.on(table.sceneId, table.clientId, sql`md5(${table.before})`)
+			.where(sql`${table.status} = 'pending'`),
+		// Every scene delete and every client delete checks these foreign keys.
+		index('scene_split_proposals_scene_idx').on(table.sceneId),
+		index('scene_split_proposals_client_idx').on(table.clientId)
+	]
 );

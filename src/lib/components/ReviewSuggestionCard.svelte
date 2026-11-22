@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
 	import { enhance } from '#lib/enhance';
 	import { confirmEnhance } from '#lib/confirm.svelte';
 	import Icon from './Icon.svelte';
@@ -11,6 +12,7 @@
 		roleLabel,
 		authorColor,
 		suggestionAuthor,
+		appAuthorParts,
 		suggestionKind,
 		type ReviewSuggestion,
 		type ReviewThread
@@ -52,6 +54,10 @@
 	const kind = $derived(suggestionKind(suggestion));
 	const verb = $derived(kind === 'insert' ? 'Insert' : kind === 'delete' ? 'Delete' : 'Replace');
 	const byline = $derived(roleLabel(author));
+	// An app's name and its host, shown on lines of their own.
+	const who = $derived(
+		author.isApp ? appAuthorParts(author.name) : { name: author.name, host: null }
+	);
 	const pending = $derived(suggestion.status === 'pending');
 	// The author works an open suggestion straight from the card corner.
 	const canDecide = $derived(role === 'author' && pending);
@@ -95,9 +101,11 @@
 	<div class="rv-card-top">
 		<ReviewAvatar {author} />
 		<div class="rv-who">
-			<div class="rv-who-name">
-				{suggestion.reviewerName} <span class="rv-role">{byline}</span>
+			<div class="rv-who-line">
+				<span class="rv-who-name">{who.name}</span>
+				<span class="rv-role">{byline}</span>
 			</div>
+			{#if who.host}<div class="rv-who-host">{who.host}</div>{/if}
 			<div class="rv-when">{formatDateTime(suggestion.createdAt, page.data.timeZone)}</div>
 		</div>
 		{#if canDecide}
@@ -121,12 +129,16 @@
 											? { bodyMd, baseHash }
 											: null
 									);
+								} else if (result.type === 'failure') {
+									// The suggestion may have been revised; show it as it is now.
+									await invalidateAll();
 								}
 								await update();
 							};
 						}}
 					>
 						<input type="hidden" name="suggestionId" value={suggestion.id} />
+						<input type="hidden" name="seen" value={suggestion.stamp ?? ''} />
 						<button
 							class="icon-btn sm accept"
 							type="submit"
@@ -164,7 +176,10 @@
 
 	{#if pending && suggestion.anchorLost}
 		<div class="rv-anchor-lost">
-			<Icon name="close" size={12} /> The text changed since; this can only be rejected.
+			<Icon name="close" size={12} />
+			{suggestion.anchorNotSought
+				? 'This could not be checked against the current text. It can only be rejected.'
+				: 'The text changed since; this can only be rejected.'}
 		</div>
 	{/if}
 

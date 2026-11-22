@@ -6,7 +6,9 @@ enrichment pass and character arcs followed on 2026-11-18, #845 and #846). The g
 co-author and continuation, the reviewer role, the admin egress panel, the
 per-story mute, and the background jobs with their activity cards are all
 merged. The "Frontend wiring map" at the end records where each surface
-landed. The design intent below still holds and the shipped code matches
+landed. The tools the Assistant calls are also offered to outside apps over
+an MCP endpoint (#1175, 2026-11-21; see "The same toolbox over MCP"), with the
+exceptions listed there. The design intent below still holds and the shipped code matches
 its shape; where the text speaks of the work in the future tense, read it
 as the rationale that produced what is now built. Numbers and prompts
 marked TODO remain placeholders to calibrate against a real prose corpus.
@@ -852,6 +854,288 @@ budget. The code invariant that makes "writes are suggestions" real:
 
 This is what lets the entire write surface reuse the suggestion/accept
 machinery instead of building a parallel apply-and-undo path.
+
+### The same toolbox over MCP
+
+An outside app a writer has connected (#1175; see Access for outside apps in
+`design.md`) calls the same tools at `/api/mcp`. There is one catalogue
+(`tools/registry.ts`) and one dispatcher (`tools/dispatch.ts`) for both; a
+tool is added once and reaches both sides with the same ownership checks.
+`src/lib/server/mcp/tools.ts` is the thin layer between: it picks the tools a
+connection is offered, adds the universe as a required argument (in the app
+the open page supplies it), and re-checks that universe against the connected
+writer on every call, since there is no turn to check it once for.
+`src/lib/server/mcp/server.ts` wires the tools into the official SDK
+(`@modelcontextprotocol/server`), stateless, one server per request.
+
+Rules that hold on this surface:
+
+- The bearer token is an app's OAuth access token or a personal access
+  token the writer made on the Account page; both resolve through
+  `resolveBearer` to a grant, and everything below is the same for both.
+- The user id comes from the bearer token alone. No argument can name a
+  writer, and the route never reads the session cookie.
+- A universe that is another writer's, in the trash, or missing gives one
+  answer ("No universe with that id."). Inside a verified universe, a scene
+  or entry that is another writer's, in a muted or trashed story, in another
+  universe, or missing gives the tool's one not-found answer. There is one
+  integration test per tool for this (`tests/integration/mcp-endpoint.test.ts`).
+  A thread or suggestion on a scene in the trash is the same miss.
+- An entity must belong to the universe the call names. This check sits in
+  the dispatcher, so it holds in the app as well.
+- No model of the writer's is called, so there is no usage row, no spend
+  cap and no tool-call budget. Rate limits stand in: 120 calls a minute per
+  connection, 240 per writer across connections, and 600 requests of any
+  kind per writer. Each call is logged (`mcp.tool`: user, grant, client
+  host, tool, outcome; never prose).
+- Results stay under 140,000 characters, since clients cut a result off at
+  about 150,000; `get_scene` returns at most 120,000 characters of a scene
+  here and says when it cut.
+- A request with an `Origin` header other than this site's is refused; a
+  program that is not a browser sends none.
+
+Offered: the read tools to every connection, and to one the writer allowed
+to suggest also `suggest_edit`, `leave_comment`, `leave_pattern_note`,
+`reply_in_thread` and `update_suggestion`. What they stage is authored by the
+app, not the Assistant: the review rows carry the client (see Review and
+collaboration in `schema.md`) and show its name with its host, with an "App"
+role chip. The app has the Assistant's protections under its own identity: a
+repeat of its own comment or edit is dropped, a retried pattern note extends
+its own note only, and `update_suggestion` reaches only its own pending
+suggestion. On top of those:
+
+- Staging has its own rate limit: 30 calls a minute per connection, 60 per
+  writer.
+- An app may have at most 100 notes (pending suggestions and open comments
+  it started) waiting on one scene; past that it stages nothing more there
+  until the writer decides on some.
+- `reply_in_thread` reaches only a thread of the app's own: a note it
+  opened, or the discussion under an edit it suggested. A thread the writer,
+  a guest reviewer, the Assistant or another app opened is "No thread with
+  that id.", whoever has written in it since.
+- `reply_in_thread` posts once and then waits: an app whose reply is the
+  latest in a thread cannot add another until someone else writes. The check
+  runs under the thread's lock, with the insert.
+- `update_suggestion` revises only after the writer has written last in that
+  edit's discussion, and once for each thing they say there
+  (`review_suggestions.revised_at`): a second revision would refuse the
+  accept of what the writer just read. A suggestion that is not the app's own pending one gives
+  the same "No suggestion with that id." as one that does not exist.
+- Calls from outside apps wait for a place in memory, before they take a
+  database connection (`mcp/call-gate.ts`). A gate gives each writer so many
+  running calls, over all their apps, tokens and universes, and the whole
+  process so many; a free place goes to the writer who has waited longest
+  for a turn, so one writer's line does not hold up another's call. Staging
+  and reading have a gate each, so neither keeps the other waiting, and
+  together they hold at most five of the pool's ten connections.
+  - Staging: one call at a time per writer, two in the process
+    (`MAX_STAGING_TRANSACTIONS`), so the checks that come before a write (a
+    repeat, a ceiling, whose turn it is) hold for calls sent together and
+    the writer's save of a scene never waits behind more than one call.
+    Eight may wait, and a call past that, or one whose turn has not come in
+    20 seconds, is answered "Another call is still running. Try again."
+  - Reading: two calls at a time per writer, three in the process; twenty
+    may wait, for ten seconds at most, and a call past either is answered
+    "Too many calls at once. Try again." `search_text` runs its queries one
+    after another here (the command palette runs them side by side), and
+    `get_review_note` places only the requested note's edits in the scene.
+    Placing an edit compares two versions of the scene, and that runs in
+    the server's one thread, so it is bounded everywhere
+    (`createAnchorMapper(budget)` in `review-anchor.ts`). Every line, and
+    every sentence not inside such a line, that is the same in both
+    versions, stands once in each whole text and has at least 16 visible
+    characters maps to its copy wherever it now stands. The paired lines in
+    the same order in both (the set with the most text), then the paired
+    sentences in order inside each gap, split the texts into gaps; what is
+    left of each gap, with the moved units cut out, is compared with the
+    character diff main used, after setting aside the start the two sides
+    share; an insertion or deletion is moved along the text it repeats to a
+    line break, a sentence end or a space where it can be (diff-match-patch's
+    lossless cleanup), so a paragraph put in before one starting with the
+    same letter is put in at the line break. An end mapped through that diff
+    counts only if it rests on a run of at least 12 shared characters;
+    otherwise the anchor is lost. A range whose two ends map through
+    different runs is lost if a run starting between them came from outside
+    it (a moved sentence carried past). A marker's end whose own character
+    is in no run may rest on the run just outside it, and one in a run too
+    short to count may too when what was typed between holds no white space
+    ("of" to "long" takes "long", as main's marker rule does); if both ends
+    rest outside, some run of the marker's own text that would hold an end
+    must be left. A marker whose first or last word was deleted or replaced,
+    or an inner word deleted, with a word or two typed beside it, can take
+    in the typed text where main gives null (143 in 121 seeds of the
+    property test, bounded there; never an accept). This costs
+    ranges with several edits close together: on natural prose, one with an
+    edit inside it and two or three more nearby is lost about 2.2 to 2.8% of
+    the time (main less), and of all ranges in an edited paragraph 0.44% of
+    comments and 0.39% of markers are lost; on the property test's generated
+    prose, 5 to 9% and about 4%. A request has a
+    `DiffBudget` in edit units of character diff (about D squared for edit
+    distance D; `perPair`, `total`, and a `floor` every pair may spend even
+    once the total is used up). The line and sentence passes are not
+    charged, so the same texts give the same result however busy the
+    server is. A stretch whose diff runs past the budget is recorded as not
+    checked, which is not the same as gone (`mapper.unchecked`). An app's
+    call has `APP_DIFF_BUDGET` (400,000 units, about 25 ms of character
+    diff; floor 4,000). The uncharged line and sentence passes grow with the
+    scene: at the 2,000,000 character cap one comparison holds the thread
+    for 100 to 230 ms, and about 300 ms (app) to 350 ms (writer) after the
+    whole draft was replaced;
+    the writer's pages, the in-app Assistant, accepting a suggestion and
+    the export have `WRITER_DIFF_BUDGET` (1,000,000 a pair, about 55 ms;
+    10,000,000 a mapper; floor 40,000), and a page compares its pairs
+    through `mapper.prepare`, which lets the server answer others between
+    pairs; the marker remap on save has `SAVE_DIFF_BUDGET` (6,250,000, edit
+    distance 2,500), compared in one go, and a marker in a stretch past it
+    is detached. The diff alone takes about 0.35 s to give up at that budget
+    on prose; whole saves on prose took 0.4 to 0.5 s, up to about 0.75 s at
+    the 2M cap, and repetitive text can reach about 1.9 s at 2M, as only D
+    squared is charged. Main is slower in every case. An edit that was not checked is reported with `notice`: "The
+    text has changed since; the edit may no longer apply." A follow-up
+    `suggest_edit` that cannot be placed is refused as "can no longer be
+    found", the in-app re-read skips the edit, and the review page shows the
+    suggestion as "This could not be checked against the current text. It
+    can only be rejected." (or as changed, when its text is gone). A
+    suggestion is accepted only where its original text starts at the
+    mapped start or ends at the mapped end, never found by a search.
+  - The per-minute budgets (per connection, per writer, and for requests of
+    any kind) count the calls of the last sixty seconds
+    (`slidingRateLimit`), so a burst across a minute boundary gets no more
+    than a burst inside one.
+
+  A staging call then runs in one transaction that takes an advisory lock
+  keyed on the writer (the rule kept by the database, should more than one
+  process ever serve a writer) with `lock_timeout` set to two seconds and
+  `transaction_timeout` to thirty, so a call that cannot get a lock, the
+  writer's save of the same scene included, gives up with the same answer
+  instead of holding a connection, and nothing a call holds outlasts it.
+  Postgres ends the session when `transaction_timeout` passes; the pool
+  listens for errors on checked-out connections (`createPool`), so that
+  fails the one call and nothing else. Inside the transaction, after the
+  wait, the endpoint checks again that access for outside apps is still on
+  for the instance, the token and its grant are live, the account usable and
+  the universe still the writer's; if not the call answers as for a universe
+  that is not theirs and stages nothing. A staging call holds the scene's revision lock from its
+  first edit to its end, which is what a save of that scene waits on: about
+  0.4 s for the largest pattern note (40 edits), measured, and a few
+  milliseconds for a single edit. A pattern note whose scene goes to the
+  trash while it is staged stages none of itself. Unique indexes back the
+  rules that are about one row: one pending entry suggestion for a name in a
+  universe, one pending split from an app for a point in a scene, one
+  follow-up from an app to an accepted edit.
+- A call that fails tells the app "The tool failed. Try again." and nothing
+  else. The log line (`mcp.tool_failed`) carries the tool and the database's
+  error code, never the error's message, which holds the statement and the
+  values bound to it. Text with a null character is refused before any query.
+- An app's `stage_scene_draft` leaves a failed draft of the writer's own on
+  that scene where it is. A universe holds at most 20 undecided drafts from
+  apps (`MAX_APP_DRAFTS_WAITING`); past that an app stages no more until the
+  writer has kept or discarded some.
+
+What holds for the Assistant in the app as well, since the handlers are
+shared: every tool call is awaited inside the dispatcher's own catch, so a
+throw becomes a tool result (a database error as "the request could not be
+completed", never its message); a revision through `update_suggestion` must
+change something and must not repeat another pending edit of the same author;
+and an accept is refused when the suggestion was revised after the writer was
+shown it (see Review in `design.md`).
+
+Reading its notes back. `list_review_notes` (a story's notes) and
+`get_review_note` (one note, or one edit by its id) are read tools on both
+sides: the Assistant gets its own notes, an app gets its own. A note is a
+thread the caller opened; the result carries the replies between the caller
+and the writer in order (on the note and under each edit), and for each edit
+its status, the original, the text as applied (the writer's wording when they
+changed it on accept) and the paragraph as the scene has it now. A guest
+reviewer's comments and another program's replies are left out.
+`writerRepliedLast` in the listing marks a note the writer wrote last on. With
+`reply_in_thread` and `update_suggestion` this is how an app talks an edit
+over with the writer before they decide, as an editor would.
+
+The guided pass for an app's note. `leave_pattern_note` tells an app the
+note's id and a link, `/stories/<story>/review?scene=<scene>&pass=<note>`,
+which opens "Work through this" on that note; the note's card offers the same
+button as on an Assistant note. After an accept the writer's own Assistant
+re-reads the paragraph as it does for its own notes, and its follow-up is the
+Assistant's, linked to the app's note. The app can follow up as well:
+`suggest_edit` over MCP takes an optional `patternNoteId` (add the edit to a
+pattern note the app opened) and `followsSuggestionId` (an accepted edit in
+such a note). A follow-up is held to the changed paragraph and one either
+side, in the same scene, one per accepted edit and app.
+
+Proposals that are not notes on a scene (`src/lib/server/proposals.ts`). Two
+kinds wait in the universe's settings under Suggestions
+(`/universes/<id>/suggestions`) until the writer decides:
+
+- `suggest_entity` (both surfaces): a character, place or lore entry the
+  universe has no entry for, with an optional short description and where it
+  was seen. Stored in `entity_proposals` with who suggested it. Refused for a
+  name the universe already has as a name, alias or keyword (any kind, without
+  case), for a name already waiting, and for one the writer dismissed before;
+  one program may have 50 waiting per universe. Accept creates the entry with
+  the description as its markdown summary (a lore entry under the first
+  category) and queues the universe mention scan; the name is checked again
+  at that point.
+- `propose_scene_split` over MCP: an app has no chat to show the proposal card
+  in, so the proposal is stored in `scene_split_proposals` (the opening words
+  and the reason; five waiting per scene and app, a repeat dropped). "Split
+  here" locates the words in the story as it then stands
+  (`locateSplitInStory`) and runs the normal `splitScene`; a passage that is
+  gone leaves the proposal waiting for the writer to dismiss. In the app the
+  tool is unchanged: a card in the chat, nothing stored.
+
+`stage_scene_draft` (MCP only) hands the writer a draft the app wrote. It is
+an `assistant_drafts` row, status `ready`, with the app's label in `note`
+("Drafted by <app>."), so it shows on the scene's draft card and takes the
+existing rules: one undecided draft per writer and scene (the unique index),
+shown even with the Assistant off, and kept only by the writer (fill the
+empty scene, add as a new scene, or discard). The tool never writes to
+`scenes.body_md`.
+
+Prompts. Each Assistant command that starts work has an MCP prompt of the same
+name (`mcp/prompts.ts`): `review`, `copyedit`, `continuity-review`, `write`,
+`rewrite`, `draft`, `draft-chapter`, `catchup`, `who`, `find`, and
+`pattern-pass` (in the app a tick box in the review window, not a command). A
+prompt is the Assistant's own instruction for that work, from the builders in
+`llm/prompts`, inside a frame that tells the agent which universe id to pass,
+to read through the tools (it has no assembled context), and that it only
+stages. The two passes Codex runs in stages for its own model (continuity,
+patterns) are given to an agent as one brief each (`buildContinuityBrief`,
+`buildPatternBrief`) made of the same looks-for lists and staging rules; the
+JSON hand-off between Codex's stages is left out. Where the in-app text says
+"in your context", the builders take a `WorldSource` (`prompts/format.ts`):
+`IN_CONTEXT` by default, `READ_WITH_TOOLS` for a prompt, which names the tools
+to read the world with instead. The `rewrite` prompt asks the co-author
+builder for its rewrite wording, since it knows the passage is to be replaced.
+`/who` and `/find` share
+their one-line asks with the chat panel (`assistant-slash.ts`). A prompt reads
+nothing from the database: it is text around the ids and words the caller
+sent, and the tools it names do the ownership checks. The prompts that stage
+notes are offered only to a connection that may suggest. `rewrite` stages its
+result as a suggested edit when the connection may suggest. `write`, `draft`
+and `draft-chapter` hand their result over with `stage_scene_draft` when the
+connection may suggest, and give it in the reply otherwise.
+
+Exceptions to "one toolbox for both", each with its reason:
+
+- `list_universes` and `list_stories` are offered over MCP only
+  (`external: true` in the registry), because the in-app Assistant already
+  knows the open universe and story from the page. The dispatcher refuses
+  them on any other surface.
+- In the app the universe comes from the open page; over MCP the same tools
+  take it as an argument. Same tool, different source for the id.
+- `reply_in_thread` and `update_suggestion` act in the app on the thread or
+  suggestion the open page fixes. Over MCP they take `threadId` and
+  `suggestionId` as arguments, and the dispatcher checks that the target is
+  in a live, unmuted story of the connected writer in the named universe.
+- `suggest_edit` takes `patternNoteId` and `followsSuggestionId` over MCP
+  only. In the app the run that calls it fixes both (the pattern pass, the
+  re-read), so the model is never asked for them.
+- `stage_scene_draft` is offered over MCP only. In the app a draft is asked
+  for by the writer with `/draft`, who sees its cost first and whose job
+  writes the row; the model does not start one unasked.
+- `propose_scene_split` is one tool with two outcomes: a card in the chat in
+  the app, a stored proposal over MCP, because an app has no chat in Codex.
 
 ### Background jobs
 

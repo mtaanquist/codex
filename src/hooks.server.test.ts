@@ -31,7 +31,8 @@ function request(
 ) {
 	const resolve = vi.fn(async () => new Response('ok'));
 	const cookies = {
-		get: vi.fn(() => cookie),
+		// Only the session cookie is set.
+		get: vi.fn((name: string) => (name === 'session' ? cookie : undefined)),
 		delete: vi.fn(),
 		serialize: vi.fn((name: string, value: string) => `${name}=${value}; Path=/; Max-Age=0`)
 	};

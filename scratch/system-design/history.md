@@ -1023,6 +1023,997 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 6 (2026-11-22)
+
+Part of #1175, branch `fix/mcp-review-6` on `staging/mcp-endpoint`. No
+migration.
+
+The round 5 budget counted `middle + edits^2` and gave up on the whole pair
+past it, so any large edit (a name replaced everywhere, a tenth of the
+paragraphs rewritten) lost every anchor: markers were saved as detached and
+review cards said "changed" for text that was merely not compared. The first
+round 6 commit replaced it with a levelled comparison (own Myers over token
+ids, step caps, alike and near-identical line pairing, move detection, a
+`slid` step, and `findWords` for markers on save). Review found that it
+lost markers in a paragraph that was split or joined (H1), could store a
+marker on the same words in another paragraph (H2), lost markers when many
+short paragraphs changed (H3), could accept onto another copy of a short
+line (M1, M2), and held the thread too long on a page of many threads (L1).
+The second commit rebuilt `review-anchor.ts` on unique lines and sentences;
+the eighth review of that found anchors stored on unrelated text, a moved
+and respaced paragraph losing its anchors, and budgets that depended on
+wall time. The third commit fixed those. The ninth review found that its
+support rule's "12 of them inside the range" lost anchors through ordinary
+edits inside a range when another edit sat in the same sentence (H1), and
+that a range whose ends mapped through a moved sentence and the text before
+it stretched over everything between (M1). The fourth commit fixed those.
+The tenth review found that a marker with both ends resting outside it was
+kept on a one-letter chance run of its own text (M1), that the asynchronous
+`finish` on save reached only edit distance about 2,500 in its 3 s while
+holding the scene's row (M3), and that resting an end outside when its own
+character was still in a short run let a marker grow over a word typed
+after it (L1). The fifth commit fixed those; its check found that the L1
+fix detached markers main's marker rule places exactly right, and the
+sixth commit narrowed it. What the code does now:
+
+- Identity: every line, and every sentence not inside such a line, that is
+  the same in both texts, stands once in each whole text and has at least
+  16 visible characters maps to its copy wherever it now stands, in order
+  or not. Sentence uniqueness is counted over the whole text, so a copy
+  inside a paired line disqualifies it.
+- Gaps: the paired lines in the same order in both (heaviest increasing
+  subsequence), then the paired sentences in order inside each line gap,
+  split the texts into gaps. What is left of a gap, with the moved units
+  cut out of both sides, goes to `diffChars` as main calls it, after
+  setting aside the shared start; the shared end is set aside only if the
+  diff fails (setting it aside first picked the other reading of an
+  insertion next to it). Lone insertions and deletions are slid so kept
+  runs join (diff-match-patch's shift step, same cost): "the lantern" to
+  "the old lantern" keeps "lantern" whole. Then each lone insertion or
+  deletion is moved along the text it repeats to the best place to start
+  and end (diff-match-patch's cleanupSemanticLossless: blank line, line
+  break, sentence end, space), staying put unless another place scores
+  higher; the shared start gives up its last letters only where that puts
+  the edit at a line break, so it otherwise maps as on main. Without this a
+  paragraph put in before one starting with the same letter ("Door ..."
+  before "Dark ...", or a copy of the paragraph before) left the "D" in the
+  shared start and a range on "Dark ..." stretched over the new paragraph
+  (main does the same). A version that also refused shifts in the slide
+  step that worsened the boundary was tried and dropped: it only moved
+  ties into the support rule's count and lost slightly more.
+- Support: an end mapped through a kept run of the diff counts only if the
+  run has at least 12 characters; paired units, a gap's shared start or
+  end, and the readings of a pure insertion or deletion count as they are.
+  Otherwise the anchor is lost (null, not unchecked). The third commit also
+  required 12 of the run's characters inside the range; the ninth review
+  measured that losing 472 of 674 ranges with a typo inside and three
+  other edits in the paragraph (main 8), so it was removed. A marker end
+  whose own character is in no run at all may rest on the run just outside
+  it (firm or 12 long); one whose character is in a run too short to count
+  may do so only when what was typed between that outside run and its own
+  run holds no white space (the edge word changed, not a word typed beside
+  it). Both ends may rest outside only if some of the marker's own text is
+  left in a run that would hold an end (so "hard" is not stored on "Mara"
+  through their shared "ar"). The fourth commit rested an end in a short
+  run whatever was typed, which let "always her through!" grow over
+  "brisk" typed after it (main's marker rule, a point per end, keeps "hor
+  through!"; this now detaches it). The fifth commit first took that back
+  entirely, which detached markers main places exactly right: "of" to
+  "long" and "only" to "slowly", where main's marker rule stores "long his
+  face Esk" and "slowly quiet bridge on" (2 of the 40 markers in the
+  restore case). The no-white-space condition keeps those, as main does,
+  and keeps "brisk" out. A point needs a firm run or one of 12.
+- Stretch: a range whose ends map through different runs is lost if a run
+  starting in [from, to) in the current text starts outside the range in
+  the base (a moved or deleted-and-retyped unit carried past it). Of the
+  two rules the review offered, this one, because it names exactly what
+  must not happen (text from outside the range inside the result) and
+  leaves alone a range both of whose ends are in moved units that kept
+  their order. A span starting exactly at `from` counts: a start resting
+  on the run before it, or on the later reading, does not make it the
+  start's own (seed 124 of the property test).
+- N = 12, measured again after the H1 change with the property test's new
+  rounds (below) over seeds 1 to 60 and 100 to 160. Results on text sharing
+  nothing with their range: N = 10 gives 19 and 8 misplaced, 12 gives 4
+  (seed 38: a rewritten paragraph keeps "almost through" and its last word,
+  14 shared characters of which 7 lie inside the range, the case the
+  in-range clause refused), 15 gives none; main gives 50,573 of about 3.7
+  million. Ranges main places correctly that are lost: with edits spread
+  over the scene 193 of 743,427 (0.03%); with clustered edits 4.1% (3.5%
+  to 5.1% a seed) at 12 and 5.9% at 15. The spread-out rounds alone
+  understated the cost: the 0.28% the third commit reported came from
+  rounds where two edits rarely fall within 12 characters of each other.
+  These are on the property test's generated prose, which has a small
+  vocabulary and so more chance runs; on natural prose the review measured
+  2.2 to 2.8% lost for an edit inside a range with two or three nearby
+  (main lower), and 0.44% of comments and 0.39% of markers over all ranges
+  in an edited paragraph (generated prose: 5 to 9% and about 4%), both
+  measured on the fourth commit. For the edit at a range of 2 to 10 words with two or three more in its
+  sentence or paragraph, ranges placed where they belong (ours, main): a
+  typo inside 5,539 and 6,085 of 6,109, a word added inside 6,299 and
+  6,668 of 6,683, a word removed inside 5,150 and 5,454 of 5,466; beside
+  the range, ours places as many or more than main (a word added beside:
+  6,013 and 5,426 of 6,042). Results holding 20 or more characters from
+  outside their range: none in rounds without a move (main 127), none after
+  a move (main 2,778), 42 after a sentence was deleted and typed again
+  elsewhere (main 2,067), 34 of them where main's result for the same range
+  is null or stays on the range (see known limits).
+- Budgets in edit units of character diff, about D * D for edit distance D
+  (measured 55 to 65 ns a unit past D = 400, plus about 3 ms per 40,000
+  characters diffed), charged only for the diff, so the same texts give the
+  same result however loaded the server is: `WRITER_DIFF_BUDGET` 1,000,000
+  a pair (about 55 ms), 10,000,000 a mapper, floor 40,000;
+  `APP_DIFF_BUDGET` 400,000, floor 4,000; `SAVE_DIFF_BUDGET` 6,250,000. No
+  wall-clock bound is left.
+- Pages call `mapper.prepare`, which yields with `setImmediate` between
+  pairs.
+- Markers on save: one synchronous comparison under `SAVE_DIFF_BUDGET`
+  (edit distance 2,500) while the save holds the scene's row; a marker in a
+  stretch past it is detached. The fourth commit had a 1,000,000 budget and
+  then compared such a stretch again with `diffChars` in callback mode for
+  up to 3 s. That mode waits about 1 ms per edit step, so in 3 s it reached
+  only edit distance about 2,500: a rewritten paragraph of about 2,100
+  characters before a marked sentence with a typo in it gave a 3 s save
+  (900 to 1,600 characters: 1.5 to 2.2 s). Measured here on prose, the
+  diff alone gives up at D = 2,500 in about 0.35 s; the whole comparison
+  takes about 0.22 s for that case (keeps the marker), 0.29 s for 2,400
+  characters (past the budget, detached), 0.4 to 0.5 s to give up on a
+  120,000 or 500,000 character scene replaced outright, and up to about
+  0.75 to 0.8 s at 2M. Only D squared is charged, so repetitive text can
+  take longer for the same units (the review measured about 1.9 s at 2M).
+  Main is slower in every one of these cases.
+- `placeSuggestion` keeps the start-or-end rule (M2).
+- Tests: a seeded property test against a ground-truth character map and
+  main's mapper (`tests/main-anchor-oracle.ts`) asserts no misplaced range
+  on unique text in any round (moves included), untouched unique lines and
+  sentences always placed wherever they stand, nothing placed on unrelated
+  text, no result stretched over 20 or more characters from outside it
+  (after a move, none where main's result for the same range is not; after
+  a sentence typed again, such cases listed and at most 8 a seed), and
+  main's correct placements kept except those the support rule refuses
+  (counted). Each round also has a clustered-edit case (an edit inside or
+  beside a range and two or three more in its sentence or paragraph),
+  where nothing is held out: what main places and this does not is counted
+  as the support rule's (under 6% a seed) or as a tie, an equally short
+  alignment main happened to share with the truth (under 0.05%; at most 48
+  in a seed). A clustered result that takes in a word typed beyond the
+  range's own text where main's does not is counted apart, as misplaced,
+  and listed in the output (143 over the 121 seeds, at most 17 a seed,
+  nearly all markers; bounded by the test). Most are a marker whose first
+  or last word was deleted or replaced, with a word typed beside it
+  ("Your snow bright, Mara, his" to "Your brisk bright, Mara,"). Seed 113's
+  are an inner word deleted and a word typed just after the marker ("every
+  carried or dark." to "every or idle dark.": the marker gives "every or
+  idle", main null), and it can be more than one word ("every or pale
+  idle"). Before the tenth review these went uncounted, as most have no
+  true position. The narrowed L1 rule added 9 (134 before), all a first
+  word replaced by a typed word sharing a letter, the same case as "of" to
+  "long". None of this touches an accept. The
+  rounds also delete a sentence and type it again elsewhere. Seeds 1 to 60
+  and 100 to 160 pass except seed 38, on the unrelated-text check (above);
+  CI runs seed 51.
+- Known limits that stay: a copy of the original made right next to it can
+  receive the accept when the original was edited (the text is identical;
+  main refuses); the line and sentence passes are not budgeted, so one
+  comparison at the 2M scene cap holds the thread for 100 to 230 ms, about
+  300 ms (app budget) to 350 ms (writer budget) after the whole draft was
+  replaced (a whole-draft replacement at 2M on save takes about 0.8 s in
+  all); a paragraph whose only sentence changed, with every line around it
+  rewritten, is not found; after a sentence is deleted and typed again
+  elsewhere, with the paragraph between them lightly edited, a range or
+  marker can stretch over that paragraph where main returns null
+  (generated prose 16 results against main's 1,078, natural prose 7
+  against 543, in the review's measurement; never an accept); a marker
+  whose first or last word was deleted or replaced, or an inner word
+  deleted, with a word (or two) typed beside it, can take in the typed
+  text where main gives null (143 in the property test, above; never an
+  accept); a marker whose word was replaced outright depends on what the
+  two words share: "harbour" to "harvest" keeps it on "harvest" (the
+  "har" joins the text before) and "slowly" to "quickly" on "quickly" (the
+  "ly" joins the text after), as on main (the review saw the second
+  detached on the fourth commit); "hard" to "Mara" detaches it (only a
+  chance "ar" is shared), where main keeps it on "Mara"; a range with an
+  edit inside it and others within a few letters
+  of its ends is lost more often than on main (above); a whole-text conversion
+  between CRLF and LF loses comments and suggestions on lines of ten
+  characters or fewer, which main keeps (markers are mapped on LF text and
+  are not affected).
+
+## MCP endpoint, review round 5 (2026-11-22)
+
+Part of #1175, branch `fix/mcp-review-5` on `staging/mcp-endpoint`. No
+migration.
+
+- Placing an edit in a scene that changed is a character diff on the
+  server's one thread. A follow-up `suggest_edit` ran it with no limit (in
+  `acceptedPatternEdit`, before the cheap checks and inside the staging
+  transaction): 102 s on a 118k scene in review, 80 s here for the sibling
+  case. `get_review_note` was bounded in edits but still paid the diff's
+  fixed cost of tokenising the whole scene once per base revision (266 ms
+  stall here for 30 edits on 30 revisions). Fixed in `review-anchor.ts`:
+  the shared start and end are found by plain comparison (in 256-character
+  slices, about 0.08 ms for 105k) and only the middle is diffed, and there
+  is one mapper, `createAnchorMapper(budget)`, with a `DiffBudget` for the
+  whole request: the longest middle a pair may have, the most edits one
+  diff looks through (capped so its cost cannot pass what is left), and a
+  total charged `middle + edits^2` per pair. `APP_DIFF_BUDGET` for apps,
+  `WRITER_DIFF_BUDGET` for the writer's pages, the in-app Assistant, accept
+  and bulk accept (one mapper for the batch), the marker remap on save and
+  the export. Now 15 to 35 ms stall for the app cases; the writer's review
+  page on the same rewrite takes about 230 ms and shows the suggestion as
+  changed since (reject only; accept refuses it under the lock).
+- Not exactly the old mapping: where several shortest alignments exist,
+  diffing only the middle can pick another one than a diff of the whole
+  texts (a property test showed it in about half of random small-alphabet
+  cases). The unit tests hold the mapper to the whole-text diff exactly
+  where the alignment is forced (removed and inserted characters from
+  alphabets that cannot match), and elsewhere to keeping as many
+  characters, landing next to the same character, and leaving the shared
+  start alone. Surrogate pairs are never split.
+- Spread-out small changes (a typo at each end of a long scene) still make
+  the middle the whole scene, so each such pair costs the full tokenising;
+  the budget caps how many a request does. A paragraph-level pass first
+  would make those cheap too; left for later.
+- `acceptedPatternEdit` no longer places the edit; `placeAcceptedEdit` does,
+  after the own-note and follow-up-exists checks in `appEditLink`, and
+  after the cheap checks in the re-read.
+- The bounded fallback no longer places a range because its text stands
+  once in the new scene: only the shared start or end.
+- `slidingRateLimit` stamps with `performance.now()` and drops stamps later
+  than now, so a clock set back cannot hold a key shut for an hour.
+- A reading call that waited at the gate checks the credential and the
+  instance switch again (the gate tells `work` whether it waited).
+- The daily purge could deadlock with a code exchange (exchange locks the
+  code, then the client through the grant's key; the delete locked the
+  client, then the code through the cascade). It now skips clients with an
+  unspent, unexpired code and locks the rest `for update skip locked`
+  before deleting. A loop of twenty exchange-plus-purge rounds failed first.
+- The return address is measured after cookie encoding (3800), and an
+  older `return_to` cookie is deleted whenever a new target is refused, so
+  a dropped oversized cookie cannot leave a stale one in place.
+- `csrf.ts` leaves `/api/mcp` out (it reads no cookie), so a bodyless
+  DELETE or POST with no Origin reaches the transport's 405 instead of a
+  403. The stricter rule (no Content-Type counts as a form) stays for pages.
+
+## MCP endpoint, review round 4: sign-in and app side (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No
+migration.
+
+- Connecting from an app's other address ends the tokens that went to the
+  first (round 3), but the exchange held the user row shared like any
+  issuer, so it ran beside a refresh or another exchange: the refresh's new
+  pair was issued after the exchange had looked and stayed live, two
+  exchanges each missed the other's tokens, and an exchange and a refresh
+  could wait on each other's token rows (a deadlock, a 500 at the token
+  endpoint). `exchangeCode` now takes the exclusive user lock
+  (`lockUserForRevocation`, then `accountUsable` without a lock, as
+  `createPersonalToken` does). Three tests, thirty rounds each, that failed
+  first: a refresh against the new-host exchange, two exchanges together,
+  and all three at once.
+- The consent page showed the app's name inside quotation marks in a
+  sentence of Codex's own, so a name with a quotation mark in it could go
+  on in Codex's voice. The name now stands in a box of its own under "It
+  calls itself:", and `parseClientMetadata` takes quotation marks out of a
+  name (apostrophes stay).
+- "This app is already connected" no longer drops "Only allow this if you
+  started it yourself" for an app on this computer, and says which
+  connection ends when the request comes from the app's other address.
+- A writer whose sign-in ended before they pressed Allow was sent to sign
+  in and landed in the library, the app's request lost. The hook now
+  remembers the consent page's address from the posted form's own fields
+  (`returnToForForm`, the named OAuth fields only), so after signing in
+  they are back at the same request, which the page checks again as it
+  loads.
+- A long host wraps in the Connected apps list (`.list-title`) and in
+  "Return to ..." on the faulty-request page; the e2e reads where the text
+  is drawn at 390 px, with a host that has nowhere to break.
+- With the Assistant off for the account, the panel introduced any waiting
+  draft as one "it wrote before". A draft row does not record who wrote it
+  (an app's draft differs only in its note), so the line now covers both:
+  "Drafts waiting for you, from the Assistant or from a connected app".
+- Help: step 6 of connecting an app says what the page shows for an app on
+  the writer's own computer.
+- Not from this work: the right pane's resize handle is not hidden at narrow
+  widths (computed `display: flex` at 390 px, though theme.css means to hide
+  it at 960 px and below). `theme.css` and `PaneResizer.svelte` are the same
+  as on main, so it is left for its own issue.
+
+## MCP endpoint, review round 4: endpoint and tools (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No
+migration.
+
+- A connection the database ended while it was checked out took the whole
+  process down. When `transaction_timeout` passes, Postgres ends the session
+  (FATAL 25P04); node-pg then emits `error` on the client, and a checked-out
+  client had no listener (`pool.on('error')` covers idle clients only), so
+  Node exited on the unhandled event. `createPool` now puts a listener on
+  every client as it connects, which logs `db.client_error` and nothing
+  more; the query in flight, or the next one on that client, fails as an
+  ordinary error and the pool replaces the connection. The worker makes its
+  pool with the same function, so it is covered. Other paths that end a
+  session had the same exposure and are covered by the same listener: an
+  administrator's `pg_terminate_backend`, a Postgres restart or failover
+  while a client is checked out (every open transaction and every
+  `pool.connect()` user: staging calls, the sign-in transactions, the
+  worker's jobs), `idle_in_transaction_session_timeout` or
+  `idle_session_timeout` should an operator set them, and a network drop.
+  `statement_timeout` (30 s, set by the pool) only cancels the statement and
+  never had it. Tests that failed first (`tests/integration/db-pool.test.ts`,
+  and one in `mcp-endpoint.test.ts` that lets the timeout fire inside a
+  staging call): an unhandled "terminating connection due to transaction
+  timeout" and "Connection terminated unexpectedly" respectively.
+- Read tools ran with no limit on how many at once, and `search_text` took
+  seven connections for one call. With the production pool (ten connections,
+  five seconds to get one), one writer's two apps spending a minute's
+  reading in one burst on a universe of about 3 MB made another writer's
+  longest save 2.2 s and ran the pool dry ("timeout exceeded when trying to
+  connect"). Now: reading calls go through a gate in memory (two at once
+  per writer, three in the process, twenty waiting for ten seconds at most,
+  then "Too many calls at once. Try again."); `search_text` runs its queries
+  one after another on this surface; `get_review_note` selects only the
+  requested note's edits before placing them in the scene, where it used to
+  place every suggestion of the story and filter after. The same tests now
+  pass with the other writer's longest save under 0.7 s (the bound in the
+  test), also while a 40-edit
+  pattern note is staged and the writer saves the same scene.
+- The staging queue became the same gate (`mcp/call-gate.ts` replaces
+  `staging-queue.ts`), keyed on the writer alone: it was first come first
+  served per writer and universe, so a writer with many universes could
+  take every running place. A free place now goes to the writer who has
+  waited longest for a turn, and a writer has one staging call running
+  whatever the universe. The staging total went from three to two so that
+  staging and reading together hold at most half the pool.
+- The per-minute budgets for MCP calls and requests used the fixed-window
+  limiter, which lets through twice the limit across a window boundary.
+  `slidingRateLimit` (rate-limit.ts) keeps the times of the allowed calls
+  and counts those of the last minute; the MCP keys use it, everything else
+  keeps the fixed window.
+- The check a staging call makes after its wait also asks whether access for
+  outside apps is still on for the instance.
+- `suggest_entity` over MCP answers "That name cannot be suggested." for a
+  name that is taken, already waiting or was turned down, so an app cannot
+  tell which; the in-app Assistant keeps the detailed answers.
+- `get_review_note` ran a character diff of the scene as it was against the
+  scene as it is, in the server's own thread, with no limit. For a 20 KB
+  scene rewritten from top to bottom one diff took about nine seconds here
+  (half a second when part of it was kept), during which the server answered
+  nobody, and an app could ask many times a minute. Over MCP the diff is now
+  stopped once the texts differ by more than 500 characters added and
+  removed (jsdiff's `maxEditLength`; `REVIEW_NOTE_DIFF_MAX_EDITS`), which
+  costs about 25 ms; the cost grows with the square of the limit (a second
+  at 4000). Past the limit an edit is placed without a diff when it sits in
+  the start or end the two texts share, or its text stands exactly once in
+  the scene; otherwise the answer carries "The text has changed since; the
+  edit may no longer apply." in place of the paragraph. The test that failed
+  first: four calls on such a scene took 35 s; they now answer in under
+  0.4 s with the server's thread never held for 0.1 s. The review page and
+  the in-app Assistant are unchanged, and the review page's own diff cost
+  is for a separate issue.
+
+## MCP endpoint, review round 3: endpoint, tools and sign-in fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-review-3` on `staging/mcp-endpoint`. No
+migration.
+
+- The staging queue was keyed on client and universe, so a writer with
+  several apps (or tokens) still had several staging transactions at once,
+  each holding the lock a save of the scene waits on, and enough of them
+  emptied the pool. The key is now writer and universe, for the queue and
+  for the advisory lock inside, and three staging transactions at most run
+  in the whole process (`MAX_STAGING_TRANSACTIONS`), the rest waiting in
+  memory. The test that failed first: six apps of one writer staging two
+  40-edit notes each on a large scene while `saveSceneBody` runs on it and a
+  second writer saves; the writer's longest save was 3.0 s before, and is
+  0.15 to 0.17 s now, the other writer's 25 to 71 ms, with three connections
+  busy at most.
+- A waiting call had no deadline. It gives up after 20 seconds with the same
+  "try again" answer, and passes its turn on only when the calls ahead have
+  finished, so the next never runs beside them. The transaction itself has
+  `transaction_timeout` of 30 seconds (Postgres 17 and later; the project
+  runs 18), so a call that hangs cannot hold its key or its locks for good.
+- Checks made before the wait were not repeated after it: a queued call
+  still staged after the app was disconnected or the universe trashed. The
+  dispatcher asks the endpoint again inside the transaction
+  (`external.stillAllowed`: token and grant live, account usable, universe
+  still the writer's), and a no answers as for a universe that is not
+  theirs.
+- `subscriptions/listen` is refused (`maxSubscriptions: 0` on the SDK
+  handler). Checked that `tools/list` and `tools/call` still answer for the
+  2025 handshake and for the 2026-07-28 sessionless requests.
+- A pattern note on a scene trashed mid-call kept the note and the edits
+  staged before the trash. `createSuggestion` reads `deleted_at` under the
+  scene revision lock and says the scene is gone; for an app the handler
+  throws, which rolls the call's transaction back. For the Assistant in the
+  app, which has no outer transaction, the edit is refused as before.
+- The drafts ceiling counted drafts on trashed scenes and stories.
+- Sign-in. An exchange that changes a grant's `redirect_host` revokes the
+  grant's other tokens. `createPersonalToken` takes the exclusive user lock
+  (six at once made five before). `lockUserForRevocation` is FOR NO KEY
+  UPDATE, which still conflicts with the issuers' FOR SHARE but not with the
+  FOR KEY SHARE of an insert that references the user; the race tests were
+  rerun and a new test holds a key-share lock and checks a revoke does not
+  wait. A refused Allow showed "This link does not work", because the form
+  posts to the action's address, which no longer carries the request; the
+  page shows the refusal first. The consent page says 'An app calling itself
+  "Name"' and puts where the answer goes on its own line.
+- The text for the suggest permission now lists everything it allows
+  (entries, split proposals and drafts as well), on the consent page, the
+  token form and in the help.
+- App side. The draft link (`?scene=&draft=show`) on a narrow window showed
+  the writing pane with the draft out of sight: taking the marker off the
+  address is a navigation, and a navigation switches to the writing. That one
+  keeps the pane. "Split here" is named "Split here: scene" so the name
+  starts with the label. The review error banner sits on a solid surface, and
+  a refusal in the guided pass is no longer handed to the page as well, so it
+  is said once, in the card. The consent page, Connected apps and a
+  universe's Suggestions are in the accessibility pass.
+- Looked into, not changed: `e2e/author-review.spec.ts` "accepts several
+  suggestions together" fails now and then with the word typed after the
+  last accept missing after a reload, though the pill said saved. At three
+  workers it failed 6 of 96 runs on this branch and 4 of 96 on main, so the
+  branch is not the cause; the accept's success path in the client is the
+  same on both. It looks like the same fault as the test above it in that
+  file ("typing immediately after an accept"), which failed 2 of 24 on main.
+
+## MCP endpoint, review round 2: app side fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-app-side-review-2` on `staging/mcp-endpoint`.
+No migration.
+
+- Turning access on. The form was a plain POST and its refusal (a wrong
+  password or code) came back under "Apps with access", below the fold on a
+  phone. The form is enhanced and keeps what was typed, the refusal has a
+  scope of its own (`access`) and shows beside the button. The e2e checks it
+  is in view at 390 px wide and at the default size.
+- The guided pass after a refused accept. Focus goes to the step's card (the
+  pressed button is disabled or replaced, which dropped it to the page). When
+  the writer is in Edit and the suggestion was revised under them, the card
+  shows "The suggestion now reads" with the new wording above their own,
+  which is kept. The refusal line already has `role="alert"` from the sign-in
+  branch.
+- An authenticator code works once, so turning access on and then making a
+  token with the same code is refused. The refusal, a hint under the token
+  form's code field and the help article say to wait for the next code.
+- Help: a password change disconnects the apps but leaves access on, so only
+  the apps need connecting again. The article said to turn access on again.
+- "Split here" on a proposal from an app. The shared locate follows a passage
+  into a sibling scene, which is right for the Assistant's chain of splits in
+  one chat. For a stored proposal the writer was shown one scene, so a
+  passage that has moved to another gets the stale sentence and nothing is
+  split.
+
+## MCP endpoint, review round 2: endpoint and tools fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-tools-review-2` on `staging/mcp-endpoint`,
+stacked on the sign-in branch because both add a migration (0101 there, 0102
+here: one nullable column, `review_suggestions.revised_at`).
+
+- The staging lock emptied the pool. Round 1 made an app's staging calls for
+  one universe take a transaction advisory lock, which is right for the
+  checks but means every waiting call sits on a pooled connection: 30 calls
+  at once from one grant took all ten, and anything else the server did
+  waited for a connection. The calls now queue in memory first
+  (`mcp/staging-queue.ts`: a promise chain per key, a count of who is in
+  line), so only the call whose turn it is has a connection. Eight may wait;
+  a call past that is answered "Another call is still running. Try again."
+  without waiting. The advisory lock stays inside the transaction as the
+  database's own copy of the rule, and the transaction sets `lock_timeout` to
+  two seconds, so if that lock (or any other, such as a row the writer's save
+  holds) is not free the call gives up with the same answer. The timeout
+  covers the whole transaction on purpose: an app should never wait long on
+  the writer either. The test that failed first: 30 calls at once had all ten
+  connections busy; now at most two (the call at work and the test's own
+  query).
+- How long a save can wait on an app. A staging call is one transaction, so
+  the scene's revision lock (what a save of that scene waits on) is held from
+  the call's first edit to its end. The outer transaction was kept: it is what
+  the advisory lock lives in, and it makes a pattern note land whole or not at
+  all. Measured instead: a 40-edit pattern note, the largest a call takes,
+  held the lock for 0.34 to 0.45 s here; a single edit for a few
+  milliseconds. A test asks for the lock over and over during a 40-edit call
+  and fails if any wait passes two seconds. What was not done: shortening the
+  per-edit work (each edit runs its ceiling check, repeat check and insert in
+  turn) so the hold is shorter still. Worth doing if a pattern note ever
+  grows past 40 edits.
+- One revision for each writer reply. An app could revise its suggestion any
+  number of times on one reply, and each revision refuses an accept of the
+  earlier wording, so a looping app could keep an accept from landing.
+  `revised_at` is set on every revision; an app's revision is refused when
+  the writer's last comment is not newer than it.
+- A ceiling on drafts: 20 undecided drafts from apps in a universe. The
+  drafts table does not say who wrote a draft, so an app's draft is told by
+  what it is: ready, with no job (the Assistant's always has one). Counted for
+  the writer across apps, so two apps staging at the same moment can pass it
+  by one; not worth a lock.
+- `nameTaken` ran three queries at once on one transaction client, which the
+  driver warns about. They run in turn.
+
+## MCP endpoint, review round 2: sign-in fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-sign-in-review-2` on `staging/mcp-endpoint`.
+Four lows, nothing above. Migration 0101 adds one nullable column.
+
+- The consent page's code was a bare insert outside the user-row lock, so an
+  Allow already in flight could leave a live code behind a password change, a
+  reset or a Disconnect. `createAuthorizationCode` is now a transaction that
+  holds the user row shared (through `accountUsable`), checks that the session
+  that pressed Allow is still live (same user, not revoked, not expired), and
+  only then inserts. It returns null when refused and the allow action answers
+  403 with a sentence that says to sign in again. The session id is optional
+  in the function so the token tests can still make a code without a browser
+  session; the route always passes it.
+- `revokeToken` (the revoke endpoint) ran outside the lock, so it could answer
+  200 while an overlapping refresh left a live pair. It is now a transaction:
+  read whose token it is, lock the user row for revocation, revoke the family.
+- Lock order inside a family. Two issuers of one account both hold the user
+  row shared, so a replayed code and a refresh (or two replays) could take
+  token rows in opposite orders. Rather than order the row locks, every path
+  that touches a family (`refreshTokens`, `revokeFamily`) first takes a
+  transaction-scoped advisory lock on `oauth-family:<id>`, after the user lock
+  and any code row and before any token row. One lock is easier to reason
+  about than an ordering across three callers, and a family is one
+  connection, so nothing useful is serialised away.
+- Which host a grant shows. A self-registered client may list this computer
+  and one remote host; it was listed and attributed as "localhost" even when
+  the code went to the remote host. `oauth_grants.redirect_host` records the
+  host of the redirect address the code went to (self-registered clients
+  only; a client named by a metadata document is vouched for by where the
+  document lives, so it stays null), and `listGrants` and `resolveBearer` use
+  it before the client's stored host. Rows from before the column, and
+  personal tokens, fall back. Connecting again from the other address updates
+  it: the grant is one connection and shows where it was last made from.
+- A personal token handed back at the revoke endpoint left its grant live, so
+  it stayed in the list and counted toward the limit. `revokeToken` revokes
+  the grant too when the token is a personal one.
+- The guided pass, found by CI on this branch (`e2e/pattern-pass.spec.ts`,
+  the first test). The refresh after a refused accept, added with the app
+  side fixes, makes the "text changed" notice appear, so a stale edit showed
+  that notice and the refusal line under it, both with the class
+  `rv-anchor-lost`. The refusal line has a class of its own now
+  (`pp-failure`, same look, `role="alert"`) and is not shown once the passage
+  is gone: the notice already says it, and there is no Accept left. The test
+  is unchanged.
+- Tests. A deterministic one holds the user row shared and checks that
+  `revokeToken` waits. The raced ones (revoke against refresh, a replayed code
+  against a refresh and a revoke) passed before the fix as well, since the
+  window is narrow; they are there as guards, not as reproductions. The test
+  events for the consent page now carry a real session row.
+
+## MCP endpoint, review round 1: app side fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-app-side-review` on `staging/mcp-endpoint`. No
+migration of its own: the indexes this review asked for went into 0100 with
+the tools batch.
+
+- Review cards. The name, the host and the "App" chip shared one nowrap line
+  that cut from the right, so a long name hid the two parts that say what
+  wrote the note. The name and chip are now a flex line where only the name
+  gives way (`.rv-who-line`), and the host is a line of its own that wraps
+  (`.rv-who-host`). The views still carry one label ("Name (host)", from
+  `clientDisplayName`); `appAuthorParts` in `review-ui.ts` takes it apart, so
+  the server shape did not change. Avatar initials come from the name alone.
+  The Suggestions list and the draft card put the label in wrapping text and
+  needed nothing.
+- An app's note, and its replies, render through `renderReplyMarkdown`, the
+  renderer used for the Assistant: raw HTML escaped, images as their alt
+  text, links limited to http, https and mailto. A suggested entry's
+  description keeps its line breaks (it stays plain text).
+- The personal token form is enhanced. A refusal keeps the name; a new token
+  is scrolled into view, focused and selected.
+- A split proposal that can no longer be placed tells the writer one
+  sentence, whatever the locating code said (its wording is for the program
+  that proposed).
+- `decideEntityProposal` and `decideSplitProposal` take the universe of the
+  page and filter on it in the query that finds the proposal. Before, the
+  entity decision committed and was compared afterwards, and the split had no
+  check.
+- Suggestions uses `FormStatus`; the scene link in a split row is underlined
+  in the body colour like the other prose links (`.list-title a`).
+- Help: an app's notes show its address under its name, a personal token's
+  show "personal token"; suggested edits, suggested entries, proposed splits
+  and undecided drafts are not exported (review comment threads are, through
+  `export-reviews.ts`, an app's included).
+- Not done here, to be filed: focus and an announcement after each decision
+  on the Suggestions page, disconnecting an app while the admin switch is
+  off, and a sign elsewhere that something is waiting.
+
+## MCP endpoint, review round 1: endpoint and tools fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-tools-review` on `staging/mcp-endpoint`,
+migration 0100 (indexes only).
+
+- Writer trust (H1). `update_suggestion` could change a pending edit's text
+  at any moment, and Accept sent only the id, so the writer could apply text
+  they never saw. The same held for the in-app Assistant's revise. Now every
+  accept form sends `seen`, a SHA-256 of the replacement as the page showed it
+  (`suggestionStamp`, carried on `SuggestionView.stamp`), and
+  `decideSuggestion` reads the suggestion `for update` inside its transaction,
+  after the scene row, compares, and applies the text it read there. It used
+  to read the replacement before the transaction; a test that races an accept
+  with a revision showed unseen text landing. A stamp was picked over a
+  revised-at column because it needs no migration and is exact: a revision
+  back to the same text is the same proposal. `textHash` was not used; it is
+  not collision resistant and the other side is a program. The page actions
+  refuse an accept without `seen`; the function takes it as optional for the
+  callers that are not a page (tests, the bulk path passes a map). The only
+  accept paths are the three forms on the review page (card, guided pass,
+  "Decide together"); nothing in the editor or the chat accepts a suggestion.
+  On a refusal the card and the list reload.
+- Over MCP `update_suggestion` also needs the writer to have written last in
+  the edit's discussion. Everywhere, a revision must change something and
+  must not repeat another pending edit of the same author
+  (`updateAssistantSuggestion`, now one transaction with the row locked).
+- Errors (M1). The write cases of the dispatcher's switch were returned
+  without `await`, so a throw skipped its catch and reached the caller: over
+  MCP the SDK answered with the error's message, which for a query is the
+  statement and its parameters. The same on main sent the throw up the in-app
+  tool loop. All cases are awaited; a database error is never quoted, to the
+  model or the app; `callMcpTool` has a catch of its own around everything
+  after the rate limit; the log line carries the tool and the error code only;
+  a null character in any string argument is refused before any query.
+- Trashed scenes (M2). `reachableStory` and `isOwnNote` join the scene and
+  require it live, so `reply_in_thread`, `update_suggestion`,
+  `get_review_note` and a `suggest_edit` linked by `patternNoteId` or
+  `followsSuggestionId` all miss on one.
+- Whose thread (M3). `reply_in_thread` took any thread of the story. It now
+  takes a note the app opened or the discussion under its own edit
+  (`isOwnThread`). A thread the writer opened is refused too: the earlier
+  test that replied in one was a convenience of the test, not a rule; an app
+  has no tool that would tell it such a thread's id.
+- Calls sent together (M4). The duplicate refusals and ceilings were check
+  then insert. An app's staging calls now take
+  `pg_advisory_xact_lock(hashtext('mcp-staging:<client>:<universe>'))` in the
+  dispatcher and run inside that transaction. Universe and client was chosen
+  over scene and client so one lock covers the scene tools and
+  `suggest_entity` alike; at 30 staging calls a minute nothing is lost. The
+  handlers that catch a unique violation insert inside a transaction of
+  their own (a savepoint here), so the refusal does not abort the call.
+  Unique indexes back the one-row rules for callers outside that lock (the
+  Assistant and an app suggesting the same name). The follow-up index covers
+  apps only: the Assistant's rows on main may already hold repeats, and its
+  re-read runs one at a time. The turn check of `reply_in_thread` moved under
+  `addComment`'s thread lock.
+- `update_suggestion` gives "No suggestion with that id." for anything that
+  is not the app's own pending suggestion (L2). `stageAppDraft` no longer
+  discards a failed draft of the writer's on that scene (L3).
+- The indexes on `client_id` and `scene_id` asked for in the app-side review
+  (L4) are in the same migration.
+- Not done here, to be filed: `get_review_note` re-anchoring the whole story
+  per call, and blocked calls counting against the grant's rate bucket.
+
+## MCP endpoint, review round 1: sign-in fixes (2026-11-21)
+
+Part of #1175, branch `fix/mcp-sign-in-review` on `staging/mcp-endpoint`. No
+migration.
+
+- A self-registered client could list redirect URIs on several hosts, and the
+  consent page named the first one, not the one the answer went to. A
+  registration and a metadata document are now refused when their redirect
+  URIs name more than one remote host. Loopback addresses may sit beside the
+  one remote host, because desktop clients register both (a first cut refused
+  that mix and was relaxed before merge). The consent page names the host of
+  the redirect URI in use, which also covers rows registered before the rule:
+  a loopback redirect shows the loopback name and "The app runs on this
+  computer", never the remote host. A registered client that lists a loopback
+  address is stored under it, so Connected apps does not show a remote host a
+  local program merely listed.
+- `client_name` loses format characters (`\p{Cf}`: bidi overrides, zero-width
+  marks) as well as control characters.
+- Turning the account switch on asks for the password and, with two-factor on,
+  the code, through one `confirmIdentity` helper shared with `createToken`
+  (same throttle). Turning it off asks for nothing. While off, the section
+  shows a small form instead of the toggle.
+- "Sign out other sessions" does not revoke grants or tokens. It is about
+  browsers; an app is disconnected from its own list. Left as is on purpose.
+- Revocation against issuing: `exchangeCode`, `refreshTokens` and
+  `createPersonalToken` take the user row `for share` before anything else,
+  and `revokeAllGrants` and `revokeGrant` take it `for update`. The issuers
+  read the owner's id by hash without a lock first, then lock the user, then
+  the code or token row, so the order is always user first and there is no
+  cycle with a prior live grant. Tests race the two forty and twenty times.
+- `revokeGrant` spends that user and client's unspent codes, so a consent
+  given just before Disconnect cannot be exchanged after it.
+- A faulty authorize request for a known client and redirect used to be
+  answered by a redirect to the client with the error. It now shows "This
+  request cannot be answered" with a "Return to <host>" link carrying the same
+  error; the allow and deny actions answer 400 on such a request. The writer's
+  own Deny still redirects.
+- Suspending an account revokes its grants and tokens in the same transaction.
+- Looked at and left: a DELETE to `/api/mcp` with no Origin and no content
+  type is refused by the hook's cross-site form check with a plain 403 in
+  production, before the route, where the transport would have said 405. The
+  endpoint issues no session id, so a client following the spec has no reason
+  to send one.
+- Not done here, to be filed: a grace window for a refresh token used twice,
+  a throttle and negative cache on metadata document fetches, and per-address
+  limits for hosted clients.
+
+## MCP endpoint, lane 9: documentation (2026-11-21)
+
+Part of #1175, branch `docs/mcp-endpoint` on `staging/mcp-endpoint`. No code
+beyond the help index entry.
+
+- New help article `connecting-apps` ("Connecting an app"), written for
+  someone who has never connected anything: what it is, the steps, what an
+  app may do, where to find what it left, disconnecting, and what to do when
+  it does not connect. The Connected apps section of `account` stays as the
+  reference and links to it.
+- `docs/SELF-HOSTING.md` has a "Connected apps (MCP)" section: claude.ai and
+  Claude Desktop connect from Anthropic's servers, so the instance must be
+  reachable over public HTTPS; `ORIGIN` must be the public URL; which paths a
+  proxy must pass. The in-app self-hosting article says the same in plain
+  words.
+- `assistant.md`: the status header now says the toolbox is also served over
+  MCP. The exception list was written lane by lane and is complete as of
+  lane 7. The old note that the Assistant uses "no MCP" is in the Phase 9
+  entry of this file, further down; it describes how the Assistant's own
+  model gets its tools (in-process function calling), which is still true,
+  so it stays as written.
+- Not in this round, by decision: the pass card (MCP Apps), a
+  `decide_suggestion` tool and the `apply` permission.
+- Left for later, found while building: a count of waiting suggestions
+  outside the universe's settings, and a notification when an app stages
+  something.
+- The help link in the top bar opens the new article while Connected apps is
+  the open section of the account page.
+
+## MCP endpoint, lane 8: personal access tokens (2026-11-21)
+
+Part of #1175, branch `feat/mcp-personal-tokens` on `staging/mcp-endpoint`.
+No migration: the two `kind` columns are plain text and gained a value each.
+
+- A personal token is a grant on a client row of kind `personal`, with one
+  `api_tokens` row of kind `personal`. The alternative was a token row with
+  no grant and no client, carrying its own name and permissions. That would
+  have needed new columns and a second path through everything keyed on the
+  client: the `client_id` on review rows and proposals, the "only your own
+  note" rules, the waiting-note ceilings, the rate limits and the log line.
+  Giving the token a client row of its own made all of that apply unchanged,
+  and `resolveBearer` only had to accept one more token kind.
+- The OAuth side cannot reach a `personal` client: `findClient` returns only
+  `dcr` rows for a non-URL id, the row has no redirect addresses, and a
+  personal token is not a refresh token. `resolveBearer` also refuses a token
+  whose kind and client kind disagree.
+- Its host is the fixed text `personal token`, which no registered app can
+  have as a host, so "Name (personal token)" cannot be imitated.
+- Making one re-checks the password under the shared re-auth throttle, and
+  the TOTP code when two-factor is on. The secret is in the action's answer
+  only; the page data never holds it.
+- Revocation needed no new code: `revokeGrant` (one token, owner-scoped) and
+  `revokeAllGrants` (switch off, password change, reset, scheduled deletion)
+  already cover grants and tokens of every kind.
+- The clean-up revokes the grant of a personal token whose row has expired
+  and been deleted, so it leaves the list; until then the list says Expired.
+- Tests: the lifecycle and the account actions in `mcp-oauth.test.ts`; in
+  `mcp-endpoint.test.ts` a table runs every tool with a personal token
+  against another writer's universe and ids and the writer's own muted and
+  trashed scenes.
+- Also in this branch: the prompt wording fixes (the shared builders take the
+  source of the world details; a review of an untitled scene names it by id;
+  the rewrite prompt reads as a rewrite).
+
+## MCP endpoint, lane 7: proposals and app drafts (2026-11-21)
+
+Part of #1175, branch `feat/mcp-proposals` on `staging/mcp-endpoint`.
+Migration `0099_mcp-proposals` (two new tables, nothing rewritten).
+
+- `suggest_entity` on both surfaces, `propose_scene_split` now offered over
+  MCP, and `stage_scene_draft` over MCP only. All three need `suggest`.
+- New tables rather than a reuse of `entity_suggestions`: that table hangs a
+  field suggestion (alias, detail, summary) off an entry that exists, with a
+  target id and a job. A proposal for a new entry has no target, so it got its
+  own table and its own list. The accept path inserts the row the same way
+  the Plan sidebar's create does and queues the universe mention scan.
+- The list lives in the universe's settings as a Suggestions section with a
+  count in its link, built from the existing list primitives
+  (`UniverseSuggestions.svelte`). The tool results give the app the link.
+- The split store is used by apps only. Sharing it with the in-app card was
+  considered and left: the card already confirms through the split endpoint
+  with the text re-located at confirm time, and moving it would change a flow
+  that works for no gain. Confirm from the store reuses `locateSplitInStory`
+  and `splitScene`. The proposal is claimed before the split and put back if
+  the split is refused, so two confirms cannot both split.
+- App drafts needed no schema change. The row is an ordinary `ready`
+  `assistant_drafts` row with the app's label in `note`, which the draft card
+  already shows, and the unique index gives the one-undecided-draft rule. The
+  writer's fill, add as new scene, and discard are untouched.
+- The `write`, `draft` and `draft-chapter` prompts now end by staging with
+  `stage_scene_draft` for a connection that may suggest.
+- Deferred: a count of waiting suggestions outside the universe's settings
+  (the Plan sidebar or the library), and a notification when an app stages
+  something.
+
+## MCP endpoint, lane 6: prompts (2026-11-21)
+
+Part of #1175, branch `feat/mcp-prompts` on `staging/mcp-endpoint`. No
+migration.
+
+- Eleven MCP prompts, one per Assistant flow (`src/lib/server/mcp/prompts.ts`),
+  registered on the per-request server next to the tools.
+- One source for the instruction text. `review` and `copyedit` call
+  `buildReviewMessage`; `write` and `rewrite` call `buildCoauthorMessage`;
+  `draft` and `draft-chapter` call `buildSceneDraftMessage`; `catchup` calls
+  `buildRecapMessage`. For the two staged passes the shared sentences in
+  `prompts/review.ts` became constants, used both by the staged builders and
+  by two new briefs for an agent that runs the pass itself. The `/who` and
+  `/find` asks moved out of the chat panel into `assistant-slash.ts`. Unit
+  tests assert each prompt contains its builder's output, so a change to the
+  Assistant's instruction changes the prompt with it.
+- Prompts do not read the database. The alternative was to look up the scene
+  to put its title in the prompt and refuse a foreign id there; that would
+  have added a second place where ownership is decided. A prompt for another
+  writer's ids is the same text around those ids and nothing else (tested);
+  the tools refuse the ids.
+- The review prompt therefore says `Review the scene "this scene" (id: ...)`,
+  the builder's wording for an untitled scene.
+- Arguments are text. Ids must look like ids, free text is capped (the brief
+  at the draft brief's cap), `focus` takes the review categories, `words` is
+  clamped as the draft form clamps it. A bad argument is a protocol error
+  that names it.
+- Review and copyedit are per scene. A chapter or a story is the agent
+  running the prompt scene by scene, where Codex would queue a background run.
+- The pattern caps moved to `prompts/review.ts` (re-exported from
+  `pattern-pass.ts`), so the prompts module does not import the gateway.
+
+## MCP endpoint, lane 5: the guided pass and reading notes back (2026-11-21)
+
+Part of #1175, branch `feat/mcp-guided-pass` on `staging/mcp-endpoint`. No
+migration.
+
+- Two read tools in the shared registry, `list_review_notes` and
+  `get_review_note`, backed by `listOwnNotes` and `getOwnNote` in `review.ts`.
+  "Own" is the caller: the Assistant in the app, the connected client over
+  MCP (`writtenBy`). They are in the Assistant's default set, so it can check
+  what became of an earlier note when asked.
+- Replies are filtered to the writer's and the caller's own. A guest
+  reviewer's comment in the same thread is not shown, and neither is another
+  app's or (to an app) the Assistant's. The "writer wrote last" flag is worked
+  out over the same filtered list, so a guest's aside after the writer's
+  question does not hide the question.
+- `get_review_note` takes a note id or an edit id, since a loose
+  `suggest_edit` has a discussion too and no note to hang it on. An edit
+  someone else linked to the note (the Assistant's follow-up on an app's
+  note) is shown with `yours: false`.
+- The edits come from `listSuggestions` for the story, filtered, so the
+  anchors (and so "the paragraph as it now stands") are the review page's own.
+  That reads every suggestion of the story for one note; the review page pays
+  the same on each load, so it was not worth a second anchoring path.
+- A note on a scene in the trash is not found; one in a muted or trashed
+  story is not found either (the same `reachableStory` check as lane 4).
+- `suggest_edit` over MCP: `patternNoteId` must be a note the app opened;
+  `followsSuggestionId` must be an accepted edit in such a note, in the same
+  scene, and the edit must fall inside `paragraphWindow(..., 1)` around where
+  the accepted text now sits. One follow-up per accepted edit per app,
+  counted whatever became of it, so a rejected follow-up is not retried in a
+  loop. The window size is one constant (`FOLLOW_UP_NEIGHBOURS`) shared with
+  the Assistant's re-read.
+- The re-read (`pattern-reread.ts`) accepted only a note whose first Assistant
+  comment existed; it now takes the thread's opening comment and requires the
+  Assistant or an app to have written it. Its follow-up stays the Assistant's.
+- `?pass=<note id>` on the story review page starts the pass once, when the
+  page first loads, if the note is there and has pending edits. The parameter
+  is left in the address, so a reload opens the pass again.
+- Not done, on purpose: the in-app Assistant does not answer in an app's
+  thread. The app answers for itself (it reads the writer's reply with
+  `get_review_note`), so there is one voice per note. This replaces the line
+  in the lane 4 notes that deferred it here.
+
+## MCP endpoint, lane 4: staging tools and the app as author (2026-11-21)
+
+Part of #1175, branch `feat/mcp-staging` on `staging/mcp-endpoint`,
+migration 0098.
+
+- A fourth review author. `review_comments` and `review_suggestions` gain
+  `client_id` (set null when the client row goes), `client_name` and
+  `client_host`. The name and host are copied at staging time and
+  `client_host` being set is what marks the row as an app's, so attribution
+  does not depend on the client row, which the worker prunes. One function
+  (`clientAuthorName` in `review.ts`, over `clientDisplayName`) turns the two
+  into the label.
+- The Assistant's own-write rules were generalised to "a program's own
+  writes" (`MachineAuthor`, `writtenBy`): the duplicate checks, the retried
+  pattern note, and the revise-own-pending-suggestion rule each compare on
+  `assistant = true` or on `client_id`. Two apps, or an app and the
+  Assistant, never dedupe against or revise each other.
+- Like the Assistant's, an app's notes cannot be retracted by anyone; the
+  writer resolves, rejects or clears them.
+- `reply_in_thread` and `update_suggestion` take the target id as an
+  argument over MCP. The check (`reachableStory` in the dispatcher) requires
+  the story to be the writer's, live, unmuted and in the named universe;
+  anything else is "No thread with that id." or "No suggestion with that
+  id.".
+- Three guards against a looping client: the staging rate limit, the
+  ceiling of 100 waiting notes per scene and app, and the rule that an app
+  does not reply to its own latest reply. The last one was not in the issue;
+  it is the cheapest way to stop a reply loop, which the ceiling does not
+  count.
+- `leave_comment` tells an app the new thread's id so it can reply there
+  later. The in-app result is unchanged.
+- The review UI shows an app's notes with an "App" role chip and plain-text
+  bodies (the Assistant's are rendered as markdown; an app's are treated
+  like a reviewer's).
+- Deferred to lane 5: "Work through this" on an app's pattern note and the
+  re-read after an accept. No notification is sent for an app's note.
+
+## MCP endpoint, lane 3: the endpoint and the read tools (2026-11-21)
+
+Part of #1175, branch `feat/mcp-endpoint` on `staging/mcp-endpoint`, no
+migration.
+
+- `/api/mcp` on `@modelcontextprotocol/server` 2.x, stateless, with the
+  SDK's fallback for 2025-era clients left on. One handler for the process;
+  the route resolves the bearer token and passes the connection in, and the
+  SDK builds a server per request from it.
+- The tools are the Assistant's own. `list_universes` and `list_stories`
+  are in the shared registry marked `external`, never offered in the app and
+  refused by the dispatcher there. `mcp/tools.ts` adds the required
+  `universeId` argument and runs `ownsUniverse` on every call.
+- "Not found" is uniform. Ids that are not uuids are a miss in the
+  dispatcher instead of a query error, and a handler that throws now flags
+  the outcome so the endpoint answers "The tool failed" and keeps the error
+  text in the log, not in the reply to an outside app.
+- `get_entity` and `find_appearances` now require the entity to be in the
+  context's universe. The check is in the dispatcher, so the in-app
+  Assistant gets it too; before, an id from another of the writer's own
+  universes resolved.
+- `get_scene` is capped at 120,000 characters over MCP (the in-app cap
+  stays at 200,000), and any result at 140,000, because clients cut a
+  result at about 150,000 characters.
+- Origin: a request whose `Origin` is not this site's is refused. That
+  rules out a browser-based client on another site until someone needs one;
+  the place to allow it is the check in the route.
+- Rate limits are in-memory like the others, so the single-replica note in
+  SELF-HOSTING applies. Numbers are in `mcp/constants.ts`.
+- Deferred: the staging tools and their author kind (lane 4), prompts,
+  reading a long scene in parts.
+
+## MCP endpoint, lane 2: the OAuth server (2026-11-21)
+
+Part of #1175, branch `feat/mcp-oauth` on `staging/mcp-endpoint`, migration
+0097. The authorization server an outside app signs a writer in through; the
+MCP endpoint itself is the next lane.
+
+- Both ways for a client to name itself are supported: self-registration
+  (`/oauth/register`) and a metadata document at an https URL. The metadata
+  advertises `client_id_metadata_document_supported` and the `none` token
+  method, which is what makes a client that supports documents use one. A
+  document is fetched through the egress guard (private addresses always
+  blocked), capped in size and time, cached for a day, and a stale copy is
+  kept when a re-fetch fails.
+- Clients are public only. Redirect addresses are https, or http on
+  localhost, 127.0.0.1 or [::1], where the port is ignored when matching.
+  Custom URL schemes are refused; a desktop app is expected to use loopback.
+- The app name is stored with the host Codex checked, and
+  `clientDisplayName` in `src/lib/mcp-access.ts` is the one place that decides
+  how the two are shown.
+- Lifetimes and limits are in `src/lib/server/mcp/constants.ts`: code 1
+  minute, access 1 hour, refresh 30 days sliding. A refresh token is replaced
+  on each use and a second use of a spent one revokes its family, with no
+  grace window. A replayed code revokes the tokens it bought.
+- Permissions live on the grant, not the token. `apply` is in the stored
+  vocabulary but not offered (`GRANTABLE_PERMISSIONS`), since nothing acts on
+  it yet.
+- Turning the account switch off revokes every grant instead of pausing
+  them, so switching it back on never revives a connection the writer may
+  have forgotten.
+- SvelteKit's cross-site form check rejects a form post with no Origin
+  before any hook runs and has no per-route exception, which would block the
+  token endpoint. It is switched off (`csrf.trustedOrigins: ['*']`) and the
+  same rule runs first thing in `hooks.server.ts` with `/oauth/token` and
+  `/oauth/revoke` left out. Those paths, the register endpoint and the
+  discovery documents skip the session cookie entirely.
+- The page policy has `form-action 'self'`, which some browsers apply to a
+  redirect that follows a form, so the consent actions return the address
+  and the page navigates to it.
+- The sign-in return is a short-lived cookie set by the hook when it sends a
+  signed-out visitor to `/login`, accepted only for `/oauth/authorize`, and
+  consumed by password, two-factor, passkey and emailed-link sign-in.
+- Deferred: the MCP route and its Origin check (lane 3), any use of
+  `suggest` (lane 4), and attribution of an app's suggestions, which has to
+  survive the client row being pruned.
+
 ## Scene drafting, review round 6 (2026-11-21)
 
 Small fixes from the sixth review of #1168, branch

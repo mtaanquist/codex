@@ -78,7 +78,9 @@
 	import { page } from '$app/state';
 	import {
 		commandsForScope,
+		findAsk,
 		matchCommands,
+		whoAsk,
 		SLASH_COMMANDS,
 		matchSlash,
 		slashName,
@@ -1097,16 +1099,13 @@
 	// /who: show a character or place sheet inline, a templated chat send that
 	// leans on the tool-enabled chat (get_entity). Works in both scopes.
 	function askWho(who: string, typed: string) {
-		void send(`Show me a short sheet for ${who}: the key facts you have on them.`, typed);
+		void send(whoAsk(who), typed);
 	}
 
 	// /find: search the universe and list hits, a templated send backed by the
 	// universe-scoped search_text tool. Works in both scopes.
 	function askFind(query: string, typed: string) {
-		void send(
-			`Search this universe for "${query}" and list what you find, with where each turns up.`,
-			typed
-		);
+		void send(findAsk(query), typed);
 	}
 
 	// The command menu. Typing "/word" in the composer opens it filtered by the
@@ -1641,8 +1640,8 @@
 		{#if off}
 			<p>The Assistant is off for your account.</p>
 			<p class="muted-hint">
-				Drafts it wrote before are still here to keep or discard. To use the Assistant again, turn
-				it on under Account, Assistant.
+				Drafts waiting for you, from the Assistant or from a connected app, are still here to keep
+				or discard. To use the Assistant, turn it on under Account, Assistant.
 			</p>
 		{:else}
 			<p>The Assistant is off for this story.</p>

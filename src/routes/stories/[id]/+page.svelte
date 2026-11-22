@@ -664,8 +664,13 @@
 			const url = new URL(page.url.href);
 			url.searchParams.delete('draft');
 			url.searchParams.delete('draftChapter');
+			// Taking the marker off the address is a navigation, which on a narrow
+			// window would switch back to the writing and hide the draft.
+			keepPaneOnNavigate = true;
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- this page's own address
-			void goto(url, { replace: true, reset: false });
+			void goto(url, { replace: true, reset: false }).finally(() => {
+				keepPaneOnNavigate = false;
+			});
 		});
 	});
 

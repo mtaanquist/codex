@@ -1,18 +1,42 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../../auth.ts';
-import { scenes, stories } from '../../db/schema.ts';
+import { reviewSuggestions, reviewThreads, scenes, stories, universes } from '../../db/schema.ts';
+import { resolveOwnedEntity } from '../../entity-lookups.ts';
 import { ownedUniverseRow, storyAssistantOn, storyIsLive } from '../../universe-scope.ts';
 import { entityAppearances, getEntityCard } from '../../plan-data.ts';
 import { searchAll } from '../../search.ts';
 import {
 	addComment,
+	acceptedPatternEdit,
+	placeAcceptedEdit,
+	clientNotesWaiting,
 	createSuggestion,
 	createThread,
+	FOLLOW_UP_EXISTS,
+	FOLLOW_UP_NEIGHBOURS,
+	followUpExists,
+	getOwnNote,
+	isOwnNote,
+	isOwnThread,
+	listOwnNotes,
 	MAX_COMMENT_LENGTH,
 	openAssistantNote,
-	updateAssistantSuggestion
+	updateAssistantSuggestion,
+	type ClientAuthor,
+	type MachineAuthor
 } from '../../review.ts';
 import { toLf } from '#lib/line-endings';
+import { clientDisplayName } from '#lib/mcp-access';
+import { PROPOSAL_KIND_LABEL, stageEntityProposal, stageSplitProposal } from '../../proposals.ts';
+import { stageAppDraft } from '../../scene-drafts.ts';
+import {
+	APP_DIFF_BUDGET,
+	STAGING_LOCK_TIMEOUT_MS,
+	STAGING_TRANSACTION_TIMEOUT_MS
+} from '../../mcp/constants.ts';
+import { GateBusyError, stagingGate, stagingKey } from '../../mcp/call-gate.ts';
+import { isUuid } from '#lib/slug';
+import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
 import { locateQuote } from '#lib/quote-locate';
 import { universeSkeleton, type SceneSummary } from '../context/sources.ts';
@@ -73,7 +97,45 @@ export type ToolContext = {
 	// The turn's model context window in tokens, when known; it bounds how much
 	// of a scene get_scene may return (see sceneBodyCap).
 	contextWindow?: number;
+	// Set when the call comes from an outside app through the MCP endpoint,
+	// which is the only surface the external tools run on.
+	external?: {
+		// The most characters of a scene's text get_scene may return, where no
+		// model window is known and the client caps the size of a result.
+		sceneBodyCap: number;
+		// The app, which is the author of anything the call stages.
+		client: ClientAuthor;
+		// The most notes the app may have waiting on one scene.
+		maxNotesPerScene: number;
+		// Where this Codex is reached, for a link the app can hand the writer.
+		origin: string;
+		// Asked inside a staging call's transaction, after any wait for its
+		// turn: whether the connection and the universe are still good. False
+		// ends the call with `refused` and nothing staged.
+		stillAllowed?: (tx: Database) => Promise<boolean>;
+		// Shorter limits for a staging call's transaction, in place of the
+		// constants. For tests.
+		timeouts?: { lockMs?: number; transactionMs?: number };
+	};
 };
+
+// Who a staged note is from: the app on the MCP surface, the Assistant
+// everywhere else.
+function stagingAuthor(ctx: ToolContext): MachineAuthor {
+	return ctx.external ? { client: ctx.external.client } : { assistant: true };
+}
+
+// The refusal for an app that already has its fill of notes waiting on a
+// scene, or null when it may stage another. The Assistant has no such ceiling:
+// its runs are bounded by the writer's own tool budget.
+const NO_SCENE = 'No scene with that id in this story.';
+
+async function overCeiling(ctx: ToolContext, sceneId: string): Promise<string | null> {
+	if (!ctx.external) return null;
+	const waiting = await clientNotesWaiting(ctx.db, sceneId, ctx.external.client.id);
+	if (waiting < ctx.external.maxNotesPerScene) return null;
+	return `This scene already has ${waiting} of your notes waiting for the writer. Stage nothing more on it until they have decided on some.`;
+}
 
 export type ToolOutcome = {
 	// The text fed back to the model as the tool result.
@@ -87,6 +149,15 @@ export type ToolOutcome = {
 	// How many notes the call staged, when one call stages several (a pattern
 	// note with its edits); counts in place of note.
 	noteCount?: number;
+	// The call was turned away by `external.stillAllowed`.
+	refused?: true;
+	// True when the handler threw. The result says only that it failed, unless
+	// the error was one of the app's own with a message meant to be read.
+	failed?: boolean;
+	// The database's error code, when it was the database that failed. The one
+	// detail of such an error that is safe to log: its message carries the
+	// statement and the values bound to it, which are the writer's prose.
+	errorCode?: string;
 	// A staged action the surface should show alongside the reply (a proposal
 	// card with a confirm button); the gateway forwards it on the stream.
 	surface?: { type: 'proposal'; proposal: SplitProposal };
@@ -106,7 +177,9 @@ const SCENE_BODY_WINDOW_SHARE = 0.25;
 const MIN_SCENE_BODY = 8_000;
 const MAX_APPEARANCES = 20;
 
-function sceneBodyCap(contextWindow?: number): number {
+function sceneBodyCap(ctx: ToolContext): number {
+	if (ctx.external) return Math.min(MAX_SCENE_BODY, ctx.external.sceneBodyCap);
+	const { contextWindow } = ctx;
 	if (!contextWindow) return MAX_SCENE_BODY;
 	const share = Math.floor(contextWindow * SCENE_BODY_WINDOW_SHARE * CHARS_PER_TOKEN);
 	return Math.min(MAX_SCENE_BODY, Math.max(MIN_SCENE_BODY, share));
@@ -143,7 +216,9 @@ export async function dispatchToolCall(
 	call: ProviderToolCall
 ): Promise<ToolOutcome> {
 	const tool = findTool(call.name);
-	if (!tool) return { result: `Unknown tool: ${call.name}.`, staged: false };
+	if (!tool || (tool.external && !ctx.external)) {
+		return { result: `Unknown tool: ${call.name}.`, staged: false };
+	}
 	if (ctx.allowedTools && !ctx.allowedTools.includes(call.name)) {
 		return {
 			result: `The tool ${call.name} is not available in this turn. Use one of the offered tools.`,
@@ -156,66 +231,174 @@ export async function dispatchToolCall(
 	} catch {
 		return { result: 'Could not parse the tool arguments as JSON.', staged: false };
 	}
-	try {
-		switch (call.name) {
-			case 'list_scenes':
-				return { result: await listScenes(ctx), staged: false };
-			case 'get_scene':
-				return { result: await getScene(ctx, asString(args.sceneId)), staged: false };
-			case 'get_entity':
-				return { result: await getEntity(ctx, asString(args.entityId)), staged: false };
-			case 'find_appearances':
-				return { result: await findAppearances(ctx, asString(args.entityId)), staged: false };
-			case 'search_text':
-				return { result: await searchText(ctx, asString(args.query)), staged: false };
-			case 'suggest_edit':
-				return suggestEdit(ctx, {
-					sceneId: asString(args.sceneId),
-					original: asString(args.original),
-					replacement: asString(args.replacement),
-					reason: asString(args.reason)
-				});
-			case 'leave_comment':
-				return leaveComment(ctx, {
-					sceneId: asString(args.sceneId),
-					comment: asString(args.comment),
-					quote: typeof args.quote === 'string' ? args.quote : undefined
-				});
-			case 'leave_pattern_note':
-				return leavePatternNote(ctx, {
-					sceneId: asString(args.sceneId),
-					comment: asString(args.comment),
-					edits: asList(args.edits).map((edit) => ({
-						original: asString(edit.original),
-						replacement: asString(edit.replacement),
-						reason: asString(edit.reason)
-					})),
-					kept: asList(args.kept).map((entry) => ({
-						quote: asString(entry.quote),
-						reason: asString(entry.reason)
-					}))
-				});
-			case 'propose_scene_split':
-				return proposeSceneSplit(ctx, {
-					sceneId: asString(args.sceneId),
-					// The old parameter name rides as a fallback for any provider
-					// still answering against a cached tool schema. Remove once
-					// cached schemas have aged out; nothing else uses "before".
-					before: asString(args.newSceneStart) || asString(args.before),
-					rationale: asString(args.rationale)
-				});
-			case 'reply_in_thread':
-				return replyInThread(ctx, asString(args.comment));
-			case 'update_suggestion':
-				return updateSuggestion(ctx, asString(args.replacement));
-			default:
-				return { result: `Unhandled tool: ${call.name}.`, staged: false };
-		}
-	} catch (err) {
+	// The database takes no text with a null character in it, and would answer
+	// with an error that quotes the statement.
+	if (hasNullCharacter(args)) {
 		return {
-			result: `Tool error: ${err instanceof Error ? err.message : 'failed'}.`,
+			result: 'Text cannot contain the null character. Remove it and try again.',
 			staged: false
 		};
+	}
+	try {
+		const { external } = ctx;
+		if (!external || tool.kind !== 'write') return await runTool(ctx, call.name, args);
+		// One writer's staging calls run one at a time, whichever of their apps
+		// sent them (see the staging gate). They wait in memory, so a waiting
+		// call holds no connection. The advisory lock inside is the same rule
+		// kept by the database, should two processes ever serve one writer; it
+		// is taken first, so it orders nothing against the locks the handlers
+		// take. No lock in the call is waited on for long, and the transaction
+		// itself has an end: a call that cannot get a lock gives up and is asked
+		// to try again. Postgres ends the whole session at that end, which the
+		// pool survives (see createPool).
+		const key = stagingKey(ctx.userId);
+		const lockMs = Number(external.timeouts?.lockMs ?? STAGING_LOCK_TIMEOUT_MS);
+		const transactionMs = Number(
+			external.timeouts?.transactionMs ?? STAGING_TRANSACTION_TIMEOUT_MS
+		);
+		return await stagingGate.run(ctx.userId, () =>
+			ctx.db.transaction(async (tx) => {
+				await tx.execute(sql.raw(`set local lock_timeout = ${lockMs}`));
+				await tx.execute(sql.raw(`set local transaction_timeout = ${transactionMs}`));
+				await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${key}))`);
+				// What the endpoint checked before the wait may no longer hold.
+				if (external.stillAllowed && !(await external.stillAllowed(tx))) {
+					return { result: '', staged: false, refused: true };
+				}
+				return await runTool({ ...ctx, db: tx }, call.name, args);
+			})
+		);
+	} catch (err) {
+		return toolFailure(err);
+	}
+}
+
+// Postgres: a lock was not available within lock_timeout.
+const LOCK_NOT_AVAILABLE = '55P03';
+const STAGING_BUSY = 'Another call is still running. Try again.';
+
+function hasNullCharacter(value: unknown): boolean {
+	if (typeof value === 'string') return value.includes('\u0000');
+	if (Array.isArray(value)) return value.some(hasNullCharacter);
+	if (value && typeof value === 'object') return Object.values(value).some(hasNullCharacter);
+	return false;
+}
+
+// What a throw inside a handler becomes. A database error is never quoted:
+// its message is the statement with its parameters.
+// Thrown by a handler to end the call with an answer and stage nothing: on
+// the MCP surface the call is one transaction, so what it staged so far is
+// undone.
+class ToolAbort extends Error {
+	answer: string;
+	constructor(answer: string) {
+		super(answer);
+		this.answer = answer;
+	}
+}
+
+function toolFailure(err: unknown): ToolOutcome {
+	if (err instanceof ToolAbort) return { result: err.answer, staged: false };
+	const cause = (err as { cause?: { code?: unknown } } | null)?.cause;
+	const code = typeof cause?.code === 'string' ? cause.code : undefined;
+	// Nothing went wrong; the call came at a busy moment and staged nothing.
+	if (err instanceof GateBusyError || code === LOCK_NOT_AVAILABLE) {
+		return { result: STAGING_BUSY, staged: false };
+	}
+	const fromDatabase =
+		code !== undefined || typeof (err as { query?: unknown })?.query === 'string';
+	return {
+		result:
+			err instanceof Error && !fromDatabase
+				? `Tool error: ${err.message}.`
+				: 'Tool error: the request could not be completed.',
+		staged: false,
+		failed: true,
+		errorCode: code
+	};
+}
+
+async function runTool(
+	ctx: ToolContext,
+	name: string,
+	args: Record<string, unknown>
+): Promise<ToolOutcome> {
+	switch (name) {
+		case 'list_universes':
+			return { result: await listUniverses(ctx), staged: false };
+		case 'list_stories':
+			return { result: await listStories(ctx), staged: false };
+		case 'list_scenes':
+			return { result: await listScenes(ctx), staged: false };
+		case 'get_scene':
+			return { result: await getScene(ctx, asString(args.sceneId)), staged: false };
+		case 'get_entity':
+			return { result: await getEntity(ctx, asString(args.entityId)), staged: false };
+		case 'find_appearances':
+			return { result: await findAppearances(ctx, asString(args.entityId)), staged: false };
+		case 'search_text':
+			return { result: await searchText(ctx, asString(args.query)), staged: false };
+		case 'list_review_notes':
+			return { result: await listReviewNotes(ctx, asString(args.storyId)), staged: false };
+		case 'get_review_note':
+			return { result: await getReviewNote(ctx, asString(args.noteId)), staged: false };
+		case 'suggest_edit':
+			return await suggestEdit(ctx, {
+				sceneId: asString(args.sceneId),
+				original: asString(args.original),
+				replacement: asString(args.replacement),
+				reason: asString(args.reason),
+				patternNoteId: asString(args.patternNoteId),
+				followsSuggestionId: asString(args.followsSuggestionId)
+			});
+		case 'leave_comment':
+			return await leaveComment(ctx, {
+				sceneId: asString(args.sceneId),
+				comment: asString(args.comment),
+				quote: typeof args.quote === 'string' ? args.quote : undefined
+			});
+		case 'leave_pattern_note':
+			return await leavePatternNote(ctx, {
+				sceneId: asString(args.sceneId),
+				comment: asString(args.comment),
+				edits: asList(args.edits).map((edit) => ({
+					original: asString(edit.original),
+					replacement: asString(edit.replacement),
+					reason: asString(edit.reason)
+				})),
+				kept: asList(args.kept).map((entry) => ({
+					quote: asString(entry.quote),
+					reason: asString(entry.reason)
+				}))
+			});
+		case 'propose_scene_split':
+			return await proposeSceneSplit(ctx, {
+				sceneId: asString(args.sceneId),
+				// The old parameter name rides as a fallback for any provider
+				// still answering against a cached tool schema. Remove once
+				// cached schemas have aged out; nothing else uses "before".
+				before: asString(args.newSceneStart) || asString(args.before),
+				rationale: asString(args.rationale)
+			});
+		case 'suggest_entity':
+			return await suggestEntity(ctx, {
+				kind: asString(args.kind),
+				name: asString(args.name),
+				description: asString(args.description),
+				seenIn: asString(args.seenIn)
+			});
+		case 'stage_scene_draft':
+			return await stageSceneDraft(ctx, {
+				sceneId: asString(args.sceneId),
+				text: asString(args.text),
+				brief: asString(args.brief)
+			});
+		case 'reply_in_thread':
+			return await replyInThread(ctx, asString(args.comment), asString(args.threadId));
+		case 'update_suggestion':
+			return await updateSuggestion(ctx, asString(args.replacement), asString(args.suggestionId));
+		default:
+			return { result: `Unhandled tool: ${name}.`, staged: false };
 	}
 }
 
@@ -236,6 +419,8 @@ function asList(value: unknown): Record<string, unknown>[] {
 // change to the right story even when the pass was launched from another.
 async function loadScene(ctx: ToolContext, sceneId: string) {
 	if (ctx.scope?.storyOnly && !ctx.storyId) return null;
+	// An id that is not one at all is a miss like any other, not a query error.
+	if (!isUuid(sceneId)) return null;
 	const [row] = await ctx.db
 		.select({
 			id: scenes.id,
@@ -259,6 +444,84 @@ async function loadScene(ctx: ToolContext, sceneId: string) {
 			)
 		);
 	return row ?? null;
+}
+
+// The writer's live universes. The one tool that needs no universe: it is how
+// an outside app finds the ids the others take.
+async function listUniverses(ctx: ToolContext): Promise<string> {
+	const rows = await ctx.db
+		.select({
+			id: universes.id,
+			name: universes.name,
+			description: universes.descriptionMd,
+			establishedSetting: universes.establishedSetting
+		})
+		.from(universes)
+		.where(and(eq(universes.ownerId, ctx.userId), isNull(universes.deletedAt)))
+		.orderBy(asc(universes.name), asc(universes.createdAt));
+	// Stories the other tools can reach: live, and not muted.
+	const counts = await ctx.db
+		.select({ universeId: stories.universeId, n: count() })
+		.from(stories)
+		.where(and(eq(stories.ownerId, ctx.userId), isNull(stories.deletedAt), storyAssistantOn()))
+		.groupBy(stories.universeId);
+	const storyCount = new Map(counts.map((row) => [row.universeId, row.n]));
+	return JSON.stringify({
+		universes: rows.map((row) => ({ ...row, storyCount: storyCount.get(row.id) ?? 0 }))
+	});
+}
+
+// The stories of the universe, in series order. A muted story is left out,
+// as it is from every other tool.
+async function listStories(ctx: ToolContext): Promise<string> {
+	const rows = await ctx.db
+		.select({
+			id: stories.id,
+			title: stories.title,
+			brief: stories.brief,
+			positionInSeries: stories.positionInSeries
+		})
+		.from(stories)
+		.where(
+			and(
+				eq(stories.universeId, ctx.universeId),
+				eq(stories.ownerId, ctx.userId),
+				isNull(stories.deletedAt),
+				storyAssistantOn()
+			)
+		)
+		.orderBy(asc(stories.positionInSeries), asc(stories.createdAt));
+	const counts = rows.length
+		? await ctx.db
+				.select({ storyId: scenes.storyId, n: count() })
+				.from(scenes)
+				.where(
+					and(
+						inArray(
+							scenes.storyId,
+							rows.map((row) => row.id)
+						),
+						isNull(scenes.deletedAt)
+					)
+				)
+				.groupBy(scenes.storyId)
+		: [];
+	const sceneCount = new Map(counts.map((row) => [row.storyId, row.n]));
+	return JSON.stringify({
+		stories: rows.map((row) => ({ ...row, sceneCount: sceneCount.get(row.id) ?? 0 }))
+	});
+}
+
+// An entity card, but only for an entity of the context's universe. The card
+// lookup is scoped to the owner alone, and an id from another of the writer's
+// universes must read as a miss here like any other.
+async function loadEntityCard(ctx: ToolContext, entityId: string) {
+	if (!isUuid(entityId)) return null;
+	const entity = await resolveOwnedEntity(ctx.db, ctx.userId, entityId, (table) => ({
+		universeId: table.universeId
+	}));
+	if (entity?.universeId !== ctx.universeId) return null;
+	return getEntityCard(ctx.db, ctx.userId, entityId);
 }
 
 // The chapter and scene skeleton for every story in the universe (or only the
@@ -294,7 +557,7 @@ async function listScenes(ctx: ToolContext): Promise<string> {
 async function getScene(ctx: ToolContext, sceneId: string): Promise<string> {
 	const scene = await loadScene(ctx, sceneId);
 	if (!scene) return 'No scene with that id in this story.';
-	const cap = sceneBodyCap(ctx.contextWindow);
+	const cap = sceneBodyCap(ctx);
 	const body =
 		scene.bodyMd.length > cap
 			? `${scene.bodyMd.slice(0, cap)}\n...(truncated: showing the first ${cap} of ${scene.bodyMd.length} characters)`
@@ -309,7 +572,7 @@ async function getScene(ctx: ToolContext, sceneId: string): Promise<string> {
 }
 
 async function getEntity(ctx: ToolContext, entityId: string): Promise<string> {
-	const card = await getEntityCard(ctx.db, ctx.userId, entityId);
+	const card = await loadEntityCard(ctx, entityId);
 	if (!card) return 'No entity with that id.';
 	return JSON.stringify({
 		id: card.id,
@@ -324,7 +587,7 @@ async function getEntity(ctx: ToolContext, entityId: string): Promise<string> {
 }
 
 async function findAppearances(ctx: ToolContext, entityId: string): Promise<string> {
-	const card = await getEntityCard(ctx.db, ctx.userId, entityId);
+	const card = await loadEntityCard(ctx, entityId);
 	if (!card) return 'No entity with that id.';
 	const appearances = await entityAppearances(
 		ctx.db,
@@ -348,16 +611,80 @@ async function searchText(ctx: ToolContext, query: string): Promise<string> {
 	if (!query.trim()) return 'Provide a search query.';
 	const results = await searchAll(ctx.db, ctx.userId, query, {
 		universeId: ctx.universeId,
-		assistant: true
+		assistant: true,
+		oneAtATime: ctx.external !== undefined
 	});
 	return JSON.stringify(
 		results.map((r) => ({ type: r.type, label: r.label, detail: r.sublabel, href: r.href }))
 	);
 }
 
+// The link an outside app asked for on a suggest_edit: the note the edit
+// belongs to, and the accepted edit it follows up. In the app the calling
+// surface fixes both (ToolScope); an app names them, so each is checked here:
+// the note must be one the app opened, and a follow-up is held to the changed
+// paragraph and its neighbours, one per accepted edit, as the Assistant's
+// re-read is.
+type EditLink = {
+	patternThreadId?: string;
+	followsSuggestionId?: string;
+	editWindow?: { sceneId: string; start: number; end: number };
+};
+async function appEditLink(
+	ctx: ToolContext,
+	input: { sceneId: string; patternNoteId: string; followsSuggestionId: string }
+): Promise<EditLink | { refusal: string }> {
+	const author = stagingAuthor(ctx);
+	const noteId = input.patternNoteId;
+	if (noteId) {
+		const reached = await reachableStory(ctx, reviewThreads, noteId);
+		if (!reached || !(await isOwnNote(ctx.db, noteId, author))) {
+			return { refusal: NO_REVIEW_NOTE };
+		}
+	}
+	if (!input.followsSuggestionId) return { patternThreadId: noteId };
+	const followed = (await reachableStory(ctx, reviewSuggestions, input.followsSuggestionId))
+		? await acceptedPatternEdit(ctx.db, ctx.userId, input.followsSuggestionId)
+		: null;
+	if (
+		!followed ||
+		(noteId && followed.patternThreadId !== noteId) ||
+		!(await isOwnNote(ctx.db, followed.patternThreadId, author))
+	) {
+		return { refusal: 'No accepted edit with that id in a note of yours.' };
+	}
+	if (followed.sceneId !== input.sceneId) {
+		return { refusal: 'A follow-up must be in the scene of the edit it follows.' };
+	}
+	if (await followUpExists(ctx.db, input.followsSuggestionId, author)) {
+		return { refusal: FOLLOW_UP_EXISTS };
+	}
+	// Last, as it is the costly check: comparing the scene as it was with the
+	// scene as it is. Past the budget the change counts as not found.
+	const spot = placeAcceptedEdit(followed, APP_DIFF_BUDGET);
+	if (!spot) {
+		return {
+			refusal: 'That change can no longer be found in the scene; there is nothing to follow.'
+		};
+	}
+	const span = paragraphWindow(followed.bodyMd, spot.start, spot.end, FOLLOW_UP_NEIGHBOURS);
+	return {
+		patternThreadId: followed.patternThreadId,
+		followsSuggestionId: input.followsSuggestionId,
+		editWindow: { sceneId: followed.sceneId, ...span }
+	};
+}
+
 async function suggestEdit(
 	ctx: ToolContext,
-	input: { sceneId: string; original: string; replacement: string; reason: string }
+	input: {
+		sceneId: string;
+		original: string;
+		replacement: string;
+		reason: string;
+		patternNoteId: string;
+		followsSuggestionId: string;
+	}
 ): Promise<ToolOutcome> {
 	if (!input.original) return { result: 'Provide the exact text to replace.', staged: false };
 	const limit = ctx.scope?.maxEdits;
@@ -367,12 +694,20 @@ async function suggestEdit(
 			staged: false
 		};
 	}
-	const window = ctx.scope?.editWindow;
+	let link: EditLink = ctx.scope ?? {};
+	if (ctx.external && (input.patternNoteId || input.followsSuggestionId)) {
+		const asked = await appEditLink(ctx, input);
+		if ('refusal' in asked) return { result: asked.refusal, staged: false };
+		link = asked;
+	}
+	const window = link.editWindow;
 	if (window && window.sceneId !== input.sceneId) {
 		return { result: 'Only the passage under review can be edited in this turn.', staged: false };
 	}
 	const scene = await loadScene(ctx, input.sceneId);
 	if (!scene) return { result: 'No scene with that id in this story.', staged: false };
+	const full = await overCeiling(ctx, scene.id);
+	if (full) return { result: full, staged: false };
 	// Tolerates a quote echoed back with the quotes or whitespace reshaped, but
 	// the staged range still indexes the scene's real text (see locateQuote).
 	const found = locateQuote(scene.bodyMd, input.original);
@@ -396,13 +731,13 @@ async function suggestEdit(
 		// suggestion to the right book, not the surface it was launched from.
 		storyId: scene.storyId,
 		sceneId: input.sceneId,
-		author: { assistant: true },
+		author: stagingAuthor(ctx),
 		range: { start: found.start, end: found.end },
 		original: scene.bodyMd.slice(found.start, found.end),
 		replacement: input.replacement,
 		reason: input.reason,
-		patternThreadId: ctx.scope?.patternThreadId,
-		followsSuggestionId: ctx.scope?.followsSuggestionId
+		patternThreadId: link.patternThreadId,
+		followsSuggestionId: link.followsSuggestionId
 	});
 	if (!result.ok) return { result: result.reason, staged: false };
 	if (limit !== undefined) stagedEdits.set(ctx, (stagedEdits.get(ctx) ?? 0) + 1);
@@ -425,6 +760,24 @@ async function proposeSceneSplit(
 	if (!scene) return { result: 'No scene with that id in this story.', staged: false };
 	// Checked the way the confirm step locates it, so a scene stored with
 	// CRLF line endings (an older import) takes a passage across a line break.
+	// An app has no chat to show the card in: its proposal is stored, and the
+	// writer confirms it in the universe's Suggestions.
+	if (ctx.external) {
+		const stored = await stageSplitProposal(ctx.db, {
+			ownerId: ctx.userId,
+			storyId: scene.storyId,
+			sceneId: scene.id,
+			bodyMd: scene.bodyMd,
+			before: input.before,
+			rationale: input.rationale,
+			author: { client: ctx.external.client }
+		});
+		if (!stored.ok) return { result: stored.reason, staged: false };
+		return {
+			result: `The split is proposed to the writer. Nothing has changed; the scene is split only if they confirm it here: ${suggestionsLink(ctx)}`,
+			staged: true
+		};
+	}
 	const location = locateSplitBefore(toLf(scene.bodyMd), toLf(input.before));
 	if (!location.ok) return { result: location.reason, staged: false };
 	return {
@@ -443,39 +796,238 @@ async function proposeSceneSplit(
 	};
 }
 
+// Where the writer decides on suggested entries and proposed splits.
+function suggestionsLink(ctx: ToolContext): string {
+	return `${ctx.external?.origin ?? ''}/universes/${ctx.universeId}/suggestions`;
+}
+
+// A new entry for the universe of the call, staged for the writer to accept.
+async function suggestEntity(
+	ctx: ToolContext,
+	input: { kind: string; name: string; description: string; seenIn: string }
+): Promise<ToolOutcome> {
+	const staged = await stageEntityProposal(ctx.db, {
+		ownerId: ctx.userId,
+		universeId: ctx.universeId,
+		...input,
+		author: stagingAuthor(ctx)
+	});
+	if (!staged.ok) {
+		// An app is not told why a name is refused: that an entry of that name
+		// exists (it may be in the trash) or was turned down is the writer's to
+		// know.
+		const result =
+			ctx.external && staged.nameRefused ? 'That name cannot be suggested.' : staged.reason;
+		return { result, staged: false };
+	}
+	const label = PROPOSAL_KIND_LABEL[input.kind as keyof typeof PROPOSAL_KIND_LABEL];
+	return {
+		result: ctx.external
+			? `Suggested the ${label} "${input.name.trim()}" to the writer. Nothing is created until they accept it here: ${suggestionsLink(ctx)}`
+			: `Suggested the ${label} "${input.name.trim()}" to the writer. Nothing is created until they accept it under Suggestions in the universe's settings.`,
+		staged: true
+	};
+}
+
+// A draft an app wrote for a scene (see stageAppDraft). Only on the MCP
+// surface: in the app the writer asks for a draft with /draft and sees its
+// cost first, and the model does not start one unasked.
+async function stageSceneDraft(
+	ctx: ToolContext,
+	input: { sceneId: string; text: string; brief: string }
+): Promise<ToolOutcome> {
+	if (!ctx.external) return { result: 'Unknown tool: stage_scene_draft.', staged: false };
+	const scene = await loadScene(ctx, input.sceneId);
+	if (!scene) return { result: 'No scene with that id in this story.', staged: false };
+	const { client, origin } = ctx.external;
+	const staged = await stageAppDraft(ctx.db, {
+		userId: ctx.userId,
+		storyId: scene.storyId,
+		sceneId: scene.id,
+		textMd: input.text,
+		brief: input.brief,
+		from: clientDisplayName({ clientName: client.name, host: client.host })
+	});
+	if (!staged.ok) return { result: staged.reason, staged: false };
+	return {
+		result: `Staged the draft. It waits on the scene, where the writer keeps or discards it; the scene's own text has not changed. The scene opens here: ${origin}/stories/${scene.storyId}?scene=${scene.id}&draft=show`,
+		staged: true
+	};
+}
+
+// The story of a thread or a suggestion an outside app names by id, but only
+// when that story is the connected writer's, live, not muted, and in the
+// universe of the call, and the scene it is on is not in the trash. In the app
+// the calling surface fixes the target; an app has no surface, so the id is an
+// argument and this check stands in.
+async function reachableStory(
+	ctx: ToolContext,
+	table: typeof reviewThreads | typeof reviewSuggestions,
+	id: string
+): Promise<string | null> {
+	if (!isUuid(id)) return null;
+	if (ctx.scope?.storyOnly && !ctx.storyId) return null;
+	const [row] = await ctx.db
+		.select({ storyId: table.storyId })
+		.from(table)
+		.innerJoin(stories, eq(table.storyId, stories.id))
+		.innerJoin(scenes, eq(table.sceneId, scenes.id))
+		.where(
+			and(
+				eq(table.id, id),
+				eq(stories.universeId, ctx.universeId),
+				eq(stories.ownerId, ctx.userId),
+				isNull(stories.deletedAt),
+				isNull(scenes.deletedAt),
+				storyAssistantOn(),
+				ctx.scope?.storyOnly && ctx.storyId ? eq(table.storyId, ctx.storyId) : undefined
+			)
+		);
+	return row?.storyId ?? null;
+}
+
+const NO_REVIEW_NOTE = 'No review note of yours with that id.';
+
+// Where the writer works through a pattern note one edit at a time.
+function passLink(
+	ctx: ToolContext,
+	storyId: string,
+	sceneId: string,
+	noteId: string
+): string | null {
+	if (!ctx.external) return null;
+	return `${ctx.external.origin}/stories/${storyId}/review?scene=${sceneId}&pass=${noteId}`;
+}
+
+// The caller's own notes on one story of the universe (see listOwnNotes).
+async function listReviewNotes(ctx: ToolContext, storyId: string): Promise<string> {
+	const [story] = isUuid(storyId)
+		? await ctx.db
+				.select({ id: stories.id })
+				.from(stories)
+				.where(
+					and(
+						eq(stories.id, storyId),
+						eq(stories.universeId, ctx.universeId),
+						eq(stories.ownerId, ctx.userId),
+						isNull(stories.deletedAt),
+						storyAssistantOn()
+					)
+				)
+		: [];
+	if (!story || (ctx.scope?.storyOnly && storyId !== ctx.storyId)) {
+		return 'No story with that id.';
+	}
+	const listed = await listOwnNotes(ctx.db, storyId, stagingAuthor(ctx));
+	return JSON.stringify({
+		notes: listed.notes,
+		// Suggested edits that belong to no note.
+		otherEdits: listed.edits,
+		...(listed.truncated ? { truncated: 'Only the newest are listed.' } : {})
+	});
+}
+
+// One of the caller's own notes, by the id of the note or of one of its own
+// edits. The id is checked like any target an app names (reachableStory), and
+// the note must be the caller's: anything else is the same miss.
+async function getReviewNote(ctx: ToolContext, noteId: string): Promise<string> {
+	const storyId =
+		(await reachableStory(ctx, reviewThreads, noteId)) ??
+		(await reachableStory(ctx, reviewSuggestions, noteId));
+	// An app can ask many times a minute, so what one call may cost is bounded.
+	const view = storyId
+		? await getOwnNote(
+				ctx.db,
+				storyId,
+				stagingAuthor(ctx),
+				noteId,
+				ctx.external ? { diffBudget: APP_DIFF_BUDGET } : undefined
+			)
+		: null;
+	if (!storyId || !view) return NO_REVIEW_NOTE;
+	const pending = view.edits.some((edit) => edit.status === 'pending');
+	const link =
+		view.note && pending ? passLink(ctx, storyId, view.note.sceneId, view.note.id) : null;
+	return JSON.stringify({
+		storyId,
+		...(view.note ? { note: view.note } : {}),
+		edits: view.edits,
+		// Where the writer goes through the pending edits one at a time.
+		...(link ? { workThroughLink: link } : {})
+	});
+}
+
 // The scoped reply: posts into the thread fixed by the calling surface, as
-// the Assistant. No thread id crosses the model boundary.
-async function replyInThread(ctx: ToolContext, comment: string): Promise<ToolOutcome> {
-	const threadId = ctx.scope?.threadId;
+// the Assistant. No thread id crosses the model boundary. An outside app
+// names the thread instead (see reachableStory). It may speak only in a
+// thread of its own (a note it opened, or the discussion under its own edit),
+// and may not answer itself: it replies once, then waits for someone else.
+async function replyInThread(
+	ctx: ToolContext,
+	comment: string,
+	threadArgument: string
+): Promise<ToolOutcome> {
+	let threadId = ctx.scope?.threadId;
+	let storyId = ctx.storyId;
+	if (ctx.external) {
+		const reached = await reachableStory(ctx, reviewThreads, threadArgument);
+		if (!reached || !(await isOwnThread(ctx.db, threadArgument, stagingAuthor(ctx)))) {
+			return { result: 'No thread with that id.', staged: false };
+		}
+		threadId = threadArgument;
+		storyId = reached;
+	}
 	if (!threadId) return { result: 'There is no thread under discussion.', staged: false };
 	// The scoped review tools are only offered with a story in focus; the
 	// universe surface never reaches here.
-	if (!ctx.storyId) return { result: 'There is no thread under discussion.', staged: false };
+	if (!storyId) return { result: 'There is no thread under discussion.', staged: false };
 	if (!comment.trim()) return { result: 'Provide the reply text.', staged: false };
 	const result = await addComment(ctx.db, {
-		storyId: ctx.storyId,
+		storyId,
 		threadId,
-		author: { assistant: true },
-		body: comment
+		author: stagingAuthor(ctx),
+		body: comment,
+		waitsItsTurn: Boolean(ctx.external)
 	});
 	if (!result.ok) return { result: result.reason, staged: false };
 	return { result: 'Your reply was posted to the thread.', staged: true, note: true };
 }
 
 // The scoped revision: amends the Assistant's own pending suggestion fixed by
-// the calling surface. updateAssistantSuggestion enforces authorship and the
-// pending status.
-async function updateSuggestion(ctx: ToolContext, replacement: string): Promise<ToolOutcome> {
-	const suggestionId = ctx.scope?.suggestionId;
-	if (!suggestionId || !ctx.storyId) {
+// the calling surface (or the one an outside app names, see reachableStory).
+// updateAssistantSuggestion enforces authorship and the pending status. An
+// app revises only after the writer has answered in the edit's discussion,
+// and is told the same for a suggestion that is not its own pending one as
+// for one that does not exist.
+async function updateSuggestion(
+	ctx: ToolContext,
+	replacement: string,
+	suggestionArgument: string
+): Promise<ToolOutcome> {
+	let suggestionId = ctx.scope?.suggestionId;
+	let storyId = ctx.storyId;
+	if (ctx.external) {
+		const reached = await reachableStory(ctx, reviewSuggestions, suggestionArgument);
+		if (!reached) return { result: 'No suggestion with that id.', staged: false };
+		suggestionId = suggestionArgument;
+		storyId = reached;
+	}
+	if (!suggestionId || !storyId) {
 		return { result: 'There is no suggestion under discussion.', staged: false };
 	}
 	const result = await updateAssistantSuggestion(ctx.db, {
-		storyId: ctx.storyId,
+		storyId,
 		suggestionId,
-		replacement
+		replacement,
+		author: ctx.external ? stagingAuthor(ctx) : undefined,
+		afterWriter: Boolean(ctx.external)
 	});
-	if (!result.ok) return { result: result.reason, staged: false };
+	if (!result.ok) {
+		return {
+			result: ctx.external && result.notFound ? 'No suggestion with that id.' : result.reason,
+			staged: false
+		};
+	}
 	return {
 		result: 'Your suggestion now proposes the revised text; the author still decides on it.',
 		staged: true
@@ -489,6 +1041,8 @@ async function leaveComment(
 	if (!input.comment.trim()) return { result: 'Provide the comment text.', staged: false };
 	const scene = await loadScene(ctx, input.sceneId);
 	if (!scene) return { result: 'No scene with that id in this story.', staged: false };
+	const full = await overCeiling(ctx, scene.id);
+	if (full) return { result: full, staged: false };
 	// An anchor the same tolerant locate finds; a quote that matches nothing (or
 	// several places) still leaves a whole-scene comment rather than failing.
 	let anchor: { start: number; end: number } | null = null;
@@ -501,11 +1055,19 @@ async function leaveComment(
 		storyId: scene.storyId,
 		sceneId: input.sceneId,
 		anchor,
-		author: { assistant: true },
+		author: stagingAuthor(ctx),
 		body: input.comment
 	});
 	if (!result.ok) return { result: result.reason, staged: false };
-	return { result: 'Staged a review comment for the author.', staged: true, note: true };
+	return {
+		// An app needs the id to reply in the thread later; the Assistant's
+		// thread is fixed by the page it is asked from.
+		result: ctx.external
+			? `Staged a review comment for the author (thread id ${result.threadId}).`
+			: 'Staged a review comment for the author.',
+		staged: true,
+		note: true
+	};
 }
 
 // The longest original echoed back in a report on edits that did not land.
@@ -542,12 +1104,14 @@ async function leavePatternNote(
 		};
 	}
 	const scene = await loadScene(ctx, input.sceneId);
-	if (!scene) return { result: 'No scene with that id in this story.', staged: false };
+	if (!scene) return { result: NO_SCENE, staged: false };
+	const full = await overCeiling(ctx, scene.id);
+	if (full) return { result: full, staged: false };
 
 	// Only a pattern note is extended by a retry; any other opening always starts
 	// a note of its own.
 	let threadId = comment.startsWith('Pattern note')
-		? await openAssistantNote(ctx.db, scene.id, comment)
+		? await openAssistantNote(ctx.db, scene.id, comment, stagingAuthor(ctx))
 		: null;
 	let staged = 0;
 	if (!threadId) {
@@ -568,7 +1132,7 @@ async function leavePatternNote(
 			storyId: scene.storyId,
 			sceneId: scene.id,
 			anchor: null,
-			author: { assistant: true },
+			author: stagingAuthor(ctx),
 			body
 		});
 		if (!created.ok) return { result: created.reason, staged: false };
@@ -591,16 +1155,24 @@ async function leavePatternNote(
 			);
 			continue;
 		}
+		const stop = await overCeiling(ctx, scene.id);
+		if (stop) {
+			missed.push(`- "${quote}": ${stop}`);
+			continue;
+		}
 		const result = await createSuggestion(ctx.db, {
 			storyId: scene.storyId,
 			sceneId: scene.id,
-			author: { assistant: true },
+			author: stagingAuthor(ctx),
 			range: { start: found.start, end: found.end },
 			original: scene.bodyMd.slice(found.start, found.end),
 			replacement: edit.replacement,
 			reason: edit.reason,
 			patternThreadId: threadId
 		});
+		// The scene went to the trash while the note was being staged: an app's
+		// call stages none of it.
+		if (!result.ok && result.gone && ctx.external) throw new ToolAbort(NO_SCENE);
 		if (result.ok) edits += 1;
 		else missed.push(`- "${quote}": ${result.reason}`);
 	}
@@ -613,6 +1185,13 @@ async function leavePatternNote(
 	const lines = [
 		`Staged the pattern note with ${edits} linked edit${edits === 1 ? '' : 's'}. The author decides on each; nothing has changed yet.`
 	];
+	const link = edits ? passLink(ctx, scene.storyId, scene.id, threadId) : null;
+	if (ctx.external) lines.push(`Note id ${threadId}.`);
+	if (link) {
+		lines.push(
+			`Give the writer this link; it opens the note in Codex and takes them through the edits one at a time: ${link}`
+		);
+	}
 	if (missed.length) {
 		lines.push(
 			'These edits were not staged:',

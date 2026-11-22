@@ -10,6 +10,14 @@ import {
 	type EntityType
 } from './entity-lookups.ts';
 
+async function inTurn<T extends readonly unknown[]>(
+	queries: T
+): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+	const results: unknown[] = [];
+	for (const query of queries) results.push(await query);
+	return results as { -readonly [K in keyof T]: Awaited<T[K]> };
+}
+
 // The command palette's search: everything the user owns that has a name,
 // matched by substring, each result carrying the link that opens it.
 
@@ -33,7 +41,9 @@ export async function searchAll(
 	// Restricts the search to one universe (the Assistant's universe-scoped
 	// search_text tool); the command palette omits it and searches everything.
 	// assistant: leaves out stories the Assistant is muted on, and their scenes.
-	opts?: { universeId?: string; assistant?: boolean }
+	// oneAtATime: runs the queries in turn on one connection at a time, for a
+	// caller that must not take seven connections at once (an outside app).
+	opts?: { universeId?: string; assistant?: boolean; oneAtATime?: boolean }
 ): Promise<SearchResult[]> {
 	const trimmed = query.trim();
 	if (trimmed === '') return [];
@@ -72,109 +82,111 @@ export async function searchAll(
 
 	// All seven queries are independent and run on a pooled connection, so the
 	// palette pays one round trip's latency per keystroke instead of seven.
-	const [universeRows, storyRows, sceneRows, passageRows, characterRows, placeRows, loreRows] =
-		await Promise.all([
-			db
-				.select({ id: universes.id, slug: universes.slug, name: universes.name })
-				.from(universes)
-				.where(
-					and(
-						eq(universes.ownerId, userId),
-						ilike(universes.name, like),
-						isNull(universes.deletedAt),
-						inUniverse
-					)
+	// A query is sent when it is awaited, so listing them here sends nothing.
+	const queries = [
+		db
+			.select({ id: universes.id, slug: universes.slug, name: universes.name })
+			.from(universes)
+			.where(
+				and(
+					eq(universes.ownerId, userId),
+					ilike(universes.name, like),
+					isNull(universes.deletedAt),
+					inUniverse
 				)
-				.orderBy(asc(universes.name))
-				.limit(PER_TYPE),
-			db
-				.select({
-					id: stories.id,
-					slug: stories.slug,
-					title: stories.title,
-					universeName: universes.name
-				})
-				.from(stories)
-				.innerJoin(universes, eq(stories.universeId, universes.id))
-				.where(
-					and(
-						eq(stories.ownerId, userId),
-						ilike(stories.title, like),
-						isNull(stories.deletedAt),
-						isNull(universes.deletedAt),
-						inUniverse,
-						assistantOn
-					)
+			)
+			.orderBy(asc(universes.name))
+			.limit(PER_TYPE),
+		db
+			.select({
+				id: stories.id,
+				slug: stories.slug,
+				title: stories.title,
+				universeName: universes.name
+			})
+			.from(stories)
+			.innerJoin(universes, eq(stories.universeId, universes.id))
+			.where(
+				and(
+					eq(stories.ownerId, userId),
+					ilike(stories.title, like),
+					isNull(stories.deletedAt),
+					isNull(universes.deletedAt),
+					inUniverse,
+					assistantOn
 				)
-				.orderBy(asc(stories.title))
-				.limit(PER_TYPE),
-			db
-				.select({
-					id: scenes.id,
-					title: scenes.title,
-					storySlug: stories.slug,
-					storyTitle: stories.title
-				})
-				.from(scenes)
-				.innerJoin(stories, eq(scenes.storyId, stories.id))
-				.innerJoin(universes, eq(stories.universeId, universes.id))
-				.where(
-					and(
-						eq(stories.ownerId, userId),
-						ilike(scenes.title, like),
-						isNull(scenes.deletedAt),
-						isNull(stories.deletedAt),
-						isNull(universes.deletedAt),
-						inUniverse,
-						assistantOn
-					)
+			)
+			.orderBy(asc(stories.title))
+			.limit(PER_TYPE),
+		db
+			.select({
+				id: scenes.id,
+				title: scenes.title,
+				storySlug: stories.slug,
+				storyTitle: stories.title
+			})
+			.from(scenes)
+			.innerJoin(stories, eq(scenes.storyId, stories.id))
+			.innerJoin(universes, eq(stories.universeId, universes.id))
+			.where(
+				and(
+					eq(stories.ownerId, userId),
+					ilike(scenes.title, like),
+					isNull(scenes.deletedAt),
+					isNull(stories.deletedAt),
+					isNull(universes.deletedAt),
+					inUniverse,
+					assistantOn
 				)
-				.orderBy(asc(scenes.title))
-				.limit(PER_TYPE),
-			// Matches inside the prose itself, shown as a snippet around the first
-			// hit. The pattern escapes ILIKE wildcards, so the match is a literal
-			// substring and strpos on the lowercased text always finds it.
-			trimmed.length < MIN_PASSAGE_QUERY
-				? []
-				: db
-						.select({
-							id: scenes.id,
-							title: scenes.title,
-							storySlug: stories.slug,
-							storyTitle: stories.title,
-							snippet: sql<string>`substr(${scenes.bodyMd}, greatest(strpos(lower(${scenes.bodyMd}), lower(${trimmed})) - 40, 1), ${trimmed.length + 80})`
-						})
-						.from(scenes)
-						.innerJoin(stories, eq(scenes.storyId, stories.id))
-						.where(
-							and(
-								// The user's story ids are gathered first (an ARRAY initplan),
-								// so the planner reaches scenes through scenes_story_idx and
-								// only scans this user's prose, rather than starting from the
-								// instance-wide trigram index.
-								sql`${scenes.storyId} = any(array(${db
-									.select({ id: stories.id })
-									.from(stories)
-									.innerJoin(universes, eq(stories.universeId, universes.id))
-									.where(
-										and(
-											eq(stories.ownerId, userId),
-											isNull(stories.deletedAt),
-											isNull(universes.deletedAt),
-											inUniverse,
-											assistantOn
-										)
-									)}))`,
-								ilike(scenes.bodyMd, like),
-								isNull(scenes.deletedAt)
-							)
+			)
+			.orderBy(asc(scenes.title))
+			.limit(PER_TYPE),
+		// Matches inside the prose itself, shown as a snippet around the first
+		// hit. The pattern escapes ILIKE wildcards, so the match is a literal
+		// substring and strpos on the lowercased text always finds it.
+		trimmed.length < MIN_PASSAGE_QUERY
+			? []
+			: db
+					.select({
+						id: scenes.id,
+						title: scenes.title,
+						storySlug: stories.slug,
+						storyTitle: stories.title,
+						snippet: sql<string>`substr(${scenes.bodyMd}, greatest(strpos(lower(${scenes.bodyMd}), lower(${trimmed})) - 40, 1), ${trimmed.length + 80})`
+					})
+					.from(scenes)
+					.innerJoin(stories, eq(scenes.storyId, stories.id))
+					.where(
+						and(
+							// The user's story ids are gathered first (an ARRAY initplan),
+							// so the planner reaches scenes through scenes_story_idx and
+							// only scans this user's prose, rather than starting from the
+							// instance-wide trigram index.
+							sql`${scenes.storyId} = any(array(${db
+								.select({ id: stories.id })
+								.from(stories)
+								.innerJoin(universes, eq(stories.universeId, universes.id))
+								.where(
+									and(
+										eq(stories.ownerId, userId),
+										isNull(stories.deletedAt),
+										isNull(universes.deletedAt),
+										inUniverse,
+										assistantOn
+									)
+								)}))`,
+							ilike(scenes.bodyMd, like),
+							isNull(scenes.deletedAt)
 						)
-						.orderBy(asc(stories.title), asc(scenes.globalPosition))
-						.limit(PER_TYPE),
-			entityMatches('character'),
-			entityMatches('place'),
-			entityMatches('lore_entry')
-		]);
+					)
+					.orderBy(asc(stories.title), asc(scenes.globalPosition))
+					.limit(PER_TYPE),
+		entityMatches('character'),
+		entityMatches('place'),
+		entityMatches('lore_entry')
+	] as const;
+	const [universeRows, storyRows, sceneRows, passageRows, characterRows, placeRows, loreRows] =
+		opts?.oneAtATime ? await inTurn(queries) : await Promise.all(queries);
 
 	return [
 		...storyRows.map((row): SearchResult => ({

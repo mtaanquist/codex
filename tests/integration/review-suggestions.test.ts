@@ -19,17 +19,20 @@ import { recordRevision } from '../../src/lib/server/revisions';
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
+import { paragraphStarts, phraseIn, sceneParagraphs, seeded } from '../prose';
 
 process.env.APP_SECRET = process.env.APP_SECRET || 'review-test-secret';
 
 const {
 	createReviewInvitation,
 	createSuggestion,
+	createThread,
 	decideSuggestion,
 	decideSuggestions,
 	deleteSuggestion,
 	ensureReviewer,
-	listSuggestions
+	listSuggestions,
+	updateAssistantSuggestion
 } = await import('../../src/lib/server/review');
 
 let pool: pg.Pool;
@@ -301,6 +304,75 @@ describe('decideSuggestion', () => {
 		});
 	});
 
+	// The writer adds a paragraph above the passage that holds the same word.
+	// The edit must land on the passage it was made on, or nowhere; never on
+	// the new paragraph.
+	for (const [base, added, word] of [
+		['He sat by the window. The kettle was cold.', 'Hours passed. He slept badly.\n\n', 'He'],
+		[
+			'She opened the door and the snow came in.',
+			'Snow fell all night and She had not slept.\n\n',
+			'She'
+		]
+	]) {
+		it(`never accepts onto a new paragraph above that holds "${word}"`, async () => {
+			await db.update(scenes).set({ bodyMd: base }).where(eq(scenes.id, sceneId));
+			const { suggestionId } = (await suggest({ start: 0, end: word.length }, 'They')) as {
+				ok: true;
+				suggestionId: string;
+			};
+			const now = added + base;
+			await db.update(scenes).set({ bodyMd: now }).where(eq(scenes.id, sceneId));
+			const [view] = await listSuggestions(db, storyId);
+			if (view.anchor)
+				expect(view.anchor).toEqual({ start: added.length, end: added.length + word.length });
+			const result = await decideSuggestion(db, authorId, storyId, suggestionId, true);
+			expect(await sceneBody()).toBe(result.ok ? added + 'They' + base.slice(word.length) : now);
+		});
+	}
+
+	// Regressions from the review of the levelled comparison: an edit on a
+	// short line is never accepted onto another copy of that line, one at a
+	// time or several at once.
+	const shortLines: [string, string, string, string][] = [
+		[
+			'M1',
+			'She waited.\n"No."\n"No."\nHe left.',
+			'She waited.\n"No, never."\n"No."\nHe left then.',
+			'"No."'
+		],
+		[
+			'M2',
+			'She asked, "Will you come with me to the harbour?"\n"No."\nHe asked, "Is the road to the north still open?"\n"Not this week."',
+			'She asked, "Will you come with me to the harbour?"\nHe asked, "Is the road to the north still open?"\n"No."',
+			'"No."'
+		]
+	];
+	for (const [name, base, now, original] of shortLines) {
+		for (const bulk of [false, true]) {
+			it(`${name}: never accepts onto another copy of a short line${bulk ? ', in bulk' : ''}`, async () => {
+				await db.update(scenes).set({ bodyMd: base }).where(eq(scenes.id, sceneId));
+				const start = base.indexOf(original);
+				const { suggestionId } = (await suggest(
+					{ start, end: start + original.length },
+					'"Yes."'
+				)) as { ok: true; suggestionId: string };
+				await db.update(scenes).set({ bodyMd: now }).where(eq(scenes.id, sceneId));
+				const [view] = await listSuggestions(db, storyId);
+				expect(view.anchor).toBeNull();
+				if (bulk) {
+					const result = await decideSuggestions(db, authorId, storyId, [suggestionId], true);
+					expect(result.decided).toEqual([]);
+				} else {
+					expect(await decideSuggestion(db, authorId, storyId, suggestionId, true)).toMatchObject({
+						ok: false
+					});
+				}
+				expect(await sceneBody()).toBe(now);
+			});
+		}
+	}
+
 	it('refuses to accept once the author edited inside the passage', async () => {
 		const start = BODY.indexOf('quick brown');
 		const { suggestionId } = (await suggest(
@@ -387,7 +459,145 @@ describe('decideSuggestion', () => {
 	});
 });
 
+describe('accepting what the writer saw', () => {
+	const CHANGED = 'This suggestion changed. Read it again.';
+
+	async function assistantSuggests(word: string, replacement: string) {
+		const start = BODY.indexOf(word);
+		const made = await createSuggestion(db, {
+			storyId,
+			sceneId,
+			author: { assistant: true },
+			range: { start, end: start + word.length },
+			replacement
+		});
+		if (!made.ok) throw new Error(made.reason);
+		return made.suggestionId;
+	}
+	const stampOf = async (id: string) =>
+		(await listSuggestions(db, storyId)).find((row) => row.id === id)!.stamp;
+	const revise = (suggestionId: string, replacement: string) =>
+		updateAssistantSuggestion(db, { storyId, suggestionId, replacement });
+
+	it('refuses an accept when the replacement changed after the writer read it', async () => {
+		const id = await assistantSuggests('quick', 'swift');
+		const seen = await stampOf(id);
+		expect(await revise(id, 'DELETED EVERYTHING')).toEqual({ ok: true });
+		expect(await decideSuggestion(db, authorId, storyId, id, true, undefined, seen)).toEqual({
+			ok: false,
+			reason: CHANGED
+		});
+		expect(await sceneBody()).toBe(BODY);
+		const [row] = await listSuggestions(db, storyId);
+		expect(row).toMatchObject({ status: 'pending', replacement: 'DELETED EVERYTHING' });
+		// Read again, it can be accepted as it now stands.
+		expect(
+			await decideSuggestion(db, authorId, storyId, id, true, undefined, row.stamp)
+		).toMatchObject({ ok: true });
+		expect(await sceneBody()).toBe(BODY.replace('quick', 'DELETED EVERYTHING'));
+	});
+
+	it('gives the same text the same stamp and other text another', async () => {
+		const id = await assistantSuggests('quick', 'swift');
+		const first = await stampOf(id);
+		await revise(id, 'fast');
+		expect(await stampOf(id)).not.toBe(first);
+		await revise(id, 'swift');
+		expect(await stampOf(id)).toBe(first);
+	});
+
+	it('holds the writers own wording to the suggestion they reworded', async () => {
+		const made = await createThread(db, {
+			storyId,
+			sceneId,
+			anchor: null,
+			author: { assistant: true },
+			body: 'Pattern note (quick): overused.'
+		});
+		if (!made.ok) throw new Error(made.reason);
+		const start = BODY.indexOf('quick');
+		const staged = await createSuggestion(db, {
+			storyId,
+			sceneId,
+			author: { assistant: true },
+			range: { start, end: start + 5 },
+			replacement: 'swift',
+			patternThreadId: made.threadId
+		});
+		if (!staged.ok) throw new Error(staged.reason);
+		const seen = await stampOf(staged.suggestionId);
+		await revise(staged.suggestionId, 'fast');
+		expect(
+			await decideSuggestion(db, authorId, storyId, staged.suggestionId, true, 'brisk', seen)
+		).toEqual({ ok: false, reason: CHANGED });
+		expect(await sceneBody()).toBe(BODY);
+	});
+
+	it('accepts the ones still as read and leaves out the one that changed', async () => {
+		const quick = await assistantSuggests('quick', 'swift');
+		const dog = await assistantSuggests('lazy dog', 'sleeping hound');
+		const seen = { [quick]: await stampOf(quick), [dog]: await stampOf(dog) };
+		await revise(quick, 'DELETED EVERYTHING');
+		const result = await decideSuggestions(db, authorId, storyId, [quick, dog], true, seen);
+		expect(result.decided).toEqual([dog]);
+		expect(result.failed).toEqual([{ id: quick, reason: CHANGED }]);
+		expect(await sceneBody()).toBe(BODY.replace('lazy dog', 'sleeping hound'));
+	});
+
+	it('never applies text that arrives while the accept is under way', async () => {
+		// Whichever lands first, the scene holds the text the writer read or
+		// nothing of this suggestion at all.
+		for (let round = 0; round < 15; round++) {
+			await db.update(scenes).set({ bodyMd: BODY }).where(eq(scenes.id, sceneId));
+			const id = await assistantSuggests('quick', `swift${round}`);
+			const seen = await stampOf(id);
+			const [decided] = await Promise.all([
+				decideSuggestion(db, authorId, storyId, id, true, undefined, seen),
+				revise(id, 'UNSEEN')
+			]);
+			const body = await sceneBody();
+			expect(body).not.toContain('UNSEEN');
+			expect(body).toBe(decided.ok ? BODY.replace('quick', `swift${round}`) : BODY);
+			await pool.query('delete from review_suggestions');
+		}
+	});
+});
+
 describe('decideSuggestions (several at once)', () => {
+	// Round 8, 3: one mapper serves every accept in a bulk accept, and the
+	// cost of finding lines and sentences is not charged to its budget, so
+	// the last of 200 is placed as surely as the first.
+	it('accepts 200 suggestions made on 200 versions of a long scene', async () => {
+		const paragraphs = sceneParagraphs(71, 150_000).slice(0, 400);
+		expect(paragraphs.length).toBe(400);
+		const next = seeded(72);
+		const ids: string[] = [];
+		let version = [...paragraphs];
+		for (let n = 0; n < 200; n++) {
+			// A typo in an odd paragraph, then a suggestion in an even one.
+			const k = 2 * next(200) + 1;
+			version[k] = version[k].replace(/ the /, ' teh ');
+			version = [...version];
+			const body = version.join('\n\n');
+			await db.update(scenes).set({ bodyMd: body }).where(eq(scenes.id, sceneId));
+			const at = phraseIn(version[2 * n])!;
+			const start = paragraphStarts(version)[2 * n] + at[0];
+			const made = await suggest({ start, end: start + at[1] - at[0] }, 'X');
+			if (!made.ok) throw new Error(made.reason);
+			ids.push(made.suggestionId);
+			// Then its paragraph's first letter changes, so placing it takes a
+			// character diff.
+			version[2 * n] = `Q${version[2 * n].slice(1)}`;
+		}
+		await db
+			.update(scenes)
+			.set({ bodyMd: version.join('\n\n') })
+			.where(eq(scenes.id, sceneId));
+		const result = await decideSuggestions(db, authorId, storyId, ids, true);
+		expect(result.failed).toEqual([]);
+		expect(result.decided).toHaveLength(200);
+	}, 120_000);
+
 	async function suggestWord(word: string, replacement: string) {
 		const start = BODY.indexOf(word);
 		const made = await suggest({ start, end: start + word.length }, replacement);

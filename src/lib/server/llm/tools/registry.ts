@@ -11,7 +11,12 @@ export type ToolKind = 'read' | 'write';
 // A scoped tool acts on a target carried in the dispatch context (a review
 // thread, a suggestion) rather than on ids the model supplies, and is only
 // offered when a surface names it explicitly - never in the default set.
-export type ToolDef = ToolSpec & { kind: ToolKind; scoped?: boolean };
+//
+// An external tool is offered only to an outside app connected through the
+// MCP endpoint (see #lib/server/mcp/tools). The in-app Assistant never gets
+// one: it already knows the open universe and story from the page. These are
+// the listed exceptions to "one toolbox for both"; keep the list short.
+export type ToolDef = ToolSpec & { kind: ToolKind; scoped?: boolean; external?: boolean };
 
 function obj(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
 	return { type: 'object', properties, required, additionalProperties: false };
@@ -20,6 +25,22 @@ function obj(properties: Record<string, unknown>, required: string[]): Record<st
 const str = (description: string) => ({ type: 'string', description });
 
 export const TOOLS: ToolDef[] = [
+	{
+		kind: 'read',
+		external: true,
+		name: 'list_universes',
+		description:
+			"List the writer's universes with each one's id, name, description and number of stories. Every other tool needs a universe id from this list.",
+		parameters: obj({}, [])
+	},
+	{
+		kind: 'read',
+		external: true,
+		name: 'list_stories',
+		description:
+			"List the stories in this universe with each one's id, title, one-line brief and number of scenes. Use list_scenes for their chapters and scenes.",
+		parameters: obj({}, [])
+	},
 	{
 		kind: 'read',
 		name: 'list_scenes',
@@ -56,6 +77,27 @@ export const TOOLS: ToolDef[] = [
 		parameters: obj({ query: str('The text to search for.') }, ['query'])
 	},
 	{
+		kind: 'read',
+		name: 'list_review_notes',
+		description:
+			'List the review notes you have left on a story: the comments and pattern notes you opened, each with how many of its edits are pending, accepted or rejected, and your other suggested edits with their status. writerRepliedLast marks a note where the writer wrote last and may be waiting for your answer. Use get_review_note to read one.',
+		parameters: obj({ storyId: str('The story id.') }, ['storyId'])
+	},
+	{
+		kind: 'read',
+		name: 'get_review_note',
+		description:
+			'Read one of your own review notes: the note, the replies between you and the writer in order, and for each of its edits the status, the original text, the text as applied if the writer accepted it, and the paragraph as it now stands. Use it to see what the writer decided and to answer what they wrote.',
+		parameters: obj(
+			{
+				noteId: str(
+					'The id of a note you opened, or of a suggested edit you made, from list_review_notes.'
+				)
+			},
+			['noteId']
+		)
+	},
+	{
 		kind: 'write',
 		name: 'suggest_edit',
 		description:
@@ -88,6 +130,38 @@ export const TOOLS: ToolDef[] = [
 				rationale: str('One or two sentences on why this is a natural break.')
 			},
 			['sceneId', 'newSceneStart', 'rationale']
+		)
+	},
+	{
+		kind: 'write',
+		external: true,
+		name: 'stage_scene_draft',
+		description:
+			'Hand the writer a draft you wrote for a scene. It waits on the scene in Codex, where the writer reads it and either keeps it (into the scene while it is empty, or as a new scene after it) or discards it; it never replaces prose the writer has. A scene takes one undecided draft at a time.',
+		parameters: obj(
+			{
+				sceneId: str('The scene id.'),
+				text: str(
+					'The draft, as manuscript prose with *asterisks* only for italics and no other Markdown.'
+				),
+				brief: str('Optional: one or two sentences on what you were asked to write.')
+			},
+			['sceneId', 'text']
+		)
+	},
+	{
+		kind: 'write',
+		name: 'suggest_entity',
+		description:
+			'Suggest a character, place or lore entry the universe has no entry for yet, such as someone the text names again and again. Staged for the writer to accept or dismiss; nothing is created until they accept. Refused for a name, or another name of an entry, the universe already has: look with search_text first.',
+		parameters: obj(
+			{
+				kind: { type: 'string', enum: ['character', 'place', 'lore'], description: 'What it is.' },
+				name: str('The name of the entry.'),
+				description: str('Optional: one or two sentences on who or what it is.'),
+				seenIn: str('Optional: where in the text it turns up, such as a scene title and a quote.')
+			},
+			['kind', 'name']
 		)
 	},
 	{
@@ -170,15 +244,18 @@ export const TOOLS: ToolDef[] = [
 // dropped, so fewer schemas ride on each round.
 export const MINIMAL_TOOL_NAMES = ['get_scene', 'suggest_edit', 'leave_comment'];
 
-// The specs offered to the model: the default set leaves the scoped tools
-// out; a surface that needs them names them explicitly.
+// The specs offered to the in-app model: the default set leaves the scoped
+// tools out; a surface that needs them names them explicitly. The external
+// tools are never offered here, even by name.
 export function toolSpecs(names?: string[]): ToolSpec[] {
+	const inApp = TOOLS.filter((tool) => !tool.external);
 	const picked = names
-		? TOOLS.filter((tool) => names.includes(tool.name))
-		: TOOLS.filter((tool) => !tool.scoped);
-	return picked.map(({ kind, scoped, ...spec }) => {
+		? inApp.filter((tool) => names.includes(tool.name))
+		: inApp.filter((tool) => !tool.scoped);
+	return picked.map(({ kind, scoped, external, ...spec }) => {
 		void kind;
 		void scoped;
+		void external;
 		return spec;
 	});
 }

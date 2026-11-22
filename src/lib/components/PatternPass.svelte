@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import { enhance } from '#lib/enhance';
 	import Icon from './Icon.svelte';
 	import { paragraphWindow } from '#lib/paragraphs';
@@ -85,10 +86,14 @@
 		failure = null;
 	});
 
+	// The suggested wording the writer's own started from, so a revision that
+	// lands while they type can be shown beside it.
+	let draftFrom = $state('');
 	function startEdit() {
-		draft = step?.replacement ?? '';
+		draft = draftFrom = step?.replacement ?? '';
 		editing = true;
 	}
+	const revisedUnder = $derived(editing && step != null && step.replacement !== draftFrom);
 
 	// Each new step scrolls its card to the top of the list, leaving a little of
 	// the card before it in view. Only a new step does, so a writer scrolling
@@ -98,6 +103,12 @@
 		typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 	function cardOf(id: string): HTMLElement | null {
 		return scroller?.querySelector<HTMLElement>(`[data-edit="${CSS.escape(id)}"]`) ?? null;
+	}
+	// After a refused accept the pressed button may be gone or disabled, which
+	// would leave the keyboard on the page; it goes to the step's card.
+	async function refocus(id: string) {
+		await tick();
+		cardOf(id)?.focus({ preventScroll: true });
 	}
 	// The button the writer pressed goes with the step, so focus moves to the
 	// new step rather than falling back to the page, unless the writer had
@@ -198,7 +209,10 @@
 						</div>
 					{:else}
 						<div class="rv-anchor-lost">
-							<Icon name="close" size={12} /> The text changed since; skip this one.
+							<Icon name="close" size={12} />
+							{step.anchorNotSought
+								? 'This could not be checked against the current text; skip this one.'
+								: 'The text changed since; skip this one.'}
 						</div>
 						<div class="rv-diff">
 							{#if step.original}<span class="rv-diff-del">{step.original}</span>{/if}
@@ -222,6 +236,7 @@
 								busy = false;
 								failure = 'Your latest typing could not be saved, so nothing was accepted.';
 								cancel();
+								void refocus(step!.id);
 								return;
 							}
 							const id = step!.id;
@@ -241,12 +256,27 @@
 										typeof result.data?.message === 'string'
 											? result.data.message
 											: 'That change could not be accepted.';
+									// The edit may have been revised; show it as it is now.
+									// The refusal is said in the card, so it is not handed to
+									// the page as well, which would show it a second time.
+									await invalidateAll();
+									await refocus(id);
+									return;
 								}
 								await update();
+								if (result.type !== 'success') await refocus(id);
 							};
 						}}
 					>
 						<input type="hidden" name="suggestionId" value={step.id} />
+						<input type="hidden" name="seen" value={step.stamp ?? ''} />
+						{#if revisedUnder}
+							<span class="rv-draft-k">The suggestion now reads</span>
+							<div class="rv-diff pp-revised">
+								{#if step.replacement}<span class="rv-diff-ins">{step.replacement}</span
+									>{:else}Remove these words.{/if}
+							</div>
+						{/if}
 						{#if editing}
 							<span class="rv-draft-k rv-draft-to">Your wording</span>
 							<textarea
@@ -255,7 +285,9 @@
 								aria-label="Your wording"
 								bind:value={draft}></textarea>
 						{/if}
-						{#if failure}<p class="rv-anchor-lost">{failure}</p>{/if}
+						<!-- Once the passage is gone the notice above says so, and
+						     there is no Accept left for this line to be about. -->
+						{#if failure && context}<p class="pp-failure" role="alert">{failure}</p>{/if}
 						<div class="rv-actions">
 							{#if context}
 								<button

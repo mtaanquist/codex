@@ -9,7 +9,9 @@ import { entityColor } from './entity-color';
 export type ReviewFilter = 'all' | 'comments' | 'suggestions' | 'resolved';
 
 // Just enough of a comment/suggestion author to colour and label it.
-export type AuthorRef = { isOwner: boolean; isAssistant: boolean; name: string };
+// isApp marks an outside app the writer connected; name is then its name and
+// host.
+export type AuthorRef = { isOwner: boolean; isAssistant: boolean; isApp?: boolean; name: string };
 
 export type SuggestionKind = 'insert' | 'delete' | 'replace';
 
@@ -18,6 +20,7 @@ export type SuggestionKind = 'insert' | 'delete' | 'replace';
 export function authorKey(author: AuthorRef): string {
 	if (author.isAssistant) return 'assistant';
 	if (author.isOwner) return 'owner';
+	if (author.isApp) return `app:${author.name}`;
 	return `reviewer:${author.name}`;
 }
 
@@ -32,7 +35,22 @@ export function authorColor(author: AuthorRef): string {
 // One or two initials for the avatar.
 // The byline role chip next to an author's name.
 export function roleLabel(author: AuthorRef): string {
+	if (author.isApp) return 'App';
 	return author.isAssistant ? 'Assistant' : author.isOwner ? 'Author' : 'Reviewer';
+}
+
+// An app's label is its name with its host in brackets ("Desk (app.example)",
+// see clientDisplayName), or the host alone when it gave no name. The two
+// are shown apart on a card, so a long name cannot push the host out of view.
+export function appAuthorParts(label: string): { name: string; host: string | null } {
+	const match = /^(.*) \(([^()]*)\)$/.exec(label.trim());
+	return match ? { name: match[1], host: match[2] } : { name: label.trim(), host: null };
+}
+
+// The initials on an author's avatar. An app's come from its own name; its
+// host is not part of what it is called.
+export function avatarInitials(author: AuthorRef): string {
+	return authorInitials(author.isApp ? appAuthorParts(author.name).name : author.name);
 }
 
 export function authorInitials(name: string): string {
@@ -61,6 +79,7 @@ export type ReviewComment = {
 	authorName: string;
 	isOwner: boolean;
 	isAssistant: boolean;
+	isApp?: boolean;
 	// The current viewer authored this comment, so they may retract it.
 	mine: boolean;
 	createdAt: Date | string;
@@ -73,6 +92,9 @@ export type ReviewThread = {
 	suggestionId: string | null;
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Lost only because that part of the scene could not be compared with
+	// the version it was made on.
+	anchorNotSought?: boolean;
 	resolvedAt: Date | string | null;
 	createdAt: Date | string;
 	comments: ReviewComment[];
@@ -83,14 +105,21 @@ export type ReviewSuggestion = {
 	reviewerName: string;
 	isOwner: boolean;
 	isAssistant: boolean;
+	isApp?: boolean;
 	// The current viewer authored this suggestion, so they may retract it while
 	// it is still pending.
 	mine: boolean;
 	original: string;
 	replacement: string;
+	// Sent back with an accept, so the server can tell the replacement is the
+	// one shown here.
+	stamp?: string;
 	status: 'pending' | 'accepted' | 'rejected';
 	anchor: { start: number; end: number } | null;
 	anchorLost: boolean;
+	// Lost only because that part of the scene could not be compared with
+	// the version it was made on.
+	anchorNotSought?: boolean;
 	// The Assistant pattern note this edit belongs to, if any.
 	patternThreadId: string | null;
 	// The edit whose re-read after an accept staged this one, if any.
@@ -104,13 +133,19 @@ export type ReviewSuggestion = {
 export function threadAuthor(thread: ReviewThread): AuthorRef {
 	const first = thread.comments[0];
 	return first
-		? { isOwner: first.isOwner, isAssistant: first.isAssistant, name: first.authorName }
+		? {
+				isOwner: first.isOwner,
+				isAssistant: first.isAssistant,
+				isApp: first.isApp,
+				name: first.authorName
+			}
 		: { isOwner: false, isAssistant: false, name: 'Reviewer' };
 }
 export function suggestionAuthor(suggestion: ReviewSuggestion): AuthorRef {
 	return {
 		isOwner: suggestion.isOwner,
 		isAssistant: suggestion.isAssistant,
+		isApp: suggestion.isApp,
 		name: suggestion.reviewerName
 	};
 }

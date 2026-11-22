@@ -80,12 +80,25 @@ import {
 	pendingEnrollment,
 	recoveryCodesRemaining,
 	regenerateRecoveryCodes,
-	totpStatus
+	totpStatus,
+	verifyUserTotp
 } from '#lib/server/two-factor';
 import { listPasskeys, removePasskey } from '#lib/server/passkeys';
 import { reauthLimit } from '#lib/server/reauth';
 import QRCode from 'qrcode';
 import { formText } from '#lib/server/validation';
+import {
+	createPersonalToken,
+	listGrants,
+	listPersonalTokens,
+	revokeGrant
+} from '#lib/server/mcp/oauth';
+import { PERSONAL_TOKEN_DEFAULT_DAYS, PERSONAL_TOKEN_EXPIRY_DAYS } from '#lib/server/mcp/constants';
+import {
+	mcpAccountEnabled,
+	mcpInstanceEnabled,
+	setMcpAccountEnabled
+} from '#lib/server/mcp/settings';
 
 // The actions that re-verify the password share one throttle (see reauthLimit),
 // so a borrowed session cannot brute-force the password through them. Passkey
@@ -100,6 +113,29 @@ function reauthGuard(userId: string, scope: string) {
 	});
 }
 
+// Opening the account to outside programs (turning access on, making a
+// personal access token) hands out a credential that outlives the session, so
+// it asks who is there: the password, and the authenticator code when
+// two-factor is on. Returns the failure to answer with, or null to go on.
+async function confirmIdentity(userId: string, data: FormData, scope: string) {
+	const limited = reauthGuard(userId, scope);
+	if (limited) return limited;
+	if (!(await verifyAccountPassword(db, userId, formText(data, 'password')))) {
+		return fail(400, { scope, message: 'That password is not right.' });
+	}
+	if ((await totpStatus(db, userId)).status === 'on') {
+		const code = formText(data, 'code').replace(/\s+/g, '');
+		if (!(await verifyUserTotp(db, userId, code))) {
+			return fail(400, {
+				scope,
+				message:
+					'That code is not right. Enter the current code from your authenticator app. Each code works once, so if you have just used this one, wait for the next.'
+			});
+		}
+	}
+	return null;
+}
+
 export const load: PageServerLoad = async ({ locals, params, url }) => {
 	// Profile rests on /account itself; the other sections have their own page.
 	if (
@@ -111,11 +147,15 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 			'notifications',
 			'pagesetup',
 			'assistant',
-			'invites'
+			'invites',
+			'apps'
 		].includes(params.section)
 	)
 		error(404, 'Not found');
 	const user = locals.user!;
+	// Connected apps exists only while the instance allows outside apps.
+	const externalAccessAvailable = await mcpInstanceEnabled(db);
+	if (params.section === 'apps' && !externalAccessAvailable) error(404, 'Not found');
 	const sessionId = locals.session!.id;
 	const [profile] = await db
 		.select({
@@ -188,7 +228,17 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		// The Invites section: how many codes the admin has granted, and the
 		// ones already generated. The section hides while both are empty.
 		inviteAllowance: await userInviteAllowance(db, user.id),
-		myInvites: await listUserInviteCodes(db, user.id)
+		myInvites: await listUserInviteCodes(db, user.id),
+		externalAccess: {
+			available: externalAccessAvailable,
+			enabled: await mcpAccountEnabled(db, user.id),
+			apps: externalAccessAvailable ? await listGrants(db, user.id) : [],
+			tokens: externalAccessAvailable ? await listPersonalTokens(db, user.id) : [],
+			tokenExpiryDays: [...PERSONAL_TOKEN_EXPIRY_DAYS],
+			tokenDefaultDays: PERSONAL_TOKEN_DEFAULT_DAYS,
+			// Making a token asks for a code as well when two-factor is on.
+			needsCode: totp.status === 'on'
+		}
 	};
 };
 
@@ -882,6 +932,55 @@ export const actions: Actions = {
 		// The account is now deactivated; end the current session.
 		cookies.delete(SESSION_COOKIE, { path: '/' });
 		redirect(303, '/login');
+	},
+	// Connected apps: the account's own switch for outside apps, and
+	// disconnecting one. Turning the switch off disconnects them all.
+	setExternalAccess: async ({ request, locals }) => {
+		if (!(await mcpInstanceEnabled(db))) error(404, 'Not found');
+		const data = await request.formData();
+		const enabled = formText(data, 'enabled') === 'on';
+		const userId = locals.user!.id;
+		// Turning it off asks for nothing. Turning it on is what lets an app
+		// in, so a signed-in browser alone is not enough.
+		if (enabled && !(await mcpAccountEnabled(db, userId))) {
+			const refused = await confirmIdentity(userId, data, 'access');
+			if (refused) return refused;
+		}
+		await setMcpAccountEnabled(db, userId, enabled);
+		return { scope: 'apps', saved: true };
+	},
+	revokeApp: async ({ request, locals }) => {
+		const grantId = formText(await request.formData(), 'grantId');
+		if (!isUuid(grantId) || !(await revokeGrant(db, locals.user!.id, grantId))) {
+			return fail(400, { scope: 'apps', message: 'That app is not connected any more.' });
+		}
+		return { scope: 'apps', saved: true };
+	},
+	// A personal access token, for a program of the writer's own. It acts as
+	// the writer does through an app, so making one re-checks the password,
+	// and the second factor when the account has one. The token is in this
+	// one response and nowhere after it.
+	createToken: async ({ request, locals }) => {
+		if (!(await mcpInstanceEnabled(db))) error(404, 'Not found');
+		const userId = locals.user!.id;
+		const data = await request.formData();
+		const refused = await confirmIdentity(userId, data, 'tokens');
+		if (refused) return refused;
+		const created = await createPersonalToken(db, {
+			userId,
+			name: formText(data, 'name'),
+			permissions: data.getAll('permission').map(String),
+			expiresInDays: Number(formText(data, 'expiresInDays'))
+		});
+		if (!created.ok) return fail(400, { scope: 'tokens', message: created.reason });
+		return { scope: 'tokens', token: created.token, tokenId: created.id };
+	},
+	revokePersonalToken: async ({ request, locals }) => {
+		const grantId = formText(await request.formData(), 'grantId');
+		if (!isUuid(grantId) || !(await revokeGrant(db, locals.user!.id, grantId))) {
+			return fail(400, { scope: 'tokens', message: 'That token is already revoked.' });
+		}
+		return { scope: 'tokens', saved: true };
 	},
 	// The Invites section: generate a single-use code against the admin-set
 	// allowance, or revoke one that has not been used.

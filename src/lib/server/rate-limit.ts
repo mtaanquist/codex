@@ -39,6 +39,44 @@ export function rateLimit(
 	return { allowed: true, remaining: limit - existing.count, retryAfterSeconds: 0 };
 }
 
+// A limiter that counts the calls of the last `windowMs`, whenever they came.
+// The fixed window above lets through twice the limit across a boundary (the
+// end of one window and the start of the next); this one never lets more than
+// `limit` through in any stretch of that length. It keeps one timestamp per
+// allowed call, so it is for limits in the hundreds, not the thousands. A
+// refused call is not counted. The stamps come from a clock that never runs
+// backwards; should a caller's clock do so anyway, the stamps from its
+// "future" are dropped rather than holding the key shut until it catches up.
+const logs = new Map<string, number[]>();
+
+export function slidingRateLimit(
+	key: string,
+	limit: number,
+	windowMs: number,
+	now: number = performance.now()
+): RateLimitResult {
+	if (logs.size > SWEEP_THRESHOLD) {
+		for (const [k, times] of logs) {
+			if (now - times[times.length - 1] >= windowMs) logs.delete(k);
+		}
+	}
+	const times = logs.get(key) ?? [];
+	while (times.length > 0 && times[times.length - 1] > now) times.pop();
+	let stale = 0;
+	while (stale < times.length && now - times[stale] >= windowMs) stale++;
+	if (stale > 0) times.splice(0, stale);
+	if (times.length >= limit) {
+		return {
+			allowed: false,
+			remaining: 0,
+			retryAfterSeconds: Math.max(1, Math.ceil((times[0] + windowMs - now) / 1000))
+		};
+	}
+	times.push(now);
+	logs.set(key, times);
+	return { allowed: true, remaining: limit - times.length, retryAfterSeconds: 0 };
+}
+
 // Per-user write budgets, keyed by user id. Autosave is debounced on the
 // client, so even heavy multi-editor writing stays well under WRITE_PER_MINUTE;
 // the cap only slows a client hammering the write endpoints in a loop. Uploads
@@ -87,4 +125,5 @@ export function exportLimit(userId: string, now: number = Date.now()): RateLimit
 // Clears all counters. For tests; not used by the app.
 export function resetRateLimits(): void {
 	windows.clear();
+	logs.clear();
 }

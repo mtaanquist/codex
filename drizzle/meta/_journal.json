@@ -680,6 +680,48 @@
 			"when": 1795203889256,
 			"tag": "0096_assistant-drafts",
 			"breakpoints": true
+		},
+		{
+			"idx": 97,
+			"version": "7",
+			"when": 1795244015444,
+			"tag": "0097_mcp-oauth",
+			"breakpoints": true
+		},
+		{
+			"idx": 98,
+			"version": "7",
+			"when": 1795248150943,
+			"tag": "0098_review-client-author",
+			"breakpoints": true
+		},
+		{
+			"idx": 99,
+			"version": "7",
+			"when": 1795253180855,
+			"tag": "0099_mcp-proposals",
+			"breakpoints": true
+		},
+		{
+			"idx": 100,
+			"version": "7",
+			"when": 1795264538673,
+			"tag": "0100_mcp-staging-indexes",
+			"breakpoints": true
+		},
+		{
+			"idx": 101,
+			"version": "7",
+			"when": 1795279065024,
+			"tag": "0101_mcp-grant-redirect-host",
+			"breakpoints": true
+		},
+		{
+			"idx": 102,
+			"version": "7",
+			"when": 1795279897268,
+			"tag": "0102_mcp-suggestion-revised-at",
+			"breakpoints": true
 		}
 	]
 }
