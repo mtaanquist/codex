@@ -13,6 +13,25 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
+on `staging/bug-fixes`, staging review round 2). Review anchors count
+characters in the stored body, where \r\n is two: the guest review page
+slices the raw text, the Assistant locates quotes in it, the anchor mapper
+moves a CRLF base onto an LF current text with `lfOffset`, and accept slices
+the stored body. All of that was consistent (integration tests confirm a
+replacement and an insertion land right on a CRLF body). The odd one out was
+the review centre's CodeMirror editor, which reads \r\n as one break: it
+drew marks one character short per earlier break, and sent its selection
+offsets as they were, so a suggestion made there on an unsaved CRLF scene
+was stored at the wrong place and an accept would have rewritten the wrong
+text. Both were already so on main. The editor now moves anchors across at
+its boundary (`anchorsAsShown` in, `storedOffset` out, against the text the
+server holds). As a guard for any offset mismatch, both suggest actions send
+the selected passage as `original`, and createSuggestion refuses a range that
+does not hold it, compared with plain newlines. Normalising to LF on the
+server instead was left out: it would change every stored offset and the
+mapper's CRLF path.
+
 Review anchor limits (2026-11-22, `fix/review-anchor-limits` on
 `staging/bug-fixes`, part of #1361). The support rule counted only a run's
 length, so a 14-character chance run in a rewritten paragraph held an end

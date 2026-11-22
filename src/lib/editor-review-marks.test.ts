@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import type { DecorationSet, EditorView } from '@codemirror/view';
 import {
+	anchorsAsShown,
 	buildReviewMarks,
 	remapReviewMarks,
 	removeReviewMarks,
@@ -9,6 +10,7 @@ import {
 	setReviewMarks,
 	setReviewMarksOn
 } from './editor-review-marks';
+import { toLf } from './line-endings';
 import type { ReviewFilter, ReviewSuggestion, ReviewThread } from './review-ui';
 
 // A flattened view of a decoration, enough to assert against without a DOM.
@@ -303,5 +305,34 @@ describe('review marks field', () => {
 			effects: remapReviewMarks.of(buildReviewMarks([], [g], ALL, handle.baseDoc(viewOf(more))))
 		}).state;
 		expect(handle.anchorOf(viewOf(refocused), 'g1')).toEqual({ start: 19, end: 22 });
+	});
+
+	// A scene stored with Windows line breaks (an old import) shows with plain
+	// newlines while its anchors count each stored break as two characters: a
+	// mark must not slip for every break before it.
+	it('keeps marks in place over a body stored with Windows line breaks', () => {
+		const stored = 'Line one is here.\r\nThe cat sat on the mat.\r\nThe end.';
+		const handle = reviewMarksExtension({ onFocusMark: () => {}, onGeometry: () => {} });
+		const state = EditorState.create({ doc: stored, extensions: handle.extension });
+		const viewOf = (s: EditorState) => ({ state: s }) as unknown as EditorView;
+		// "cat" in the stored text; 22-25 in the text the editor shows.
+		const g = suggestion({ anchor: { start: 23, end: 26 } });
+		const t = thread({ anchor: { start: stored.indexOf('end'), end: stored.indexOf('end') + 3 } });
+		expect(state.doc.toString().slice(22, 25)).toBe('cat');
+		const set = state.update({
+			effects: setReviewMarksOn.of({
+				base: stored,
+				marks: buildReviewMarks(
+					anchorsAsShown([t], stored),
+					anchorsAsShown([g], stored),
+					ALL,
+					toLf(stored)
+				)
+			})
+		}).state;
+		const end = state.doc.toString().indexOf('end');
+		expect(handle.anchorOf(viewOf(set), 't1')).toEqual({ start: end, end: end + 3 });
+		expect(handle.anchorOf(viewOf(set), 'g1')).toEqual({ start: 22, end: 25 });
+		expect(handle.baseDoc(viewOf(set))).toBe(toLf(stored));
 	});
 });

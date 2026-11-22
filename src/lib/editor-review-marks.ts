@@ -1,5 +1,6 @@
 import { ChangeSet, StateField, StateEffect, Text, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
+import { lfOffset, toLf } from './line-endings';
 import {
 	authorColor,
 	editSpan,
@@ -61,6 +62,26 @@ function commentInline(thread: ReviewThread, filter: ReviewFilter): boolean {
 function suggestionInline(suggestion: ReviewSuggestion, filter: ReviewFilter): boolean {
 	if (suggestion.status !== 'pending' || !suggestion.anchor) return false;
 	return filter === 'all' || filter === 'suggestions';
+}
+
+// Review anchors count characters in the stored body, where \r\n is two; the
+// editor reads it as one line break. Moves the anchors onto the text as shown.
+export function anchorsAsShown<T extends { anchor: { start: number; end: number } | null }>(
+	items: T[],
+	stored: string
+): T[] {
+	if (!stored.includes('\r\n')) return items;
+	return items.map((item) =>
+		item.anchor
+			? {
+					...item,
+					anchor: {
+						start: lfOffset(stored, item.anchor.start),
+						end: lfOffset(stored, item.anchor.end)
+					}
+				}
+			: item
+	);
 }
 
 // Builds the decoration set for the current data against the live document
@@ -255,8 +276,10 @@ const reviewMarksField = StateField.define<ReviewMarksState>({
 			}
 			if (effect.is(setReviewMarksOn)) {
 				const live = tr.state.doc.toString();
-				const { prefix, suffix } = editSpan(effect.value.base, live);
-				base = Text.of(effect.value.base.split('\n'));
+				// The editor reads \r\n as one break, as the anchors count it.
+				const baseText = toLf(effect.value.base);
+				const { prefix, suffix } = editSpan(baseText, live);
+				base = Text.of(baseText.split('\n'));
 				changes = ChangeSet.of(
 					{
 						from: prefix,
