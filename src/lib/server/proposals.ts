@@ -289,8 +289,8 @@ export type AppDraftView = {
 	note: string | null;
 };
 
-// Only drafts on live scenes of live stories wait
-// for anyone (the same rule as the ceiling in stageAppDraft).
+// Only drafts on live scenes of live stories wait for anyone (the same rule
+// as the ceiling in stageAppDraft).
 const appDraftWaiting = (ownerId: string) =>
 	and(
 		eq(assistantDrafts.userId, ownerId),
