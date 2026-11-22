@@ -26,7 +26,7 @@
 	import { continuationExtensions } from '#lib/editor-continuation';
 	import { hasPendingUploads, imageUploadExtension, storedText } from '#lib/editor-images';
 	import { markerExtensions, type MarkerHandle, type SceneMarker } from '#lib/editor-markers';
-	import type { WiderSearch } from '#lib/editor-search-scope';
+	import { searchScopeChanged, type WiderSearch } from '#lib/editor-search-scope';
 	import EditorToolbar from './EditorToolbar.svelte';
 	import CoauthorPanel from './CoauthorPanel.svelte';
 	import SceneConflictBanner from './SceneConflictBanner.svelte';
@@ -393,6 +393,13 @@
 		const extension = commandMarkerExtensions(commandMarkers);
 		if (!view) return;
 		view.dispatch({ effects: alignmentCompartment.reconfigure(extension) });
+	});
+	// Moving the scene into or out of a chapter updates an open find panel's
+	// chapter button.
+	$effect(() => {
+		widerSearch?.hasChapter();
+		if (!view) return;
+		view.dispatch({ effects: searchScopeChanged.of(null) });
 	});
 
 	// A search jump selects the first occurrence of the text it arrived
