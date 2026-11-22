@@ -247,7 +247,7 @@ describe('gateway usage recording', () => {
 		});
 	});
 
-	it('sums the cache shares of a failed attempt and its retry (#1274)', async () => {
+	it('sums the cache shares of a failed attempt and its retry', async () => {
 		await configure();
 		let attempts = 0;
 		const provider: Provider = {

@@ -38,6 +38,17 @@ call is story-scoped) and now has a test. The arc section names stories
 with out-of-date scene summaries, so the writer runs Update summaries
 before refreshing.
 
+Guided pass lows, rest (2026-11-22, `fix/guided-pass-lows` on
+`staging/bug-fixes`, #1317). An accepted deletion has nothing to mark, so its
+anchor is null and `patternEdits` put it after the pending edits of its scene.
+A zero-width anchor would have drawn empty marks, so the suggestion view now
+carries a separate `position`: the anchor's start, or for a decided edit with
+no text left (an accepted deletion, a rejected insertion) the mapped point
+where it was. The pass sorts by that. A restarted pass counts only what is
+left and says "N done earlier" under the count; following "Follows an earlier
+change" puts a "Back to the current change" button on that card (Escape was
+not used, as it already closes things on the review page).
+
 MCP endpoint low findings (2026-11-22, `fix/mcp-low-findings` on
 `staging/bug-fixes`, part of #1360). The side-column resize handle carried
 the bare classes `left` and `right`, so the panes' own `.left` and `.right`
