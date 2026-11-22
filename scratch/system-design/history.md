@@ -13,6 +13,16 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Version from the release tag (2026-11-22, #1375): `package.json` had stayed at
+3.20.0 through v3.22.0 because releases were tagged without the bump commit,
+so the admin footer showed the wrong version. The image workflow now passes
+the tag as the `APP_VERSION` build argument, the app reads it through
+`appVersion()` (falling back to `package.json` for dev and from-source runs),
+and the Release workflow no longer checks `package.json`. Considered and left
+out: a workflow that opens and merges its own bump PR, which needs a bot
+merging into `main` and waiting on CI. `package.json` was set to 3.22.0 once to
+match the latest release; it is not bumped per release any more.
+
 Small non-Assistant polish (2026-11-20, staging branch
 `staging/non-assistant-polish`, lanes #1278 to #1284): six backlog issues.
 `resolvePlanEntity` is one select with a left join per entity table instead
