@@ -11,6 +11,7 @@ import {
 	reviewMarks,
 	reviewProse,
 	suggestionKind,
+	insertionFits,
 	suggestionSnippet,
 	suggestionInFilter,
 	threadInFilter,
@@ -114,6 +115,47 @@ describe('suggestionKind', () => {
 		expect(suggestionKind({ original: '', replacement: 'new' })).toBe('insert');
 		expect(suggestionKind({ original: 'old', replacement: '' })).toBe('delete');
 		expect(suggestionKind({ original: 'old', replacement: 'new' })).toBe('replace');
+	});
+});
+
+describe('insertionFits', () => {
+	const base = 'One two. Three four.';
+	// The server inserted "Big " before "Three".
+	const stored = 'One two. Big Three four.';
+
+	it('fits with no typing', () => {
+		expect(insertionFits(base, base, stored, 9, 'Big ')).toBe(true);
+	});
+
+	it('fits around typing after the point', () => {
+		const live = 'One two. Three four. More';
+		expect(insertionFits(base, live, stored, 9, 'Big ')).toBe(true);
+	});
+
+	it('fits around typing before the point', () => {
+		const live = 'Well, one two. Three four.';
+		expect(insertionFits(base, live, stored, 15, 'Big ')).toBe(true);
+	});
+
+	it('does not fit where the typing touches the point', () => {
+		// Typed "x" right at the point; the mark may sit on either side of it.
+		expect(insertionFits(base, 'One two. xThree four.', stored, 9, 'Big ')).toBe(false);
+		expect(insertionFits(base, 'One two. xThree four.', stored, 10, 'Big ')).toBe(false);
+	});
+
+	it('does not fit when the point is not where the server inserted', () => {
+		const live = 'One two. Three four. More';
+		expect(insertionFits(base, live, stored, 4, 'Big ')).toBe(false);
+	});
+
+	it('does not fit with typing on both sides of the point', () => {
+		const live = 'Well, one two. Three four. More';
+		expect(insertionFits(base, live, stored, 15, 'Big ')).toBe(false);
+	});
+
+	it('fits at the end of the text', () => {
+		expect(insertionFits('Ab', 'Ab', 'Ab cd', 2, ' cd')).toBe(true);
+		expect(insertionFits('Ab', 'Xy Ab', 'Ab cd', 5, ' cd')).toBe(true);
 	});
 });
 
