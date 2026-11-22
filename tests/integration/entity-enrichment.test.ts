@@ -763,6 +763,45 @@ describe('enrichUniverse', () => {
 		expect(await enrichedAt(second)).toBeNull();
 	});
 
+	it('stops before a read that could take the job past the cap (#1331)', async () => {
+		await saveAccountLlmConfig(db, ownerId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			endpoint: 'https://api.example.com/v1',
+			apiKey: 'sk',
+			models: { chat: 'chat-model' },
+			toolCallBudget: 8,
+			spendCapUsd: 1.5
+		});
+		// A read's reply, at its 700-token limit, could cost $0.70 on top of its
+		// prompt; each read reports $1.
+		await saveModelPricing(db, ownerId, { 'chat-model': { prompt: 0.001, completion: 0.001 } });
+		const priced: GatewayDeps = {
+			http: noHttp,
+			provider: {
+				...stubProvider,
+				async respond() {
+					calls += 1;
+					return {
+						content: enrichJson,
+						toolCalls: [],
+						usage: { promptTokens: 1000, completionTokens: 0 }
+					};
+				}
+			}
+		};
+		const first = await makeCharacter({ name: 'Alda' });
+		const second = await makeCharacter({ name: 'Bram' });
+		await sceneMentioning(first, 'Alda at the gate');
+		await sceneMentioning(second, 'Bram at the harbour');
+
+		const result = await enrichUniverse(db, { userId: ownerId, universeId }, priced);
+		expect(result).toMatchObject({ entities: 1, failed: 0, capped: true, spentUsd: 1 });
+		expect(calls).toBe(1);
+		expect(await enrichedAt(second)).toBeNull();
+	});
+
 	it('leaves out mentions in a trashed scene or story', async () => {
 		const inTrashedScene = await makeCharacter({ name: 'Alda' });
 		const inTrashedStory = await makeCharacter({ name: 'Bram' });

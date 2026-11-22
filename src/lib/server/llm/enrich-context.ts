@@ -6,6 +6,8 @@ import { entityAppearances } from '../plan-data.ts';
 import { storyAssistantOn, storyIsLive } from '../universe-scope.ts';
 import { estimateTokens, PERSONA_TOKENS, tokensForChars } from './context/budgets.ts';
 import { modelContextWindow, pickModel, resolveLlmConfig, roleMaxTokens } from './config.ts';
+import { adapterKind } from './providers/presets.ts';
+import { cacheWriteRate } from '../../assistant-cost.ts';
 import type { EntityKind } from '../entity-suggestions.ts';
 
 // What a "find more" read of an entity sends: the short snippets around each
@@ -244,7 +246,14 @@ export async function enrichTextBudget(db: Database, userId: string, scope: Scop
 		contextWindow,
 		replyTokens,
 		partTokens: partBudgetTokens(contextWindow, replyTokens),
-		price: model ? resolved.config.modelPricing?.[model] : undefined
+		price: model ? resolved.config.modelPricing?.[model] : undefined,
+		// Claude caches every request, so its text bills at the cache-write rate
+		// (see cacheWriteRate). Each part's excerpts are new; the shared persona
+		// may be read back from the cache instead, so the figure errs high.
+		promptRate:
+			adapterKind(resolved.config.provider) === 'anthropic'
+				? cacheWriteRate(resolved.config.cacheTtl)
+				: 1
 	};
 }
 
@@ -289,7 +298,11 @@ function readEstimate(
 		requests: parts.length,
 		estTokens,
 		...(budget.price
-			? { estCostUsd: estTokens * budget.price.prompt + completion * budget.price.completion }
+			? {
+					estCostUsd:
+						estTokens * budget.promptRate * budget.price.prompt +
+						completion * budget.price.completion
+				}
 			: {})
 	};
 }

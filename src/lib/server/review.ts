@@ -44,6 +44,7 @@ import {
 } from '../review-anchor.ts';
 import { wordCount } from '../word-count.ts';
 import { paragraphWindow } from '../paragraphs.ts';
+import { clearedSuggestions } from '../review-clear.ts';
 import { normaliseAssistantName } from './llm/prompts/persona.ts';
 import { EMAIL_RE } from './signup.ts';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
@@ -1956,7 +1957,10 @@ export async function decideSuggestions(
 	accept: boolean,
 	// For an accept: the stamp of each replacement as the writer was shown it
 	// (see decideSuggestion), by suggestion id.
-	seen?: Record<string, string>
+	seen?: Record<string, string>,
+	// Filled with each scene as its text changes, so a caller can still act
+	// on the stored changes when a later accept throws part way.
+	changedScenes?: Set<string>
 ): Promise<BulkDecision> {
 	const decided: string[] = [];
 	const failed: BulkDecision['failed'] = [];
@@ -1980,6 +1984,7 @@ export async function decideSuggestions(
 		decided.push(id);
 		if (result.sceneId && result.bodyMd !== null && result.baseHash !== null) {
 			changes.push({ sceneId: result.sceneId, bodyMd: result.bodyMd, baseHash: result.baseHash });
+			changedScenes?.add(result.sceneId);
 		}
 	}
 	// The open editor may only build on the final text when every change was
@@ -2179,6 +2184,7 @@ export async function clearReviews(
 			.select({
 				id: reviewSuggestions.id,
 				status: reviewSuggestions.status,
+				followsId: reviewSuggestions.followsSuggestionId,
 				fresh: after(reviewSuggestions.createdAt)
 			})
 			.from(reviewSuggestions)
@@ -2221,12 +2227,14 @@ export async function clearReviews(
 				.filter((thread) => thread.suggestionId)
 				.map((thread) => [thread.suggestionId!, thread.id])
 		);
-		const goingSuggestions = suggestions
-			.filter((suggestion) => scope === 'all' || suggestion.status !== 'pending')
-			.filter((suggestion) => !suggestion.fresh)
-			.filter((suggestion) => !newSince.has(discussed.get(suggestion.id) ?? ''))
-			.map((suggestion) => suggestion.id);
-		const going = new Set(goingSuggestions);
+		const going = clearedSuggestions(
+			suggestions,
+			(suggestion) =>
+				(scope === 'all' || suggestion.status !== 'pending') &&
+				!suggestion.fresh &&
+				!newSince.has(discussed.get(suggestion.id) ?? '')
+		);
+		const goingSuggestions = [...going];
 		const goingThreads = threads
 			.filter((thread) =>
 				thread.suggestionId

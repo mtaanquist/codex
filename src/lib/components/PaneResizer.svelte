@@ -123,7 +123,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
 	bind:this={handle}
-	class="pane-resizer {side}"
+	class="pane-resizer pane-resizer-{side}"
 	class:dragging={drag !== null}
 	role="separator"
 	aria-orientation="vertical"

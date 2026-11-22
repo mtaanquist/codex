@@ -28,7 +28,7 @@ Each scene in a saved draft says whether it is the same as in the working draft,
 - **Restore this scene** puts the saved text back into the scene in the working draft. The text it replaces stays in that scene's History, so you can undo it from there.
 - **Add back to working draft** makes a new scene with the saved text when the scene was deleted since. It goes into its old chapter if that chapter still exists. If the scene is still in "Deleted scenes", the draft says so: restore it from there to keep its history, since adding it back here makes a second copy.
 
-To go back to the whole story as it was, select "New story from this draft". This makes a new story in the same universe from the saved draft, and leaves the current story as it is. The universe's characters, places, and lore are shared, so the new story uses them as they are now.
+To go back to the whole story as it was, select "New story from this draft". This makes a new story in the same universe from the saved draft, and leaves the current story as it is. The universe's characters, places, and lore are shared, so the new story uses them as they are now. If the Assistant is muted for the current story, it is muted for the new story too.
 
 ## Publishing a saved draft
 

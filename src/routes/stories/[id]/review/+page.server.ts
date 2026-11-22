@@ -297,16 +297,23 @@ export const actions: Actions = {
 				});
 			}
 		}
-		const result = await decideSuggestions(
-			db,
-			locals.user!.id,
-			story.id,
-			ids,
-			decision === 'accept',
-			seen
-		);
-		// The body changed; keep the mention index in step.
-		for (const sceneId of result.sceneIds) await queueSceneMentions(sceneId);
+		// The body changed; keep the mention index in step, also for the
+		// accepts stored before a failure part way through.
+		const changedScenes = new Set<string>();
+		let result;
+		try {
+			result = await decideSuggestions(
+				db,
+				locals.user!.id,
+				story.id,
+				ids,
+				decision === 'accept',
+				seen,
+				changedScenes
+			);
+		} finally {
+			for (const sceneId of changedScenes) await queueSceneMentions(sceneId);
+		}
 		return {
 			done: true,
 			decided: result.decided,

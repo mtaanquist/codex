@@ -86,10 +86,10 @@ contacts a model on its own.
   it if your endpoint charges per request. It also applies to reviews. With
   Fewer tools picked, the Assistant gets half this number.
 - **Spend cap per background run**: the most one background review, summary
-  update, pass suggesting details for the entries, or character arc may spend before it stops. It checks
-  between steps (a scene, an entry), so it never stops half way through one, and
-  the last step can take it a little over the cap. It tells you how far it got
-  and what it spent. A stopped summary update picks up where it left off when you run it
+  update, pass suggesting details for the entries, or character arc may spend. Before
+  each request to the model it works out what that request could cost with its
+  reply at the longest allowed, and stops without sending it if that could take
+  the run over the cap. It tells you how far it got and what it spent. A stopped summary update picks up where it left off when you run it
   again. To carry on with a review, either raise the cap and run it again, or run the same review again as it is: a run over the same
   scope (the same chapter, or the same whole story) skips the scenes the stopped
   run already read and starts from a fresh budget. Leave the box empty for no cap.
@@ -195,7 +195,9 @@ contacts a model on its own.
   a Rubber duck request would send, so it checks the endpoint settings and that
   role's own together. Codex sets the model,
   messages, tools, reply length, and streaming itself, so those cannot be
-  overridden. This does not show on the Claude provider, which is driven by the
+  overridden. When a spend cap is set, background work and drafts also leave out
+  any setting here that changes how long a reply can be or asks for several
+  replies at once, so the cap holds. This does not show on the Claude provider, which is driven by the
   thinking and effort settings instead.
 - **Effort (Claude only)**: with the Claude provider, a role's Tune window also
   has an effort list. Effort sets how hard the model works on each request, from low (fast and

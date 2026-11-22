@@ -428,7 +428,9 @@ primitive's own class too, but do not copy the pattern.
   headers). `.icon-btn.sm` is 28px, for inside cards, panel headers and
   modal headers where a 32px target would crowd the row. `.icon-btn.danger`
   tints the hover for a destructive action. Defined in `theme.css`; also
-  styles `a.icon-btn`. There are two icon sizes and no third.
+  styles `a.icon-btn`. There are two icon sizes and no third. Like `.btn`,
+  `:disabled` and `[aria-disabled='true']` both dim it; use the latter for a
+  busy button that must keep focus.
 - Scoped exceptions that stay: `.md-tool` (editor toolbar), `.seg-btn`
   (segmented strips), `.pop-link` (the text links in an entity hover card's
   `.pop-footer`, below a divider; "Open full details" there is a button

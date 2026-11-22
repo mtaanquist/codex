@@ -14,8 +14,11 @@ vi.mock('#lib/server/scene-status', () => ({ setSceneStatus: async () => true })
 
 const { PUT } = await import('./+server');
 
-async function statusFor(baseHashes: string[]): Promise<number> {
-	const body = JSON.stringify({ bodyMd: 'Words.', baseHashes });
+async function statusFor(
+	baseHashes: string[],
+	fields: { bodyMd?: string; title?: string } = {}
+): Promise<number> {
+	const body = JSON.stringify({ bodyMd: 'Words.', baseHashes, ...fields });
 	const event = {
 		params: { id: 'scene' },
 		locals: { user: { id: 'user' } },
@@ -38,5 +41,13 @@ describe('scene save fingerprints', () => {
 
 	it('refuses more than that', async () => {
 		expect(await statusFor(hashes(MAX_BASE_HASHES + 1))).toBe(400);
+	});
+});
+
+describe('scene save text', () => {
+	// Postgres text cannot hold one; the save is refused before the query.
+	it('refuses a null character in the body or the title', async () => {
+		expect(await statusFor(hashes(1), { bodyMd: 'Wor\u0000ds.' })).toBe(400);
+		expect(await statusFor(hashes(1), { title: 'Ti\u0000tle' })).toBe(400);
 	});
 });

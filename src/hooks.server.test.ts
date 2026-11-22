@@ -27,7 +27,11 @@ function request(
 	path: string,
 	cookie?: string,
 	origin = 'http://localhost',
-	{ method = 'GET', isDataRequest = false } = {}
+	{
+		method = 'GET',
+		isDataRequest = false,
+		headers = {}
+	}: { method?: string; isDataRequest?: boolean; headers?: Record<string, string> } = {}
 ) {
 	const resolve = vi.fn(async () => new Response('ok'));
 	const cookies = {
@@ -39,7 +43,7 @@ function request(
 	const url = new URL(`${origin}${path}`);
 	const event = {
 		url,
-		request: new Request(url, { method }),
+		request: new Request(url, { method, headers }),
 		isDataRequest,
 		isRemoteRequest: false,
 		cookies,
@@ -141,6 +145,57 @@ describe('handle without a session', () => {
 		const { event, resolve } = request('/stories/x', undefined, undefined, options);
 		await expect(handle({ event, resolve } as never)).rejects.toSatisfy(
 			(err) => isRedirect(err) && err.location === '/login'
+		);
+	});
+
+	// #1360: only the writer's own visit to the consent page is remembered for
+	// after sign-in. An image, script or frame on another site that loads the page
+	// must not choose where the writer lands.
+	it.each([
+		['a page navigation', { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' }, true],
+		['a browser that sends no fetch metadata', {}, true],
+		['an image', { 'sec-fetch-mode': 'no-cors', 'sec-fetch-dest': 'image' }, false],
+		['a script fetch', { 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }, false],
+		['a frame', { 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'iframe' }, false]
+	])(
+		'remembers the consent page only for a navigation: %s',
+		async (_label, headers, remembered) => {
+			const { event, resolve } = request('/oauth/authorize?client_id=a', undefined, undefined, {
+				headers
+			});
+			const response: Response = await handle({ event, resolve } as never);
+			expect(response.status).toBe(303);
+			expect(response.headers.get('location')).toBe('/login');
+			const cookie = response.headers.get('set-cookie');
+			if (remembered) expect(cookie).toMatch(/^return_to=\/oauth\/authorize\?client_id=a;/);
+			else expect(cookie).toBeNull();
+		}
+	);
+});
+
+describe('handle with a session', () => {
+	beforeEach(() => {
+		vi.mocked(validateSession).mockResolvedValue({ user: {}, session: {} } as never);
+	});
+	afterEach(() => {
+		vi.mocked(validateSession).mockResolvedValue(null);
+	});
+
+	it.each(['/login', '/login/link', '/signup'])('sends %s to the library', async (path) => {
+		expect(await outcome(path, 'live-token')).toBe('303 /');
+	});
+
+	// The page says who is signed in instead of dropping the link silently.
+	it('lets a sign-in link through', async () => {
+		expect(await outcome('/login/link?token=abc', 'live-token')).toBe('resolved');
+	});
+
+	it('refuses to use a sign-in link', async () => {
+		const { event, resolve } = request('/login/link?token=abc&/use', 'live-token', undefined, {
+			method: 'POST'
+		});
+		await expect(handle({ event, resolve } as never)).rejects.toSatisfy(
+			(err) => isRedirect(err) && err.location === '/'
 		);
 	});
 });

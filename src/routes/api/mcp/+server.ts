@@ -1,9 +1,9 @@
 import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { publicOrigin } from '#lib/server/origin';
-import { slidingRateLimit } from '#lib/server/rate-limit';
+import { rateLimit, slidingRateLimit } from '#lib/server/rate-limit';
 import { GRANTABLE_PERMISSIONS, scopeFromPermissions } from '#lib/mcp-access';
-import { REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
+import { FAILED_BEARER_PER_MINUTE, REQUESTS_PER_MINUTE } from '#lib/server/mcp/constants';
 import { notFound } from '#lib/server/mcp/http';
 import { protectedResourceUrl } from '#lib/server/mcp/metadata';
 import { resolveBearer } from '#lib/server/mcp/oauth';
@@ -37,12 +37,16 @@ function unauthorized(origin: string, hadToken: boolean): Response {
 	);
 }
 
+function tooManyRequests(retryAfterSeconds: number): Response {
+	return json(429, { error: 'too_many_requests' }, { 'retry-after': String(retryAfterSeconds) });
+}
+
 function bearerToken(request: Request): string {
 	const match = /^Bearer +(\S+)$/i.exec(request.headers.get('authorization')?.trim() ?? '');
 	return match?.[1] ?? '';
 }
 
-const handle: RequestHandler = async ({ request, url }) => {
+const handle: RequestHandler = async ({ request, url, getClientAddress }) => {
 	if (!(await mcpInstanceEnabled(db))) return notFound();
 	const origin = publicOrigin(url);
 
@@ -55,16 +59,19 @@ const handle: RequestHandler = async ({ request, url }) => {
 
 	const token = bearerToken(request);
 	const identity = await resolveBearer(db, token);
-	if (!identity) return unauthorized(origin, token !== '');
+	if (!identity) {
+		// Bad tokens are limited per address, but only after the lookup: hosted
+		// apps share addresses, so a valid token must never be refused by this.
+		if (token) {
+			const key = `mcp:bad-token:${getClientAddress()}`;
+			const failures = rateLimit(key, FAILED_BEARER_PER_MINUTE, 60 * 1000);
+			if (!failures.allowed) return tooManyRequests(failures.retryAfterSeconds);
+		}
+		return unauthorized(origin, token !== '');
+	}
 
 	const limit = slidingRateLimit(`mcp:requests:${identity.userId}`, REQUESTS_PER_MINUTE, 60 * 1000);
-	if (!limit.allowed) {
-		return json(
-			429,
-			{ error: 'too_many_requests' },
-			{ 'retry-after': String(limit.retryAfterSeconds) }
-		);
-	}
+	if (!limit.allowed) return tooManyRequests(limit.retryAfterSeconds);
 
 	return serveMcp(request, { db, identity, origin });
 };

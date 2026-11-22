@@ -396,10 +396,11 @@ describe('reviewUniverseContinuity', () => {
 
 describe('the continuity pass and the spend cap', () => {
 	const MODEL = 'review-model';
-	const PROMPT_TOKENS = 1000;
-	const PRICE_PER_TOKEN = 0.001;
+	const PROMPT_TOKENS = 100_000;
+	const PRICE_PER_TOKEN = 0.00001;
 
-	// Every turn reports the same usage, so one request costs $1.
+	// Every turn reports the same usage, so one request costs $1. What a request
+	// is held to before it is sent (its own size) stays a few cents.
 	function meteredProvider(): { provider: Provider; seen: ChatMessage[][] } {
 		const seen: ChatMessage[][] = [];
 		const provider: Provider = {

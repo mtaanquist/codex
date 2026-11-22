@@ -47,7 +47,7 @@ import {
 	type ToolSpec,
 	billedUsage
 } from './providers/types.ts';
-import type { SpendMeter } from './spend.ts';
+import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatModelSettings } from '../../assistant-chat.ts';
 
 // Adds one request's reported counts to a running total, so a caller can price
@@ -251,6 +251,7 @@ async function respondWithRetry(
 ): Promise<ProviderResponse & { failedUsage?: TokenUsage }> {
 	let failedUsage: TokenUsage | undefined;
 	for (let attempt = 0; ; attempt += 1) {
+		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(req);
 		try {
 			const response = await p.provider.respond(request, p.conn, p.http, req.signal);
 			return failedUsage ? { ...response, failedUsage } : response;
@@ -264,6 +265,7 @@ async function respondWithRetry(
 				throw err;
 			}
 			if (req.mayResend && !req.mayResend()) throw err;
+			if (wouldPassCap(p, req, request)) throw heldAtCap(req);
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -273,6 +275,36 @@ async function respondWithRetry(
 			await p.sleep(RETRY_DELAYS_MS[attempt]);
 		}
 	}
+}
+
+// Whether sending this request could take a metered run past its spend cap:
+// what the run has spent, plus this request with its reply at the limit. Asked
+// before every send (a first send, a resend after a failure the endpoint may
+// have billed, a resume, a tool round), so the rule lives here and not in each
+// job. The prompt is counted as written to Claude's cache, the dearest way it
+// can be billed. A caller with its own mayResend hook holds its own ceiling
+// (drafting, against the cap in force at each request).
+function wouldPassCap(
+	p: Prepared,
+	req: GatewayRequest,
+	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
+): boolean {
+	if (!req.meter || req.mayResend) return false;
+	const promptTokens =
+		conversationTokens(request.messages) +
+		(request.tools ? estimateTokens(JSON.stringify(request.tools)) : 0);
+	const written = p.claude ? promptTokens : 0;
+	return req.meter.wouldPassCap(p.model, {
+		promptTokens,
+		completionTokens: request.maxTokens,
+		cacheWriteTokens: written,
+		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
+	});
+}
+
+function heldAtCap(req: GatewayRequest): SpendCapError {
+	req.meter?.hold();
+	return new SpendCapError();
 }
 
 // Parameters that change how much a request can be billed for. A writer's
@@ -294,10 +326,33 @@ const REPLY_LIMIT_PARAMS = [
 	'num_predict'
 ];
 // Names that ask for several replies at once. Short enough to mean something
-// else elsewhere (a property of a response_format schema), so they are left
-// out only at the top level and in the groups endpoints read options from.
-const REPLY_COUNT_PARAMS = ['n', 'best_of', 'candidate_count', 'num_return_sequences'];
-const OPTION_GROUPS = ['options', 'extra_body', 'parameters'];
+// else elsewhere, so they are left out only at the top level and in the
+// groups endpoints read options from.
+const REPLY_COUNT_PARAMS = [
+	'n',
+	'best_of',
+	'candidate_count',
+	'candidateCount',
+	'num_return_sequences'
+];
+const OPTION_GROUPS = [
+	'options',
+	'extra_body',
+	'parameters',
+	'generationConfig',
+	'generation_config'
+];
+// Keys that carry a schema for the reply (OpenAI response_format and
+// text.format, Ollama format, Gemini responseSchema): its property names are
+// the writer's own, so nothing inside one is left out.
+const REPLY_SCHEMA_KEYS = [
+	'response_format',
+	'format',
+	'responseSchema',
+	'response_schema',
+	'responseJsonSchema',
+	'response_json_schema'
+];
 export function withoutReplySizeParams<T extends Record<string, unknown> | undefined>(
 	params: T,
 	options = true
@@ -305,8 +360,7 @@ export function withoutReplySizeParams<T extends Record<string, unknown> | undef
 	if (!params) return params;
 	const kept: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(params)) {
-		// A schema for the reply: its property names are the writer's own.
-		if (key === 'response_format') {
+		if (REPLY_SCHEMA_KEYS.includes(key)) {
 			kept[key] = value;
 			continue;
 		}
@@ -393,6 +447,8 @@ type Prepared = {
 	webSearch?: boolean;
 	// The account's prompt cache lifetime (see CompletionRequest.cacheTtl).
 	cacheTtl?: '5m' | '1h';
+	// The requests go to Claude, which bills a cache write above the prompt rate.
+	claude: boolean;
 	// The reply length for this turn: what the writer set for this role, else
 	// what the surface asked for, else the role's default.
 	maxTokens: number;
@@ -536,11 +592,15 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 				? claudeEffort(req.role, model, resolved.config.tuning[req.role])
 				: undefined
 		),
-		extraParams: req.boundedReply
-			? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
-			: roleExtraParams(resolved.config, req.role),
+		// A run held to a spend cap is checked at the reply limit (see
+		// wouldPassCap), so an extra parameter must not raise or multiply it.
+		extraParams:
+			req.boundedReply || req.meter?.capUsd !== undefined
+				? withoutReplySizeParams(roleExtraParams(resolved.config, req.role))
+				: roleExtraParams(resolved.config, req.role),
 		webSearch: await webSearchAllowed(db, resolved.config, req),
 		cacheTtl: resolved.config.cacheTtl,
+		claude: adapterKind(resolved.config.provider) === 'anthropic',
 		maxTokens: requestReplyLimit(
 			resolved.config,
 			req.role,
