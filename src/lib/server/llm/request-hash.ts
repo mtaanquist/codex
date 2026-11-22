@@ -9,3 +9,14 @@ import type { ChatMessage } from './providers/types.ts';
 export function requestHash(messages: ChatMessage[]): string {
 	return createHash('sha256').update(JSON.stringify(messages)).digest('hex');
 }
+
+// Stored in place of a fingerprint when the reply to a request could not be
+// used (cut off at the reply limit, or empty), so the identical request is not
+// paid for again on every pass. settings is roleReplySettings for the role
+// that sent it: a new model or reply limit is worth another try. Never equal
+// to a requestHash.
+export function unusableReplyMark(input: string, settings: string): string {
+	return `unusable:${createHash('sha256')
+		.update(JSON.stringify([input, settings]))
+		.digest('hex')}`;
+}

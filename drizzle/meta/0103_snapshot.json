@@ -1,5 +1,5 @@
 {
-	"id": "4d2da94f-41a8-4b71-98a2-923ff52573b8",
+	"id": "24c698fd-8a1a-4c04-a3a1-b0bb6e486e35",
 	"prevId": "c2255e8d-8621-4095-8793-b6d68fd6b754",
 	"version": "7",
 	"dialect": "postgresql",
@@ -879,27 +879,9 @@
 					"primaryKey": false,
 					"notNull": false
 				},
-				"chapter_brief": {
-					"name": "chapter_brief",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"job_id": {
 					"name": "job_id",
 					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_source": {
-					"name": "save_source",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_seq": {
-					"name": "save_seq",
-					"type": "integer",
 					"primaryKey": false,
 					"notNull": false
 				},
@@ -2023,6 +2005,18 @@
 						},
 						{
 							"expression": "target_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						},
+						{
+							"expression": "source_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						},
+						{
+							"expression": "position",
 							"isExpression": false,
 							"asc": true,
 							"nulls": "last"
@@ -5848,18 +5842,6 @@
 				"deleted_at": {
 					"name": "deleted_at",
 					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_source": {
-					"name": "save_source",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"save_seq": {
-					"name": "save_seq",
-					"type": "integer",
 					"primaryKey": false,
 					"notNull": false
 				}

@@ -13,6 +13,47 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Fingerprint low findings, wave 2 (2026-11-22, `fix/fingerprint-lows` on
+`staging/bug-fixes`, part of #1322, after #1392). A cut-off enrich read and
+an empty chapter summary stored nothing, so every pass paid for the same
+request again. They now store `unusableReplyMark` in the fingerprint column:
+a distinct `unusable:` hash of the request plus the role's model, tuning and
+extra fields, so it never reads as a read, and a new limit or model is
+worth another try. Storing the plain fingerprint was rejected: it would mark
+an unread entry read. The 3.21.4 enrich fingerprint covered aliases and
+details, so an entry edited after its read matched neither formula; the
+entry's History snapshots supply the aliases and details it had, and a hash
+match is proof, so no time heuristic was needed (coalesced autosaves can
+lose the version, and then it is read once, as before). The pass now builds
+only the fingerprint, with the entity type known and the stored input in
+the same select. The arc check's first-mention query reads off a widened
+`entity_mentions_target_idx` (target type, target, source, position;
+0103): on 2,000 scenes and 50 arcs the median check went from about 250
+to 200 ms locally, the rest being the 20,000 first-mention rows it joins and
+moves. Sampling in SQL to move fewer rows was left out: any drift from
+`sampleEvenly` would change every stored arc fingerprint. A universe-wide "Suggest details" checks each
+part's stories before sending, since the gateway only checks a story's mute
+on a story-scoped request; the whole-book review was already safe (each
+call is story-scoped) and now has a test. The arc section names stories
+with out-of-date scene summaries, so the writer runs Update summaries
+before refreshing.
+
+Cache read rates per provider (2026-11-22, `fix/cache-read-rates` on
+`staging/bug-fixes`, #1372). Cached tokens on every provider but Claude were
+metered at the full price, so an OpenAI or Gemini figure read high and a cap
+stopped early. `cacheReadRate` is now keyed by the provider id: the preset
+providers whose adapters report cached tokens get their published rate, the
+dearest across their models so a figure still never reads low (OpenAI a half,
+since gpt-4o caches at a half and newer models lower; Gemini a quarter;
+DeepSeek 0.26, its earlier price ratio, though it now charges a tenth; with
+`prompt_cache_hit_tokens` now read as the cached share where
+`prompt_tokens_details` is absent). OpenRouter serves many upstreams, so
+no one rate fits; its discovery reports `input_cache_read` per model, which is
+carried as an optional `cacheRead` on the price itself and wins over any rate.
+A custom endpoint and a typed price keep the full-rate fallback. The rates
+were set from the providers' published price lists as known at the time; the
+build environment could not reach them to re-check.
+
 Guided pass lows, rest (2026-11-22, `fix/guided-pass-lows` on
 `staging/bug-fixes`, #1317). An accepted deletion has nothing to mark, so its
 anchor is null and `patternEdits` put it after the pending edits of its scene.

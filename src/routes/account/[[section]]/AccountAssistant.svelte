@@ -6,7 +6,7 @@
 	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
-	import { usageCostUsd } from '#lib/assistant-cost';
+	import { usageCostUsd, type TokenPrice } from '#lib/assistant-cost';
 	import { askConfirm } from '#lib/confirm.svelte';
 	import { formatDateTime, formatNumber, pluralSuffix, spentPhrase } from '#lib/format';
 	import { resolveRoleModel, type AssistantRole } from '#lib/assistant-tuning';
@@ -102,13 +102,12 @@
 	});
 	// Per-token prices: what the endpoint reported at the last discovery (or the
 	// one just run), with anything typed here laid over it.
-	type Price = { prompt: number; completion: number };
 	const discoveredPricing = $derived({
 		...(data.assistant.modelPricing ?? {}),
 		...Object.fromEntries(discoveredModels.filter((m) => m.pricing).map((m) => [m.id, m.pricing!]))
-	} as Record<string, Price>);
+	} as Record<string, TokenPrice>);
 	const manualPricing = $derived(
-		(data.assistant.modelPricingManual ?? {}) as Record<string, Price>
+		(data.assistant.modelPricingManual ?? {}) as Record<string, TokenPrice>
 	);
 	const modelPricing = $derived({ ...discoveredPricing, ...manualPricing });
 	// A stored per-token price back as the dollars per million tokens that were
@@ -168,7 +167,7 @@
 	// cache shares is priced at the plain price. Rows do not record their
 	// provider, so the saved one decides the cache read rate; a row from
 	// before a provider switch seldom has a price left to show a cost with.
-	const claudeSaved = $derived(data.assistant.provider === 'anthropic');
+	const savedProvider = $derived(data.assistant.provider);
 	function usageCost(row: {
 		model: string;
 		promptTokens: number | null;
@@ -186,7 +185,7 @@
 				promptTokens: row.promptTokens ?? 0,
 				completionTokens: row.completionTokens ?? 0
 			},
-			claudeSaved
+			savedProvider
 		);
 	}
 	const usageTotalCost = $derived.by(() => {

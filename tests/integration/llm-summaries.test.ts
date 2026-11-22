@@ -33,6 +33,8 @@ let calls = 0;
 let prompts: string[] = [];
 // Runs while the stub is answering, to land a change mid-call.
 let duringCall: ((call: number) => Promise<void>) | null = null;
+// Set to have the stub answer a chapter summary request with nothing.
+let emptyChapters = false;
 const stubProvider: Provider = {
 	async *chatStream() {
 		yield { type: 'done' };
@@ -41,6 +43,9 @@ const stubProvider: Provider = {
 		calls += 1;
 		prompts.push(req.messages.map((m) => m.content ?? '').join('\n'));
 		if (duringCall) await duringCall(calls);
+		if (emptyChapters && prompts.at(-1)!.includes('Summarise the chapter')) {
+			return { content: '', toolCalls: [] };
+		}
 		return { content: `SUMMARY-${calls}`, toolCalls: [] };
 	},
 	async listModels() {
@@ -72,6 +77,7 @@ beforeEach(async () => {
 	calls = 0;
 	prompts = [];
 	duringCall = null;
+	emptyChapters = false;
 	await pool.query('truncate table scenes, chapters, stories, universes, users cascade');
 	const [owner] = await db
 		.insert(users)
@@ -193,6 +199,44 @@ describe('summariseStory', () => {
 		const again = await summariseStory(db, { userId: ownerId, storyId }, deps);
 		expect(again.scenes).toBe(0);
 		expect(again.chapters).toBe(0);
+	});
+
+	it('does not ask again for a chapter summary that came back empty until its request, the model or the limit changes (#1322)', async () => {
+		emptyChapters = true;
+		const chapterCalls = () => prompts.filter((p) => p.includes('Summarise the chapter')).length;
+		const run = () => summariseStory(db, { userId: ownerId, storyId }, deps);
+		expect(await run()).toMatchObject({ scenes: 1, chapters: 0 });
+		expect(chapterCalls()).toBe(1);
+		expect(await run()).toMatchObject({ scenes: 0, chapters: 0 });
+		expect(chapterCalls()).toBe(1);
+		const [blank] = await db
+			.select({ summaryMd: chapters.summaryMd, summaryGeneratedAt: chapters.summaryGeneratedAt })
+			.from(chapters)
+			.where(eq(chapters.id, chapterId));
+		expect(blank).toEqual({ summaryMd: null, summaryGeneratedAt: null });
+
+		// Another model is worth a try.
+		await saveAccountLlmConfig(db, ownerId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			endpoint: 'https://api.example.com/v1',
+			apiKey: 'sk',
+			models: { chat: 'chat-model', utility: 'other-model' },
+			toolCallBudget: 8
+		});
+		await run();
+		expect(chapterCalls()).toBe(2);
+		await run();
+		expect(chapterCalls()).toBe(2);
+
+		// So is a new title, and a reply is stored as usual.
+		emptyChapters = false;
+		await db.update(chapters).set({ title: 'Descent, renamed' }).where(eq(chapters.id, chapterId));
+		expect(await run()).toMatchObject({ chapters: 1 });
+		expect(chapterCalls()).toBe(3);
+		expect(await run()).toMatchObject({ chapters: 0 });
+		expect(chapterCalls()).toBe(3);
 	});
 
 	it('refreshes an Assistant-generated summary after the scene body changes', async () => {

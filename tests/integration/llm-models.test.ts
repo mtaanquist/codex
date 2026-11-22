@@ -93,6 +93,24 @@ describe('discoverModels', () => {
 		expect((await accountLlmView(db, userId)).modelPricing).toBeUndefined();
 	});
 
+	it('keeps a reported cache read price with the snapshot, for the spend meter', async () => {
+		const cached: Provider = {
+			...stub,
+			async listModels() {
+				return [
+					{ id: 'cached', pricing: { prompt: 0.000003, completion: 0.000015, cacheRead: 3e-7 } }
+				];
+			}
+		};
+		await configure('https://openrouter.ai/api/v1', {});
+		await discoverModels(db, userId, { provider: cached, http: noHttp });
+		const { resolveLlmConfig } = await import('../../src/lib/server/llm/config');
+		const { config } = await resolveLlmConfig(db, userId);
+		expect(config.modelPricing).toEqual({
+			cached: { prompt: 0.000003, completion: 0.000015, cacheRead: 3e-7 }
+		});
+	});
+
 	it('snapshots reported context windows and clears them when a discovery has none', async () => {
 		const withContext: Provider = {
 			...stub,
