@@ -3,6 +3,7 @@ import { EditorState } from '@codemirror/state';
 import type { DecorationSet, EditorView } from '@codemirror/view';
 import {
 	buildReviewMarks,
+	remapReviewMarks,
 	removeReviewMarks,
 	reviewMarksExtension,
 	setReviewMarks
@@ -235,5 +236,50 @@ describe('review marks field', () => {
 		}).state;
 		expect(handle.anchorOf(viewOf(applied), 'g1')).toBeNull();
 		expect(handle.anchorOf(viewOf(applied), 't1')).toEqual({ start: 8, end: 11 });
+	});
+
+	// #1367: a focus or filter change rebuilds the marks from the anchors the
+	// page loaded with, which do not know about typing since the load.
+	it('remaps a rebuild from the loaded anchors through typing since', () => {
+		const { handle, state, viewOf } = stateWith([thread()], [suggestion()]);
+		const typed = state.update({ changes: { from: 0, to: 0, insert: 'Look. ' } }).state;
+		const base = handle.baseDoc(viewOf(typed));
+		expect(base).toBe(doc);
+		const refocused = typed.update({
+			effects: remapReviewMarks.of(buildReviewMarks([thread()], [suggestion()], ALL, base, 't1'))
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 'g1')).toEqual({ start: 10, end: 13 });
+		expect(handle.anchorOf(viewOf(refocused), 't1')).toEqual({ start: 8, end: 12 });
+	});
+
+	it('keeps a removed suggestion out of a remapped rebuild', () => {
+		const { handle, state, viewOf } = stateWith([], [suggestion()]);
+		const applied = state.update({
+			changes: { from: 4, to: 7, insert: 'dog' },
+			effects: removeReviewMarks.of(['g1'])
+		}).state;
+		// The page data still lists the suggestion as pending until it reloads.
+		const refocused = applied.update({
+			effects: remapReviewMarks.of(
+				buildReviewMarks([], [suggestion()], ALL, handle.baseDoc(viewOf(applied)))
+			)
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 'g1')).toBeNull();
+	});
+
+	it('takes a new base on setReviewMarks', () => {
+		const { handle, state, viewOf } = stateWith([], []);
+		const typed = state.update({ changes: { from: 0, to: 0, insert: 'Look. ' } }).state;
+		const now = typed.doc.toString();
+		// Anchored against the new text: "Look".
+		const fresh = thread({ anchor: { start: 0, end: 4 } });
+		const reset = typed.update({
+			effects: setReviewMarks.of(buildReviewMarks([fresh], [], ALL, now))
+		}).state;
+		expect(handle.baseDoc(viewOf(reset))).toBe(now);
+		const refocused = reset.update({
+			effects: remapReviewMarks.of(buildReviewMarks([fresh], [], ALL, now))
+		}).state;
+		expect(handle.anchorOf(viewOf(refocused), 't1')).toEqual({ start: 0, end: 4 });
 	});
 });

@@ -30,6 +30,10 @@ async function storyWithTwoScenes(page: Page, name: string) {
 		await expect(page.locator('.cm-content')).toHaveText(text);
 	}
 	await page.getByRole('link', { name: 'Review', exact: true }).click();
+	// The Write sidebar has .scene-row links too; a row click before the review
+	// page lands would navigate back to Write.
+	await expect(page).toHaveURL(/\/review$/);
+	await expect(page.locator('.review-edit .cm-content')).toBeVisible();
 	await expect(page.locator('.scene-row')).toHaveCount(2);
 }
 
