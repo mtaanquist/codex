@@ -16,6 +16,7 @@ import {
 import { loadStoryScope, loadUniverseScope } from './context/sources.ts';
 import { adapterKind } from './providers/presets.ts';
 import { estimateTokens } from './context/assemble.ts';
+import { ceilingTokens } from './context/budgets.ts';
 import {
 	EgressDeniedError,
 	EgressTimeoutError,
@@ -147,16 +148,36 @@ const CONTEXT_NUDGE =
 // name and the whole arguments JSON go back on the wire every round, and a
 // staged suggest_edit holds an entire passage in its arguments. Counting content
 // alone let a run of edit-heavy rounds sail past the context guard.
-function messageTokens(message: ChatMessage): number {
-	let tokens = estimateTokens(message.content) + MESSAGE_OVERHEAD_TOKENS;
+function messageTokens(message: ChatMessage, count = estimateTokens): number {
+	let tokens = count(message.content) + MESSAGE_OVERHEAD_TOKENS;
 	for (const call of message.toolCalls ?? []) {
-		tokens += estimateTokens(call.name) + estimateTokens(call.arguments);
+		tokens += count(call.name) + count(call.arguments);
 	}
 	return tokens;
 }
 
-function conversationTokens(messages: ChatMessage[]): number {
-	return messages.reduce((sum, message) => sum + messageTokens(message), 0);
+function conversationTokens(messages: ChatMessage[], count = estimateTokens): number {
+	return messages.reduce((sum, message) => sum + messageTokens(message, count), 0);
+}
+
+// What a request's prompt could be billed as at most, for the spend cap: the
+// messages and tool specs counted high (ceilingTokens). The one count every
+// cap check uses, drafting's own included.
+export function ceilingPromptTokens(
+	messages: ChatMessage[],
+	tools?: CompletionRequest['tools']
+): number {
+	return (
+		conversationTokens(messages, ceilingTokens) + (tools ? ceilingTokens(JSON.stringify(tools)) : 0)
+	);
+}
+
+// The persona system message the gateway puts at the front of every turn.
+export function personaMessage(config: {
+	assistantName: string;
+	persona: Parameters<typeof buildPersonaPrompt>[1];
+}): ChatMessage {
+	return { role: 'system', content: buildPersonaPrompt(config.assistantName, config.persona) };
 }
 
 export type GatewayRequest = {
@@ -281,18 +302,17 @@ async function respondWithRetry(
 // what the run has spent, plus this request with its reply at the limit. Asked
 // before every send (a first send, a resend after a failure the endpoint may
 // have billed, a resume, a tool round), so the rule lives here and not in each
-// job. The prompt is counted as written to Claude's cache, the dearest way it
-// can be billed. A caller with its own mayResend hook holds its own ceiling
-// (drafting, against the cap in force at each request).
+// job. The prompt is counted high (ceilingPromptTokens) and as written to
+// Claude's cache, the dearest way it can be billed. A caller with its own mayResend
+// hook holds its own ceiling (drafting, against the cap in force at each
+// request).
 function wouldPassCap(
 	p: Prepared,
 	req: GatewayRequest,
 	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
 ): boolean {
 	if (!req.meter || req.mayResend) return false;
-	const promptTokens =
-		conversationTokens(request.messages) +
-		(request.tools ? estimateTokens(JSON.stringify(request.tools)) : 0);
+	const promptTokens = ceilingPromptTokens(request.messages, request.tools);
 	const written = p.claude ? promptTokens : 0;
 	return req.meter.wouldPassCap(p.model, {
 		promptTokens,
@@ -525,10 +545,7 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 	// The persona system message rides at the front of every turn, so the
 	// Assistant's name and tone are consistent across surfaces. Any
 	// surface-supplied system message (the assembled world context) follows it.
-	const persona: ChatMessage = {
-		role: 'system',
-		content: buildPersonaPrompt(resolved.config.assistantName, resolved.config.persona)
-	};
+	const persona = personaMessage(resolved.config);
 
 	// The window of the model this role runs on, where one is known; the tools
 	// size their results against it and later callers can size what they send.
