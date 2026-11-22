@@ -738,6 +738,26 @@ describe('a details read for one entry', () => {
 		);
 	});
 
+	it('says when stories muted during the read left nothing to read, or no summary (#1419)', async () => {
+		const { owner, data } = await seedRead();
+		const results = [
+			{ suggestions: [], scenes: 4, requests: 0, skipped: 'all' as const },
+			{ suggestions: found(2), scenes: 4, requests: 1, skipped: 'summary' as const },
+			{ suggestions: [], scenes: 4, requests: 1, skipped: 'summary' as const }
+		];
+		const { handlers } = harness({ enrichEntityFromText: async () => results.shift()! });
+
+		for (let i = 0; i < 3; i++) await handlers.assistantEnrich([job(data)]);
+
+		expect((await titles(owner.id)).sort()).toEqual(
+			[
+				'The Assistant read nothing for Bram: every story it was going to read has since been muted for the Assistant or moved to the trash. Turn the Assistant back on for a story, then select "Suggest details with the Assistant" on the entry again.',
+				'The Assistant left 2 suggestions for Bram, but no summary, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, select "Suggest details with the Assistant" on the entry again.',
+				'The Assistant found nothing new to suggest for Bram, and no summary, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, select "Suggest details with the Assistant" on the entry again.'
+			].sort()
+		);
+	});
+
 	it("says nothing for an entry that is gone or not the writer's", async () => {
 		const { owner, data } = await seedRead();
 		const { handlers } = harness({
