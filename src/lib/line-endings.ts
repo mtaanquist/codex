@@ -4,6 +4,12 @@ export function toLf(text: string): string {
 	return text.replace(/\r\n?/g, '\n');
 }
 
+// Whether an editor showing doc shows the stored body, which may still hold
+// Windows line breaks the editor reads as plain newlines.
+export function showsText(doc: string, body: string): boolean {
+	return doc === toLf(body);
+}
+
 // Where an offset in `text` lands in toLf(text). An offset between \r and \n
 // lands on the newline that replaces them.
 export function lfOffset(text: string, offset: number): number {

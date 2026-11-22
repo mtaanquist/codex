@@ -1,5 +1,6 @@
 import { ChangeSet, StateField, StateEffect, Text, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
+import { toLf } from './line-endings';
 import {
 	authorColor,
 	editSpan,
@@ -255,8 +256,10 @@ const reviewMarksField = StateField.define<ReviewMarksState>({
 			}
 			if (effect.is(setReviewMarksOn)) {
 				const live = tr.state.doc.toString();
-				const { prefix, suffix } = editSpan(effect.value.base, live);
-				base = Text.of(effect.value.base.split('\n'));
+				// The editor reads \r\n as one break, as the anchors count it.
+				const baseText = toLf(effect.value.base);
+				const { prefix, suffix } = editSpan(baseText, live);
+				base = Text.of(baseText.split('\n'));
 				changes = ChangeSet.of(
 					{
 						from: prefix,

@@ -1,10 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { lfOffset, toLf } from './line-endings';
+import { lfOffset, showsText, toLf } from './line-endings';
 
 describe('toLf', () => {
 	it('turns Windows and old Mac line breaks into newlines', () => {
 		expect(toLf('a\r\nb\rc\nd')).toBe('a\nb\nc\nd');
 		expect(toLf('no breaks')).toBe('no breaks');
+	});
+});
+
+describe('showsText', () => {
+	it('matches a stored body the editor shows, whatever its line breaks', () => {
+		expect(showsText('a\nb', 'a\r\nb')).toBe(true);
+		expect(showsText('a\nb', 'a\nb')).toBe(true);
+		expect(showsText('a\nb', 'a\r\nc')).toBe(false);
 	});
 });
 

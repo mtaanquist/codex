@@ -9,6 +9,7 @@ import {
 	setReviewMarks,
 	setReviewMarksOn
 } from './editor-review-marks';
+import { toLf } from './line-endings';
 import type { ReviewFilter, ReviewSuggestion, ReviewThread } from './review-ui';
 
 // A flattened view of a decoration, enough to assert against without a DOM.
@@ -303,5 +304,26 @@ describe('review marks field', () => {
 			effects: remapReviewMarks.of(buildReviewMarks([], [g], ALL, handle.baseDoc(viewOf(more))))
 		}).state;
 		expect(handle.anchorOf(viewOf(refocused), 'g1')).toEqual({ start: 19, end: 22 });
+	});
+
+	// A scene stored with Windows line breaks (an old import) shows with plain
+	// newlines, and the anchors count those: a mark must not slip back a
+	// character for every break before it.
+	it('keeps marks in place over a body stored with Windows line breaks', () => {
+		const stored = 'Line one is here.\r\nThe cat sat on the mat.';
+		const handle = reviewMarksExtension({ onFocusMark: () => {}, onGeometry: () => {} });
+		const state = EditorState.create({ doc: stored, extensions: handle.extension });
+		const viewOf = (s: EditorState) => ({ state: s }) as unknown as EditorView;
+		// "cat" in the text the editor shows.
+		const g = suggestion({ anchor: { start: 22, end: 25 } });
+		expect(state.doc.toString().slice(22, 25)).toBe('cat');
+		const set = state.update({
+			effects: setReviewMarksOn.of({
+				base: stored,
+				marks: buildReviewMarks([], [g], ALL, toLf(stored))
+			})
+		}).state;
+		expect(handle.anchorOf(viewOf(set), 'g1')).toEqual({ start: 22, end: 25 });
+		expect(handle.baseDoc(viewOf(set))).toBe(toLf(stored));
 	});
 });

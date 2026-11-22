@@ -27,6 +27,7 @@
 	import { createAutosave, type SaveStatus } from '#lib/autosave';
 	import { createSceneSaver, type SceneConflict } from '#lib/scene-saver';
 	import { textHash } from '#lib/text-hash';
+	import { showsText, toLf } from '#lib/line-endings';
 	import {
 		toggleCommandMarkers as toggleCommandMarkersView,
 		toggleNonPrintingMarks
@@ -290,7 +291,7 @@
 		if (
 			wasClean &&
 			saver.knows(accepted.baseHash) &&
-			view.state.doc.toString() !== accepted.bodyMd
+			!showsText(view.state.doc.toString(), accepted.bodyMd)
 		) {
 			syncingFromServer = true;
 			try {
@@ -320,11 +321,11 @@
 		if (!view || !handle) return;
 		const doc = view.state.doc.toString();
 		const build = (text: string) => buildReviewMarks(threads, suggestions, filter, text, focusedId);
-		if (doc === scene.bodyMd || scene.bodyMd !== markedBody) {
+		if (showsText(doc, scene.bodyMd) || scene.bodyMd !== markedBody) {
 			markedBody = scene.bodyMd;
-			view.dispatch({
-				effects: setReviewMarksOn.of({ base: scene.bodyMd, marks: build(scene.bodyMd) })
-			});
+			// The anchors count line breaks the way the editor does.
+			const base = toLf(scene.bodyMd);
+			view.dispatch({ effects: setReviewMarksOn.of({ base, marks: build(base) }) });
 		} else {
 			view.dispatch({ effects: remapReviewMarks.of(build(handle.baseDoc(view))) });
 		}
@@ -427,7 +428,7 @@
 		seenBody = incoming;
 		if (changed) {
 			if (!autosave.hasUnsaved()) {
-				if (view.state.doc.toString() !== incoming) {
+				if (!showsText(view.state.doc.toString(), incoming)) {
 					// The server's own text, so it lands even while typing is paused,
 					// and it is not an edit to save: a save queued for it would be
 					// refused when a second change lands before it goes.
@@ -443,7 +444,7 @@
 				}
 				// Only once the editor shows it, or the next save would build on
 				// text the writer never saw.
-				if (view.state.doc.toString() === incoming) saver.adopt(incoming);
+				if (showsText(view.state.doc.toString(), incoming)) saver.adopt(incoming);
 			}
 			// With unsaved edits, a save still on its way included (#1374), the
 			// save is refused as a conflict, and the banner lets the author choose.
