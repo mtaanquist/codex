@@ -1199,8 +1199,13 @@ its summary out of date at once, without waiting for a summaries pass. The
 pass rewrites scene summaries first and chapters from the result, so it
 converges in one run, and a rewritten summary that comes out the same puts
 the arc and chapter back to current. The other readers of scene summaries
-(the outline's scene lines, neighbouring scenes, `list_scenes`, an attached
-story outline, the review survey) still send a scene summary as it is stored.
+(the recap, the focus scene, neighbouring scenes, the outline's scene lines,
+an attached story outline, `list_scenes` and `get_scene`, which MCP clients
+share, and the review survey) send an out-of-date Assistant summary with a
+note in front saying so (`sceneSummaryToSend`, the one source of that note),
+as an out-of-date arc is sent (#1321). The summaries pass clears an Assistant
+summary whose scene has been emptied, under the same compare-and-set as a
+write; the writer's own summary is never labelled or cleared.
 
 So a save runs no Assistant bookkeeping and takes no Assistant lock, the same
 request is never paid for twice, and a change that is undone reads as current

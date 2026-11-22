@@ -15,6 +15,10 @@ export const CODE_TTL_MS = MINUTE;
 export const ACCESS_TOKEN_TTL_MS = HOUR;
 // Sliding: each refresh issues a new refresh token with a fresh lifetime.
 export const REFRESH_TOKEN_TTL_MS = 30 * DAY;
+// A refresh token spent this recently may be presented again (an app that
+// refreshes twice at once, or retries after losing the reply) and gets a new
+// pair; any later reuse is treated as theft and ends the connection.
+export const REFRESH_REUSE_GRACE_MS = MINUTE;
 
 // A personal access token: how long it may live, and the choice offered
 // first. It has no refresh token, so this is its whole life.

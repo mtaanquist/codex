@@ -324,6 +324,67 @@ test('typing while an insertion is accepted keeps both', async ({ page }) => {
 	);
 });
 
+// #1356: once an accept's page refresh lands, the editor keeps focus, so keys
+// typed after it reach the text and are saved, not dropped while the pill
+// reads "Saved".
+test('typing after an accept refresh lands is kept', async ({ page }) => {
+	await gotoReady(page, '/');
+	const stamp = Date.now();
+	await pickFromLibraryMenu(page, 'New universe');
+	await page.getByLabel('New universe').fill(`Focus ${stamp}`);
+	await page.getByRole('button', { name: 'Create universe' }).click();
+	await gotoReady(page, '/');
+	await startStoryInUniverse(page, `Focus ${stamp}`);
+	await page.getByLabel('New story').fill('Focus');
+	await page.getByRole('button', { name: 'Create story' }).click();
+	await page.getByRole('button', { name: 'New chapter' }).click();
+	await page.getByRole('button', { name: 'New scene' }).click();
+	await page.locator('.cm-content').click();
+	await page.keyboard.type('Keyword BASETAIL closing.');
+	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
+
+	await page.getByRole('link', { name: 'Review', exact: true }).click();
+	const prose = page.locator('.review-edit .cm-content');
+	await prose.waitFor();
+
+	const line = prose.locator('.cm-line').first();
+	const box = (await line.boundingBox())!;
+	await page.mouse.move(box.x + 3, box.y + box.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 8 });
+	await page.mouse.up();
+	await page.locator('.rv-seltool').getByRole('button', { name: 'Suggest edit' }).click();
+	await page.getByLabel('Suggested text').fill('REPLACED');
+	await page.getByRole('button', { name: 'Save suggestion' }).click();
+	await expect(page.locator('.rv-diff-ins')).toHaveText('REPLACED');
+
+	// Hold the page data refresh that follows the accept, so the writer is
+	// already back in the editor and typing when it lands.
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/__data.json*', async (route) => {
+		await held;
+		await route.continue();
+	});
+	const refreshed = page.waitForResponse((response) => response.url().includes('__data.json'));
+	await page.getByRole('button', { name: 'Accept suggestion' }).click();
+	await expect(prose).toContainText('REPLACED');
+	await prose.press('End');
+	await page.keyboard.type(' BEFORE');
+	release();
+	await refreshed;
+	await expect(page.locator('.rv-diff-ins')).toHaveCount(0);
+	await page.unroute('**/__data.json*');
+
+	// No click back into the editor: the keys go wherever focus now is.
+	await page.keyboard.type(' AFTER');
+	await expect(prose).toContainText('BEFORE AFTER');
+	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
+	await page.reload();
+	await expect(page.locator('.review-edit .cm-content')).toContainText('REPLACED');
+	await expect(page.locator('.review-edit .cm-content')).toContainText('BEFORE AFTER');
+});
+
 // #823: the author clears finished notes, keeping open ones, then clears
 // everything, from one dialog.
 test('the author can clear finished review notes, then all of them', async ({ page }) => {

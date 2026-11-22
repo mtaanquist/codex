@@ -15,6 +15,7 @@ import {
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase } from './test-db';
 import { sentToken } from './token-helpers';
+import { hashToken } from '../../src/lib/server/tokens';
 
 // The OAuth server behind external access, against a real database: the code
 // and token rules, the two switches, revocation with the account's other
@@ -56,7 +57,7 @@ const {
 	revokeGrant,
 	revokeToken
 } = await import('#lib/server/mcp/oauth');
-const { MAX_PERSONAL_TOKENS } = await import('#lib/server/mcp/constants');
+const { MAX_PERSONAL_TOKENS, REFRESH_REUSE_GRACE_MS } = await import('#lib/server/mcp/constants');
 const { mcpInstanceEnabled, saveMcpInstanceEnabled, setMcpAccountEnabled } =
 	await import('#lib/server/mcp/settings');
 const { checkAuthorizeRequest } = await import('#lib/server/mcp/authorize');
@@ -272,10 +273,62 @@ describe('refreshing', () => {
 			refreshTokens(db, { refreshToken, clientId: client.clientId });
 		const second = await refresh(first.refreshToken);
 		expect(second.ok).toBe(true);
+		// Spent long enough ago that it is no retry.
+		await db
+			.update(apiTokens)
+			.set({ usedAt: new Date(Date.now() - REFRESH_REUSE_GRACE_MS - 1000) })
+			.where(eq(apiTokens.tokenHash, hashToken(first.refreshToken)));
 		expect(await refresh(first.refreshToken)).toEqual({ ok: false });
 		if (!second.ok) return;
 		expect(await resolveBearer(db, second.tokens.accessToken)).toBeNull();
 		expect(await refresh(second.tokens.refreshToken)).toEqual({ ok: false });
+	});
+
+	it('lets an app retry a refresh whose reply it lost, without disconnecting it', async () => {
+		const first = await connect(alice);
+		const refresh = (refreshToken: string) =>
+			refreshTokens(db, { refreshToken, clientId: client.clientId });
+		const lost = await refresh(first.refreshToken);
+		const retried = await refresh(first.refreshToken);
+		expect(lost.ok && retried.ok).toBe(true);
+		if (!lost.ok || !retried.ok) return;
+		expect(retried.tokens.refreshToken).not.toBe(lost.tokens.refreshToken);
+		for (const pair of [lost.tokens, retried.tokens]) {
+			expect((await resolveBearer(db, pair.accessToken))?.userId).toBe(alice);
+		}
+		expect(await resolveBearer(db, first.accessToken)).toBeNull();
+		expect((await refresh(retried.tokens.refreshToken)).ok).toBe(true);
+	});
+
+	it('lets two simultaneous refreshes of one token both through', async () => {
+		const first = await connect(alice);
+		const results = await Promise.all(
+			[1, 2].map(() =>
+				refreshTokens(db, { refreshToken: first.refreshToken, clientId: client.clientId })
+			)
+		);
+		for (const result of results) {
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect((await resolveBearer(db, result.tokens.accessToken))?.userId).toBe(alice);
+		}
+	});
+
+	it('does not revive a refresh token that was handed back, even a moment ago', async () => {
+		const first = await connect(alice);
+		await revokeToken(db, first.accessToken);
+		expect(
+			await refreshTokens(db, { refreshToken: first.refreshToken, clientId: client.clientId })
+		).toEqual({ ok: false });
+	});
+
+	it('still checks the client on a retry', async () => {
+		const other = await newClient(['https://other.example/cb'], 'Other');
+		const first = await connect(alice);
+		await refreshTokens(db, { refreshToken: first.refreshToken, clientId: client.clientId });
+		expect(
+			await refreshTokens(db, { refreshToken: first.refreshToken, clientId: other.clientId })
+		).toEqual({ ok: false });
 	});
 
 	it('refuses another client, an expired token and an access token', async () => {
