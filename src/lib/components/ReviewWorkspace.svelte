@@ -18,6 +18,7 @@
 	import SidebarSearch from './SidebarSearch.svelte';
 	import StoryOutline from './StoryOutline.svelte';
 	import ClearReviewsModal from './ClearReviewsModal.svelte';
+	import { clearedSuggestions } from '#lib/review-clear';
 	import ReviewDecideModal from './ReviewDecideModal.svelte';
 	import StoryRowMenu, { type RowMenuState, type RowMenuTarget } from './StoryRowMenu.svelte';
 	import ReviewSurface from './ReviewSurface.svelte';
@@ -159,7 +160,7 @@
 	const liveSuggestions = $derived(suggestions.filter((s) => liveSceneIds.has(s.sceneId)));
 	const finishedNotes = $derived(
 		liveThreads.filter((t) => t.resolvedAt !== null).length +
-			liveSuggestions.filter((s) => s.status !== 'pending').length
+			clearedSuggestions(liveSuggestions, (s) => s.status !== 'pending').size
 	);
 	const totalNotes = $derived(liveThreads.length + liveSuggestions.length);
 	let clearing = $state(false);
