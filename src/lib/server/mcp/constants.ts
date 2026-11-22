@@ -91,13 +91,14 @@ export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
 // How much comparing of texts one call may do to work out where an edit now
 // sits in a scene that changed since (see DiffBudget). The comparison holds
 // the server's one thread, so this is what one call may cost the others:
-// about 25 ms at most. Past it an edit is placed only when it lies in the
-// start or the end the two texts share, and is otherwise reported as possibly
-// no longer applying (get_review_note) or not found (a follow-up edit).
+// about 20 ms, and at most 0.2 ms more for each version of the scene an edit
+// was made on. Past it an edit in a part of the scene that was not compared
+// is reported as possibly no longer applying (get_review_note) or not found
+// (a follow-up edit).
 export const APP_DIFF_BUDGET: DiffBudget = {
-	maxMiddle: 250_000,
-	maxEdits: 500,
-	maxWork: 500_000
+	perPair: 8_000_000,
+	total: 8_000_000,
+	floor: 100_000
 };
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;

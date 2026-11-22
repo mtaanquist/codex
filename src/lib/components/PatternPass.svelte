@@ -209,7 +209,10 @@
 						</div>
 					{:else}
 						<div class="rv-anchor-lost">
-							<Icon name="close" size={12} /> The text changed since; skip this one.
+							<Icon name="close" size={12} />
+							{step.anchorNotSought
+								? 'This could not be checked against the current text; skip this one.'
+								: 'The text changed since; skip this one.'}
 						</div>
 						<div class="rv-diff">
 							{#if step.original}<span class="rv-diff-del">{step.original}</span>{/if}

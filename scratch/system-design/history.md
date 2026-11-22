@@ -1023,6 +1023,66 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 6 (2026-11-22)
+
+Part of #1175, branch `fix/mcp-review-6` on `staging/mcp-endpoint`. No
+migration.
+
+- The round 5 budget counted `middle + edits^2` and gave up on the whole
+  pair past it, so any large edit (a name replaced everywhere, a tenth of
+  the paragraphs rewritten) lost every anchor: markers were saved as
+  detached (H1), and the review cards said "changed" for text that was
+  merely not compared (M1). `review-anchor.ts` now compares hierarchically
+  with its own Myers over token ids, with work counted in steps (about 2 to
+  3 ns each, measured): shared start and end cut back to whole lines, then
+  lines as wholes, then each changed stretch by character, or by word and
+  then character inside each changed run. Every comparison has a cap that
+  grows with its size, and a stretch past its cap is recorded as a gap, so
+  `mapper.unchecked` tells "not looked for" from "gone". `DiffBudget` is now
+  `{ perPair, total, floor }`; the floor lets every pair spend a little even
+  after the total is used up (100 versions of a scene: 100 of 100 placed,
+  76 ms).
+- Moved lines: a line content standing once among the removed and once
+  among the added lines counts as moved, wherever it sits; a range must lie
+  within it. Line ids are of the content alone, so a paragraph that moved to
+  or from the end of the scene still matches (L1).
+- Changed stretches: lines are paired from either end while alike (half the
+  shorter in runs of 8 or more), then lines nearly the same (80% in long
+  runs) a few ahead. Short runs shared by chance in rewritten text are set
+  aside (`withoutStrays`, after the semantic cleanup in diff-match-patch);
+  a run that a shortest edit bound to the wrong copy of a letter slides to
+  its neighbour (`slid`: "the lantern" -> "the old lantern" otherwise kept
+  the "l" of "old").
+- Markers on save (`SAVE_DIFF_BUDGET`, bounded only by the caps): a marker
+  in an unchecked stretch keeps its place if its exact words stand once in
+  what that stretch became, and is otherwise detached; nothing that was not
+  looked for is written as null, and nothing is placed by a guess.
+- M2: `placeSuggestion` accepts the original only where it starts at the
+  mapped start or ends at the mapped end (both, or neither, is refused); the
+  free search could land on the same words in a paragraph just added.
+- An unchecked suggestion shows "This could not be checked against the
+  current text. It can only be rejected." and accept refuses it with that
+  reason (`NOT_CHECKED`).
+- L2: the cost comments now state the step model. Accept still compares
+  twice (placing the suggestion, then the marker remap of old body against
+  new), but the second differs by one replacement, so it is the shared
+  start and end found by plain comparison (well under a millisecond on
+  120k) and no longer a second whole-scene budget.
+- The export quotes the original wording from `baseBody` for threads whose
+  anchor was lost or not checked (L3), owner-only.
+- Two app stall tests from round 5 changed outcome, not bounds: a paragraph
+  left alone between two rewritten stretches is now found (it was "may no
+  longer apply" or "cannot be found"), so the unplaceable variants now join
+  the paragraph into the rewritten text.
+- Measured (median of 3, this sandbox), round 5 / main / now: save with 10
+  markers on 120k replace-all 212 ms 0 kept / 406 ms 10 / 10 ms 10; 10%
+  rewritten 120k 243 ms 0 / 12.9 s 10 / 22 ms 10. Writer review page, 20
+  comments, 120k replace-all 244 ms 0 / 421 ms 20 / 4 ms 20. App cases 16
+  to 17 ms before, 8 to 13 ms now.
+- A property test holds the mapper to a ground-truth character map on
+  edited prose (300 rounds; 3000 rounds passed on six seeds), with surrogate
+  pairs never split.
+
 ## MCP endpoint, review round 5 (2026-11-22)
 
 Part of #1175, branch `fix/mcp-review-5` on `staging/mcp-endpoint`. No

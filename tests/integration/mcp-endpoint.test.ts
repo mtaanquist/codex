@@ -70,6 +70,7 @@ const {
 	ensureSuggestionThread,
 	listSuggestions,
 	listThreads,
+	NOT_CHECKED,
 	updateAssistantSuggestion
 } = await import('#lib/server/review');
 const {
@@ -1536,9 +1537,9 @@ describe('get_review_note on a large scene that was mostly rewritten', () => {
 	});
 
 	// The writer's own review page compares on a larger budget, but a bounded
-	// one: past it the edit shows as changed, which can be read and rejected
-	// but not accepted.
-	it('shows the writer the edit as changed since, without holding the server', async () => {
+	// one. A paragraph left alone is found as a whole, however much around it
+	// was rewritten.
+	it('places the writer the edit in a paragraph left alone, without holding the server', async () => {
 		const tide = 'The tide turned and the town slept on. '.repeat(1000);
 		await setBody(
 			alice,
@@ -1549,19 +1550,45 @@ describe('get_review_note on a large scene that was mostly rewritten', () => {
 		await setBody(alice, now);
 		const { result, stall } = await longestStall(() => listSuggestions(db, alice.storyId));
 		expect(stall).toBeLessThan(1000);
+		const at = now.indexOf('lantern');
+		expect(result.find((entry) => entry.id === id)).toMatchObject({
+			anchor: { start: at, end: at + 'lantern'.length },
+			anchorLost: false
+		});
+		const accepted = await longestStall(() =>
+			decideSuggestion(db, alice.userId, alice.storyId, id, true)
+		);
+		expect(accepted.stall).toBeLessThan(1000);
+		expect(accepted.result).toMatchObject({ ok: true });
+		const [scene] = await db.select().from(scenes).where(eq(scenes.id, alice.sceneId));
+		expect(scene.bodyMd).toBe(now.replace('lantern', 'lamp'));
+	});
+
+	// Past the budget the edit shows as not checked, which can be read and
+	// rejected but not accepted.
+	it('shows the writer an edit it could not check, without holding the server', async () => {
+		const tide = 'The tide turned and the town slept on. '.repeat(1000);
+		await setBody(
+			alice,
+			`${tide}\n\n${before}\n\nShe held the lantern high.\n\n${before}\n\n${tide}`
+		);
+		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
+		// The paragraph is now inside one long rewritten one.
+		const now = `${tide}\n\n${after}She held the lantern high. ${after}\n\n${tide}`;
+		await setBody(alice, now);
+		const { result, stall } = await longestStall(() => listSuggestions(db, alice.storyId));
+		expect(stall).toBeLessThan(1000);
 		expect(result.find((entry) => entry.id === id)).toMatchObject({
 			anchor: null,
 			anchorLost: true,
+			anchorNotSought: true,
 			original: 'lantern'
 		});
 		const accepted = await longestStall(() =>
 			decideSuggestion(db, alice.userId, alice.storyId, id, true)
 		);
 		expect(accepted.stall).toBeLessThan(1000);
-		expect(accepted.result).toEqual({
-			ok: false,
-			reason: 'The text this suggestion applies to has changed; it can only be rejected.'
-		});
+		expect(accepted.result).toEqual({ ok: false, reason: NOT_CHECKED });
 		const [scene] = await db.select().from(scenes).where(eq(scenes.id, alice.sceneId));
 		expect(scene.bodyMd).toBe(now);
 		expect(await decideSuggestion(db, alice.userId, alice.storyId, id, false)).toMatchObject({
@@ -1641,8 +1668,9 @@ describe('a follow-up to an accepted edit on a large scene that was mostly rewri
 
 	it('answers quickly, holds nobody up, and stages nothing it cannot place', async () => {
 		const id = await acceptedEdit(`${tide}\n\n${before}\n\n${paragraph}\n\n${before}\n\n${tide}`);
-		// Both sides of the edit were rewritten; it is in what changed between them.
-		const now = `${tide}\n\n${after}\n\n${paragraph.replace('lantern', 'lamp')}\n\n${after}\n\n${tide}`;
+		// Both sides of the edit were rewritten, and its paragraph joined to them;
+		// it is in what changed between them.
+		const now = `${tide}\n\n${after}${paragraph.replace('lantern', 'lamp')} ${after}\n\n${tide}`;
 		await setBody(alice, now);
 		expect(now.length).toBeGreaterThan(118_000);
 		const staged = await stagedRows();
@@ -1654,6 +1682,18 @@ describe('a follow-up to an accepted edit on a large scene that was mostly rewri
 			isError: false
 		});
 		expect(await stagedRows()).toBe(staged);
+	});
+
+	it('follows an edit in a paragraph left alone, though both sides were rewritten', async () => {
+		const id = await acceptedEdit(`${tide}\n\n${before}\n\n${paragraph}\n\n${before}\n\n${tide}`);
+		await setBody(
+			alice,
+			`${tide}\n\n${after}\n\n${paragraph.replace('lantern', 'lamp')}\n\n${after}\n\n${tide}`
+		);
+		const { result, stall, took } = await longestStall(() => followUp(id));
+		expect(stall).toBeLessThan(100);
+		expect(took).toBeLessThan(400);
+		expect(result.text).toContain('Staged a suggested edit');
 	});
 
 	it('still follows an edit in the start or the end the texts share', async () => {

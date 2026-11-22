@@ -5,7 +5,7 @@ import { ownedScene } from './scene-access.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findTodoLines } from '#lib/todo-markers';
 import { toLf } from '#lib/line-endings';
-import { createAnchorMapper, WRITER_DIFF_BUDGET } from '../review-anchor.ts';
+import { createAnchorMapper, SAVE_DIFF_BUDGET } from '../review-anchor.ts';
 import type { ActionFailure } from './action-result.ts';
 
 // A selection turned into a checkable marker. Anchors are clamped to the
@@ -116,11 +116,20 @@ export async function updateMarkerAnchors(
 
 // For a body rewrite that does not come from the Write editor (a review
 // save, an accepted suggestion, a restore): map every anchored marker
-// through the old-to-new diff, so it keeps pointing at the same words. A
-// marker whose start or end text is gone, or whose range is left empty,
+// through the old-to-new comparison, so it keeps pointing at the same words.
+// A marker whose start or end text is gone, or whose range is left empty,
 // loses its anchor rather than pointing at whatever now sits at its old
 // offsets. Run inside the transaction that writes the body. Anchors count
-// \r\n as one character, as the editor does, so the diff runs on that text.
+// \r\n as one character, as the editor does, so the comparison runs on that
+// text.
+//
+// The comparison has no budget beyond the caps inside it (SAVE_DIFF_BUDGET),
+// so every ordinary rewrite is compared in full. Should part of the scene be
+// past those caps (pages of text replaced with nothing in common), a marker
+// in that part was not looked for, and losing it would drop it for no
+// reason; its exact words are looked for instead in what that part became,
+// and it follows them if they stand there once. Only if they do not is it
+// left without an anchor, as a marker whose words were rewritten is.
 export async function remapMarkerAnchors(
 	db: Database,
 	sceneId: string,
@@ -138,18 +147,22 @@ export async function remapMarkerAnchors(
 		})
 		.from(sceneMarkers)
 		.where(eq(sceneMarkers.sceneId, sceneId));
-	const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+	const mapper = createAnchorMapper(SAVE_DIFF_BUDGET);
 	const moved: { id: string; anchorStart: number; anchorEnd: number }[] = [];
 	const lost: string[] = [];
 	for (const marker of markers) {
-		if (marker.anchorStart === null || marker.anchorEnd === null) continue;
+		const { anchorStart: start, anchorEnd: end } = marker;
+		if (start === null || end === null) continue;
 		// Each end maps on its own, so an edit at the edge of the marked text
 		// stretches or shrinks the range instead of losing it.
-		const start = mapper.point(oldBody, newBody, marker.anchorStart);
-		const end = mapper.point(oldBody, newBody, marker.anchorEnd);
-		if (start !== null && end !== null && start < end) {
-			moved.push({ id: marker.id, anchorStart: start, anchorEnd: end });
-		} else lost.push(marker.id);
+		const now =
+			mapper.ends(oldBody, newBody, start, end) ??
+			(mapper.unchecked(oldBody, newBody, start, start) ||
+			mapper.unchecked(oldBody, newBody, end, end)
+				? mapper.findWords(oldBody, newBody, start, end)
+				: null);
+		if (now) moved.push({ id: marker.id, anchorStart: now.start, anchorEnd: now.end });
+		else lost.push(marker.id);
 	}
 	await updateMarkerAnchors(db, sceneId, moved, newBody.length);
 	if (lost.length > 0) {

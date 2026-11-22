@@ -24,6 +24,15 @@ import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { recordRevision, restoreRevision } from '../../src/lib/server/revisions';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
+import {
+	join,
+	paragraph,
+	paragraphStarts,
+	phraseIn,
+	replaceShe,
+	sceneParagraphs,
+	seeded
+} from '../prose';
 
 let pool: pg.Pool;
 let db: Database;
@@ -334,5 +343,135 @@ describe('anchors follow body rewrites outside the Write editor', () => {
 			ok: true
 		});
 		expect(quote(older, await anchors(markerId))).toBe('She rides on');
+	});
+});
+
+// A long scene with ten to-do markers spread over it, rewritten in ways a
+// writer does in one go. A marker whose words are still there must keep
+// pointing at them, however much changed elsewhere.
+describe('markers on a long scene survive large rewrites outside the Write editor', () => {
+	async function markedLongScene(before: string[]) {
+		const body = join(before);
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 20, bodyMd: body })
+			.returning();
+		const starts = paragraphStarts(before);
+		const marked: { id: string; index: number; phrase: string }[] = [];
+		for (let n = 0; n < 10; n++) {
+			let index = Math.floor(((n + 0.5) * before.length) / 10);
+			while (!phraseIn(before[index])) index++;
+			const [from, to] = phraseIn(before[index])!;
+			const [marker] = await db
+				.insert(sceneMarkers)
+				.values({
+					sceneId: scene.id,
+					ownerId,
+					anchorStart: starts[index] + from,
+					anchorEnd: starts[index] + to
+				})
+				.returning();
+			marked.push({ id: marker.id, index, phrase: before[index].slice(from, to) });
+		}
+		return { sceneId: scene.id, marked };
+	}
+
+	// The markers that still quote their own words in `body`, and those left
+	// without an anchor.
+	async function kept(body: string, marked: { id: string; phrase: string }[]) {
+		let quoted = 0;
+		let detached = 0;
+		for (const marker of marked) {
+			const [row] = await db.select().from(sceneMarkers).where(eq(sceneMarkers.id, marker.id));
+			if (row.anchorStart === null) detached++;
+			else if (body.slice(row.anchorStart, row.anchorEnd!) === marker.phrase) quoted++;
+		}
+		return { quoted, detached };
+	}
+
+	const save = (id: string, bodyMd: string) =>
+		saveSceneBody(db, id, {
+			title: null,
+			bodyMd,
+			anchors: null,
+			baseHashes: null,
+			overwrite: false
+		});
+
+	// Rewrites `count` paragraphs spread from the first to the last, none of
+	// them holding a marker, each as `size` paragraphs' worth of new text.
+	function rewrite(before: string[], count: number, keep: Set<number>, seed: number, size = 1) {
+		const next = seeded(seed);
+		const after = [...before];
+		for (let n = 0; n < count; n++) {
+			let index = Math.round((n * (before.length - 1)) / (count - 1));
+			while (keep.has(index)) index++;
+			after[index] = Array.from({ length: size }, () => paragraph(next)).join(' ');
+		}
+		return after;
+	}
+
+	it('keeps all ten after "she" becomes "Mara" everywhere in a 120,000 character scene', async () => {
+		const before = sceneParagraphs(11, 120_000);
+		const { sceneId: id, marked } = await markedLongScene(before);
+		const after = join(before.map(replaceShe));
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await kept(after, marked)).toEqual({ quoted: 10, detached: 0 });
+	});
+
+	it('keeps all ten after three paragraphs of a 120,000 character scene are rewritten', async () => {
+		const before = sceneParagraphs(12, 120_000);
+		const { sceneId: id, marked } = await markedLongScene(before);
+		const keep = new Set(marked.map((marker) => marker.index));
+		const after = join(rewrite(before, 3, keep, 13, 4));
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await kept(after, marked)).toEqual({ quoted: 10, detached: 0 });
+	});
+
+	it('keeps all ten after a tenth of the paragraphs of a 60,000 character scene are rewritten', async () => {
+		const before = sceneParagraphs(14, 60_000);
+		const { sceneId: id, marked } = await markedLongScene(before);
+		const keep = new Set(marked.map((marker) => marker.index));
+		const after = join(rewrite(before, Math.floor(before.length / 10), keep, 15));
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await kept(after, marked)).toEqual({ quoted: 10, detached: 0 });
+	});
+
+	it('keeps all ten after a tenth of the paragraphs of a 120,000 character scene are rewritten', async () => {
+		const before = sceneParagraphs(16, 120_000);
+		const { sceneId: id, marked } = await markedLongScene(before);
+		const keep = new Set(marked.map((marker) => marker.index));
+		const after = join(rewrite(before, Math.floor(before.length / 10), keep, 17));
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await kept(after, marked)).toEqual({ quoted: 10, detached: 0 });
+	});
+
+	it('keeps all ten when History restores a version with "she" replaced everywhere', async () => {
+		const before = sceneParagraphs(18, 120_000);
+		const { sceneId: id, marked } = await markedLongScene(before);
+		const older = join(before.map(replaceShe));
+		await recordRevision(db, 'scene', id, older, 'checkpoint');
+		const [revision] = await db
+			.select({ id: revisions.id })
+			.from(revisions)
+			.where(and(eq(revisions.entityType, 'scene'), eq(revisions.entityId, id)))
+			.orderBy(desc(revisions.createdAt))
+			.limit(1);
+		expect(await restoreRevision(db, ownerId, revision.id, 'scene', id)).toMatchObject({
+			ok: true
+		});
+		expect(await kept(older, marked)).toEqual({ quoted: 10, detached: 0 });
+	});
+
+	it('still detaches a marker whose own paragraph was deleted', async () => {
+		const before = sceneParagraphs(19, 120_000);
+		const { sceneId: id, marked } = await markedLongScene(before);
+		const keep = new Set(marked.map((marker) => marker.index));
+		const rewritten = rewrite(before, Math.floor(before.length / 10), keep, 20);
+		const after = join(rewritten.filter((_, index) => index !== marked[4].index));
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await kept(after, marked)).toEqual({ quoted: 9, detached: 1 });
+		const [gone] = await db.select().from(sceneMarkers).where(eq(sceneMarkers.id, marked[4].id));
+		expect(gone.anchorStart).toBeNull();
 	});
 });

@@ -125,7 +125,10 @@
 
 	{#if thread.anchorLost}
 		<div class="rv-anchor-lost">
-			<Icon name="close" size={12} /> The text this pointed at has changed.
+			<Icon name="close" size={12} />
+			{thread.anchorNotSought
+				? 'This could not be checked against the current text.'
+				: 'The text this pointed at has changed.'}
 		</div>
 	{:else if excerpt}
 		<div class="rv-quote">"{excerpt}"</div>

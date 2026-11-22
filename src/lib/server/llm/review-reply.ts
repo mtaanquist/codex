@@ -28,7 +28,7 @@ export async function prepareReviewReply(
 	// mapper covers the threads and the suggestion lookup below, so a scene
 	// revision is diffed once rather than once per anchor.
 	const anchors = createAnchorMapper(WRITER_DIFF_BUDGET);
-	const threads = await listThreads(db, storyId, anchors.range, { userId });
+	const threads = await listThreads(db, storyId, anchors, { userId });
 	const thread = threads.find((t) => t.id === threadId);
 	if (!thread) error(404, 'That thread does not exist.');
 	if (!thread.comments[0]?.isAssistant) {

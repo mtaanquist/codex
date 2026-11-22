@@ -79,7 +79,9 @@ A pending suggestion's card also takes replies, so you can talk a proposed edit 
 
 When the Assistant is set up and a note came from it, replying on that note makes the Assistant answer you right there. Ask it why it suggested something, or ask for a different wording: it can revise its own pending suggestion, and the card updates with the new proposal. It never decides anything - accepting or rejecting stays yours - and it only ever responds to you, never to your reviewers.
 
-Comments and suggestions point at the exact words they were made on. If you edit the text afterwards, they follow the passage when it can be found; if the passage itself was rewritten, a comment is kept and marked as referring to older text. A suggestion can be accepted only while its passage is exactly as it was when suggested: once you change any of those words, it can only be rejected. The same happens when large parts of the scene around the passage were rewritten since.
+Comments and suggestions point at the exact words they were made on. If you edit the text afterwards, they follow the passage when it can be found; if the passage itself was rewritten, a comment is kept and marked as referring to older text. A suggestion can be accepted only while its passage is exactly as it was when suggested: once you change any of those words, it can only be rejected.
+
+Rarely, a note sits in a long stretch of the scene that was rewritten so thoroughly that it cannot be compared with the text the note was made on. Its card then says "This could not be checked against the current text." Read it against the scene yourself; a suggestion in that state can only be rejected.
 
 ## Clearing review notes
 

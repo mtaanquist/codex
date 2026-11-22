@@ -939,21 +939,34 @@ suggestion. On top of those:
     "Too many calls at once. Try again." `search_text` runs its queries one
     after another here (the command palette runs them side by side), and
     `get_review_note` places only the requested note's edits in the scene.
-    Placing an edit is a character diff, and it runs in the server's one
-    thread, so it is bounded everywhere (`createAnchorMapper(budget)` in
-    `review-anchor.ts`): the start and the end the two texts share are set
-    aside by plain comparison and only the middle is diffed, and each
-    request has a `DiffBudget` (the longest middle one pair may have, the
-    most edits one diff looks through, and a total for every pair the
-    request compares). An app's call has `APP_DIFF_BUDGET` (500 edits, about
-    25 ms); the writer's pages, the in-app Assistant, accepting a suggestion
-    and the marker remap on save have `WRITER_DIFF_BUDGET` (2000 edits,
-    about half a second at most). Past the budget an edit is placed only in
-    the shared start or end, and is otherwise reported with `notice`: "The
+    Placing an edit compares two versions of the scene, and that runs in
+    the server's one thread, so it is bounded everywhere
+    (`createAnchorMapper(budget)` in `review-anchor.ts`). The comparison
+    works down from paragraphs to words to characters: the shared start and
+    end are set aside, the paragraphs between are compared as wholes (a
+    paragraph left alone is always found, and one that stands once among
+    the removed and once among the added counts as moved), and each stretch
+    of changed paragraphs is compared on its own, by character or by word
+    and then character. Every comparison has a cap that grows with the size
+    of what it compares, and a request has a `DiffBudget` (`perPair`,
+    `total`, and a `floor` every pair may spend even once the total is used
+    up, so an early costly pair cannot starve the rest). A stretch past its
+    cap is recorded as not checked, which is not the same as gone
+    (`mapper.unchecked`). An app's call has `APP_DIFF_BUDGET` (about 20 ms);
+    the writer's pages, the in-app Assistant, accepting a suggestion and
+    the export have `WRITER_DIFF_BUDGET` (about 75 ms a pair, 300 ms a
+    page); the marker remap on save has `SAVE_DIFF_BUDGET`, bounded only by
+    the caps. An edit that was not checked is reported with `notice`: "The
     text has changed since; the edit may no longer apply." A follow-up
-    `suggest_edit` past it is refused as "can no longer be found", the
-    in-app re-read skips the edit, and the review page shows the suggestion
-    as changed since (it can be read and rejected, not accepted).
+    `suggest_edit` that cannot be placed is refused as "can no longer be
+    found", the in-app re-read skips the edit, and the review page shows the
+    suggestion as "This could not be checked against the current text. It
+    can only be rejected." (or as changed, when its text is gone). A
+    suggestion is accepted only where its original text starts at the
+    mapped start or ends at the mapped end, never found by a search. A
+    marker in a stretch that was not checked keeps its place if its exact
+    words stand once in what that stretch became, and is otherwise
+    detached.
   - The per-minute budgets (per connection, per writer, and for requests of
     any kind) count the calls of the last sixty seconds
     (`slidingRateLimit`), so a burst across a minute boundary gets no more

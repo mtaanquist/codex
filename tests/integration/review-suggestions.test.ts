@@ -303,6 +303,33 @@ describe('decideSuggestion', () => {
 		});
 	});
 
+	// The writer adds a paragraph above the passage that holds the same word.
+	// The edit must land on the passage it was made on, or nowhere; never on
+	// the new paragraph.
+	for (const [base, added, word] of [
+		['He sat by the window. The kettle was cold.', 'Hours passed. He slept badly.\n\n', 'He'],
+		[
+			'She opened the door and the snow came in.',
+			'Snow fell all night and She had not slept.\n\n',
+			'She'
+		]
+	]) {
+		it(`never accepts onto a new paragraph above that holds "${word}"`, async () => {
+			await db.update(scenes).set({ bodyMd: base }).where(eq(scenes.id, sceneId));
+			const { suggestionId } = (await suggest({ start: 0, end: word.length }, 'They')) as {
+				ok: true;
+				suggestionId: string;
+			};
+			const now = added + base;
+			await db.update(scenes).set({ bodyMd: now }).where(eq(scenes.id, sceneId));
+			const [view] = await listSuggestions(db, storyId);
+			if (view.anchor)
+				expect(view.anchor).toEqual({ start: added.length, end: added.length + word.length });
+			const result = await decideSuggestion(db, authorId, storyId, suggestionId, true);
+			expect(await sceneBody()).toBe(result.ok ? added + 'They' + base.slice(word.length) : now);
+		});
+	}
+
 	it('refuses to accept once the author edited inside the passage', async () => {
 		const start = BODY.indexOf('quick brown');
 		const { suggestionId } = (await suggest(
