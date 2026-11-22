@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { strFromU8, unzipSync, zipSync } from 'fflate';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import {
@@ -32,6 +32,7 @@ import {
 } from '../../src/lib/server/export';
 import { parseStoryZip } from '../../src/lib/import-markdown';
 import { runImport } from '../../src/lib/server/import-story';
+import { countProposals, listProposals } from '../../src/lib/server/proposals';
 import { reviewLoader } from '../../src/lib/server/export-reviews';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
@@ -289,7 +290,7 @@ describe('buildAccountExport', () => {
 			.insert(chapters)
 			.values({ storyId: story.id, title: 'One', position: 1 })
 			.returning();
-		const [gate, road, gone] = await db
+		const [gate, road, gone, ford] = await db
 			.insert(scenes)
 			.values([
 				{ storyId: story.id, chapterId: chapter.id, globalPosition: 1, title: 'Gate', bodyMd: '' },
@@ -300,7 +301,8 @@ describe('buildAccountExport', () => {
 					title: 'Gone',
 					bodyMd: '',
 					deletedAt: new Date()
-				}
+				},
+				{ storyId: story.id, globalPosition: 4, title: 'Ford', bodyMd: '' }
 			])
 			.returning();
 		const draft = (sceneId: string, status: 'ready' | 'running' | 'accepted', textMd: string) => ({
@@ -319,7 +321,14 @@ describe('buildAccountExport', () => {
 				note: 'Drafted by Helper.',
 				chapterBrief: 'The caravan arrives.',
 				position: 0,
-				chapterId: chapter.id
+				chapterId: chapter.id,
+				jobId: 'a-job',
+				source: 'assistant' as const
+			},
+			{
+				...draft(ford.id, 'ready', 'Cold water.'),
+				note: 'Drafted by Helper.',
+				source: 'app' as const
 			},
 			// Being written, decided, or on a scene in the trash: none rides along.
 			draft(road.id, 'running', 'Half a'),
@@ -331,7 +340,10 @@ describe('buildAccountExport', () => {
 		const unzipped = unzipSync(bytes);
 		const storyDir = 'universes/mythos/stories/halden/';
 		const waiting = Object.keys(unzipped).filter((n) => n.startsWith(`${storyDir}waiting-drafts/`));
-		expect(waiting).toEqual([`${storyDir}waiting-drafts/01-one-01-gate.md`]);
+		expect(waiting.sort()).toEqual([
+			`${storyDir}waiting-drafts/01-one-01-gate.md`,
+			`${storyDir}waiting-drafts/unfiled-02-ford.md`
+		]);
 		const file = strFromU8(unzipped[waiting[0]]);
 		expect(file).toContain('scene: "chapters/01-one/01-gate.md"');
 		expect(file).toContain('note: "Drafted by Helper."');
@@ -352,17 +364,36 @@ describe('buildAccountExport', () => {
 		const plan = parseStoryZip(zipSync(folder));
 		expect(plan.problems).toEqual([]);
 		const imported = await runImport(db, { id: universe.id, ownerId }, plan);
-		expect(imported.waitingDraftsCreated).toBe(1);
-		const [newGate] = await db
-			.select({ id: scenes.id })
-			.from(scenes)
-			.where(and(eq(scenes.storyId, imported.storyId), eq(scenes.title, 'Gate')));
+		expect(imported.waitingDraftsCreated).toBe(2);
+		const sceneOf = async (title: string) =>
+			(
+				await db
+					.select({ id: scenes.id })
+					.from(scenes)
+					.where(and(eq(scenes.storyId, imported.storyId), eq(scenes.title, title)))
+			)[0];
+		const newGate = await sceneOf('Gate');
+		const newFord = await sceneOf('Ford');
 		const rows = await db
 			.select()
 			.from(assistantDrafts)
-			.where(eq(assistantDrafts.storyId, imported.storyId));
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toMatchObject({
+			.where(eq(assistantDrafts.storyId, imported.storyId))
+			.orderBy(asc(assistantDrafts.createdAt));
+		expect(rows).toHaveLength(2);
+		expect(rows.find((row) => row.sceneId === newFord.id)).toMatchObject({
+			source: 'app',
+			note: 'Drafted by Helper.',
+			textMd: 'Cold water.'
+		});
+		// Only the app's draft waits on Suggestions: the Assistant's stays the
+		// Assistant's though it comes back with no job.
+		const listed = (await listProposals(db, ownerId, universe.id)).drafts.filter(
+			(d) => d.storyId === imported.storyId
+		);
+		expect(listed.map((d) => d.sceneId)).toEqual([newFord.id]);
+		expect((await countProposals(db, ownerId)).get(universe.id)).toBe(2);
+		expect(rows.find((row) => row.sceneId === newGate.id)).toMatchObject({
+			source: 'assistant',
 			userId: ownerId,
 			sceneId: newGate.id,
 			status: 'ready',

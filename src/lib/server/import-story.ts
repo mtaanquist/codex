@@ -321,7 +321,8 @@ export async function runImport(
 				textMd,
 				status: 'ready',
 				note: draft.note,
-				chapterBrief: draft.chapterBrief
+				chapterBrief: draft.chapterBrief,
+				source: draft.source
 			});
 			waitingDraftsCreated += 1;
 		}

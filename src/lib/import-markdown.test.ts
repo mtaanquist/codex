@@ -159,7 +159,7 @@ describe('parseStoryZip', () => {
 				'chapters/01-a/01-one.md': '---\ntitle: "One"\n---\n',
 				'unfiled/01-two.md': '---\ntitle: "Two"\n---\n',
 				'waiting-drafts/a.md':
-					'---\nscene: "chapters/01-a/01-one.md"\nbrief: "B"\nwords: "800"\npov: "Mara"\nnote: "N"\nchapter-brief: "C"\n---\nRain.\n',
+					'---\nscene: "chapters/01-a/01-one.md"\nbrief: "B"\nwords: "800"\npov: "Mara"\nnote: "N"\nchapter-brief: "C"\nsource: "app"\n---\nRain.\n',
 				'waiting-drafts/b.md': '---\nscene: "unfiled/01-two.md"\nwords: "lots"\n---\nSun.',
 				'waiting-drafts/c.md': '---\nscene: "unfiled/01-two.md"\n---\nAgain.',
 				'waiting-drafts/d.md': '---\nscene: "unfiled/09-gone.md"\n---\nGone.'
@@ -173,6 +173,7 @@ describe('parseStoryZip', () => {
 				pov: 'Mara',
 				note: 'N',
 				chapterBrief: 'C',
+				source: 'app',
 				textMd: 'Rain.'
 			},
 			{
@@ -182,6 +183,7 @@ describe('parseStoryZip', () => {
 				pov: null,
 				note: null,
 				chapterBrief: null,
+				source: 'assistant',
 				textMd: 'Sun.'
 			}
 		]);
