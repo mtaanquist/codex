@@ -490,6 +490,46 @@ test('typing in a draft decided in another window is kept to copy', async ({ pag
 	await expect(brief).toHaveValue('The horse bolts.');
 });
 
+// #1369: "/draft ..." typed while the form opened from the menu is still
+// loading puts its words in the brief, not the scene's suggestion.
+test('words typed with /draft while the form loads reach the brief', async ({ page }) => {
+	const stamp = Date.now();
+	await storyWithScene(page, `Lockkeepers ${stamp}`, `Sluice ${stamp}`);
+	const card = page.getByRole('group', { name: 'Scene draft' });
+	const composer = page.getByPlaceholder('Ask about your story', { exact: false });
+	await page.getByRole('tab', { name: 'Assistant' }).click();
+
+	// The first ask for the form's defaults waits until the second is made, and
+	// is answered first, as it would be on a slow line.
+	let asked = 0;
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assistant/draft', async (route) => {
+		const body = route.request().postDataJSON() as { defaults?: boolean };
+		if (!body?.defaults) return route.continue();
+		asked += 1;
+		if (asked === 1) {
+			await held;
+			return route.continue();
+		}
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		await route.continue();
+	});
+
+	await openRowMenu(page, page.locator('.scene-row').first());
+	await page.locator('.row-menu').getByRole('menuitem', { name: 'Assistant' }).hover();
+	await page.locator('.row-submenu').getByRole('menuitem', { name: 'Draft this scene...' }).click();
+	await expect(card).toContainText('Loading...');
+	await composer.fill('/draft The gates open at noon.');
+	await page.keyboard.press('Enter');
+	await expect.poll(() => asked).toBe(2);
+	await expect(card.getByLabel('What happens in this scene')).toHaveValue(
+		'The gates open at noon.'
+	);
+	await page.unroute('**/api/assistant/draft');
+});
+
 // #1168: on a story with the Assistant turned off, the panel lists the drafts
 // that wait on other scenes, one still being written among them.
 test('a muted story lists its waiting drafts, and one being written can be stopped', async ({
