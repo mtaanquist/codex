@@ -37,7 +37,8 @@ If you do not have your password to hand, select "Email me a sign-in link
 instead" on the sign-in page and enter your email address. The email holds a
 link that signs you in once and is good for 15 minutes; asking again replaces
 the earlier link. If two-factor is on, you are still asked for a code. Your
-password stays the same.
+password stays the same. If you open the link while already signed in, sign out
+first and then open the link from the email again.
 
 ## Active sessions
 

@@ -7,6 +7,10 @@ import { authTokens, sessions, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { hashPassword } from '../../src/lib/server/password';
 import { setUserSuspended } from '../../src/lib/server/admin';
+import {
+	adminCancelDeletion,
+	scheduleAccountDeletion
+} from '../../src/lib/server/account-deletion';
 import { totpCode } from '../../src/lib/server/totp';
 import { ensureTestDatabase } from './test-db';
 import { sentToken } from './token-helpers';
@@ -138,6 +142,13 @@ describe('redeemSignInLink', () => {
 		expect(await redeemSignInLink(db, link)).toBeNull();
 	});
 
+	it('stays refused when the account is scheduled for deletion and let back in', async () => {
+		const link = await sentLink();
+		await scheduleAccountDeletion(db, userId);
+		expect(await adminCancelDeletion(db, userId)).toBe(true);
+		expect(await redeemSignInLink(db, link)).toBeNull();
+	});
+
 	it('stays refused when the account is suspended and let back in', async () => {
 		const link = await sentLink();
 		expect(await setUserSuspended(db, userId, true)).toBe(true);
@@ -255,22 +266,50 @@ describe('the page that asks for a link', () => {
 		expect(queueEmail).not.toHaveBeenCalled();
 	});
 
+	const load = (token: string, user: { email: string } | null = null) =>
+		(
+			linkPage.load as (e: unknown) => Promise<{
+				token: string;
+				email: string;
+				message: string | null;
+				signedInAs: string | null;
+			}>
+		)({
+			url: new URL(`http://localhost/login/link?token=${token}`),
+			locals: { user }
+		});
+
 	it('shows the button for a live link without spending it, and says when one is dead', async () => {
 		const link = await sentLink();
-		const load = (token: string) =>
-			(
-				linkPage.load as (
-					e: unknown
-				) => Promise<{ token: string; email: string; message: string | null }>
-			)({
-				url: new URL(`http://localhost/login/link?token=${token}`)
-			});
 		// The page names the account the button signs in to.
 		expect(await load(link)).toMatchObject({ token: link, email: EMAIL, message: null });
 		expect(await load(link)).toMatchObject({ token: link, email: EMAIL, message: null });
 		const dead = await load('not-a-real-token');
 		expect(dead).toMatchObject({ token: '', email: '' });
 		expect(dead.message).toContain('not valid');
+		expect(await redeemSignInLink(db, link)).toBe(userId);
+	});
+
+	it('offers no button for an account that may no longer sign in', async () => {
+		const blocked = [{ approvedAt: null }, { deletionScheduledAt: new Date() }];
+		for (const gate of blocked) {
+			await db
+				.update(users)
+				.set({ approvedAt: new Date(), deletionScheduledAt: null })
+				.where(eq(users.id, userId));
+			const link = await sentLink();
+			await db.update(users).set(gate).where(eq(users.id, userId));
+			const page = await load(link);
+			expect(page, JSON.stringify(gate)).toMatchObject({ token: '', email: '' });
+			expect(page.message).toContain('not valid');
+		}
+	});
+
+	it('says who is signed in and leaves the link unspent', async () => {
+		const link = await sentLink();
+		const page = await load(link, { email: 'someone@example.com' });
+		expect(page).toMatchObject({ token: '', email: '', signedInAs: 'someone@example.com' });
+		expect(page.message).toBeNull();
 		expect(await redeemSignInLink(db, link)).toBe(userId);
 	});
 });
@@ -314,7 +353,11 @@ describe('using a link', () => {
 			const res = await run(linkPage.actions.use, event('/login/link', { token: `guess${i}` }));
 			expect(res.status).toBe(400);
 		}
-		const res = await run(linkPage.actions.use, event('/login/link', { token: await sentLink() }));
+		const link = await sentLink();
+		const res = await run(linkPage.actions.use, event('/login/link', { token: link }));
 		expect(res.status).toBe(429);
+		// The page keeps the button: the link is still good once the wait is over.
+		expect(res).toMatchObject({ data: { retry: true } });
+		expect(await redeemSignInLink(db, link)).toBe(userId);
 	});
 });

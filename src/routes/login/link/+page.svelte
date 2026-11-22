@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import AuthShell from '#lib/components/AuthShell.svelte';
+	import { dropAllDraftForms } from '#lib/draft-forms';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	// A link that fails when used drops back to the request form.
-	const usable = $derived(data.token !== '' && !form?.message);
+	// A link that fails when used drops back to the request form; one that was
+	// only rate limited keeps its button, since it is still good.
+	const retry = $derived(Boolean(form && 'retry' in form && form.retry));
+	const usable = $derived(data.token !== '' && (!form?.message || retry));
 	const message = $derived(form?.message ?? data.message);
 </script>
 
@@ -15,8 +18,21 @@
 </svelte:head>
 
 <AuthShell title="Sign in with a link">
-	{#if usable}
+	{#if data.signedInAs}
+		<form method="POST" action={resolve('/logout')} onsubmit={dropAllDraftForms}>
+			<p class="auth-lede">
+				You are signed in as <strong>{data.signedInAs}</strong>. To use this link, sign out and then
+				open the link from your email again.
+			</p>
+			<div class="auth-actions">
+				<button class="btn btn-primary" type="submit">Sign out</button>
+			</div>
+		</form>
+	{:else if usable}
 		<form method="POST" action="?/use">
+			{#if message}
+				<p class="form-error" role="alert">{message}</p>
+			{/if}
 			<p class="auth-lede">
 				Select the button to sign in as <strong>{data.email}</strong>. If your account uses
 				two-factor authentication, you are asked for a code next.
@@ -57,6 +73,10 @@
 		</form>
 	{/if}
 	<div class="auth-links">
-		<a href={resolve('/login')}>Back to sign in</a>
+		{#if data.signedInAs}
+			<a href={resolve('/')}>Back to your library</a>
+		{:else}
+			<a href={resolve('/login')}>Back to sign in</a>
+		{/if}
 	</div>
 </AuthShell>

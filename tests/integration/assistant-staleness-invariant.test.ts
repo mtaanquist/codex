@@ -1218,6 +1218,9 @@ const nextMillisecond = () => new Promise((resolve) => setTimeout(resolve, 2));
 describe('Assistant results are out of date exactly when their request changed', () => {
 	// The actions that applied in at least one seed.
 	const ran = new Set<string>();
+	// Seed tests that ran in this file run, so the top-up below does not
+	// stand in for them when they were filtered out.
+	let seedTestsRun = 0;
 	const seeds = Array.from({ length: SEEDS }, (_, i) => i + 1);
 
 	async function runSeed(seed: number) {
@@ -1272,17 +1275,21 @@ describe('Assistant results are out of date exactly when their request changed',
 		}
 	}
 
-	it.each(seeds)('seed %i', { timeout: 300_000 }, runSeed);
+	it.each(seeds)('seed %i', { timeout: 300_000 }, async (seed) => {
+		seedTestsRun++;
+		await runSeed(seed);
+	});
 
 	// A write path that never applies is not being checked at all. All picks
 	// come from one stream, so adding an action moves every seed's picks and can
 	// leave a rarely applicable one out of the default seeds; further seeds then
-	// run until each has applied. A run narrowed by STALE_SEEDS or STALE_STEPS
-	// is not held to this.
+	// run until each has applied. A run narrowed by STALE_SEEDS or STALE_STEPS,
+	// or one that filtered out the seed tests, is not held to this.
 	it.skipIf(SEEDS < 8 || STEPS < 30)(
 		'every action ran in some seed',
 		{ timeout: EXTRA_SEEDS * 300_000 },
-		async () => {
+		async ({ skip }) => {
+			if (seedTestsRun === 0) skip();
 			const missing = () => Object.keys(actions).filter((name) => !ran.has(name));
 			for (let seed = SEEDS + 1; missing().length && seed <= SEEDS + EXTRA_SEEDS; seed++)
 				await runSeed(seed);

@@ -145,6 +145,24 @@ describe('handle without a session', () => {
 	});
 });
 
+describe('handle with a session', () => {
+	beforeEach(() => {
+		vi.mocked(validateSession).mockResolvedValue({ user: {}, session: {} } as never);
+	});
+	afterEach(() => {
+		vi.mocked(validateSession).mockResolvedValue(null);
+	});
+
+	it.each(['/login', '/login/link', '/signup'])('sends %s to the library', async (path) => {
+		expect(await outcome(path, 'live-token')).toBe('303 /');
+	});
+
+	// The page says who is signed in instead of dropping the link silently.
+	it('lets a sign-in link through', async () => {
+		expect(await outcome('/login/link?token=abc', 'live-token')).toBe('resolved');
+	});
+});
+
 describe('security headers', () => {
 	async function headersFor(path: string, origin?: string) {
 		const { event, resolve } = request(path, undefined, origin);
