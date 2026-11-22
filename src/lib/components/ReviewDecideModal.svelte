@@ -4,7 +4,13 @@
 	import { enhance } from '#lib/enhance';
 	import { modal } from '#lib/modal';
 	import Icon from './Icon.svelte';
-	import { authorColor, suggestionAuthor, type ReviewSuggestion } from '#lib/review-ui';
+	import {
+		authorColor,
+		bulkDecisionNote,
+		editCount as edits,
+		suggestionAuthor,
+		type ReviewSuggestion
+	} from '#lib/review-ui';
 
 	// The review toolbar's dialog: every pending suggested edit on the open
 	// scene, listed with what it changes, so the author can accept or reject
@@ -23,7 +29,9 @@
 		// Called with the applied suggestion ids the moment the server confirms
 		// them, before the page data reloads, so the live editor can apply them.
 		onAccepted: (ids: string[], accepted: { bodyMd: string; baseHash: string } | null) => void;
-		onClose: () => void;
+		// Called with what was decided when the dialog closes itself after
+		// deciding every ticked edit, so the page can announce it.
+		onClose: (outcome?: string) => void;
 	} = $props();
 
 	// Everything starts ticked; the list is the chance to leave some out. Kept
@@ -36,16 +44,14 @@
 	const allTicked = $derived(ticked.length === suggestions.length);
 
 	let busy = $state(false);
+	// While the open editor saves before an accept, which can stall.
+	let saving = $state(false);
 	let note = $state<string | null>(null);
 
 	// A decision under way finishes before the dialog goes, so its outcome is
 	// always shown.
 	function close() {
 		if (!busy) onClose();
-	}
-
-	function edits(n: number) {
-		return n === 1 ? '1 edit' : `${n} edits`;
 	}
 </script>
 
@@ -95,7 +101,10 @@
 						// The replacement as this list shows it.
 						formData.set(`seen:${s.id}`, s.stamp ?? '');
 					}
-					if (!(await beforeAccept())) {
+					saving = true;
+					const saved = await beforeAccept();
+					saving = false;
+					if (!saved) {
 						busy = false;
 						note = 'Your latest typing could not be saved, so nothing was accepted.';
 						cancel();
@@ -117,7 +126,11 @@
 					}
 					const data = result.data ?? {};
 					const decided = Array.isArray(data.decided) ? (data.decided as string[]) : [];
-					const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+					const failed: string[] = Array.isArray(data.failed)
+						? data.failed.map((f: { reason?: unknown }) =>
+								typeof f?.reason === 'string' ? f.reason : ''
+							)
+						: [];
 					if (accept) {
 						onAccepted(
 							decided,
@@ -129,16 +142,17 @@
 					// The boxes follow the ticked state, not the form's defaults.
 					await update({ reset: false });
 					busy = false;
-					if (failed === 0) return onClose();
-					note = `${edits(decided.length)} ${accept ? 'accepted' : 'rejected'}. ${edits(failed)} could not be ${
-						accept ? 'accepted because the text or the suggestion changed' : 'rejected'
-					}.`;
+					const outcome = bulkDecisionNote(decided.length, failed, accept);
+					if (failed.length === 0) return onClose(outcome);
+					note = outcome;
 				};
 			}}
 		>
 			<div class="modal-body">
 				{#if note}
 					<p class="form-error" role="alert">{note}</p>
+				{:else if saving}
+					<p class="rd-saving" role="status">Saving your latest typing first...</p>
 				{/if}
 				{#if suggestions.length === 0}
 					<p>No suggested edits are waiting on this scene.</p>
@@ -245,6 +259,11 @@
 	.rd-edit :global(.rv-diff) {
 		display: block;
 		margin-bottom: 2px;
+	}
+	.rd-saving {
+		margin: 0 0 var(--space-2);
+		font-size: var(--text-sm);
+		color: var(--text-muted);
 	}
 	.rd-warning {
 		margin: var(--space-3) 0 0;

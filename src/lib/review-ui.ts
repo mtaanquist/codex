@@ -71,6 +71,36 @@ export function suggestionKind(suggestion: {
 	return 'replace';
 }
 
+// Whether an insertion the server made can be made at the point at in live,
+// the editor's text: base (the text the server inserted into) with the
+// writer's unsaved typing since. The typing must not touch the point, so the
+// text on both sides of it still reads as in base, and inserting there must
+// give stored, the server's text.
+export function insertionFits(
+	base: string,
+	live: string,
+	stored: string,
+	at: number,
+	insert: string
+): boolean {
+	let place = at;
+	if (live !== base) {
+		const most = Math.min(base.length, live.length);
+		let prefix = 0;
+		while (prefix < most && base[prefix] === live[prefix]) prefix++;
+		let suffix = 0;
+		while (
+			suffix < most - prefix &&
+			base[base.length - 1 - suffix] === live[live.length - 1 - suffix]
+		)
+			suffix++;
+		if (at < prefix) place = at;
+		else if (at > live.length - suffix) place = at - (live.length - base.length);
+		else return false;
+	}
+	return base.slice(0, place) + insert + base.slice(place) === stored;
+}
+
 // The client shapes of a thread and a suggestion, matching what listThreads
 // and listSuggestions return once serialised to the page.
 export type ReviewComment = {
@@ -469,4 +499,23 @@ export function patternName(body: string): string {
 	if (labelled) return labelled[1].trim();
 	const line = body.trim().split('\n')[0] ?? '';
 	return line.length > 60 ? `${line.slice(0, 60).trimEnd()}...` : line;
+}
+
+export function editCount(n: number): string {
+	return n === 1 ? '1 edit' : `${n} edits`;
+}
+
+// What the decide dialog says after a bulk accept or reject: how many went
+// through and, for the rest, the server's own reasons, each said once.
+export function bulkDecisionNote(
+	decided: number,
+	failedReasons: string[],
+	accept: boolean
+): string {
+	const verb = accept ? 'accepted' : 'rejected';
+	const done = `${editCount(decided)} ${verb}.`;
+	if (failedReasons.length === 0) return done;
+	const reasons = [...new Set(failedReasons.filter((r) => r.trim()))];
+	const why = reasons.length > 0 ? ` ${reasons.join(' ')}` : '';
+	return `${done} ${editCount(failedReasons.length)} could not be ${verb}.${why}`;
 }

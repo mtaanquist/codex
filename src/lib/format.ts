@@ -105,6 +105,15 @@ export function spentPhrase(usd: number, estimated?: boolean, digits = 2): strin
 	return `about $${usd.toFixed(digits)}${estimated ? ' (estimated)' : ''}`;
 }
 
+/**
+ * Why a background job stopped at the spend cap, and what it had spent. A job
+ * stops before a request that could pass the cap, so what it spent can be
+ * under the cap.
+ */
+export function capStopPhrase(usd: number, estimated?: boolean): string {
+	return `before the next request could take it past your spend cap, having spent ${spentPhrase(usd, estimated)}`;
+}
+
 /** "950", "1.2k": compact counts for tight rows. Empty for non-positive. */
 export function compactCount(n: number): string {
 	if (n <= 0) return '';

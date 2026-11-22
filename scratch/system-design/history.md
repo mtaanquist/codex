@@ -26,6 +26,30 @@ focused again when focus fell to the page. The return-to cookie is only set
 for a request with `Sec-Fetch-Dest: document` (or none), and `?pass=` is
 taken off the address with a shallow replace once read.
 
+Spend cap held before every request (2026-11-22, `fix/assistant-retry-cap`,
+#1331): the background jobs checked `capReached` (spend at or over the cap)
+only between steps, and the gateway resent a failed attempt the endpoint had
+billed, so a job could end well past its cap, and a pg-boss retry of the job
+sent again from under it. The rule drafting already had now lives in the
+gateway for every metered request: before each send (first, resend, resume,
+tool round) it asks `SpendMeter.wouldPassCap` with the request's prompt
+(chars/4, tool specs included, as a Claude cache write) and its reply at the
+limit. A held request throws `SpendCapError` and marks the meter held, so
+`capReached` is true from then on and every existing boundary check stops the
+run there; each job maps the error to its own capped outcome instead of a
+failure. A caller with its own `mayResend` hook (drafting) keeps its own
+ceiling, which follows the cap in force at each request. A hold inside a
+review's tool loop can stop a scene after some of its notes were staged; the
+scene stays out of `completed`, so a continuation reads it again with those
+notes as prior. The cap tests now report $1 a request as many cheap tokens,
+so a request's own estimate stays a few cents. A request under a capped
+meter drops the writer's reply-size and reply-count extra parameters, as a
+bounded drafting request does, so the reply cannot outgrow the limit the
+check counted. The capped notices share one phrase (`capStopPhrase`): the job
+stopped before the next request could pass the cap, having spent about $X,
+which stays true below the cap. Left open: the chars/4 estimate with no
+safety factor.
+
 Small non-Assistant polish (2026-11-20, staging branch
 `staging/non-assistant-polish`, lanes #1278 to #1284): six backlog issues.
 `resolvePlanEntity` is one select with a left join per entity table instead
@@ -1227,10 +1251,13 @@ sixth commit narrowed it. What the code does now:
   detached on the fourth commit); "hard" to "Mara" detaches it (only a
   chance "ar" is shared), where main keeps it on "Mara"; a range with an
   edit inside it and others within a few letters
-  of its ends is lost more often than on main (above); a whole-text conversion
-  between CRLF and LF loses comments and suggestions on lines of ten
-  characters or fewer, which main keeps (markers are mapped on LF text and
-  are not affected).
+  of its ends is lost more often than on main (above). A whole-text conversion
+  from CRLF to LF lost comments and suggestions on lines of ten characters
+  or fewer (each such line sat in a kept run between two `\r` deletions, too
+  short to count); since #1361 a base with `\r` is compared as `toLf(base)`
+  when the current text has no `\r`, offsets moved across as `lfOffset`
+  does. The reverse (LF base, CRLF current) is not handled: the editor
+  never saves `\r`. Markers are mapped on LF text and were not affected.
 
 ## MCP endpoint, review round 5 (2026-11-22)
 

@@ -165,6 +165,21 @@
 	let clearing = $state(false);
 	// The review toolbar's dialog for deciding on several edits at once.
 	let deciding = $state(false);
+	// Read out once the dialog closes itself, having decided every ticked edit.
+	let decidedNote = $state('');
+	async function closeDecide(outcome?: string) {
+		deciding = false;
+		if (!outcome) return;
+		// Emptied first so the same outcome twice is read out twice.
+		decidedNote = '';
+		await tick();
+		decidedNote = outcome;
+		// The toolbar that opened the dialog goes with the last edits, so focus
+		// would drop to the page; the notes pane holds it instead.
+		await tick();
+		const active = document.activeElement;
+		if (!active || active === document.body) paneEls.notes?.focus();
+	}
 	const discussions = $derived(
 		new Map(threads.filter((t) => t.suggestionId).map((t) => [t.suggestionId!, t]))
 	);
@@ -828,6 +843,7 @@
 
 		<aside class="pane right" aria-label={RIGHT_PANE_LABEL} tabindex="-1" bind:this={paneEls.notes}>
 			<PaneResizer side="right" />
+			<p class="visually-hidden" role="status">{decidedNote}</p>
 			<!-- One panel invocation, two shapes of pane: with the Assistant the strip
 			     is a real tablist, without it the pane is just the Comments panel,
 			     which carries its own title. The props must not drift between the
@@ -945,7 +961,7 @@
 		suggestions={pendingHere}
 		beforeAccept={flushEditor}
 		onAccepted={(ids, accepted) => editorRef?.applyAccepted(ids, accepted)}
-		onClose={() => (deciding = false)}
+		onClose={closeDecide}
 	/>
 {/if}
 

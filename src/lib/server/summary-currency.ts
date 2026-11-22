@@ -37,3 +37,17 @@ export function usableSceneSummary(scene: SceneSummarySource): string | null {
 	if (!scene.summaryGeneratedAt) return text;
 	return summaryIsCurrent(scene.summaryGeneratedAt, scene.updatedAt) ? text : null;
 }
+
+// Put before a scene summary the Assistant wrote before the scene last changed.
+export const OUT_OF_DATE_SCENE_SUMMARY_NOTE =
+	'(Out of date: written before the scene last changed, so it may no longer match the scene text.)';
+
+// The scene summary to give the model as context: the writer's own as it is,
+// the Assistant's as it is while current, and the Assistant's out-of-date one
+// with a note in front, as an out-of-date arc is sent.
+export function sceneSummaryToSend(scene: SceneSummarySource): string | null {
+	const text = scene.summaryMd?.trim();
+	if (!text) return null;
+	if (usableSceneSummary(scene)) return text;
+	return `${OUT_OF_DATE_SCENE_SUMMARY_NOTE} ${text}`;
+}

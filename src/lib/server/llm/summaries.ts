@@ -9,7 +9,7 @@ import {
 	type GatewayDeps
 } from './gateway.ts';
 import { buildSceneSummaryMessage } from './prompts/summary.ts';
-import { spentFields, type SpendMeter } from './spend.ts';
+import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import type { ChatMessage } from './providers/types.ts';
 import { storyIsLive } from '../universe-scope.ts';
@@ -136,9 +136,11 @@ export async function summariseStory(
 	let changed = 0;
 	let noModel = false;
 	let disabled = false;
-	// The gate refusal ends the pass; anything else is one item's failure.
+	// The gate refusal and the spend cap end the pass; anything else is one
+	// item's failure.
 	const stopsPass = (err: unknown): boolean => {
-		if (err instanceof NoModelError) noModel = true;
+		if (err instanceof SpendCapError) capped = true;
+		else if (err instanceof NoModelError) noModel = true;
 		else if (err instanceof AssistantDisabledError) disabled = true;
 		else return false;
 		return true;
@@ -174,7 +176,23 @@ export async function summariseStory(
 			capped = true;
 			break;
 		}
-		if (blank(scene.bodyMd)) continue;
+		if (blank(scene.bodyMd)) {
+			// An Assistant summary of a scene since emptied tells of text that is
+			// gone. Cleared under the same checks as a write, so text typed or a
+			// summary given since the read keeps the row as it is. The writer's
+			// own summary (no summary_generated_at) stays.
+			if (scene.summaryGeneratedAt && scene.summaryMd !== null) {
+				await db.execute(sql`
+					update scenes set summary_md = null, summary_generated_at = null
+					where id = ${scene.id}
+						and updated_at = ${scene.updatedAtText}::timestamptz
+						and summary_md is not distinct from ${scene.summaryMd}
+						and summary_generated_at = ${scene.generatedAtText}::timestamptz
+						and deleted_at is null
+				`);
+			}
+			continue;
+		}
 		const changedSince = scene.summaryGeneratedAt
 			? !summaryIsCurrent(scene.summaryGeneratedAt, scene.updatedAt)
 			: false;
