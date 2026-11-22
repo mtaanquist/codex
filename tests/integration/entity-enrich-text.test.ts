@@ -557,6 +557,30 @@ describe('the estimate', () => {
 		);
 	});
 
+	it('prices a Claude read at the rate for writing its text to the cache', async () => {
+		await writeScenes(storyId, ['Bram counted the boats.']);
+		await saveAccountLlmConfig(db, ownerId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk',
+			models: { chat: 'chat-model', utility: 'chat-model' },
+			toolCallBudget: 8,
+			cacheTtl: '1h'
+		});
+		await saveModelPricing(db, ownerId, {
+			'chat-model': { prompt: 0.000001, completion: 0.000002 }
+		});
+		const counted = await estimate();
+		// The one-hour cache bills new text at twice the plain prompt price.
+		expect(counted!.scenes.estCostUsd).toBeCloseTo(
+			counted!.scenes.estTokens * 0.000002 + 1500 * 0.000002,
+			8
+		);
+	});
+
 	it('offers the whole book only from a story, with a known window it fits, when it adds scenes', async () => {
 		await writeScenes(storyId, [
 			'Bram counted the boats.',
