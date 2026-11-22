@@ -831,6 +831,124 @@ describe('review findings, round 8', () => {
 	}, 120_000);
 });
 
+describe('review findings, round 9', () => {
+	const before = 'The kettle was cold when she came down to the kitchen.';
+	const after = 'They set out before the bell rang for the morning office.';
+	const was = 'Mara walked slowly down to the old harbour and waited there for the boat.';
+	const mainOf = (base: string, current: string, start: number, end: number) =>
+		wholeTextRange(wholeTextSpans(base, current), base.length, start, end);
+
+	// H1: an edit inside a range, with two more in the same sentence.
+	it('H1: keeps a range through an edit inside it when its sentence has other edits', () => {
+		const cases: [string, string, string][] = [
+			[
+				'the old harbour',
+				'Mara went slowly down to the old grey harbour and waited for the boat.',
+				'the old grey harbour'
+			],
+			[
+				'the old harbour',
+				'Mara went slowly down to the old harbuor and waited for the boat.',
+				'the old harbuor'
+			],
+			[
+				'down to the old harbour',
+				'Mara went slowly down to the harbour and waited for the boat.',
+				'down to the harbour'
+			]
+		];
+		for (const [words, now, want] of cases) {
+			const base = [before, was, after].join('\n\n');
+			const current = [before, now, after].join('\n\n');
+			const at = base.indexOf(words);
+			const end = at + words.length;
+			expect(quote(current, mainOf(base, current, at, end))).toBe(want);
+			const range = createAnchorMapper(WRITER_DIFF_BUDGET).range(base, current, at, end);
+			const ends = createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, end);
+			expect({ now, range: quote(current, range), ends: quote(current, ends) }).toEqual({
+				now,
+				range: want,
+				ends: want
+			});
+		}
+	});
+
+	// M1: the ends map through two spans, one a sentence that moved; the
+	// range must not stretch over the text that now lies between them.
+	it('M1: does not stretch a range over the text a moved sentence was carried past', () => {
+		const base =
+			'The kettle sang on the stove all morning. Mara watched the rain against the window. ' +
+			'Then she left.\n\nTobin came home late that evening with the letter. He did not speak at all.';
+		const current =
+			'The kettle sang on the stove all morning. Then she left.\n\nTobin came home late that ' +
+			'evening with the letter. He did not speak at all. Mara watched the rain against the window.';
+		const at = base.indexOf('all morning. Mara watched');
+		const end = at + 'all morning. Mara watched'.length;
+		expect(mainOf(base, current, at, end)).toBeNull();
+		for (const mapper of [
+			createAnchorMapper(WRITER_DIFF_BUDGET),
+			createAnchorMapper(SAVE_DIFF_BUDGET)
+		]) {
+			expect(mapper.range(base, current, at, end)).toBeNull();
+			expect(mapper.ends(base, current, at, end)).toBeNull();
+		}
+		// Each part on its own is still placed.
+		const morning = base.indexOf('all morning.');
+		expect(quote(current, reanchorRange(base, current, morning, morning + 12))).toBe(
+			'all morning.'
+		);
+		const mara = base.indexOf('Mara watched');
+		expect(quote(current, reanchorRange(base, current, mara, mara + 12))).toBe('Mara watched');
+	});
+
+	// Found by the clustered edits and seeds 1 to 60 and 100 to 160 of the
+	// property test.
+	it('a marker whose first word became one sharing a letter takes the new word', () => {
+		// "of" became "long" and kept its "o", a run too short to count.
+		const base = 'Under morning table after of his face Esk that. Never or before.';
+		const current = 'Under morning table after long his face Esk that. Never or before.';
+		const at = base.indexOf('of his face Esk');
+		const ends = createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, at + 15);
+		expect(quote(current, ends)).toBe('long his face Esk');
+		// A marker on one word replaced outright, sharing only a chance "r"
+		// with it, is detached rather than stored on the new word.
+		const was = 'Boat before nearly my turned grey waited your field heavy her sudden!';
+		const now = 'Boat before nearly my turned grey waited your field heavy Mara sudden!';
+		const her = was.indexOf('her');
+		expect(createAnchorMapper(SAVE_DIFF_BUDGET).ends(was, now, her, her + 3)).toBeNull();
+	});
+
+	it('does not stretch a range over a paragraph put in before one that starts with the same letters', () => {
+		const first = 'The kettle was cold when she came down to the kitchen.';
+		const cases: [string, string, string][] = [
+			// A new paragraph starting with "D" before "Dark ...".
+			[
+				[first, 'Dark letter there took no lost a Esk warm heavy wind.'].join('\n\n'),
+				[
+					first,
+					'Door Esk key pulled opened, chair, wind opened nearly.',
+					'Dark letter there took no lost a Esk warm heavy rain.'
+				].join('\n\n'),
+				'Dark letter'
+			],
+			// A copy of the paragraph before, starting "Li", before "Listened".
+			[
+				[first, 'Listened here slowly old lost our the sudden only?'].join('\n\n'),
+				[first, first, 'Listened here slowly old lost our Mara sudden only?'].join('\n\n'),
+				'Listened here'
+			]
+		];
+		for (const [base, current, words] of cases) {
+			const at = base.indexOf(words);
+			const want = { start: current.indexOf(words), end: current.indexOf(words) + words.length };
+			expect(reanchorRange(base, current, at, at + words.length)).toEqual(want);
+			expect(
+				createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, at, at + words.length)
+			).toEqual(want);
+		}
+	});
+});
+
 describe('placeSuggestion', () => {
 	const place = (base: string, current: string, start: number, end: number) =>
 		placeSuggestion(createAnchorMapper(WRITER_DIFF_BUDGET), base, current, start, end);
@@ -935,8 +1053,9 @@ describe('createAnchorMapper ends (for markers)', () => {
 describe('createAnchorMapper on edited prose, against the true positions', () => {
 	const EMOJI = ['\u{1F319}', '\u{1F600}'];
 	// A cell is one code unit of the edited text and the base index it came
-	// from, or -1 for one that is new.
-	type Cell = { ch: string; from: number };
+	// from, or -1 for one that is new. A character deleted and typed again
+	// elsewhere is new, with the index of the one it copies as `was`.
+	type Cell = { ch: string; from: number; was?: number };
 	// By code unit, so the index of a cell is its index in the text.
 	const units = (text: string, from: (k: number) => number): Cell[] =>
 		Array.from({ length: text.length }, (_, k) => ({ ch: text[k], from: from(k) }));
@@ -1000,12 +1119,13 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 		// called the original).
 		const shuffled = new Set<number>();
 		const copied = new Set<number>();
+		let retyped = false;
 		const mark = (set: Set<number>, para: Cell[]) => {
 			for (const c of para) if (c.from !== -1) set.add(c.from);
 		};
 		for (let n = 1 + next(4); n > 0; n--) {
 			const k = next(paras.length);
-			const kind = next(12);
+			const kind = next(13);
 			edits.push(String(kind));
 			const text = paras[k].map((c) => c.ch).join('');
 			if (kind === 0) {
@@ -1048,7 +1168,10 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 					newSep()
 				);
 			} else if (kind === 4 && paras.length > 2) {
-				removeAt(k);
+				// Deleting a paragraph that was copied leaves the copy reading as
+				// the original moved there.
+				const { para } = removeAt(k);
+				if (para.some((c) => copied.has(c.from))) mark(shuffled, para);
 			} else if (kind === 5 && paras.length > 2) {
 				const { para, separator } = removeAt(k);
 				const to = next(paras.length + 1);
@@ -1084,6 +1207,24 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 				tail = convert(tail);
 			} else if (kind === 11) {
 				tail = tail.length ? [] : cells('\n');
+			} else if (kind === 12 && paras.length > 1) {
+				// A sentence deleted and typed again at the end of another
+				// paragraph.
+				const starts = [0, ...[...text.matchAll(/[.?!] /g)].map((m) => m.index! + 2)];
+				if (starts.length < 2) continue;
+				const i = next(starts.length);
+				const last = i === starts.length - 1;
+				const from = last ? starts[i] - 1 : starts[i];
+				const to = last ? text.length : starts[i + 1];
+				const cut = paras[k].splice(from, to - from);
+				const sentence = last ? cut.slice(1) : cut.slice(0, -1);
+				mark(shuffled, sentence);
+				const into = (k + 1 + next(paras.length - 1)) % paras.length;
+				paras[into].push(
+					...cells(' '),
+					...sentence.map((c) => ({ ch: c.ch, from: -1, was: c.from }))
+				);
+				retyped = true;
 			}
 		}
 		const doc: Cell[] = [];
@@ -1094,7 +1235,116 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 		doc.forEach((c, i) => {
 			if (c.from !== -1) pos[c.from] = i;
 		});
-		return { base, current, pos, edits, shuffled, copied };
+		const origin = doc.map((c) => (c.from !== -1 ? c.from : (c.was ?? -1)));
+		return { base, current, pos, origin, edits, shuffled, copied, retyped };
+	}
+
+	// Paragraphs, one of them (not the first or last) edited in a cluster: a
+	// range of 2 to 10 words in it, one edit inside it or beside it (a typo, a
+	// word added, a word removed) and two or three more in the same sentence or
+	// paragraph. Returns every range of 2 to 10 whole words in that paragraph.
+	// Not in the prose's vocabulary, so an added word is never a copy of one
+	// beside it (which copy is the original would be a guess).
+	const ADDED = ['pale', 'faint', 'brisk', 'damp', 'idle', 'stark'];
+	function clusterCase(next: (below: number) => number) {
+		const texts: string[] = [];
+		for (let i = 3 + next(3); i > 0; i--)
+			texts.push(
+				paragraph(next)
+					.split(/(?<=[.?!]) /)
+					.slice(0, 2 + next(3))
+					.join(' ')
+			);
+		const k = 1 + next(texts.length - 2);
+		const offset = texts.slice(0, k).reduce((n, t) => n + t.length + 2, 0);
+		const text = texts[k];
+		const words: { start: number; end: number; sentence: number; text: string }[] = [];
+		let sentence = 0;
+		for (const m of text.matchAll(/\S+/g)) {
+			words.push({
+				start: offset + m.index!,
+				end: offset + m.index! + m[0].length,
+				sentence,
+				text: m[0].replace(/[,.?!]+$/, '').toLowerCase()
+			});
+			if (/[.?!]$/.test(m[0])) sentence++;
+		}
+		const length = Math.min(2 + next(9), words.length - 2);
+		const i = next(words.length - length + 1);
+		const j = i + length - 1;
+		type Op = { kind: number; word: number };
+		const ops: Op[] = [];
+		// The edit at the range: 0 a typo, 1 a word added after `word`, 2 a
+		// word removed.
+		const kind = next(3);
+		const inside = next(2) === 0;
+		if (inside) {
+			if (kind === 2 && length >= 3) ops.push({ kind, word: i + 1 + next(length - 2) });
+			else if (kind === 0) ops.push({ kind, word: i + next(length) });
+			else ops.push({ kind: 1, word: i + next(length - 1) });
+		} else {
+			const side = i > 0 && (j + 1 >= words.length || next(2) === 0) ? i - 1 : j + 1;
+			if (kind === 1) ops.push({ kind, word: side === i - 1 ? i - 1 : j });
+			else ops.push({ kind, word: side });
+		}
+		const used = new Set([i - 1, i, j, j + 1, ...ops.map((o) => o.word)]);
+		const near = words.map((w, n) => n).filter((n) => !used.has(n) && (n < i || n > j));
+		const sameSentence = near.filter(
+			(n) => words[n].sentence >= words[i].sentence && words[n].sentence <= words[j].sentence
+		);
+		for (let m = 2 + next(2); m > 0; m--) {
+			const pool = sameSentence.filter((n) => !used.has(n)).length
+				? sameSentence.filter((n) => !used.has(n))
+				: near.filter((n) => !used.has(n));
+			if (!pool.length) break;
+			const word = pool[next(pool.length)];
+			used.add(word);
+			ops.push({ kind: next(3), word });
+		}
+		const para = units(text, (n) => offset + n);
+		const find = (from: number) => para.findIndex((c) => c.from === from);
+		for (const { kind, word } of ops) {
+			const { start, end } = words[word];
+			const a = find(start);
+			const b = find(end - 1);
+			if (a === -1 || b === -1) continue;
+			if (kind === 0) {
+				// A letter inside the word (never its first or last) mistyped.
+				const inner: number[] = [];
+				for (let n = a + 1; n < b; n++) if (/[a-z]/.test(para[n].ch)) inner.push(n);
+				if (!inner.length) continue;
+				const at = inner[next(inner.length)];
+				const letter = 'abcdefghijklmnopqrstuvwxyz'.replace(para[at].ch, '')[next(25)];
+				para[at] = { ch: letter, from: -1 };
+			} else if (kind === 1) {
+				para.splice(b + 1, 0, ...cells(` ${ADDED[next(ADDED.length)]}`));
+			} else if ([word - 1, word + 1].some((n) => words[n] && words[n].text === words[word].text)) {
+				// Which of two like words beside each other went is a guess.
+				continue;
+			} else if (b + 1 < para.length && para[b + 1].ch === ' ') para.splice(a, b - a + 2);
+			else if (a > 0 && para[a - 1].ch === ' ') para.splice(a - 1, b - a + 2);
+		}
+		const doc: Cell[] = [];
+		let at = 0;
+		texts.forEach((t, n) => {
+			if (n > 0) {
+				doc.push(...units('\n\n', (m) => at + m));
+				at += 2;
+			}
+			doc.push(...(n === k ? para : units(t, (m) => at + m)));
+			at += t.length;
+		});
+		const base = texts.join('\n\n');
+		const current = doc.map((c) => c.ch).join('');
+		const pos = new Array<number>(base.length).fill(-1);
+		doc.forEach((c, n) => {
+			if (c.from !== -1) pos[c.from] = n;
+		});
+		const ranges: { s: number; e: number; target: boolean }[] = [];
+		for (let a = 0; a < words.length; a++)
+			for (let b = a + 1; b < Math.min(words.length, a + 10); b++)
+				ranges.push({ s: words[a].start, e: words[b].end, target: a === i && b === j });
+		return { base, current, pos, ranges, ops: ops.map((o) => `${o.kind}@${o.word}`), inside, i, j };
 	}
 
 	const splits = (text: string, at: number) =>
@@ -1125,24 +1375,36 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 	// places where it belongs is placed there too, unless only the support
 	// rule refuses it (counted as supportCost). (d) No result is out of range,
 	// inverted or splits a character. (e) No result shares no text with the
-	// range it was mapped from (counted as unrelated, against main's).
+	// range it was mapped from (counted as unrelated, against main's). (f) In
+	// a round with no move, no result holds 20 or more visible characters from
+	// outside its range beyond where the range truly went; in rounds with a
+	// move or a sentence typed again elsewhere, no more results do than on
+	// main. (g) With clustered edits, every range of whole words in the edited
+	// paragraph that main places where it belongs is placed there, by range
+	// and by a marker's rule, with nothing held out; what is not is counted,
+	// as lost to the support rule or as a tie (an equally short alignment
+	// main happened to share with the truth).
 	//
 	// Held out, each for a reason the design gives:
-	// - Ranges on a paragraph that was copied, from (a) to (c) and (e): either
-	//   copy can be called the original, and the mapper takes the one left as
-	//   it was.
+	// - Ranges on a paragraph that was copied, from (a) to (c) and (e), and
+	//   copied text from (f): either copy can be called the original, and the
+	//   mapper takes the one left as it was.
 	// - Ranges on a line that stands more than once (a scene break, a short
-	//   reply), from (c) and (e): such a line is never paired, so when copies
-	//   of it are deleted or added, which copy is kept is a guess.
-	// - Rounds that move a paragraph, from (c): main's diff of the whole text
-	//   keeps some of the text a move left behind and drops some that stayed,
-	//   and this follows paired units instead.
+	//   reply), from (a), (c) and (e), and such lines from (f): such a line is
+	//   never paired, so when copies of it are deleted or added, which copy is
+	//   kept is a guess.
+	// - Rounds that move a paragraph (or delete one that was copied, which
+	//   leaves the copy reading as moved), from (c): main's diff of the whole
+	//   text keeps some of the text a move left behind and drops some that
+	//   stayed, and this follows paired units instead.
 	function check(seed: number, rounds: number) {
 		const next = seeded(seed);
 		const misplaced: unknown[] = [];
 		const untouchedLost: unknown[] = [];
 		const mainOnly: unknown[] = [];
 		const unrelated: unknown[] = [];
+		const stretched: unknown[] = [];
+		const ties: unknown[] = [];
 		const counts = {
 			untouched: 0,
 			truth: 0,
@@ -1150,10 +1412,42 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 			mainRight: 0,
 			supportCost: 0,
 			placed: 0,
-			mainUnrelated: 0
+			mainUnrelated: 0,
+			// Results holding 20 or more foreign characters, in rounds with a
+			// move and in rounds with a sentence typed again.
+			stretchedMoved: 0,
+			mainStretchedMoved: 0,
+			stretchedRetyped: 0,
+			mainStretchedRetyped: 0,
+			clusterMainRight: 0,
+			clusterSupport: 0
+		};
+		const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+		type At = { start: number; end: number };
+		// How many visible characters of `got` came from base text outside
+		// [s, e) (a character typed again counts as the one it copies), and lie
+		// outside where the range truly went (text moved into it is part of
+		// it). White space is left out, as one space or line break is as good
+		// as another, and so is text in `held`.
+		const foreign = (
+			text: string,
+			origin: number[],
+			s: number,
+			e: number,
+			got: At,
+			want: At | null,
+			held?: (at: number) => boolean
+		) => {
+			let n = 0;
+			for (let k = got.start; k < got.end; k++) {
+				if (want && k >= want.start && k < want.end) continue;
+				const o = origin[k];
+				if (o !== -1 && (o < s || o >= e) && /\S/.test(text[k]) && !held?.(o)) n++;
+			}
+			return n;
 		};
 		for (let round = 0; round < rounds; round++) {
-			const { base, current, pos, edits, shuffled, copied } = proseCase(next);
+			const { base, current, pos, origin, edits, shuffled, copied, retyped } = proseCase(next);
 			const moved = shuffled.size > 0;
 			const spans = wholeTextSpans(base, current);
 			const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
@@ -1171,34 +1465,39 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 				for (let k = s; k < e; k++) if (set.has(k)) return true;
 				return false;
 			};
-			const lineAt = (at: number) => {
-				const from = Math.max(base.lastIndexOf('\n', at - 1) + 1, 0);
-				const to = base.indexOf('\n', at);
-				return base.slice(from, to === -1 ? base.length : to).replace(/\r$/, '');
-			};
+			// Whether each base character is on a line that stands more than once.
+			const onRepeated: boolean[] = [];
+			const lineCount = new Map<string, number>();
+			const allLines = base.split('\n');
+			for (const l of allLines) {
+				const line = l.replace(/\r$/, '');
+				lineCount.set(line, (lineCount.get(line) ?? 0) + 1);
+			}
+			for (const l of allLines) {
+				const line = l.replace(/\r$/, '');
+				const twice = line !== '' && lineCount.get(line)! > 1;
+				for (let k = 0; k <= l.length; k++) onRepeated.push(twice);
+			}
 			const repeated = (s: number, e: number) => {
-				for (let k = s; k < e; k++) {
-					const line = lineAt(k);
-					if (line && base.split('\n').filter((l) => l.replace(/\r$/, '') === line).length > 1)
-						return true;
-				}
+				for (let k = s; k < e; k++) if (onRepeated[k]) return true;
 				return false;
 			};
-			const valid = (got: { start: number; end: number } | null) =>
+			const held = (at: number) => copied.has(at) || onRepeated[at];
+			const valid = (got: At | null) =>
 				got === null ||
 				(got.start >= 0 &&
 					got.end <= current.length &&
 					got.start < got.end &&
 					!splits(current, got.start) &&
 					!splits(current, got.end));
-			const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-			// Whether not one character of base[s, e) went into `got`, and it
-			// does not read the same either. (The same text can be left by
-			// chance where two rewritten sentences share their last letters,
-			// "hand." and "found.": that end is shared, so it maps.)
-			const sharesNothing = (s: number, e: number, got: { start: number; end: number }) => {
+			// Whether not one character of base[s, e) (or a copy of one typed
+			// again) went into `got`, and it does not read the same either. (The
+			// same text can be left by chance where two rewritten sentences
+			// share their last letters, "hand." and "found.": that end is shared,
+			// so it maps.)
+			const sharesNothing = (s: number, e: number, got: At) => {
 				if (current.slice(got.start, got.end) === base.slice(s, e)) return false;
-				for (let k = s; k < e; k++) if (pos[k] >= got.start && pos[k] < got.end) return false;
+				for (let k = got.start; k < got.end; k++) if (origin[k] >= s && origin[k] < e) return false;
 				return true;
 			};
 
@@ -1288,8 +1587,25 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 				if (/\s/.test(base[s]) || /\s/.test(base[e - 1])) continue;
 				const want = truth(s, e);
 				const words = base.slice(s, e);
+				// (f)
+				if (!repeated(s, e)) {
+					const kind = retyped ? 'Retyped' : 'Moved';
+					for (const [how, result] of [
+						['range', got],
+						['ends', ends]
+					] as const) {
+						const n = result ? foreign(current, origin, s, e, result, want, held) : 0;
+						if (n < 20) continue;
+						if (moved) counts[`stretched${kind}`]++;
+						else stretched.push({ seed, round, edits, how, s, e, words, result, want, n });
+					}
+					for (const result of [main, mainEnds])
+						if (moved && result && foreign(current, origin, s, e, result, want, held) >= 20)
+							counts[`mainStretched${kind}`]++;
+				}
 				// (a)
 				if (
+					!repeated(s, e) &&
 					untouched(s, e) &&
 					occurrences(base, words) === 1 &&
 					occurrences(current, words) === 1
@@ -1312,13 +1628,60 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 					else mainOnly.push({ seed, round, edits, s, e, words, got, want });
 				}
 			}
+
+			// (g), and (f) for the clustered edits, which move nothing.
+			const c = clusterCase(next);
+			const cSpans = wholeTextSpans(c.base, c.current);
+			const cRange = createAnchorMapper(WRITER_DIFF_BUDGET);
+			const cEnds = createAnchorMapper(SAVE_DIFF_BUDGET);
+			const cLoose = createAnchorMapper(WRITER_DIFF_BUDGET, false);
+			const cLooseEnds = createAnchorMapper(SAVE_DIFF_BUDGET, false);
+			const cOrigin = new Array<number>(c.current.length).fill(-1);
+			c.pos.forEach((at, b) => {
+				if (at !== -1) cOrigin[at] = b;
+			});
+			for (const { s, e } of c.ranges) {
+				const want =
+					c.pos[s] !== -1 && c.pos[e - 1] !== -1
+						? { start: c.pos[s], end: c.pos[e - 1] + 1 }
+						: null;
+				const ms = wholeTextPoint(cSpans, c.base.length, s);
+				const me = wholeTextPoint(cSpans, c.base.length, e);
+				const results = [
+					[
+						'range',
+						cRange.range(c.base, c.current, s, e),
+						wholeTextRange(cSpans, c.base.length, s, e),
+						cLoose
+					],
+					[
+						'ends',
+						cEnds.ends(c.base, c.current, s, e),
+						ms !== null && me !== null && ms < me ? { start: ms, end: me } : null,
+						cLooseEnds
+					]
+				] as const;
+				for (const [how, result, main, without] of results) {
+					const at = { seed, round, ops: c.ops, how, words: c.base.slice(s, e), result, want };
+					if (result && foreign(c.current, cOrigin, s, e, result, want) >= 20) stretched.push(at);
+					if (want === null || !same(main, want)) continue;
+					counts.clusterMainRight++;
+					if (same(result, want)) continue;
+					const free =
+						how === 'range'
+							? without.range(c.base, c.current, s, e)
+							: without.ends(c.base, c.current, s, e);
+					if (same(free, want)) counts.clusterSupport++;
+					else ties.push(at);
+				}
+			}
 		}
-		return { misplaced, untouchedLost, mainOnly, unrelated, counts };
+		return { misplaced, untouchedLost, mainOnly, unrelated, stretched, ties, counts };
 	}
 
 	it('places nothing on text it was not made on, keeps untouched text, and keeps what main keeps', () => {
 		// ANCHOR_SEED runs another seed.
-		const { misplaced, untouchedLost, mainOnly, unrelated, counts } = check(
+		const { misplaced, untouchedLost, mainOnly, unrelated, stretched, ties, counts } = check(
 			Number(process.env.ANCHOR_SEED ?? 51),
 			300
 		);
@@ -1326,11 +1689,22 @@ describe('createAnchorMapper on edited prose, against the true positions', () =>
 		expect(untouchedLost).toEqual([]);
 		expect(mainOnly).toEqual([]);
 		expect(unrelated).toEqual([]);
+		expect(stretched).toEqual([]);
+		expect(counts.stretchedMoved).toBeLessThanOrEqual(counts.mainStretchedMoved);
+		expect(counts.stretchedRetyped).toBeLessThanOrEqual(counts.mainStretchedRetyped);
+		// What clustered edits cost: over seeds 1 to 60 and 100 to 160, the
+		// support rule lost 3.5% to 5.1% a seed of the ranges main placed
+		// where they belong, and ties at most 0.031% (seed 51: 4.1% and 4).
+		expect(counts.clusterSupport).toBeLessThan(0.06 * counts.clusterMainRight);
+		expect(ties.length).toBeLessThan(0.0005 * counts.clusterMainRight);
 		expect(counts.untouched).toBeGreaterThan(1000);
-		expect(counts.truth).toBeGreaterThan(5000);
+		expect(counts.truth).toBeGreaterThan(4000);
 		expect(counts.movedTruth).toBeGreaterThan(1000);
-		// The rounds do reach the case: main places hundreds of ranges on
-		// text that shares nothing with them (seed 51: 330).
+		expect(counts.clusterMainRight).toBeGreaterThan(100_000);
+		// The rounds do reach the cases: main places hundreds of ranges on
+		// text that shares nothing with them (seed 51: 330), and some over
+		// text from outside them after a move (seed 51: 20).
 		expect(counts.mainUnrelated).toBeGreaterThan(100);
+		expect(counts.mainStretchedMoved + counts.mainStretchedRetyped).toBeGreaterThan(5);
 	}, 60_000);
 });

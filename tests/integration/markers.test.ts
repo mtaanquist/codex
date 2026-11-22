@@ -619,6 +619,57 @@ describe('markers through a save, review findings', () => {
 		expect(await anchorOf(ids[0])).toBeNull();
 	});
 
+	// Round 9, H1: a version with one word in fifteen changed, as History
+	// restores, keeps every marker, whatever edits fall inside or beside it.
+	it('round 9, H1: keeps 40 markers when one word in fifteen of a 30,000 character scene changes', async () => {
+		const before = sceneParagraphs(71, 30_000);
+		const body = join(before);
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 32, bodyMd: body })
+			.returning();
+		const starts = paragraphStarts(before);
+		const rows = Array.from({ length: 40 }, (_, n) => {
+			let index = Math.floor(((n + 0.5) * before.length) / 40);
+			while (!phraseIn(before[index], 4)) index++;
+			const [from, to] = phraseIn(before[index], 4)!;
+			return {
+				sceneId: scene.id,
+				ownerId,
+				anchorStart: starts[index] + from,
+				anchorEnd: starts[index] + to
+			};
+		});
+		const markers = await db.insert(sceneMarkers).values(rows).returning();
+		const next = seeded(72);
+		const others = ['grey', 'cold', 'still', 'long', 'Mara', 'slowly'];
+		let count = 0;
+		const after = before.map((text) =>
+			text
+				.split(' ')
+				.map((word) => (++count % 15 === 0 ? word.replace(/[a-z]+/i, others[next(6)]) : word))
+				.join(' ')
+		);
+		expect(await save(scene.id, join(after))).toMatchObject({ ok: true });
+		let detached = 0;
+		for (const marker of markers) if ((await anchorOf(marker.id)) === null) detached++;
+		expect(detached).toBe(0);
+	});
+
+	// Round 9, M1: a marker reaching into a sentence that moved is detached,
+	// not stretched over what the sentence was carried past.
+	it('round 9, M1: detaches a marker reaching into a sentence that moved', async () => {
+		const before =
+			'The kettle sang on the stove all morning. Mara watched the rain against the window. ' +
+			'Then she left.\n\nTobin came home late that evening with the letter. He did not speak at all.';
+		const after =
+			'The kettle sang on the stove all morning. Then she left.\n\nTobin came home late that ' +
+			'evening with the letter. He did not speak at all. Mara watched the rain against the window.';
+		const { sceneId: id, ids } = await sceneWith(before, ['all morning. Mara watched']);
+		expect(await save(id, after)).toMatchObject({ ok: true });
+		expect(await anchorOf(ids[0])).toBeNull();
+	});
+
 	for (const changed of [450, 520, 1400]) {
 		it(`H3: keeps 300 markers with one word put into ${changed} of 1400 paragraphs`, async () => {
 			const before = shortParagraphs(43, 1400);

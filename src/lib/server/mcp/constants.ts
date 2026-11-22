@@ -94,6 +94,9 @@ export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
 // edit units (see DiffBudget): 400,000 a call (edit distance 630, about
 // 25 ms of character diff), and 4,000 (edit distance 63, under 1 ms) for each
 // further version of the scene an edit was made on once that is used up.
+// The line and sentence passes before the diff are not counted: one
+// comparison of a scene at the 2,000,000 character cap holds the thread for
+// 100 to 230 ms, and about 300 ms after the whole draft was replaced.
 // Past it an edit in a part of the scene that was not compared is reported
 // as possibly no longer applying (get_review_note) or not found (a follow-up
 // edit).

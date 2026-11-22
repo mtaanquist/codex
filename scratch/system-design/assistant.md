@@ -949,16 +949,27 @@ suggestion. On top of those:
     sentences in order inside each gap, split the texts into gaps; what is
     left of each gap, with the moved units cut out, is compared with the
     character diff main used, after setting aside the start the two sides
-    share. An end mapped through that diff counts only if it rests on a run
-    of at least 12 shared characters, 12 of them (or the whole range)
-    inside the range; otherwise the anchor is lost. A request has a
+    share; an insertion or deletion is moved along the text it repeats to a
+    line break, a sentence end or a space where it can be (diff-match-patch's
+    lossless cleanup), so a paragraph put in before one starting with the
+    same letter is put in at the line break. An end mapped through that diff
+    counts only if it rests on a run of at least 12 shared characters;
+    otherwise the anchor is lost. A range whose two ends map through
+    different runs is lost if a run starting between them came from outside
+    it (a moved sentence carried past). This costs ranges with several edits
+    close together: one with an edit inside it and two or three more in its
+    sentence or paragraph is lost 7% of the time (main: 0.3%). A request has a
     `DiffBudget` in edit units of character diff (about D squared for edit
     distance D; `perPair`, `total`, and a `floor` every pair may spend even
     once the total is used up). The line and sentence passes are not
     charged, so the same texts give the same result however busy the
     server is. A stretch whose diff runs past the budget is recorded as not
     checked, which is not the same as gone (`mapper.unchecked`). An app's
-    call has `APP_DIFF_BUDGET` (400,000 units, about 25 ms; floor 4,000);
+    call has `APP_DIFF_BUDGET` (400,000 units, about 25 ms of character
+    diff; floor 4,000). The uncharged line and sentence passes grow with the
+    scene: at the 2,000,000 character cap one comparison holds the thread
+    for 100 to 230 ms, and about 300 ms (app) to 350 ms (writer) after the
+    whole draft was replaced;
     the writer's pages, the in-app Assistant, accepting a suggestion and
     the export have `WRITER_DIFF_BUDGET` (1,000,000 a pair, about 55 ms;
     10,000,000 a mapper; floor 40,000), and a page compares its pairs
