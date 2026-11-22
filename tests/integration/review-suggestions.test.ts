@@ -670,6 +670,27 @@ describe('decideSuggestions (several at once)', () => {
 		]);
 	});
 
+	it('names each changed scene as it goes, so a throw part way loses none', async () => {
+		const fox = await suggestWord('brown fox', 'red vixen');
+		const dog = await suggestWord('lazy dog', 'sleeping hound');
+		const stamps = Object.fromEntries(
+			(await listSuggestions(db, storyId)).map((s) => [s.id, s.stamp])
+		);
+		// The second lookup of what the writer read blows up.
+		const seen = new Proxy(stamps, {
+			get: (target, id: string) => {
+				if (id === dog) throw new Error('boom');
+				return target[id];
+			}
+		}) as Record<string, string>;
+		const changed = new Set<string>();
+		await expect(
+			decideSuggestions(db, authorId, storyId, [fox, dog], true, seen, changed)
+		).rejects.toThrow('boom');
+		expect(await sceneBody()).toBe(BODY.replace('brown fox', 'red vixen'));
+		expect([...changed]).toEqual([sceneId]);
+	});
+
 	it('decides nothing for someone who does not own the story', async () => {
 		const fox = await suggestWord('brown fox', 'red vixen');
 		const result = await decideSuggestions(db, strangerId, storyId, [fox], true);

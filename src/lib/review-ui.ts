@@ -470,3 +470,22 @@ export function patternName(body: string): string {
 	const line = body.trim().split('\n')[0] ?? '';
 	return line.length > 60 ? `${line.slice(0, 60).trimEnd()}...` : line;
 }
+
+export function editCount(n: number): string {
+	return n === 1 ? '1 edit' : `${n} edits`;
+}
+
+// What the decide dialog says after a bulk accept or reject: how many went
+// through and, for the rest, the server's own reasons, each said once.
+export function bulkDecisionNote(
+	decided: number,
+	failedReasons: string[],
+	accept: boolean
+): string {
+	const verb = accept ? 'accepted' : 'rejected';
+	const done = `${editCount(decided)} ${verb}.`;
+	if (failedReasons.length === 0) return done;
+	const reasons = [...new Set(failedReasons.filter((r) => r.trim()))];
+	const why = reasons.length > 0 ? ` ${reasons.join(' ')}` : '';
+	return `${done} ${editCount(failedReasons.length)} could not be ${verb}.${why}`;
+}

@@ -1956,7 +1956,10 @@ export async function decideSuggestions(
 	accept: boolean,
 	// For an accept: the stamp of each replacement as the writer was shown it
 	// (see decideSuggestion), by suggestion id.
-	seen?: Record<string, string>
+	seen?: Record<string, string>,
+	// Filled with each scene as its text changes, so a caller can still act
+	// on the stored changes when a later accept throws part way.
+	changedScenes?: Set<string>
 ): Promise<BulkDecision> {
 	const decided: string[] = [];
 	const failed: BulkDecision['failed'] = [];
@@ -1980,6 +1983,7 @@ export async function decideSuggestions(
 		decided.push(id);
 		if (result.sceneId && result.bodyMd !== null && result.baseHash !== null) {
 			changes.push({ sceneId: result.sceneId, bodyMd: result.bodyMd, baseHash: result.baseHash });
+			changedScenes?.add(result.sceneId);
 		}
 	}
 	// The open editor may only build on the final text when every change was
