@@ -338,6 +338,19 @@
 									>
 										<h2 class="universe-name">{universe.name}</h2>
 									</a>
+									{#if universe.waiting > 0}
+										<a
+											class="chip"
+											href={resolve('/universes/[id]/[[section]]', {
+												id: universe.slug,
+												section: 'suggestions'
+											})}
+											aria-label="{count(
+												universe.waiting,
+												'suggestion'
+											)} waiting in {universe.name}">{count(universe.waiting, 'suggestion')}</a
+										>
+									{/if}
 								</div>
 								{#if universe.descriptionMd}
 									<p class="universe-description">{universe.descriptionMd}</p>

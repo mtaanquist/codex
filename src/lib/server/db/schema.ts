@@ -1559,6 +1559,9 @@ export type PatternUnitState = {
 		examples: string[];
 		threadId?: string;
 		noteBody?: string;
+		// The scenes the note names, in reading order. Only these get fixes.
+		// Absent in state saved before it was kept.
+		listed?: string[];
 		applied: string[];
 	}[];
 	// A survey that goes part by part (the whole book, chapter by chapter):

@@ -37,6 +37,9 @@ export const LAST_USED_REFRESH_MS = 5 * MINUTE;
 export const CLIENT_DOCUMENT_TTL_MS = DAY;
 export const CLIENT_DOCUMENT_MAX_BYTES = 64 * 1024;
 export const CLIENT_DOCUMENT_TIMEOUT_MS = 5000;
+// A document that could not be fetched, or did not qualify, is not asked for
+// again for this long; meanwhile the copy last checked, if any, stands.
+export const CLIENT_DOCUMENT_RETRY_MS = MINUTE;
 
 // Clean-up windows (see purgeExternalAccess).
 export const UNUSED_CLIENT_RETENTION = '24 hours';

@@ -86,7 +86,14 @@
 
 <div class="admin-block">
 	<div class="admin-card">
-		{#if !access.enabled}
+		{#if !access.available}
+			<div class="t-title">Access for apps is turned off on this Codex</div>
+			<div class="t-sub">
+				Your administrator has turned off access for apps, so no app can connect or read anything
+				now. If they turn it on again, the apps and tokens below work again. Disconnect any you no
+				longer want.
+			</div>
+		{:else if !access.enabled}
 			<!-- Turning access on lets an app in, so it asks who is there. Turning
 			     it off, below, asks for nothing. -->
 			<form method="POST" action="?/setExternalAccess" autocomplete="off" use:enhance={keepTyped}>
@@ -153,7 +160,7 @@
 			</form>
 		{/if}
 
-		{#if access.enabled}
+		{#if access.available && access.enabled}
 			<div class="field" style="margin:var(--space-4) 0 0;">
 				<label for="mcp-address">Address to give the app</label>
 				<div class="copy-field">
@@ -182,9 +189,11 @@
 		<div class="admin-card">
 			<div class="empty-state tight">
 				<p class="empty-state-text">
-					{access.enabled
-						? 'No app is connected. Paste the address above into an app to connect it.'
-						: 'No app is connected. Turn on access above to connect one.'}
+					{!access.available
+						? 'No app is connected.'
+						: access.enabled
+							? 'No app is connected. Paste the address above into an app to connect it.'
+							: 'No app is connected. Turn on access above to connect one.'}
 				</p>
 			</div>
 		</div>
@@ -293,7 +302,7 @@
 		</div>
 	{/if}
 
-	{#if access.enabled}
+	{#if access.available && access.enabled}
 		<form
 			method="POST"
 			action="?/createToken"
@@ -374,11 +383,13 @@
 			</div>
 		</form>
 	{:else}
-		<div class="admin-card">
-			<div class="empty-state tight">
-				<p class="empty-state-text">Turn on access above to make a token.</p>
+		{#if access.available}
+			<div class="admin-card">
+				<div class="empty-state tight">
+					<p class="empty-state-text">Turn on access above to make a token.</p>
+				</div>
 			</div>
-		</div>
+		{/if}
 		<div class="settings-actions">
 			<FormStatus
 				error={form?.scope === 'tokens' && form.message ? form.message : null}

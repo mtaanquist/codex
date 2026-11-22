@@ -81,13 +81,22 @@
 	text-decoration: none;
 	border-bottom: 2px solid color-mix(in oklab, var(--auth) 60%, transparent);
 }
+/* Muted, not faint: the faint tier misses AA on a mark's tint. */
 .rv-del-t {
-	color: var(--text-faint);
+	color: var(--text-muted);
 	text-decoration: line-through;
 	text-decoration-color: color-mix(in oklab, var(--auth) 70%, var(--text-faint));
 }
 .rv-replace .rv-del-t {
 	margin-right: 3px;
+}
+/* Struck text under a comment carries both tints, which only full-strength
+   text clears at AA. */
+.rv-comment .rv-del-t,
+.rv-del-t .rv-comment,
+.review-edit .cm-content .rv-comment :is(.rv-del, .rv-replace),
+.review-edit .cm-content :is(.rv-del, .rv-replace) .rv-comment {
+	color: var(--text);
 }
 .rv-mark.rv-ins,
 .rv-mark.rv-del,
@@ -733,7 +742,7 @@
 }
 .review-edit .cm-content .rv-del,
 .review-edit .cm-content .rv-replace {
-	color: var(--text-faint);
+	color: var(--text-muted);
 	text-decoration: line-through;
 	text-decoration-color: color-mix(in oklab, var(--auth) 70%, var(--text-faint));
 	background: color-mix(in oklab, var(--auth) 9%, transparent);

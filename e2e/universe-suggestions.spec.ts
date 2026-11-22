@@ -51,6 +51,14 @@ test('a writer accepts one suggested entry and dismisses another', async ({ page
 		await pool.end();
 	}
 
+	// The library says something is waiting, and leads to it.
+	await gotoReady(page, '/');
+	const waiting = page.getByRole('link', { name: `2 suggestions waiting in ${name}` });
+	await expect(waiting).toHaveText('2 suggestions');
+	await waiting.click();
+	await expect(page).toHaveURL(`/universes/suggest-${stamp}/suggestions`);
+	await expect(page.getByText('No drafts from apps are waiting.')).toBeVisible();
+
 	// The link an app hands the writer names the universe by its id.
 	await gotoReady(page, `/universes/${universeId}/suggestions`);
 	await expect(page.getByRole('link', { name: 'Suggestions (2)' })).toBeVisible();
@@ -64,17 +72,27 @@ test('a writer accepts one suggested entry and dismisses another', async ({ page
 	);
 	await expect(marit).toContainText('Seen in: The Quay');
 
-	await marit.getByRole('button', { name: 'Accept Old Marit' }).click();
-	await expect(page.getByRole('status')).toContainText('Added to this universe.');
+	// The outcome is read out from a status region that was already in the
+	// page, and focus moves on to the next suggestion.
+	const status = page.getByRole('status').filter({ hasText: /./ });
+	await marit.getByRole('button', { name: 'Accept Old Marit' }).press('Enter');
+	await expect(status).toContainText('Added to this universe.');
 	await expect(page.locator('.list-row', { hasText: 'Old Marit' })).toHaveCount(0);
 	await expect(page.getByRole('link', { name: 'Suggestions (1)' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Accept Saltmere' })).toBeFocused();
 
+	// Deciding the last one leaves focus on the list's heading.
 	await page.getByRole('button', { name: 'Dismiss Saltmere' }).click();
-	await expect(page.getByRole('status')).toContainText('Dismissed.');
+	await expect(status).toContainText('Dismissed.');
 	await expect(page.getByText('No suggested entries are waiting.')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Suggested entries' })).toBeFocused();
 
 	// The accepted entry is in Plan with its description; the dismissed one is not.
 	await gotoReady(page, `/universes/suggest-${stamp}/plan`);
 	await expect(page.locator('.ent-row', { hasText: 'Old Marit' })).toBeVisible();
 	await expect(page.locator('.ent-row', { hasText: 'Saltmere' })).toHaveCount(0);
+
+	// With nothing left, the library shows no count.
+	await gotoReady(page, '/');
+	await expect(page.getByRole('link', { name: `waiting in ${name}` })).toHaveCount(0);
 });

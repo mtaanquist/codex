@@ -71,10 +71,13 @@ export async function checkAuthorizeRequest(
 	const redirectUri = field('redirect_uri') ?? '';
 	const client = await findClient(db, clientId, fetchDocument);
 	if (!client) {
+		// Most often an app that registered itself was disconnected over a month
+		// ago and its record cleared away (see purgeExternalAccess), while the
+		// app kept its client_id; trying again sends the same one.
 		return {
 			kind: 'invalid',
 			message:
-				'Codex does not recognise the app that sent you here. Go back to the app and try connecting again.'
+				'Codex does not recognise the app that sent you here. In the app, remove the Codex connector and add it again with the address from Connected apps in your Codex account, then connect again.'
 		};
 	}
 	if (!redirectMatches(client.redirectUris, redirectUri)) {

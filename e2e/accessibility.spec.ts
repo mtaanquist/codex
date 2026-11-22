@@ -100,6 +100,31 @@ test.beforeAll(async ({ browser }) => {
 	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
 	storyPath = new URL(page.url()).pathname;
 
+	// A comment and a suggested edit, so the review page is checked with its
+	// cards and margin markers showing.
+	await gotoReady(page, `${storyPath}/review`);
+	const prose = page.locator('.review-edit .cm-content');
+	const selectProse = async () => {
+		const box = (await prose.locator('.cm-line').first().boundingBox())!;
+		await page.mouse.move(box.x + 3, box.y + box.height / 2);
+		await page.mouse.down();
+		await page.mouse.move(box.x + box.width - 3, box.y + box.height / 2, { steps: 10 });
+		await page.mouse.up();
+	};
+	await selectProse();
+	await page.locator('.rv-seltool').getByRole('button', { name: 'Comment' }).click();
+	await page.getByLabel('Your comment').fill('Tighten this line.');
+	await page
+		.locator('.rv-card.is-draft')
+		.getByRole('button', { name: 'Comment', exact: true })
+		.click();
+	await expect(page.locator('.rv-card').filter({ hasText: 'Tighten this line.' })).toBeVisible();
+	await selectProse();
+	await page.locator('.rv-seltool').getByRole('button', { name: 'Suggest edit' }).click();
+	await page.getByLabel('Suggested text').fill('The lamps burned along the harbour wall.');
+	await page.getByRole('button', { name: 'Save suggestion' }).click();
+	await expect(page.locator('.rv-diff-ins')).toHaveText('The lamps burned along the harbour wall.');
+
 	await gotoReady(page, `${storyPath}/settings/publish`);
 	await page.getByLabel('Visibility').selectOption('public');
 	await page.getByRole('button', { name: 'Save visibility' }).click();
