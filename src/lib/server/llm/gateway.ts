@@ -148,8 +148,14 @@ const CONTEXT_NUDGE =
 // An assistant turn that called tools carries far more than its text: the call
 // name and the whole arguments JSON go back on the wire every round, and a
 // staged suggest_edit holds an entire passage in its arguments. Counting content
-// alone let a run of edit-heavy rounds sail past the context guard.
+// alone let a run of edit-heavy rounds sail past the context guard. A turn with
+// provider blocks (raw) is resent as those blocks instead, and they hold the
+// text, the calls, and any thinking or earlier search results, so they are what
+// is counted.
 function messageTokens(message: ChatMessage, count = estimateTokens): number {
+	if (message.raw !== undefined) {
+		return count(JSON.stringify(message.raw)) + MESSAGE_OVERHEAD_TOKENS;
+	}
 	let tokens = count(message.content) + MESSAGE_OVERHEAD_TOKENS;
 	for (const call of message.toolCalls ?? []) {
 		tokens += count(call.name) + count(call.arguments);

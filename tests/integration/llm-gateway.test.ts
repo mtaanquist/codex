@@ -476,6 +476,46 @@ describe('gateway gating', () => {
 		expect(calls).toBe(1);
 	});
 
+	it('counts the provider blocks a resumed request resends before a capped send', async () => {
+		await configure(true);
+		// A paused turn's blocks (earlier search results) go back verbatim and bill
+		// as input: 600k characters is about $2 at this price, past the $1 cap.
+		const raw = [{ type: 'web_search_tool_result', content: 'x'.repeat(600_000) }];
+		let calls = 0;
+		const pausing: Provider = {
+			...stubProvider,
+			async respond(req) {
+				calls += 1;
+				const resent = req.messages.some((m) => m.raw !== undefined);
+				return {
+					content: '',
+					toolCalls: [],
+					finishReason: resent ? 'stop' : 'paused',
+					raw: resent ? undefined : raw,
+					usage: { promptTokens: resent ? 200_000 : 100, completionTokens: 0 }
+				};
+			}
+		};
+		const meter = new SpendMeter({
+			pricing: { 'chat-model': { prompt: 0.00001, completion: 0 } },
+			capUsd: 1
+		});
+		const done = completeDetailed(
+			db,
+			{
+				userId,
+				role: 'chat',
+				messages: [{ role: 'user', content: 'Look this up.' }],
+				maxTokens: 100,
+				meter
+			},
+			{ provider: pausing, http: noHttp }
+		);
+		await expect(done).rejects.toThrow(SpendCapError);
+		expect(calls).toBe(1);
+		expect(meter.spentUsd).toBeLessThanOrEqual(1);
+	});
+
 	it('never offers web search on an OpenAI-compatible endpoint', async () => {
 		const [established] = await db
 			.insert(universes)
