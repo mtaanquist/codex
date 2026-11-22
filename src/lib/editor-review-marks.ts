@@ -1,6 +1,6 @@
 import { ChangeSet, StateField, StateEffect, Text, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view';
-import { toLf } from './line-endings';
+import { lfOffset, toLf } from './line-endings';
 import {
 	authorColor,
 	editSpan,
@@ -62,6 +62,26 @@ function commentInline(thread: ReviewThread, filter: ReviewFilter): boolean {
 function suggestionInline(suggestion: ReviewSuggestion, filter: ReviewFilter): boolean {
 	if (suggestion.status !== 'pending' || !suggestion.anchor) return false;
 	return filter === 'all' || filter === 'suggestions';
+}
+
+// Review anchors count characters in the stored body, where \r\n is two; the
+// editor reads it as one line break. Moves the anchors onto the text as shown.
+export function anchorsAsShown<T extends { anchor: { start: number; end: number } | null }>(
+	items: T[],
+	stored: string
+): T[] {
+	if (!stored.includes('\r\n')) return items;
+	return items.map((item) =>
+		item.anchor
+			? {
+					...item,
+					anchor: {
+						start: lfOffset(stored, item.anchor.start),
+						end: lfOffset(stored, item.anchor.end)
+					}
+				}
+			: item
+	);
 }
 
 // Builds the decoration set for the current data against the live document

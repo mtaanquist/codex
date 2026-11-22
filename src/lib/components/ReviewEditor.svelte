@@ -17,6 +17,7 @@
 	import { mentionExtensions, type MentionEntity } from '#lib/editor-mentions';
 	import { landsWhilePaused, pausedExtension } from '#lib/editor-paused';
 	import {
+		anchorsAsShown,
 		buildReviewMarks,
 		remapReviewMarks,
 		removeReviewMarks,
@@ -27,7 +28,7 @@
 	import { createAutosave, type SaveStatus } from '#lib/autosave';
 	import { createSceneSaver, type SceneConflict } from '#lib/scene-saver';
 	import { textHash } from '#lib/text-hash';
-	import { showsText, toLf } from '#lib/line-endings';
+	import { showsText, storedOffset, toLf } from '#lib/line-endings';
 	import {
 		toggleCommandMarkers as toggleCommandMarkersView,
 		toggleNonPrintingMarks
@@ -237,7 +238,8 @@
 			// server replaced the whole range, so widen back to it. When the text
 			// there is not what the suggestion replaced, the same change cannot
 			// be made here.
-			const { original } = suggestion;
+			// Counted the way the editor reads line breaks.
+			const original = toLf(suggestion.original);
 			const from = mark.start - (original.length - original.trimStart().length);
 			const to = mark.end + (original.length - original.trimEnd().length);
 			if (from < 0 || to > view.state.doc.length || view.state.sliceDoc(from, to) !== original) {
@@ -316,14 +318,22 @@
 	// data belong to scene.bodyMd, which an autosave does not refresh, so the
 	// marks are built against it and mapped through any typing the editor
 	// holds past it; until it changes, against the text they were last set on.
+	// They count a stored \r\n as two characters and the editor as one, so
+	// they are moved across first.
 	let markedBody: string | null = null;
 	function rebuildMarks() {
 		if (!view || !handle) return;
 		const doc = view.state.doc.toString();
-		const build = (text: string) => buildReviewMarks(threads, suggestions, filter, text, focusedId);
+		const build = (text: string) =>
+			buildReviewMarks(
+				anchorsAsShown(threads, scene.bodyMd),
+				anchorsAsShown(suggestions, scene.bodyMd),
+				filter,
+				text,
+				focusedId
+			);
 		if (showsText(doc, scene.bodyMd) || scene.bodyMd !== markedBody) {
 			markedBody = scene.bodyMd;
-			// The anchors count line breaks the way the editor does.
 			const base = toLf(scene.bodyMd);
 			view.dispatch({ effects: setReviewMarksOn.of({ base, marks: build(base) }) });
 		} else {
@@ -392,22 +402,29 @@
 	}
 
 	// A new comment or edit anchors against the saved text, so flush first; the
-	// offsets we captured then line up with the body the server holds.
-	async function startComment() {
-		if (!sel) return;
+	// offsets we captured then line up with the body the server holds, once
+	// counted the way it stores line breaks (see storedOffset).
+	async function flushedSelection() {
+		if (!sel) return null;
 		const captured = sel;
 		sel = null;
 		window.getSelection()?.removeAllRanges();
 		await autosave.flush();
-		onStartComment({ start: captured.start, end: captured.end, text: captured.text });
+		const stored = view && showsText(view.state.doc.toString(), appliedBody) ? appliedBody : null;
+		if (!stored) return captured;
+		return {
+			start: storedOffset(stored, captured.start),
+			end: storedOffset(stored, captured.end),
+			text: captured.text
+		};
+	}
+	async function startComment() {
+		const captured = await flushedSelection();
+		if (captured) onStartComment(captured);
 	}
 	async function startSuggest() {
-		if (!sel) return;
-		const captured = sel;
-		sel = null;
-		window.getSelection()?.removeAllRanges();
-		await autosave.flush();
-		onStartSuggest({ start: captured.start, end: captured.end, text: captured.text });
+		const captured = await flushedSelection();
+		if (captured) onStartSuggest(captured);
 	}
 
 	// Rebuild marks (with the focus highlight baked in) on every data, filter, or

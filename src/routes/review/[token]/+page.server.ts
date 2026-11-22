@@ -184,6 +184,9 @@ export const actions: Actions = {
 			sceneId,
 			author: { reviewerId: access.reviewer.id },
 			range: { start: Number(data.get('start')), end: Number(data.get('end')) },
+			// The passage the writer selected, so a range that no longer holds it
+			// is refused rather than applied somewhere else.
+			original: data.has('original') ? formText(data, 'original') : undefined,
 			replacement: formText(data, 'replacement')
 		});
 		if (!result.ok) return fail(400, { message: result.reason });

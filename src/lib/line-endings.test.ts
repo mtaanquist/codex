@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lfOffset, showsText, toLf } from './line-endings';
+import { lfOffset, showsText, storedOffset, toLf } from './line-endings';
 
 describe('toLf', () => {
 	it('turns Windows and old Mac line breaks into newlines', () => {
@@ -32,5 +32,17 @@ describe('lfOffset', () => {
 	it('puts an offset between \\r and \\n on the newline', () => {
 		expect(lfOffset('a\r\nb', 2)).toBe(1);
 		expect(toLf('a\r\nb')[1]).toBe('\n');
+	});
+});
+
+describe('storedOffset', () => {
+	it('undoes lfOffset for every offset in the text as shown', () => {
+		const text = 'one\r\ntwo\r\n\r\nthree\rfour';
+		const shown = toLf(text);
+		for (let lf = 0; lf <= shown.length; lf++) {
+			const at = storedOffset(text, lf);
+			expect(lfOffset(text, at)).toBe(lf);
+			expect(toLf(text.slice(at))).toBe(shown.slice(lf));
+		}
 	});
 });

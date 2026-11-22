@@ -19,3 +19,15 @@ export function lfOffset(text: string, offset: number): number {
 	}
 	return offset - dropped;
 }
+
+// Where an offset in toLf(text) lands in text: the inverse of lfOffset. A
+// newline that stands for \r\n lands on the \r.
+export function storedOffset(text: string, offset: number): number {
+	let i = 0;
+	let dropped = 0;
+	while (i < text.length && i - dropped < offset) {
+		if (text[i] === '\r' && text[i + 1] === '\n') dropped++;
+		i++;
+	}
+	return i;
+}

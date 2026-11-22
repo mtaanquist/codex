@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { normaliseReason } from '#lib/suggestion-reason';
 import { textHash } from '#lib/text-hash';
+import { toLf } from '#lib/line-endings';
 import {
 	and,
 	asc,
@@ -918,7 +919,12 @@ export async function createSuggestion(
 	if (start < 0 || end > scene.bodyMd.length || start > end) {
 		return { ok: false, reason: 'That selection no longer matches the text.' };
 	}
-	if (input.original !== undefined && scene.bodyMd.slice(start, end) !== input.original) {
+	// The review centre's editor reads \r\n as one line break, so the text it
+	// quotes may have plain newlines where the stored body has \r\n.
+	if (
+		input.original !== undefined &&
+		toLf(scene.bodyMd.slice(start, end)) !== toLf(input.original)
+	) {
 		return {
 			ok: false,
 			reason: 'The scene changed while this was staged; find the passage again.'
