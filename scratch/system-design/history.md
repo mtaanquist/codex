@@ -1023,6 +1023,62 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
   scenes, the cross-story framing, and the owning-story thread attribution); e2e
   not run here.
 
+## MCP endpoint, review round 5 (2026-11-22)
+
+Part of #1175, branch `fix/mcp-review-5` on `staging/mcp-endpoint`. No
+migration.
+
+- Placing an edit in a scene that changed is a character diff on the
+  server's one thread. A follow-up `suggest_edit` ran it with no limit (in
+  `acceptedPatternEdit`, before the cheap checks and inside the staging
+  transaction): 102 s on a 118k scene in review, 80 s here for the sibling
+  case. `get_review_note` was bounded in edits but still paid the diff's
+  fixed cost of tokenising the whole scene once per base revision (266 ms
+  stall here for 30 edits on 30 revisions). Fixed in `review-anchor.ts`:
+  the shared start and end are found by plain comparison (in 256-character
+  slices, about 0.08 ms for 105k) and only the middle is diffed, and there
+  is one mapper, `createAnchorMapper(budget)`, with a `DiffBudget` for the
+  whole request: the longest middle a pair may have, the most edits one
+  diff looks through (capped so its cost cannot pass what is left), and a
+  total charged `middle + edits^2` per pair. `APP_DIFF_BUDGET` for apps,
+  `WRITER_DIFF_BUDGET` for the writer's pages, the in-app Assistant, accept
+  and bulk accept (one mapper for the batch), the marker remap on save and
+  the export. Now 15 to 35 ms stall for the app cases; the writer's review
+  page on the same rewrite takes about 230 ms and shows the suggestion as
+  changed since (reject only; accept refuses it under the lock).
+- Not exactly the old mapping: where several shortest alignments exist,
+  diffing only the middle can pick another one than a diff of the whole
+  texts (a property test showed it in about half of random small-alphabet
+  cases). The unit tests hold the mapper to the whole-text diff exactly
+  where the alignment is forced (removed and inserted characters from
+  alphabets that cannot match), and elsewhere to keeping as many
+  characters, landing next to the same character, and leaving the shared
+  start alone. Surrogate pairs are never split.
+- Spread-out small changes (a typo at each end of a long scene) still make
+  the middle the whole scene, so each such pair costs the full tokenising;
+  the budget caps how many a request does. A paragraph-level pass first
+  would make those cheap too; left for later.
+- `acceptedPatternEdit` no longer places the edit; `placeAcceptedEdit` does,
+  after the own-note and follow-up-exists checks in `appEditLink`, and
+  after the cheap checks in the re-read.
+- The bounded fallback no longer places a range because its text stands
+  once in the new scene: only the shared start or end.
+- `slidingRateLimit` stamps with `performance.now()` and drops stamps later
+  than now, so a clock set back cannot hold a key shut for an hour.
+- A reading call that waited at the gate checks the credential and the
+  instance switch again (the gate tells `work` whether it waited).
+- The daily purge could deadlock with a code exchange (exchange locks the
+  code, then the client through the grant's key; the delete locked the
+  client, then the code through the cascade). It now skips clients with an
+  unspent, unexpired code and locks the rest `for update skip locked`
+  before deleting. A loop of twenty exchange-plus-purge rounds failed first.
+- The return address is measured after cookie encoding (3800), and an
+  older `return_to` cookie is deleted whenever a new target is refused, so
+  a dropped oversized cookie cannot leave a stale one in place.
+- `csrf.ts` leaves `/api/mcp` out (it reads no cookie), so a bodyless
+  DELETE or POST with no Origin reaches the transport's 405 instead of a
+  403. The stricter rule (no Content-Type counts as a form) stays for pages.
+
 ## MCP endpoint, review round 4: sign-in and app side (2026-11-21)
 
 Part of #1175, branch `fix/mcp-review-4` on `staging/mcp-endpoint`. No

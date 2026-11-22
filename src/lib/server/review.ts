@@ -37,8 +37,9 @@ import { recordRevision } from './revisions.ts';
 import { remapMarkerAnchors } from './markers.ts';
 import {
 	createAnchorMapper,
-	createBoundedAnchorMapper,
-	type AnchorMapper
+	WRITER_DIFF_BUDGET,
+	type AnchorMapper,
+	type DiffBudget
 } from '../review-anchor.ts';
 import { wordCount } from '../word-count.ts';
 import { paragraphWindow } from '../paragraphs.ts';
@@ -1061,7 +1062,7 @@ export async function listSuggestions(
 	db: Database,
 	storyId: string,
 	viewer?: ReviewViewer,
-	mapper: AnchorMapper = createAnchorMapper(),
+	mapper: AnchorMapper = createAnchorMapper(WRITER_DIFF_BUDGET),
 	// Only this suggestion, or only the edits of this pattern note. Placing a
 	// suggestion in the scene as it now reads is the costly part, so a caller
 	// that wants a few should not pay for the whole story's.
@@ -1136,7 +1137,7 @@ export async function listSuggestions(
 			anchorLost: row.suggestion.status === 'pending' && anchor === null,
 			...(row.suggestion.status === 'pending' &&
 			anchor === null &&
-			mapper.gaveUp?.(row.baseBody, row.currentBody)
+			mapper.gaveUp(row.baseBody, row.currentBody)
 				? { anchorNotSought: true as const }
 				: {}),
 			patternThreadId: row.suggestion.patternThreadId,
@@ -1148,24 +1149,27 @@ export async function listSuggestions(
 	});
 }
 
-// An accepted Assistant edit that belongs to a pattern note, with where its
-// new text now sits in the scene (a deletion is the point where the text was
-// taken out), for the re-read after an accept. Null unless the story is the
-// owner's, the suggestion is accepted, and it is linked to a note; spot is null
-// when the change can no longer be found in the current text.
-export async function acceptedPatternEdit(
-	db: Database,
-	userId: string,
-	suggestionId: string
-): Promise<{
+// An accepted Assistant edit that belongs to a pattern note, for the re-read
+// after an accept. Null unless the story is the owner's, the suggestion is
+// accepted, and it is linked to a note. Finding where its new text now sits
+// is the costly part, so that is left to placeAcceptedEdit: a caller makes its
+// cheap checks first.
+export type AcceptedPatternEdit = {
 	storyId: string;
 	sceneId: string;
 	patternThreadId: string;
 	replacement: string;
 	bodyMd: string;
 	sceneTitle: string | null;
-	spot: { start: number; end: number } | null;
-} | null> {
+	baseBody: string;
+	rangeStart: number;
+	rangeEnd: number;
+};
+export async function acceptedPatternEdit(
+	db: Database,
+	userId: string,
+	suggestionId: string
+): Promise<AcceptedPatternEdit | null> {
 	const [row] = await db
 		.select({
 			suggestion: reviewSuggestions,
@@ -1180,18 +1184,6 @@ export async function acceptedPatternEdit(
 		.where(and(eq(reviewSuggestions.id, suggestionId), eq(stories.ownerId, userId), storyIsLive()));
 	const suggestion = row?.suggestion;
 	if (!suggestion || suggestion.status !== 'accepted' || !suggestion.patternThreadId) return null;
-	// The new text sits where the original was, so either edge of the original
-	// can place it; whichever edge still lies in unchanged text is used, and the
-	// replacement must be found right there.
-	const mapper = createAnchorMapper();
-	const length = suggestion.replacement.length;
-	const holds = (start: number) =>
-		start >= 0 && row.bodyMd.slice(start, start + length) === suggestion.replacement;
-	const before = mapper.point(row.baseBody, row.bodyMd, suggestion.rangeStart);
-	const after = mapper.point(row.baseBody, row.bodyMd, suggestion.rangeEnd);
-	let spot: { start: number; end: number } | null = null;
-	if (before !== null && holds(before)) spot = { start: before, end: before + length };
-	else if (after !== null && holds(after - length)) spot = { start: after - length, end: after };
 	return {
 		storyId: suggestion.storyId,
 		sceneId: suggestion.sceneId,
@@ -1199,8 +1191,31 @@ export async function acceptedPatternEdit(
 		replacement: suggestion.replacement,
 		bodyMd: row.bodyMd,
 		sceneTitle: row.sceneTitle,
-		spot
+		baseBody: row.baseBody,
+		rangeStart: suggestion.rangeStart,
+		rangeEnd: suggestion.rangeEnd
 	};
+}
+
+// Where an accepted edit's new text now sits in the scene (a deletion is the
+// point where the text was taken out); null when it can no longer be found,
+// or when finding it would cost more than the budget allows.
+export function placeAcceptedEdit(
+	edit: AcceptedPatternEdit,
+	budget: DiffBudget = WRITER_DIFF_BUDGET
+): { start: number; end: number } | null {
+	// The new text sits where the original was, so either edge of the original
+	// can place it; whichever edge still lies in unchanged text is used, and the
+	// replacement must be found right there.
+	const mapper = createAnchorMapper(budget);
+	const length = edit.replacement.length;
+	const holds = (start: number) =>
+		start >= 0 && edit.bodyMd.slice(start, start + length) === edit.replacement;
+	const before = mapper.point(edit.baseBody, edit.bodyMd, edit.rangeStart);
+	if (before !== null && holds(before)) return { start: before, end: before + length };
+	const after = mapper.point(edit.baseBody, edit.bodyMd, edit.rangeEnd);
+	if (after !== null && holds(after - length)) return { start: after - length, end: after };
+	return null;
 }
 
 // ---- a program reading back its own notes ----
@@ -1514,10 +1529,9 @@ export async function getOwnNote(
 	storyId: string,
 	author: MachineAuthor,
 	id: string,
-	// diffBudget: how far the scene may have changed for an edit to be placed
-	// by comparing the texts (see createBoundedAnchorMapper). Without it the
-	// comparison has no limit.
-	opts?: { diffBudget?: number }
+	// diffBudget: how much comparing of texts placing the edits may cost (see
+	// DiffBudget); the writer's own by default.
+	opts?: { diffBudget?: DiffBudget }
 ): Promise<OwnNoteView | null> {
 	const [thread] = await db
 		.select({
@@ -1559,7 +1573,7 @@ export async function getOwnNote(
 		db,
 		storyId,
 		undefined,
-		opts?.diffBudget === undefined ? undefined : createBoundedAnchorMapper(opts.diffBudget),
+		createAnchorMapper(opts?.diffBudget ?? WRITER_DIFF_BUDGET),
 		thread ? { patternThreadId: id } : { id }
 	);
 	const sceneIds = [...new Set(wanted.map((suggestion) => suggestion.sceneId))];
@@ -1761,7 +1775,9 @@ export async function decideSuggestion(
 	suggestionId: string,
 	accept: boolean,
 	override?: string,
-	seen?: string
+	seen?: string,
+	// Shared by the decisions of one request, so its budget is for all of them.
+	mapper: AnchorMapper = createAnchorMapper(WRITER_DIFF_BUDGET)
 ): Promise<
 	| { ok: true; sceneId: string | null; bodyMd: string | null; baseHash: string | null }
 	| { ok: false; reason: string }
@@ -1840,10 +1856,11 @@ export async function decideSuggestion(
 				return { ok: false, reason: 'Write the wording to use, or skip this change.' };
 			}
 			const replacement = override !== undefined ? override : current.replacement;
-			// One anchor against the text just read under the lock, so there is
-			// nothing for a shared mapper to reuse.
+			// Against the text just read under the lock. Past the mapper's
+			// budget the edit is not placed, and so cannot be accepted: the
+			// lock is held meanwhile, and the writer's own save waits on it.
 			const anchor = mapSuggestionRange(
-				createAnchorMapper(),
+				mapper,
 				row.baseBody,
 				scene.bodyMd,
 				row.suggestion.rangeStart,
@@ -1922,8 +1939,18 @@ export async function decideSuggestions(
 	const decided: string[] = [];
 	const failed: BulkDecision['failed'] = [];
 	const changes: { sceneId: string; bodyMd: string; baseHash: string }[] = [];
+	const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
 	for (const id of new Set(suggestionIds)) {
-		const result = await decideSuggestion(db, userId, storyId, id, accept, undefined, seen?.[id]);
+		const result = await decideSuggestion(
+			db,
+			userId,
+			storyId,
+			id,
+			accept,
+			undefined,
+			seen?.[id],
+			mapper
+		);
 		if (!result.ok) {
 			failed.push({ id, reason: result.reason });
 			continue;

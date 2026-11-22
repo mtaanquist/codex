@@ -25,7 +25,7 @@ import { gatherStory } from '#lib/server/export';
 import { storyPreferences } from '#lib/server/preferences';
 import { storyPageSetup } from '#lib/server/page-setup';
 import { reviewMentionData } from '#lib/server/mention-entities';
-import { createAnchorMapper } from '#lib/review-anchor';
+import { createAnchorMapper, WRITER_DIFF_BUDGET } from '#lib/review-anchor';
 import { queueSceneMentions } from '#lib/server/jobs';
 import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { loadAssistantChat } from '#lib/server/llm/chat-history';
@@ -46,7 +46,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// nothing here waits on gatherStory.
 	// Threads and suggestions re-anchor against the same scene revisions, so one
 	// mapper covers both and each revision is diffed once for the page.
-	const anchors = createAnchorMapper();
+	const anchors = createAnchorMapper(WRITER_DIFF_BUDGET);
 	// Taken before the notes are read: "Clear review notes" only clears what
 	// was on the page, so a note posted after this moment is kept.
 	const seenAt = await reviewSeenCutoff(db);

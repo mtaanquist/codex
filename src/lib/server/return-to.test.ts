@@ -5,6 +5,7 @@ import {
 	rememberReturnTo,
 	returnToForForm,
 	safeReturnTo,
+	storeReturnTo,
 	takeReturnTo
 } from './return-to';
 
@@ -13,7 +14,11 @@ function cookieJar(initial: Record<string, string> = {}) {
 	const cookies = {
 		get: (name: string) => jar.get(name),
 		delete: (name: string) => void jar.delete(name),
-		serialize: (name: string, value: string) => `${name}=${encodeURIComponent(value)}`
+		set: (name: string, value: string) => void jar.set(name, value),
+		serialize: (name: string, value: string, options?: { maxAge?: number }) =>
+			options?.maxAge === 0
+				? `${name}=${encodeURIComponent(value)}; Path=/; Max-Age=0`
+				: `${name}=${encodeURIComponent(value)}`
 	} as unknown as Cookies;
 	return { jar, cookies };
 }
@@ -94,6 +99,29 @@ describe('the return-to cookie', () => {
 			rememberReturnTo(cookies, new URL('https://codex.example/oauth/authorize?client_id=a'))
 		).toBe(`${RETURN_TO_COOKIE}=${encodeURIComponent('/oauth/authorize?client_id=a')}`);
 		expect(rememberReturnTo(cookies, new URL('https://codex.example/account'))).toBeNull();
+	});
+
+	it('is refused when it would not fit in a cookie once encoded, and forgets an older one', () => {
+		// Short as text, but each character takes three once encoded.
+		const long = '/oauth/authorize?state=' + '"'.repeat(1400);
+		expect(long.length).toBeLessThan(4000);
+		expect(safeReturnTo(long)).toBeNull();
+		const { cookies } = cookieJar({ [RETURN_TO_COOKIE]: '/oauth/authorize?client_id=old' });
+		expect(rememberReturnTo(cookies, new URL(`https://codex.example${long}`))).toBe(
+			`${RETURN_TO_COOKIE}=; Path=/; Max-Age=0`
+		);
+		// With nothing stored there is nothing to forget.
+		expect(
+			rememberReturnTo(cookieJar().cookies, new URL(`https://codex.example${long}`))
+		).toBeNull();
+		// The same for a form posted to the page.
+		const { jar, cookies: formCookies } = cookieJar({
+			[RETURN_TO_COOKIE]: '/oauth/authorize?client_id=old'
+		});
+		storeReturnTo(formCookies, null);
+		expect(jar.has(RETURN_TO_COOKIE)).toBe(false);
+		storeReturnTo(formCookies, '/oauth/authorize?client_id=new');
+		expect(jar.get(RETURN_TO_COOKIE)).toBe('/oauth/authorize?client_id=new');
 	});
 
 	it('is used once and then forgotten', () => {

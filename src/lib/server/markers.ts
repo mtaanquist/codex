@@ -5,7 +5,7 @@ import { ownedScene } from './scene-access.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findTodoLines } from '#lib/todo-markers';
 import { toLf } from '#lib/line-endings';
-import { createAnchorMapper } from '../review-anchor.ts';
+import { createAnchorMapper, WRITER_DIFF_BUDGET } from '../review-anchor.ts';
 import type { ActionFailure } from './action-result.ts';
 
 // A selection turned into a checkable marker. Anchors are clamped to the
@@ -138,7 +138,7 @@ export async function remapMarkerAnchors(
 		})
 		.from(sceneMarkers)
 		.where(eq(sceneMarkers.sceneId, sceneId));
-	const mapper = createAnchorMapper();
+	const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
 	const moved: { id: string; anchorStart: number; anchorEnd: number }[] = [];
 	const lost: string[] = [];
 	for (const marker of markers) {

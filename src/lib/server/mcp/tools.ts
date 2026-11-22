@@ -187,7 +187,14 @@ export async function callMcpTool(
 		return { text: 'The tool failed. Try again.', isError: true };
 	};
 
-	const run = async (): Promise<McpToolResult> => {
+	// waited: the call waited for its place, during which the app may have
+	// been disconnected or access for outside apps turned off. The endpoint
+	// checked both before the call queued; they are checked again here, as
+	// stillAllowed does for a staging call.
+	const run = async (waited = false): Promise<McpToolResult> => {
+		if (waited && !((await mcpInstanceEnabled(db)) && (await credentialLive(db, identity)))) {
+			return refuse('no_universe', NO_UNIVERSE_RESULT);
+		}
 		const { universeId: universeArgument, ...rest } = args;
 		let universeId = '';
 		if (!NO_UNIVERSE.has(name)) {

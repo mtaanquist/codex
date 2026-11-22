@@ -77,6 +77,22 @@ describe('slidingRateLimit', () => {
 		resetRateLimits();
 		expect(slidingRateLimit('a', 1, 1000, 1001).allowed).toBe(true);
 	});
+
+	it('does not hold a key shut when the clock is set back', () => {
+		const HOUR = 3600 * 1000;
+		const at = 10 * HOUR;
+		expect(slidingRateLimit('back', 2, 60_000, at).allowed).toBe(true);
+		expect(slidingRateLimit('back', 2, 60_000, at + 10).allowed).toBe(true);
+		expect(slidingRateLimit('back', 2, 60_000, at + 20).allowed).toBe(false);
+		// The clock steps back an hour: the calls stamped "later" are no guide.
+		const stepped = slidingRateLimit('back', 2, 60_000, at - HOUR);
+		expect(stepped.allowed).toBe(true);
+		// And the limit holds from there as before.
+		expect(slidingRateLimit('back', 2, 60_000, at - HOUR + 10).allowed).toBe(true);
+		const refused = slidingRateLimit('back', 2, 60_000, at - HOUR + 20);
+		expect(refused.allowed).toBe(false);
+		expect(refused.retryAfterSeconds).toBeLessThanOrEqual(60);
+	});
 });
 
 describe('write and upload budgets', () => {

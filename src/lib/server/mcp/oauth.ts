@@ -739,20 +739,41 @@ export async function purgeExternalAccess(
 		.delete(oauthCodes)
 		.where(lt(oauthCodes.expiresAt, sql`now() - ${SPENT_CODE_RETENTION}::interval`))
 		.returning({ id: oauthCodes.id });
-	const clients = await db
-		.delete(oauthClients)
-		.where(
-			or(
+	// A client with a code that can still be exchanged is being connected right
+	// now, or may be in a minute, so it stays. The rows are locked before they
+	// are deleted, skipping any a code exchange holds: an exchange locks its
+	// code and then the client (by adding the grant), and a delete that locked
+	// the client and then waited on the code would deadlock with it.
+	const clients = await db.transaction(async (tx) => {
+		const due = await tx
+			.select({ id: oauthClients.id })
+			.from(oauthClients)
+			.where(
 				and(
-					lt(oauthClients.createdAt, sql`now() - ${UNUSED_CLIENT_RETENTION}::interval`),
-					sql`not exists (select 1 from ${oauthGrants} where ${oauthGrants.clientId} = ${oauthClients.id})`
-				),
-				and(
-					sql`exists (select 1 from ${oauthGrants} where ${oauthGrants.clientId} = ${oauthClients.id})`,
-					sql`not exists (select 1 from ${oauthGrants} where ${oauthGrants.clientId} = ${oauthClients.id} and (${oauthGrants.revokedAt} is null or ${oauthGrants.revokedAt} > now() - ${REVOKED_CLIENT_RETENTION}::interval))`
+					or(
+						and(
+							lt(oauthClients.createdAt, sql`now() - ${UNUSED_CLIENT_RETENTION}::interval`),
+							sql`not exists (select 1 from ${oauthGrants} where ${oauthGrants.clientId} = ${oauthClients.id})`
+						),
+						and(
+							sql`exists (select 1 from ${oauthGrants} where ${oauthGrants.clientId} = ${oauthClients.id})`,
+							sql`not exists (select 1 from ${oauthGrants} where ${oauthGrants.clientId} = ${oauthClients.id} and (${oauthGrants.revokedAt} is null or ${oauthGrants.revokedAt} > now() - ${REVOKED_CLIENT_RETENTION}::interval))`
+						)
+					),
+					sql`not exists (select 1 from ${oauthCodes} where ${oauthCodes.clientId} = ${oauthClients.id} and ${oauthCodes.usedAt} is null and ${oauthCodes.expiresAt} > now())`
 				)
 			)
-		)
-		.returning({ id: oauthClients.id });
+			.for('update', { skipLocked: true });
+		if (due.length === 0) return [];
+		return tx
+			.delete(oauthClients)
+			.where(
+				inArray(
+					oauthClients.id,
+					due.map((row) => row.id)
+				)
+			)
+			.returning({ id: oauthClients.id });
+	});
 	return { tokens: tokens.length, codes: codes.length, clients: clients.length };
 }

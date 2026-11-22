@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Database } from '../auth';
 import { scenes } from '../db/schema';
 import { listSuggestions, listThreads } from '../review';
-import { createAnchorMapper } from '#lib/review-anchor';
+import { createAnchorMapper, WRITER_DIFF_BUDGET } from '#lib/review-anchor';
 import { assembleReviewReplyContext, buildSystemMessage } from './context/assemble';
 import {
 	buildReviewReplyMessage,
@@ -27,7 +27,7 @@ export async function prepareReviewReply(
 	// The full thread view carries the re-anchored range and display names. One
 	// mapper covers the threads and the suggestion lookup below, so a scene
 	// revision is diffed once rather than once per anchor.
-	const anchors = createAnchorMapper();
+	const anchors = createAnchorMapper(WRITER_DIFF_BUDGET);
 	const threads = await listThreads(db, storyId, anchors.range, { userId });
 	const thread = threads.find((t) => t.id === threadId);
 	if (!thread) error(404, 'That thread does not exist.');

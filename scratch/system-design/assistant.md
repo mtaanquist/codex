@@ -938,15 +938,22 @@ suggestion. On top of those:
     may wait, for ten seconds at most, and a call past either is answered
     "Too many calls at once. Try again." `search_text` runs its queries one
     after another here (the command palette runs them side by side), and
-    `get_review_note` places only the requested note's edits in the scene,
-    and on this surface with a bounded mapper (`createBoundedAnchorMapper`):
-    the character diff runs in the server's one thread, so it is stopped
-    once the scene is known to have changed by more than 500 characters
-    (`REVIEW_NOTE_DIFF_MAX_EDITS`, about 25 ms). Past that an edit is placed
-    only where that is cheap (in the start or end the two texts share, or
-    its text stands exactly once in the scene), and is otherwise reported
-    with `notice`: "The text has changed since; the edit may no longer
-    apply." The review page and the in-app Assistant keep the full diff.
+    `get_review_note` places only the requested note's edits in the scene.
+    Placing an edit is a character diff, and it runs in the server's one
+    thread, so it is bounded everywhere (`createAnchorMapper(budget)` in
+    `review-anchor.ts`): the start and the end the two texts share are set
+    aside by plain comparison and only the middle is diffed, and each
+    request has a `DiffBudget` (the longest middle one pair may have, the
+    most edits one diff looks through, and a total for every pair the
+    request compares). An app's call has `APP_DIFF_BUDGET` (500 edits, about
+    25 ms); the writer's pages, the in-app Assistant, accepting a suggestion
+    and the marker remap on save have `WRITER_DIFF_BUDGET` (2000 edits,
+    about half a second at most). Past the budget an edit is placed only in
+    the shared start or end, and is otherwise reported with `notice`: "The
+    text has changed since; the edit may no longer apply." A follow-up
+    `suggest_edit` past it is refused as "can no longer be found", the
+    in-app re-read skips the edit, and the review page shows the suggestion
+    as changed since (it can be read and rejected, not accepted).
   - The per-minute budgets (per connection, per writer, and for requests of
     any kind) count the calls of the last sixty seconds
     (`slidingRateLimit`), so a burst across a minute boundary gets no more

@@ -1,6 +1,8 @@
 // Lifetimes and limits for external access, in one place so they are easy to
 // change together.
 
+import type { DiffBudget } from '../../review-anchor.ts';
+
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -86,13 +88,17 @@ export const STAGING_LOCK_TIMEOUT_MS = 2000;
 // The longest a staging call's transaction may last. Postgres ends it past
 // this, so nothing a call holds can outlast it.
 export const STAGING_TRANSACTION_TIMEOUT_MS = 30_000;
-// How far a scene may have changed since an edit was suggested (characters
-// added and removed) for get_review_note to still work out where the edit
-// now sits by comparing the two texts. The comparison holds the server's one
-// thread and its cost grows with the square of this: about 25 ms at 500, a
-// second at 4000. Past it the edit is placed only if that is cheap, and is
-// otherwise reported as possibly no longer applying.
-export const REVIEW_NOTE_DIFF_MAX_EDITS = 500;
+// How much comparing of texts one call may do to work out where an edit now
+// sits in a scene that changed since (see DiffBudget). The comparison holds
+// the server's one thread, so this is what one call may cost the others:
+// about 25 ms at most. Past it an edit is placed only when it lies in the
+// start or the end the two texts share, and is otherwise reported as possibly
+// no longer applying (get_review_note) or not found (a follow-up edit).
+export const APP_DIFF_BUDGET: DiffBudget = {
+	maxMiddle: 250_000,
+	maxEdits: 500,
+	maxWork: 500_000
+};
 // Every request to the endpoint, of any kind, per writer per minute.
 export const REQUESTS_PER_MINUTE = 600;
 

@@ -1,7 +1,7 @@
 import { and, asc, eq } from 'drizzle-orm';
 import type { Database } from '../auth';
 import { reviewComments, reviewSuggestions, reviewThreads } from '../db/schema';
-import { acceptedPatternEdit, FOLLOW_UP_NEIGHBOURS } from '../review';
+import { acceptedPatternEdit, FOLLOW_UP_NEIGHBOURS, placeAcceptedEdit } from '../review';
 import { paragraphWindow } from '#lib/paragraphs';
 import { assembleReviewReplyContext, buildSystemMessage } from './context/assemble';
 import { buildRereadMessage } from './prompts/review';
@@ -44,7 +44,10 @@ export async function rereadPatternEdit(
 	if (reread.has(input.suggestionId)) return { skipped: 'done' };
 	reread.add(input.suggestionId);
 	if (reread.size > REREAD_MEMORY) reread.delete(reread.values().next().value!);
-	if (!edit.spot) return { skipped: 'not-found' };
+	// Not found, or the scene changed too much since to look for it: either way
+	// there is nothing to re-read.
+	const spot = placeAcceptedEdit(edit);
+	if (!spot) return { skipped: 'not-found' };
 	// The note is the thread's opening comment, left by the Assistant or by an
 	// app the writer connected. Either way the follow-up is the Assistant's own.
 	const [note] = await db
@@ -63,7 +66,7 @@ export async function rereadPatternEdit(
 	// A resolved note takes no more edits, so there is nothing to ask for.
 	if (note.resolvedAt) return { skipped: 'done' };
 
-	const window = paragraphWindow(edit.bodyMd, edit.spot.start, edit.spot.end, FOLLOW_UP_NEIGHBOURS);
+	const window = paragraphWindow(edit.bodyMd, spot.start, spot.end, FOLLOW_UP_NEIGHBOURS);
 	const task: ChatMessage = {
 		role: 'user',
 		content: buildRereadMessage({

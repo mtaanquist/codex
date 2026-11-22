@@ -7,11 +7,10 @@ import { assertOriginConfigured, publicOrigin } from '#lib/server/origin';
 import { dev } from '$app/env';
 import { isForbiddenCrossSiteForm } from '#lib/server/csrf';
 import {
-	RETURN_TO_COOKIE,
-	RETURN_TO_COOKIE_OPTIONS,
 	isReturnablePath,
 	rememberReturnTo,
-	returnToForForm
+	returnToForForm,
+	storeReturnTo
 } from '#lib/server/return-to';
 import { AUTHORIZE_FIELDS } from '#lib/server/mcp/authorize';
 
@@ -114,8 +113,7 @@ async function redirectFromHook(
 		// the app's request is in the form, so it is remembered from there and
 		// the writer comes back to the page after signing in.
 		if (location === '/login' && method === 'POST' && isReturnablePath(event.url.pathname)) {
-			const target = await postedReturnTo(event);
-			if (target) event.cookies.set(RETURN_TO_COOKIE, target, RETURN_TO_COOKIE_OPTIONS);
+			storeReturnTo(event.cookies, await postedReturnTo(event));
 		}
 		redirect(303, location);
 	}

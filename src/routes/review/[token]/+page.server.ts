@@ -22,7 +22,7 @@ import {
 } from '#lib/server/review';
 import { gatherStory } from '#lib/server/export';
 import { reviewMentionData } from '#lib/server/mention-entities';
-import { createAnchorMapper } from '#lib/review-anchor';
+import { createAnchorMapper, WRITER_DIFF_BUDGET } from '#lib/review-anchor';
 import { rateLimit } from '#lib/server/rate-limit';
 import { notifyReviewActivity } from '#lib/server/notify';
 import { formText } from '#lib/server/validation';
@@ -95,7 +95,7 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 	});
 	// Threads and suggestions re-anchor against the same scene revisions, so one
 	// mapper covers both and each revision is diffed once for the page.
-	const anchors = createAnchorMapper();
+	const anchors = createAnchorMapper(WRITER_DIFF_BUDGET);
 	return {
 		state: 'review' as const,
 		storyTitle: resolved.storyTitle,
