@@ -411,6 +411,71 @@ describe('gateway gating', () => {
 		}
 	});
 
+	it('counts the web search results before a capped send', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Faerun', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		const config = {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced' as const,
+			provider: 'anthropic' as const,
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8
+		};
+		let calls = 0;
+		// Five searches whose results bill 60k input tokens: $0.60 at this price.
+		const searching: Provider = {
+			...stubProvider,
+			async respond() {
+				calls += 1;
+				return {
+					content: 'checked',
+					toolCalls: [],
+					usage: { promptTokens: 60_000, completionTokens: 0, webSearchRequests: 5 }
+				};
+			}
+		};
+		const run = () => {
+			const meter = new SpendMeter({
+				pricing: { 'claude-opus-5': { prompt: 0.00001, completion: 0 } },
+				provider: 'anthropic',
+				capUsd: 0.5
+			});
+			const done = completeDetailed(
+				db,
+				{
+					userId,
+					storyId: inCanon.id,
+					role: 'reviewer',
+					messages: [{ role: 'user', content: 'Check this scene.' }],
+					maxTokens: 100,
+					meter
+				},
+				{ provider: searching, http: noHttp }
+			);
+			return { meter, done };
+		};
+
+		await saveAccountLlmConfig(db, userId, { ...config, webSearch: true });
+		const capped = run();
+		await expect(capped.done).rejects.toThrow(SpendCapError);
+		expect(calls).toBe(0);
+		expect(capped.meter.spentUsd).toBeLessThanOrEqual(0.5);
+
+		// Without search the same request fits, so only the allowance held it.
+		await saveAccountLlmConfig(db, userId, { ...config, webSearch: false });
+		await run().done;
+		expect(calls).toBe(1);
+	});
+
 	it('never offers web search on an OpenAI-compatible endpoint', async () => {
 		const [established] = await db
 			.insert(universes)

@@ -152,7 +152,7 @@ function markLastBlock(messages: { role: string; content: unknown }[], cache: Ca
 // name released after this was written fails safe rather than with a 400.
 const WEB_SEARCH_FILTERING = /claude-(opus-(5|4-8|4-7|4-6)|sonnet-(5|4-6))/;
 // A ceiling on searches per turn, so a canon check cannot run up a bill.
-const WEB_SEARCH_MAX_USES = 5;
+export const WEB_SEARCH_MAX_USES = 5;
 
 function webSearchTool(model: string): Record<string, unknown> {
 	return {
