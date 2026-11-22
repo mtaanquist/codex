@@ -455,6 +455,18 @@ export async function resolveBearer(db: Database, token: string): Promise<Bearer
 	};
 }
 
+// Whether a token that resolveBearer refused was one this server issued (an
+// access, refresh or personal token, expired, rotated or revoked) rather than
+// a guess. Expired rows stay until the daily clean-up.
+export async function knownBearer(db: Database, token: string): Promise<boolean> {
+	if (!token) return false;
+	const [row] = await db
+		.select({ id: apiTokens.id })
+		.from(apiTokens)
+		.where(eq(apiTokens.tokenHash, hashToken(token)));
+	return Boolean(row);
+}
+
 // Whether a connection a request was let in on is still good: its token and
 // grant live, and the account usable. For a call that waited after
 // resolveBearer let it in.

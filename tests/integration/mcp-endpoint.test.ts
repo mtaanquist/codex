@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, asc, eq } from 'drizzle-orm';
 import type pg from 'pg';
 import {
+	apiTokens,
 	assistantDrafts,
 	characters,
 	entityCategories,
@@ -3685,6 +3686,33 @@ describe('limits', () => {
 		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
 		expect((await send(list, { token: alice.token })).status).toBe(200);
 		expect((await send(list, { token: bob.token })).status).toBe(200);
+	});
+
+	it('answers 401 with the challenge to a known token that expired, even from an address over the budget', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		for (let i = 0; i < 121; i++) await send(list, { token: `cdx_at_guess${i}` });
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(429);
+		await db
+			.update(apiTokens)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(apiTokens.kind, 'access'));
+		const expired = await send(list, { token: alice.token });
+		expect(expired.status).toBe(401);
+		expect(expired.headers.get('www-authenticate')).toContain('error="invalid_token"');
+	});
+
+	it('does not count known tokens that expired or were revoked against the address', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		await db
+			.update(apiTokens)
+			.set({ expiresAt: new Date(Date.now() - 1000) })
+			.where(eq(apiTokens.userId, alice.userId));
+		await revokeAllGrants(db, bob.userId);
+		for (let i = 0; i < 80; i++) {
+			expect((await send(list, { token: alice.token })).status).toBe(401);
+			expect((await send(list, { token: bob.token })).status).toBe(401);
+		}
+		expect((await send(list, { token: 'cdx_at_nope' })).status).toBe(401);
 	});
 
 	it('does not count good tokens against the address', async () => {
