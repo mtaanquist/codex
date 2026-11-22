@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSaveBases, MAX_BASE_HASHES } from './save-bases';
+import { createSaveBases, isBaseHashList, MAX_BASE_HASHES } from './save-bases';
 import { textHash as h } from './text-hash';
 
 describe('save bases', () => {
@@ -38,5 +38,29 @@ describe('save bases', () => {
 		bases.reset('z');
 		expect(bases.current()).toEqual([h('z')]);
 		expect(bases.unsettled()).toBe(false);
+	});
+});
+
+describe('fingerprints a request may carry', () => {
+	it('takes what a page sends', () => {
+		const sent = createSaveBases('').current();
+		expect(isBaseHashList(sent)).toBe(true);
+		expect(isBaseHashList([h('a'), h('a long text, with more in it')])).toBe(true);
+		expect(isBaseHashList(Array.from({ length: MAX_BASE_HASHES }, (_, i) => h(`${i}`)))).toBe(true);
+	});
+
+	it('refuses anything a page could not have sent', () => {
+		for (const bad of [
+			undefined,
+			'a',
+			[],
+			[1],
+			['not a hash'],
+			['ABC'],
+			['0'.repeat(15)],
+			Array.from({ length: MAX_BASE_HASHES + 1 }, (_, i) => h(`${i}`))
+		]) {
+			expect(isBaseHashList(bad)).toBe(false);
+		}
 	});
 });

@@ -17,6 +17,7 @@ import {
 	estimateSceneDraft,
 	type SceneDraftInput
 } from './llm/scene-draft.ts';
+import { supersededSave, type SaveOrder } from '#lib/save-order';
 import { isUuid } from '#lib/slug';
 import { textHash } from '#lib/text-hash';
 import { wordCount } from '#lib/word-count';
@@ -407,7 +408,12 @@ async function ownedDraft(db: Database, userId: string, draftId: string) {
 // scene rows: deleting a scene removes its drafts in that order too.
 async function lockReadyDraft(tx: Database, userId: string, draftId: string) {
 	const [draft] = await tx
-		.select({ id: assistantDrafts.id, textMd: assistantDrafts.textMd })
+		.select({
+			id: assistantDrafts.id,
+			textMd: assistantDrafts.textMd,
+			saveSource: assistantDrafts.saveSource,
+			saveSeq: assistantDrafts.saveSeq
+		})
 		.from(assistantDrafts)
 		.where(
 			and(
@@ -584,8 +590,10 @@ export async function saveDraftText(
 	// Fingerprints of the texts the window saving has saved or may have saved.
 	// When the stored text is none of them (it was saved from another window),
 	// the save is refused.
-	baseHashes?: string[]
-): Promise<{ ok: true } | ActionFailure> {
+	baseHashes?: string[],
+	// Which copy is saving, and which of its saves this is (see save-order).
+	order?: SaveOrder | null
+): Promise<{ ok: true; superseded?: true } | ActionFailure> {
 	if (!isUuid(draftId)) return NOT_FOUND;
 	// A draft is paid for and has no history: it is dropped by Discard, never
 	// by a save that would leave it blank.
@@ -593,9 +601,19 @@ export async function saveDraftText(
 	return await db.transaction(async (tx) => {
 		const ready = await lockReadyDraft(tx, userId, draftId);
 		if (!ready) return notReady((await ownedDraft(tx, userId, draftId))?.status);
+		// A later save from the same copy landed first: this one is older.
+		if (supersededSave(ready, order)) return { ok: true as const, superseded: true as const };
 		if (changedElsewhere(ready.textMd, text, baseHashes)) return CHANGED;
-		if (ready.textMd !== text) {
-			await tx.update(assistantDrafts).set({ textMd: text }).where(eq(assistantDrafts.id, draftId));
+		// The order is kept even when the text is unchanged: that save may be
+		// the one that put the text back, and an older one is still on its way.
+		if (ready.textMd !== text || order) {
+			await tx
+				.update(assistantDrafts)
+				.set({
+					textMd: text,
+					...(order ? { saveSource: order.source, saveSeq: order.seq } : {})
+				})
+				.where(eq(assistantDrafts.id, draftId));
 		}
 		return { ok: true as const };
 	});

@@ -13,6 +13,20 @@ import { textHash } from './text-hash';
 export const MAX_BASE_HASHES = 16;
 const MAX_PENDING = MAX_BASE_HASHES - 1;
 
+// A fingerprint as textHash writes it: a 53-bit number in hex.
+const HASH = /^[0-9a-f]{1,14}$/;
+
+// Whether a request's fingerprints are a list a page could have sent: one to
+// MAX_BASE_HASHES of them, each shaped as textHash writes one.
+export function isBaseHashList(value: unknown): value is string[] {
+	return (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.length <= MAX_BASE_HASHES &&
+		value.every((hash) => typeof hash === 'string' && HASH.test(hash))
+	);
+}
+
 export type SaveBases = {
 	// The fingerprints to send with a save or a decision made now.
 	current: () => string[];
