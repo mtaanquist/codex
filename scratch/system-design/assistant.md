@@ -942,21 +942,25 @@ suggestion. On top of those:
     Placing an edit compares two versions of the scene, and that runs in
     the server's one thread, so it is bounded everywhere
     (`createAnchorMapper(budget)` in `review-anchor.ts`). The comparison
-    works down from paragraphs to words to characters: the shared start and
-    end are set aside, the paragraphs between are compared as wholes (a
-    paragraph left alone is always found, and one that stands once among
-    the removed and once among the added counts as moved), and each stretch
-    of changed paragraphs is compared on its own, by character or by word
-    and then character. Every comparison has a cap that grows with the size
-    of what it compares, and a request has a `DiffBudget` (`perPair`,
-    `total`, and a `floor` every pair may spend even once the total is used
-    up, so an early costly pair cannot starve the rest). A stretch past its
-    cap is recorded as not checked, which is not the same as gone
-    (`mapper.unchecked`). An app's call has `APP_DIFF_BUDGET` (about 20 ms);
-    the writer's pages, the in-app Assistant, accepting a suggestion and
-    the export have `WRITER_DIFF_BUDGET` (about 75 ms a pair, 300 ms a
-    page); the marker remap on save has `SAVE_DIFF_BUDGET`, bounded only by
-    the caps. An edit that was not checked is reported with `notice`: "The
+    pairs lines that are the same, stand once in each version and have at
+    least 16 visible characters (the largest such set in the same order in
+    both); between two paired lines it does the same with sentences; and
+    each stretch left is compared with the character diff main used, after
+    setting aside the start the two sides share. Nothing else pairs text:
+    a paragraph that moved is not followed. A request has a `DiffBudget` in
+    milliseconds of character diff (`perPair`, `total`, and a `floor` every
+    pair may spend even once the total is used up, so an early costly pair
+    cannot starve a cheap one after it). A stretch whose diff runs past the
+    budget is recorded as not checked, which is not the same as gone
+    (`mapper.unchecked`). An app's call has `APP_DIFF_BUDGET` (20 ms, 0.2 ms
+    floor); the writer's pages, the in-app Assistant, accepting a suggestion
+    and the export have `WRITER_DIFF_BUDGET` (50 ms a pair, 500 ms a
+    mapper, 2 ms floor), and a page compares its pairs through
+    `mapper.prepare`, which lets the server answer others between pairs;
+    the marker remap on save has `SAVE_DIFF_BUDGET` (50 ms), and a stretch
+    holding a marker that it did not finish is compared again with the
+    diff's asynchronous mode for up to three seconds of wall time
+    (`SAVE_FINISH_MS`) before the marker is detached. An edit that was not checked is reported with `notice`: "The
     text has changed since; the edit may no longer apply." A follow-up
     `suggest_edit` that cannot be placed is refused as "can no longer be
     found", the in-app re-read skips the edit, and the review page shows the
@@ -964,9 +968,7 @@ suggestion. On top of those:
     can only be rejected." (or as changed, when its text is gone). A
     suggestion is accepted only where its original text starts at the
     mapped start or ends at the mapped end, never found by a search. A
-    marker in a stretch that was not checked keeps its place if its exact
-    words stand once in what that stretch became, and is otherwise
-    detached.
+    marker is never stored at a guessed place.
   - The per-minute budgets (per connection, per writer, and for requests of
     any kind) count the calls of the last sixty seconds
     (`slidingRateLimit`), so a burst across a minute boundary gets no more

@@ -54,6 +54,15 @@ export function sceneParagraphs(seed: number, chars: number, she = 2): string[] 
 	return paragraphs;
 }
 
+// `count` short paragraphs of one or two sentences, as in a scene of quick
+// exchanges.
+export function shortParagraphs(seed: number, count: number): string[] {
+	const next = seeded(seed);
+	return Array.from({ length: count }, () =>
+		Array.from({ length: 1 + next(2) }, () => sentence(next, 2)).join(' ')
+	);
+}
+
 export const join = (paragraphs: string[]) => paragraphs.join('\n\n');
 
 export const replaceShe = (text: string) => text.replace(/\bshe\b/g, 'Mara');

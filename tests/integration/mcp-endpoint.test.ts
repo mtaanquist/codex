@@ -1573,8 +1573,19 @@ describe('get_review_note on a large scene that was mostly rewritten', () => {
 			`${tide}\n\n${before}\n\nShe held the lantern high.\n\n${before}\n\n${tide}`
 		);
 		const id = idIn((await edit(alice, { original: 'lantern', replacement: 'lamp' })).text);
-		// The paragraph is now inside one long rewritten one.
-		const now = `${tide}\n\n${after}She held the lantern high. ${after}\n\n${tide}`;
+		// A sentence left whole inside one long rewritten paragraph is still
+		// found.
+		const whole = `${tide}\n\n${after}She held the lantern high. ${after}\n\n${tide}`;
+		await setBody(alice, whole);
+		const found = await longestStall(() => listSuggestions(db, alice.storyId));
+		expect(found.stall).toBeLessThan(1000);
+		const at = whole.indexOf('lantern');
+		expect(found.result.find((entry) => entry.id === id)).toMatchObject({
+			anchor: { start: at, end: at + 'lantern'.length }
+		});
+		// Its sentence is now part of a rewritten one, and nothing near it is
+		// left as it was.
+		const now = `${tide}\n\n${after}She held the lantern high and ${after}\n\n${tide}`;
 		await setBody(alice, now);
 		const { result, stall } = await longestStall(() => listSuggestions(db, alice.storyId));
 		expect(stall).toBeLessThan(1000);
@@ -1685,6 +1696,23 @@ describe('a follow-up to an accepted edit on a large scene that was mostly rewri
 	});
 
 	it('follows an edit in a paragraph left alone, though both sides were rewritten', async () => {
+		// The paragraph keeps a sentence the accepted edit did not touch.
+		const kept = `The wind had dropped by then. ${paragraph}`;
+		const id = await acceptedEdit(`${tide}\n\n${before}\n\n${kept}\n\n${before}\n\n${tide}`);
+		await setBody(
+			alice,
+			`${tide}\n\n${after}\n\n${kept.replace('lantern', 'lamp')}\n\n${after}\n\n${tide}`
+		);
+		const { result, stall, took } = await longestStall(() => followUp(id));
+		expect(stall).toBeLessThan(100);
+		expect(took).toBeLessThan(400);
+		expect(result.text).toContain('Staged a suggested edit');
+	});
+
+	// A paragraph whose only sentence the edit changed, with every line around
+	// it rewritten, has nothing left as it was to place it by, short of a
+	// character diff of the whole rewritten stretch.
+	it('does not follow an edit whose whole paragraph changed between rewritten ones', async () => {
 		const id = await acceptedEdit(`${tide}\n\n${before}\n\n${paragraph}\n\n${before}\n\n${tide}`);
 		await setBody(
 			alice,
@@ -1693,7 +1721,9 @@ describe('a follow-up to an accepted edit on a large scene that was mostly rewri
 		const { result, stall, took } = await longestStall(() => followUp(id));
 		expect(stall).toBeLessThan(100);
 		expect(took).toBeLessThan(400);
-		expect(result.text).toContain('Staged a suggested edit');
+		expect(result.text).toBe(
+			'That change can no longer be found in the scene; there is nothing to follow.'
+		);
 	});
 
 	it('still follows an edit in the start or the end the texts share', async () => {

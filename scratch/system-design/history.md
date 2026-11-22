@@ -1028,60 +1028,78 @@ reach from the focus story or takes it explicitly; (5) `requireAssistantUniverse
 Part of #1175, branch `fix/mcp-review-6` on `staging/mcp-endpoint`. No
 migration.
 
-- The round 5 budget counted `middle + edits^2` and gave up on the whole
-  pair past it, so any large edit (a name replaced everywhere, a tenth of
-  the paragraphs rewritten) lost every anchor: markers were saved as
-  detached (H1), and the review cards said "changed" for text that was
-  merely not compared (M1). `review-anchor.ts` now compares hierarchically
-  with its own Myers over token ids, with work counted in steps (about 2 to
-  3 ns each, measured): shared start and end cut back to whole lines, then
-  lines as wholes, then each changed stretch by character, or by word and
-  then character inside each changed run. Every comparison has a cap that
-  grows with its size, and a stretch past its cap is recorded as a gap, so
-  `mapper.unchecked` tells "not looked for" from "gone". `DiffBudget` is now
-  `{ perPair, total, floor }`; the floor lets every pair spend a little even
-  after the total is used up (100 versions of a scene: 100 of 100 placed,
-  76 ms).
-- Moved lines: a line content standing once among the removed and once
-  among the added lines counts as moved, wherever it sits; a range must lie
-  within it. Line ids are of the content alone, so a paragraph that moved to
-  or from the end of the scene still matches (L1).
-- Changed stretches: lines are paired from either end while alike (half the
-  shorter in runs of 8 or more), then lines nearly the same (80% in long
-  runs) a few ahead. Short runs shared by chance in rewritten text are set
-  aside (`withoutStrays`, after the semantic cleanup in diff-match-patch);
-  a run that a shortest edit bound to the wrong copy of a letter slides to
-  its neighbour (`slid`: "the lantern" -> "the old lantern" otherwise kept
-  the "l" of "old").
-- Markers on save (`SAVE_DIFF_BUDGET`, bounded only by the caps): a marker
-  in an unchecked stretch keeps its place if its exact words stand once in
-  what that stretch became, and is otherwise detached; nothing that was not
-  looked for is written as null, and nothing is placed by a guess.
-- M2: `placeSuggestion` accepts the original only where it starts at the
-  mapped start or ends at the mapped end (both, or neither, is refused); the
-  free search could land on the same words in a paragraph just added.
-- An unchecked suggestion shows "This could not be checked against the
-  current text. It can only be rejected." and accept refuses it with that
-  reason (`NOT_CHECKED`).
-- L2: the cost comments now state the step model. Accept still compares
-  twice (placing the suggestion, then the marker remap of old body against
-  new), but the second differs by one replacement, so it is the shared
-  start and end found by plain comparison (well under a millisecond on
-  120k) and no longer a second whole-scene budget.
-- The export quotes the original wording from `baseBody` for threads whose
-  anchor was lost or not checked (L3), owner-only.
-- Two app stall tests from round 5 changed outcome, not bounds: a paragraph
-  left alone between two rewritten stretches is now found (it was "may no
-  longer apply" or "cannot be found"), so the unplaceable variants now join
-  the paragraph into the rewritten text.
-- Measured (median of 3, this sandbox), round 5 / main / now: save with 10
-  markers on 120k replace-all 212 ms 0 kept / 406 ms 10 / 10 ms 10; 10%
-  rewritten 120k 243 ms 0 / 12.9 s 10 / 22 ms 10. Writer review page, 20
-  comments, 120k replace-all 244 ms 0 / 421 ms 20 / 4 ms 20. App cases 16
-  to 17 ms before, 8 to 13 ms now.
-- A property test holds the mapper to a ground-truth character map on
-  edited prose (300 rounds; 3000 rounds passed on six seeds), with surrogate
-  pairs never split.
+The round 5 budget counted `middle + edits^2` and gave up on the whole pair
+past it, so any large edit (a name replaced everywhere, a tenth of the
+paragraphs rewritten) lost every anchor: markers were saved as detached and
+review cards said "changed" for text that was merely not compared. The first
+round 6 commit replaced it with a levelled comparison (own Myers over token
+ids, step caps, alike and near-identical line pairing, move detection, a
+`slid` step, and `findWords` for markers on save). Review found that it
+lost markers in a paragraph that was split or joined (H1), could store a
+marker on the same words in another paragraph (H2), and lost markers when
+many short paragraphs changed (H3); that accept could land on the wrong
+copy (M1, M2); and that a page of many threads held the thread too long
+(L1). It was too many heuristics to reason about, so `review-anchor.ts` was
+rebuilt on a smaller design (about 600 lines with comments):
+
+- Lines that are the same, stand once in each text and have at least 16
+  visible characters are paired, keeping the order-preserving set with the
+  most text (heaviest increasing subsequence). Between two paired lines the
+  same is done with sentences. Each gap left is compared with the diff
+  package's `diffChars`, exactly as main calls it, after setting aside the
+  shared start (which the diff does itself anyway). The shared end is not
+  set aside before the diff, because that picks the other reading of an
+  insertion next to it (seed 17 of the property test: "Mara." followed by
+  a new paragraph ending in "."); it is kept only for a gap whose diff
+  fails. There is no other pairing: no alike lines, no moves, no word step.
+- Two readings at a gap edge: where the shared start and end overlap, the
+  earlier reading (main's) goes in `spans` and the later in `late`, and a
+  range start moves to the later one only when it still leaves a range. A
+  reversed diff for the later reading was tried and dropped: it misplaced
+  untouched text in tie cases. A top-level trim of the two whole texts was
+  dropped too: it ate a duplicated line at the boundary; splitting 1M into
+  lines costs about 2 ms, so it saved nothing.
+- `DiffBudget` is in milliseconds of character diff (measured: about 50 ns
+  per D^2 unit of the diff package; maxEditLength 1000 is about 50 ms):
+  `WRITER_DIFF_BUDGET` 50 ms a pair, 500 ms a mapper, 2 ms floor;
+  `APP_DIFF_BUDGET` 20 ms, 0.2 ms floor; `SAVE_DIFF_BUDGET` 50 ms. Gaps are
+  diffed smallest first, so one that cannot finish does not use up the rest.
+- Pages (`listThreads`, `listSuggestions`) call `mapper.prepare`, which
+  compares every pair up front and yields with `setImmediate` every 20 ms
+  (L1: 200 threads on 200 versions of a 120k scene, 100 ms, longest stall
+  40 ms).
+- Markers on save: a marker whose end lies in a gap the save's budget did
+  not finish is compared again with `diffChars` in its callback mode (one
+  edit-length round per timer tick, so the thread is free between rounds),
+  for up to `SAVE_FINISH_MS` (3 s) of wall time, while the save holds the
+  scene's row (statement_timeout is 30 s; no transaction_timeout applies to
+  saves). If that does not finish, the marker is detached. A marker is never
+  stored at a guessed place; `findWords` is gone. Measured: a whole-draft
+  paste over a 120k scene with markers takes about 3.1 s to save and the
+  markers are detached (main gave up past 30 s); the longest stall is 67 ms
+  at 120k, 192 ms at 1M (the line and sentence pass, which is not budgeted).
+  The async mode costs at least 1 ms a round, so it finishes edit distances
+  up to roughly 2500 in the 3 s.
+- `placeSuggestion` keeps the start-or-end rule (M2); M1 and M2 have
+  integration tests through `decideSuggestion` and `decideSuggestions`.
+- L2: a range starting at a line break no longer takes in a paragraph put
+  in before it (the late reading).
+- Not met: moves. A paragraph that moved is not followed; the place it left
+  is compared by character with whatever changed text now faces it, which
+  can misplace a range there. Over 41 seeds of 300 rounds, rounds with a
+  move or swap gave 2 to 31 misplaced ranges a seed against main's 16 to 82
+  (out of about 2500 to 3800 checks a seed); rounds without one gave none
+  beyond 0 to 8 a seed that main misplaces the same way.
+- Two app tests changed outcome: a sentence left whole inside a rewritten
+  paragraph is now found (the not-checked case now changes the sentence
+  too); a paragraph whose only sentence the accepted edit changed, between
+  two rewritten stretches, is not followed (it was in the first round 6
+  commit), and a variant whose paragraph keeps a sentence is. Stall and time
+  bounds unchanged.
+- Property test (`createAnchorMapper on edited prose`): seeded prose with
+  typo, replace-all, rewrite, add, delete, move, swap, copy, split, join,
+  CRLF and trailing newline edits, against a ground-truth character map and
+  main's mapper copied to `tests/main-anchor-oracle.ts`.
 
 ## MCP endpoint, review round 5 (2026-11-22)
 

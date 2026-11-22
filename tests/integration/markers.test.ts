@@ -31,7 +31,8 @@ import {
 	phraseIn,
 	replaceShe,
 	sceneParagraphs,
-	seeded
+	seeded,
+	shortParagraphs
 } from '../prose';
 
 let pool: pg.Pool;
@@ -474,4 +475,129 @@ describe('markers on a long scene survive large rewrites outside the Write edito
 		const [gone] = await db.select().from(sceneMarkers).where(eq(sceneMarkers.id, marked[4].id));
 		expect(gone.anchorStart).toBeNull();
 	});
+});
+
+// Regressions from the review of the levelled comparison, through a save
+// from outside the Write editor (anchors null), as the review centre saves.
+describe('markers through a save, review findings', () => {
+	const save = (id: string, bodyMd: string) =>
+		saveSceneBody(db, id, {
+			title: null,
+			bodyMd,
+			anchors: null,
+			baseHashes: null,
+			overwrite: false
+		});
+
+	async function sceneWith(body: string, phrases: string[]) {
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 30, bodyMd: body })
+			.returning();
+		const ids: string[] = [];
+		for (const phrase of phrases) {
+			const start = body.indexOf(phrase);
+			const [marker] = await db
+				.insert(sceneMarkers)
+				.values({
+					sceneId: scene.id,
+					ownerId,
+					anchorStart: start,
+					anchorEnd: start + phrase.length
+				})
+				.returning();
+			ids.push(marker.id);
+		}
+		return { sceneId: scene.id, ids };
+	}
+	async function anchorOf(id: string) {
+		const [row] = await db.select().from(sceneMarkers).where(eq(sceneMarkers.id, id));
+		return row.anchorStart === null ? null : { start: row.anchorStart, end: row.anchorEnd! };
+	}
+
+	const A = 'The kettle was cold when she came down to the kitchen.';
+	const P1 = 'Snow had come in the night and the yard held the light.';
+	const P2 = 'Tobin was already at the door with the cart and the mule.';
+	const C = 'They set out before the bell rang for the morning office.';
+	const cases: [string, string, string][] = [
+		['split', `${A}\n\n${P1} ${P2}\n\n${C}`, `${A}\n\n${P1}\n\n${P2}\n\n${C}`],
+		['join', `${A}\n\n${P1}\n\n${P2}\n\n${C}`, `${A}\n\n${P1} ${P2}\n\n${C}`],
+		[
+			'split inside a sentence',
+			`${A}\n\n${P1} ${P2}\n\n${C}`,
+			`${A}\n\n${P1} ${P2.replace(' with', '\n\nwith')}\n\n${C}`
+		],
+		[
+			'CRLF and a split',
+			`${A}\n\n${P1} ${P2}\n\n${C}`,
+			`${A}\r\n\r\n${P1}\r\n\r\n${P2}\r\n\r\n${C}`
+		]
+	];
+	for (const [name, before, after] of cases) {
+		it(`H1: keeps a marker in the half that moved (${name})`, async () => {
+			const phrases = ['the cart', 'yard held'];
+			const { sceneId: id, ids } = await sceneWith(before, phrases);
+			expect(await save(id, after)).toMatchObject({ ok: true });
+			const shown = after.replace(/\r\n/g, '\n');
+			for (const [n, markerId] of ids.entries()) {
+				const at = await anchorOf(markerId);
+				expect(at && shown.slice(at.start, at.end)).toBe(phrases[n]);
+			}
+		});
+	}
+
+	it('H2: a marker whose words were rewritten is not stored on the same words elsewhere', async () => {
+		const before = shortParagraphs(41, 1400);
+		before[10] = 'She lit the candle and waited by the door for the cart.';
+		before[900] = 'Tobin walked out to the shed, lit the lamp and sat down.';
+		const next = seeded(42);
+		const after = before.map((text) => {
+			const words = text.split(' ');
+			const at = next(words.length);
+			words[at] = words[at].replace(/^[a-z]+/i, 'Mara');
+			return words.join(' ');
+		});
+		after[10] = 'Night came on and nobody came up the road to the house.';
+		after[900] = 'Tobin walked out to the shed, lit the candle and sat down.';
+		const { sceneId: id, ids } = await sceneWith(join(before), ['lit the candle']);
+		expect(await save(id, join(after))).toMatchObject({ ok: true });
+		const at = await anchorOf(ids[0]);
+		// Detached, or (as main would) somewhere in what paragraph 10 became.
+		const p10 = paragraphStarts(after)[10];
+		if (at) {
+			expect(at.start).toBeGreaterThanOrEqual(p10);
+			expect(at.end).toBeLessThanOrEqual(p10 + after[10].length);
+		}
+	});
+
+	for (const changed of [450, 520, 1400]) {
+		it(`H3: keeps 300 markers with one word put into ${changed} of 1400 paragraphs`, async () => {
+			const before = shortParagraphs(43, 1400);
+			const after = before.map((text, index) =>
+				changed === 1400 || index % Math.ceil(1400 / changed) === 0 ? `Then ${text}` : text
+			);
+			const body = join(before);
+			const [scene] = await db
+				.insert(scenes)
+				.values({ storyId, globalPosition: 31, bodyMd: body })
+				.returning();
+			const starts = paragraphStarts(before);
+			const rows = Array.from({ length: 300 }, (_, n) => {
+				const index = Math.floor((n * 1400) / 300);
+				const length = Math.min(12, before[index].length);
+				const start = starts[index] + before[index].length - length;
+				return { sceneId: scene.id, ownerId, anchorStart: start, anchorEnd: start + length };
+			});
+			const markers = await db.insert(sceneMarkers).values(rows).returning();
+			const now = join(after);
+			expect(await save(scene.id, now)).toMatchObject({ ok: true });
+			let kept = 0;
+			for (const [n, marker] of markers.entries()) {
+				const at = await anchorOf(marker.id);
+				const was = body.slice(rows[n].anchorStart, rows[n].anchorEnd);
+				if (at && now.slice(at.start, at.end) === was) kept++;
+			}
+			expect(kept).toBe(300);
+		});
+	}
 });

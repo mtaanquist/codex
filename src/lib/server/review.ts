@@ -691,7 +691,7 @@ export async function listThreads(
 	db: Database,
 	storyId: string,
 	mapAnchor:
-		| Pick<AnchorMapper, 'range' | 'unchecked'>
+		| (Pick<AnchorMapper, 'range' | 'unchecked'> & Partial<Pick<AnchorMapper, 'prepare'>>)
 		| ((
 				baseText: string,
 				currentText: string,
@@ -735,6 +735,16 @@ export async function listThreads(
 	const assistantName = commentRows.some((c) => c.comment.assistant)
 		? await assistantDisplayName(db, storyId)
 		: 'Assistant';
+
+	// Compared up front, letting the server answer others between pairs, so a
+	// page of many threads does not hold the thread for all of them at once.
+	if ('prepare' in mapper && mapper.prepare) {
+		await mapper.prepare(
+			threadRows.flatMap((row) =>
+				row.baseBody ? [[row.baseBody, row.currentBody] as [string, string]] : []
+			)
+		);
+	}
 
 	return threadRows.map((row) => {
 		let anchor: { start: number; end: number } | null = null;
@@ -1096,6 +1106,8 @@ export async function listSuggestions(
 	const assistantName = rows.some((r) => r.suggestion.assistant)
 		? await assistantDisplayName(db, storyId)
 		: 'Assistant';
+	// Compared up front, letting the server answer others between pairs.
+	await mapper.prepare(rows.map((row) => [row.baseBody, row.currentBody] as [string, string]));
 	return rows.map((row) => {
 		const { rangeStart, rangeEnd } = row.suggestion;
 		// A pending suggestion anchors to where it would apply; a decided one

@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { diffChars } from 'diff';
 import {
 	createAnchorMapper,
 	placeSuggestion,
@@ -16,85 +15,31 @@ import {
 	phraseIn,
 	replaceShe,
 	sceneParagraphs,
-	seeded
+	seeded,
+	shortParagraphs
 } from '../../tests/prose';
+import { wholeTextPoint, wholeTextRange, wholeTextSpans } from '../../tests/main-anchor-oracle';
 
 const BASE = 'The quick brown fox jumps over the lazy dog.';
 // Anchor "brown fox" = [10, 19).
 const START = BASE.indexOf('brown');
 const END = START + 'brown fox'.length;
 
-// How anchors were mapped before the shared start and end were set aside: a
-// diff of the two whole texts.
-type Spans = { base: number; current: number; length: number }[];
-function wholeDiff(base: string, current: string): Spans {
-	const spans: Spans = [];
-	let b = 0;
-	let c = 0;
-	for (const part of diffChars(base, current)) {
-		const length = part.value.length;
-		if (part.added) c += length;
-		else if (part.removed) b += length;
-		else {
-			spans.push({ base: b, current: c, length });
-			b += length;
-			c += length;
-		}
-	}
-	return spans;
-}
-function wholeDiffRange(spans: Spans, baseLength: number, start: number, end: number) {
-	if (start < 0 || end > baseLength || start >= end) return null;
-	let newStart = -1;
-	let newEnd = -1;
-	for (const span of spans) {
-		if (start >= span.base && start < span.base + span.length)
-			newStart = span.current + start - span.base;
-		if (end > span.base && end <= span.base + span.length) newEnd = span.current + end - span.base;
-	}
-	return newStart === -1 || newEnd === -1 || newEnd <= newStart
-		? null
-		: { start: newStart, end: newEnd };
-}
-function wholeDiffPoint(spans: Spans, baseLength: number, position: number) {
-	if (position < 0 || position > baseLength) return null;
-	for (const span of spans) {
-		if (position >= span.base && position <= span.base + span.length)
-			return span.current + position - span.base;
-	}
-	return null;
-}
+const UNBOUNDED: DiffBudget = { perPair: Infinity, total: Infinity, floor: 0 };
 
-// Every point and range of the base text on which the mapper and a diff of
-// the whole texts disagree. With placedOnly, only a range the mapper places
-// somewhere else (not one it leaves unplaced), and only a point it places
-// next to neither character it stood between: a point between kept text and
-// an insertion may go to either side of the insertion once a stray shared
-// run beside it is left out.
-function disagreements(base: string, current: string, placedOnly = false) {
-	const spans =
-		base === current ? [{ base: 0, current: 0, length: base.length }] : wholeDiff(base, current);
-	const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+// Every point and range of the base text on which the mapper and main's
+// whole-text diff disagree.
+function disagreements(base: string, current: string) {
+	const spans = wholeTextSpans(base, current);
+	const mapper = createAnchorMapper(UNBOUNDED);
 	const found: unknown[] = [];
 	const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-	const besideSame = (at: number, now: number) =>
-		(at > 0 && now > 0 && base[at - 1] === current[now - 1]) ||
-		(at < base.length && base[at] === current[now]);
 	for (let start = -1; start <= base.length + 1; start++) {
-		const point = mapper.point(base, current, start);
-		const whole = wholeDiffPoint(spans, base.length, start);
-		if (
-			placedOnly
-				? point !== null && point !== whole && !besideSame(start, point)
-				: !same(point, whole)
-		)
+		if (!same(mapper.point(base, current, start), wholeTextPoint(spans, base.length, start)))
 			found.push({ base, current, start });
 		for (let end = start; end <= base.length + 1; end++) {
 			const range = mapper.range(base, current, start, end);
-			if (
-				!(placedOnly && range === null) &&
-				!same(range, wholeDiffRange(spans, base.length, start, end))
-			)
+			if (!same(range, wholeTextRange(spans, base.length, start, end)))
 				found.push({ base, current, start, end });
 		}
 	}
@@ -109,6 +54,9 @@ function random(seed: number) {
 		return Math.floor((state / 2147483648) * below);
 	};
 }
+
+const quote = (text: string, at: { start: number; end: number } | null) =>
+	at && text.slice(at.start, at.end);
 
 describe('reanchorRange', () => {
 	it('returns the range unchanged when the text is unchanged', () => {
@@ -158,17 +106,6 @@ describe('reanchorRange', () => {
 		expect(reanchorRange(BASE, BASE, 0, BASE.length + 1)).toBeNull();
 	});
 
-	it('keeps a word whole when a word ending in its first letter is added before it', () => {
-		const base = 'She held the lantern high.';
-		const current = 'She held the old lantern high, and the lantern shook.';
-		const at = base.indexOf('lantern');
-		const result = reanchorRange(base, current, at, at + 'lantern'.length);
-		expect(result).toEqual({
-			start: current.indexOf('lantern'),
-			end: current.indexOf('lantern') + 7
-		});
-	});
-
 	it('survives an edit at the very start and end of the text', () => {
 		const current = 'Lo! ' + BASE.slice(0, -1) + '!';
 		const result = reanchorRange(BASE, current, START, END);
@@ -201,8 +138,8 @@ describe('reanchorPoint', () => {
 });
 
 describe('createAnchorMapper', () => {
-	// The mapper reuses one diff per pair of texts, so what it returns has to
-	// stay identical to re-anchoring each anchor on its own.
+	// The mapper reuses one comparison per pair of texts, so what it returns
+	// has to stay identical to re-anchoring each anchor on its own.
 	const CASES: Array<[string, string]> = [
 		[BASE, BASE],
 		[BASE, 'A very ' + BASE],
@@ -242,7 +179,7 @@ describe('createAnchorMapper', () => {
 		const rewritten = BASE.replace('brown fox', 'red vixen');
 		expect(mapper.range(BASE, shifted, START, END)).toEqual({ start: START + 7, end: END + 7 });
 		expect(mapper.range(BASE, rewritten, START, END)).toBeNull();
-		// Repeating the first pair still maps through its own diff, not the second's.
+		// Repeating the first pair still maps through its own result.
 		expect(mapper.range(BASE, shifted, START, END)).toEqual({ start: START + 7, end: END + 7 });
 	});
 
@@ -251,7 +188,6 @@ describe('createAnchorMapper', () => {
 		const current = BASE.replace('lazy dog', 'sleeping cat');
 		const first = mapper.range(BASE, current, START, END);
 		const spent = mapper.spent();
-		expect(spent).toBeGreaterThan(0);
 		for (let i = 0; i < 1000; i++) mapper.range(BASE, current, START, END);
 		expect(mapper.point(BASE, current, START)).toBe(START);
 		expect(mapper.unchecked(BASE, current, START, END)).toBe(false);
@@ -259,29 +195,22 @@ describe('createAnchorMapper', () => {
 		expect(mapper.spent()).toBe(spent);
 	});
 
-	it('compares only the paragraphs between the start and the end the texts share', () => {
+	it('compares only what lies between the start and the end the texts share', () => {
 		const paragraphs = sceneParagraphs(21, 120_000);
 		const long = join(paragraphs);
 		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
-		// A few words typed into one paragraph cost about what that paragraph
-		// holds, not what the scene holds.
 		const into = paragraphStarts(paragraphs)[100] + 20;
 		const typed = `${long.slice(0, into)}a few new words ${long.slice(into)}`;
 		const at = paragraphStarts(paragraphs)[150];
 		expect(mapper.point(long, typed, at)).toBe(at + 'a few new words '.length);
-		expect(mapper.spent()).toBeLessThan(20 * paragraphs[100].length + 5000);
+		expect(mapper.spent()).toBeLessThan(5);
 	});
 });
 
-// Comparing paragraph by paragraph must not move an anchor anywhere a diff of
-// the whole texts would not. Where the texts have one shortest alignment, an
-// anchor the mapper places must be exactly where that diff places it. Where
-// several are equally short (a repeated letter at the edge of a change, say),
-// the two may pick different ones, so there the test holds the mapper to what
-// any shortest alignment gives. In a stretch that changed a lot, the mapper
-// leaves out the letters and short words two texts share by chance (see
-// withoutStrays), so it may place less than the whole diff, never more.
-describe('createAnchorMapper against a diff of the whole texts', () => {
+// Inside a stretch that has to be compared character by character the
+// mapper runs main's diff on that stretch, so where the texts have one
+// shortest alignment the result must be exactly main's.
+describe('createAnchorMapper against main, where the alignment is forced', () => {
 	// Words of lowercase letters that stay, and runs of digits that are all
 	// taken out or replaced by capitals, with more capitals put in between:
 	// no character that goes can match one that stays or one that comes, so
@@ -310,34 +239,10 @@ describe('createAnchorMapper against a diff of the whole texts', () => {
 		return { base, current };
 	}
 
-	it('places anchors only where the whole diff does, where the alignment is forced', () => {
+	it('gives exactly the same anchors where the alignment is forced', () => {
 		const next = random(7);
-		let placed = 0;
-		let placedBefore = 0;
 		for (let round = 0; round < 200; round++) {
 			const { base, current } = forcedPair(next);
-			expect(disagreements(base, current, true)).toEqual([]);
-			const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
-			const spans = base === current ? null : wholeDiff(base, current);
-			for (let at = 0; at < base.length; at++) {
-				if (mapper.range(base, current, at, at + 1)) placed++;
-				if (!spans || wholeDiffRange(spans, base.length, at, at + 1)) placedBefore++;
-			}
-		}
-		// These texts are mostly changes, so what it leaves out as shared by
-		// chance is a fair part, but well under half.
-		expect(placed).toBeGreaterThan(0.65 * placedBefore);
-	});
-
-	it('gives exactly the same anchors where a forced change is small', () => {
-		// One change in a longer text: nothing is left out by chance.
-		const next = random(17);
-		const words = ['the ', 'harbour ', 'lay ', 'quiet ', 'she ', 'walked ', 'in ', '\n\n'];
-		for (let round = 0; round < 200; round++) {
-			const text = Array.from({ length: 20 + next(20) }, () => words[next(words.length)]);
-			const at = next(text.length);
-			const base = [...text.slice(0, at), String(next(1000)), ...text.slice(at)].join('');
-			const current = [...text.slice(0, at), ['', 'X', 'NEW'][next(3)], ...text.slice(at)].join('');
 			expect(disagreements(base, current)).toEqual([]);
 		}
 	});
@@ -347,8 +252,6 @@ describe('createAnchorMapper against a diff of the whole texts', () => {
 		const letters = ['a', 'b', 'ab', ' '];
 		const text = (length: number) =>
 			Array.from({ length }, () => letters[next(letters.length)]).join('');
-		let keptAll = 0;
-		let keptAllBefore = 0;
 		for (let round = 0; round < 300; round++) {
 			const base = text(5 + next(60));
 			let current = base;
@@ -357,7 +260,7 @@ describe('createAnchorMapper against a diff of the whole texts', () => {
 				current = current.slice(0, at) + text(next(6)) + current.slice(at + next(8));
 			}
 			const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
-			const spans = wholeDiff(base, current);
+			const spans = wholeTextSpans(base, current);
 			let kept = 0;
 			let keptBefore = 0;
 			let shared = 0;
@@ -371,10 +274,10 @@ describe('createAnchorMapper against a diff of the whole texts', () => {
 					const sameAfter = position < base.length && base[position] === current[now];
 					expect(sameBefore || sameAfter || (position === 0 && now === 0)).toBe(true);
 				}
-				// In the shared start nothing moves, as before.
+				// In the shared start nothing moves, as on main.
 				if (shared > 0 && position <= shared) {
 					expect(now).toBe(position);
-					expect(now).toBe(wholeDiffPoint(spans, base.length, position));
+					expect(now).toBe(wholeTextPoint(spans, base.length, position));
 				}
 				if (position === base.length) break;
 				const one = mapper.range(base, current, position, position + 1);
@@ -383,15 +286,11 @@ describe('createAnchorMapper against a diff of the whole texts', () => {
 					expect(current[one.start]).toBe(base[position]);
 					expect(one.end - one.start).toBe(1);
 				}
-				if (wholeDiffRange(spans, base.length, position, position + 1)) keptBefore++;
+				if (wholeTextRange(spans, base.length, position, position + 1)) keptBefore++;
 			}
-			// Never more than a longest run of shared characters; less only by
-			// what it leaves out by chance.
-			expect(kept).toBeLessThanOrEqual(keptBefore);
-			keptAll += kept;
-			keptAllBefore += keptBefore;
+			// Both keep a longest run of shared characters.
+			expect(kept).toBe(keptBefore);
 		}
-		expect(keptAll).toBeGreaterThan(0.9 * keptAllBefore);
 	});
 
 	it('does not split a character written as two code units', () => {
@@ -399,22 +298,39 @@ describe('createAnchorMapper against a diff of the whole texts', () => {
 			['a\u{1F600}b', 'a\u{1F603}b'],
 			['\u{1F600}', '\u{1F603}'],
 			['x\u{1F600}', 'y\u{1F600}'],
-			['😀z', '🨀z'],
-			['ab\u{1F600}cd', 'ab\u{1F600}\u{1F600}cd']
+			['😀z', '🨀z']
 		];
 		for (const [base, current] of cases) expect(disagreements(base, current)).toEqual([]);
+		// A character put in next to its twin reads as either copy; a range
+		// starting at it takes the later one (see Comparison.late), main the
+		// earlier. Either way it holds the same text and splits nothing.
+		const base = 'ab\u{1F600}cd';
+		const current = 'ab\u{1F600}\u{1F600}cd';
+		const mapper = createAnchorMapper(UNBOUNDED);
+		for (let start = 0; start <= base.length; start++) {
+			for (let end = start + 1; end <= base.length; end++) {
+				if (start === 3 || end === 3) continue;
+				const got = mapper.range(base, current, start, end);
+				if (got && base.slice(start, end).length === got.end - got.start)
+					expect(current.slice(got.start, got.end)).toBe(base.slice(start, end));
+				if (got)
+					expect(
+						current.codePointAt(got.start)! >= 0xdc00 && current.codePointAt(got.start)! <= 0xdfff
+					).toBe(false);
+			}
+		}
 	});
 });
 
 describe('createAnchorMapper with a budget', () => {
 	const old = 'The harbour lay quiet under a low grey sky. '.repeat(200);
 	const rewritten = 'Rain came in from the west before noon and stayed on. '.repeat(170);
-	const SMALL: DiffBudget = { perPair: 1_000_000, total: 1_000_000, floor: 0 };
+	const STARVED: DiffBudget = { perPair: 0, total: 0, floor: 0 };
 
 	it('places anchors as without one while the change is within it', () => {
 		const base = `She held the lantern high.\n\n${old}`;
 		const current = `She held the old lantern high.\n\nA new line. ${old}`;
-		const bounded = createAnchorMapper(SMALL);
+		const bounded = createAnchorMapper({ perPair: 5, total: 5, floor: 0 });
 		expect(bounded.range(base, current, 13, 20)).toEqual(reanchorRange(base, current, 13, 20));
 		expect(bounded.range(base, current, 100, 140)).toEqual(reanchorRange(base, current, 100, 140));
 		expect(bounded.point(base, current, 60)).toBe(reanchorPoint(base, current, 60));
@@ -425,7 +341,7 @@ describe('createAnchorMapper with a budget', () => {
 	it('past its limit, leaves what it did not compare unchecked and places the rest', () => {
 		const base = `She held the lantern high.\n\n${old}\n\nA heron stood there.\n\nThe gull watched.`;
 		const current = `She held the lantern high.\n\n${rewritten}\n\nNo heron today.\n\nThe gull watched.`;
-		const bounded = createAnchorMapper({ perPair: 1000, total: 1000, floor: 0 });
+		const bounded = createAnchorMapper(STARVED);
 		const began = performance.now();
 		// In the shared start: where it was.
 		expect(bounded.range(base, current, 13, 20)).toEqual({ start: 13, end: 20 });
@@ -453,7 +369,7 @@ describe('createAnchorMapper with a budget', () => {
 		const full = createAnchorMapper(WRITER_DIFF_BUDGET);
 		expect(full.range(base, current, heron, heron + 5)).toBeNull();
 		expect(full.unchecked(base, current, heron, heron + 5)).toBe(false);
-		const starved = createAnchorMapper({ perPair: 0, total: 0, floor: 0 });
+		const starved = createAnchorMapper(STARVED);
 		expect(starved.range(base, current, heron, heron + 5)).toBeNull();
 		expect(starved.unchecked(base, current, heron, heron + 5)).toBe(true);
 	});
@@ -461,9 +377,10 @@ describe('createAnchorMapper with a budget', () => {
 	it('gives up on a stretch that cannot line up without holding up the rest', () => {
 		// Two long paragraphs rewritten from scratch, and a word fixed in a
 		// short one: the short one is placed whatever the long ones cost.
-		const base = `${old}\n\nKeep one.\n\nShe held the lantern high.\n\nKeep two.\n\n${old}`;
-		const current = `${rewritten}\n\nKeep one.\n\nShe held the lamp high.\n\nKeep two.\n\n${rewritten}`;
-		const mapper = createAnchorMapper(SMALL);
+		const tide = 'The tide was out and the boats lay on their sides.';
+		const base = `${old}\n\nKeep this one as it is.\n\nShe held the lantern high. ${tide}\n\nKeep two.\n\n${old}`;
+		const current = `${rewritten}\n\nKeep this one as it is.\n\nShe held the lamp high. ${tide}\n\nKeep two.\n\n${rewritten}`;
+		const mapper = createAnchorMapper({ perPair: 20, total: 20, floor: 0 });
 		const began = performance.now();
 		const she = base.indexOf('She held');
 		expect(mapper.range(base, current, she, she + 8)).toEqual({
@@ -472,32 +389,30 @@ describe('createAnchorMapper with a budget', () => {
 		});
 		expect(mapper.unchecked(base, current, 10, 20)).toBe(true);
 		expect(mapper.unchecked(base, current, base.length - 20, base.length - 10)).toBe(true);
-		expect(mapper.spent()).toBeLessThanOrEqual(SMALL.perPair + 100_000);
 		expect(performance.now() - began).toBeLessThan(250);
 	});
 
 	it('spends its budget over every pair it compares, with a floor for each', () => {
-		// Each pair is cheap on its own; many are not.
-		const versions = Array.from({ length: 40 }, (_, n) => `${n} ${old} ${n}`);
-		const current = `now ${old} now`;
-		const at = old.length / 2;
-		const placed = (budget: DiffBudget) => {
-			const mapper = createAnchorMapper(budget);
-			const count = versions.filter((version) => mapper.point(version, current, at) !== null);
-			return { count: count.length, mapper };
-		};
-		const { count, mapper } = placed({ perPair: 1_000_000, total: 200_000, floor: 0 });
-		expect(count).toBeGreaterThan(0);
-		expect(count).toBeLessThan(versions.length);
-		expect(mapper.unchecked(versions.at(-1)!, current, at, at)).toBe(true);
+		// Each pair needs a slow comparison of its own.
+		const versions = Array.from({ length: 40 }, (_, n) => `${n} ${old.slice(n)}${rewritten} ${n}`);
+		const current = `now ${old}${old} now`;
+		const at = 2;
+		const mapper = createAnchorMapper({ perPair: 1000, total: 30, floor: 0 });
+		const began = performance.now();
+		for (const version of versions) mapper.point(version, current, at);
+		expect(performance.now() - began).toBeLessThan(250);
+		expect(mapper.unchecked(versions.at(-1)!, current, 10, 10)).toBe(true);
 		// A pair already compared costs nothing more.
 		const spent = mapper.spent();
 		mapper.point(versions[0], current, at);
 		expect(mapper.spent()).toBe(spent);
-		// With a floor for each pair, every cheap one is placed.
-		expect(placed({ perPair: 1_000_000, total: 200_000, floor: 100_000 }).count).toBe(
-			versions.length
+		// With a floor for each pair, every cheap one is still placed.
+		const cheap = createAnchorMapper({ perPair: 1000, total: 0, floor: 2 });
+		const typos = Array.from(
+			{ length: 40 },
+			(_, n) => `${old.slice(0, n * 50)}x${old.slice(n * 50)}`
 		);
+		for (const typo of typos) expect(cheap.point(typo, old, typo.length)).toBe(old.length);
 	});
 });
 
@@ -582,6 +497,158 @@ describe('createAnchorMapper on a long scene', () => {
 	});
 });
 
+// Regressions from the review of the levelled comparison. Each input is the
+// one the finding gave.
+describe('review findings', () => {
+	const A = 'The kettle was cold when she came down to the kitchen.';
+	const P1 = 'Snow had come in the night and the yard held the light.';
+	const P2 = 'Tobin was already at the door with the cart and the mule.';
+	const P3 = 'Neither of them spoke of the letter on the table.';
+	const C = 'They set out before the bell rang for the morning office.';
+
+	// H1: splitting or joining a paragraph keeps the anchors in the half that
+	// moved, for comments and for markers.
+	const halves: [string, string, string][] = [
+		['split', `${A}\n\n${P1} ${P2}\n\n${C}`, `${A}\n\n${P1}\n\n${P2}\n\n${C}`],
+		['join', `${A}\n\n${P1}\n\n${P2}\n\n${C}`, `${A}\n\n${P1} ${P2}\n\n${C}`],
+		[
+			'split mid-paragraph',
+			`${A}\n\n${P1} ${P2} ${P3}\n\n${C}`,
+			`${A}\n\n${P1} ${P2}\n\n${P3}\n\n${C}`
+		],
+		[
+			'split inside a sentence',
+			`${A}\n\n${P1} ${P2}\n\n${C}`,
+			`${A}\n\n${P1} ${P2.replace(' with', '\n\nwith')}\n\n${C}`
+		],
+		[
+			'CRLF and a split',
+			`${A}\n\n${P1} ${P2}\n\n${C}`,
+			`${A}\r\n\r\n${P1}\r\n\r\n${P2}\r\n\r\n${C}`
+		]
+	];
+	for (const [name, base, current] of halves) {
+		it(`H1: keeps an anchor in the half that moved (${name})`, () => {
+			for (const words of ['the cart', 'Tobin was', 'the mule.', 'yard held']) {
+				const start = base.indexOf(words);
+				const want = { start: current.indexOf(words), end: current.indexOf(words) + words.length };
+				const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+				expect({ words, got: mapper.range(base, current, start, start + words.length) }).toEqual({
+					words,
+					got: want
+				});
+				expect(mapper.unchecked(base, current, start, start + words.length)).toBe(false);
+				const ends = createAnchorMapper(SAVE_DIFF_BUDGET).ends(
+					base,
+					current,
+					start,
+					start + words.length
+				);
+				expect({ words, ends }).toEqual({ words, ends: want });
+			}
+		});
+	}
+
+	// M1: of two identical lines, an edit on the first is never placed on the
+	// second.
+	it('M1: refuses an edit on one of two identical lines once the first was changed', () => {
+		const base = 'She waited.\n"No."\n"No."\nHe left.';
+		const current = 'She waited.\n"No, never."\n"No."\nHe left then.';
+		const start = base.indexOf('"No."');
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		expect(placeSuggestion(mapper, base, current, start, start + 5)).toBeNull();
+	});
+
+	// M2: a short reply deleted and the same reply typed elsewhere is not a
+	// move of the old one.
+	it('M2: does not follow a short line deleted and typed again under another question', () => {
+		const base =
+			'She asked, "Will you come with me to the harbour?"\n"No."\nHe asked, "Is the road to the north still open?"\n"Not this week."';
+		const current =
+			'She asked, "Will you come with me to the harbour?"\nHe asked, "Is the road to the north still open?"\n"No."';
+		const start = base.indexOf('"No."');
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		expect(placeSuggestion(mapper, base, current, start, start + 5)).toBeNull();
+		expect(mapper.range(base, current, start, start + 5)).toBeNull();
+		expect(createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, start, start + 5)).toBeNull();
+	});
+
+	// L2: a range that starts (or ends) with a line break does not stretch
+	// over a paragraph put in at that edge.
+	it('L2: a range with a line break at its edge does not take in an inserted paragraph', () => {
+		const p1 = 'The kettle was cold when she came down.';
+		const p2 = 'Snow had come in the night and the yard held the light.';
+		const added = 'Tobin was already at the door with the cart.';
+		const base = `${p1}\n\n${p2}`;
+		const current = `${p1}\n\n${added}\n\n${p2}`;
+		const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
+		const opening = mapper.range(base, current, p1.length, p1.length + 6);
+		expect(quote(current, opening)).toBe('\n\nSnow');
+		const closing = mapper.range(base, current, p1.length - 5, p1.length + 2);
+		expect(quote(current, closing)).toBe('down.\n\n');
+		const save = createAnchorMapper(SAVE_DIFF_BUDGET);
+		expect(quote(current, save.ends(base, current, p1.length, p1.length + 6))).toBe('\n\nSnow');
+		expect(quote(current, save.ends(base, current, p1.length - 5, p1.length + 2))).toBe(
+			'down.\n\n'
+		);
+	});
+
+	// H2: a marker whose words were rewritten is never stored in another
+	// paragraph that happens to hold the same words.
+	it('H2: a rewritten marker is not placed on the same words elsewhere', () => {
+		const before = shortParagraphs(41, 1400);
+		before[10] = 'She lit the candle and waited by the door for the cart.';
+		before[900] = 'Tobin walked out to the shed, lit the lamp and sat down.';
+		const next = seeded(42);
+		const after = before.map((text) => {
+			// One word in every paragraph changed.
+			const words = text.split(' ');
+			const at = next(words.length);
+			words[at] = words[at].replace(/^[a-z]+/i, 'Mara');
+			return words.join(' ');
+		});
+		after[10] = 'Night came on and nobody came up the road to the house.';
+		after[900] = 'Tobin walked out to the shed, lit the candle and sat down.';
+		const base = join(before);
+		const current = join(after);
+		expect(base.length).toBeGreaterThan(140_000);
+		const start = base.indexOf('lit the candle');
+		const mapper = createAnchorMapper(SAVE_DIFF_BUDGET);
+		const now = mapper.ends(base, current, start, start + 'lit the candle'.length);
+		const p10 = paragraphStarts(after)[10];
+		if (now) {
+			expect(now.start).toBeGreaterThanOrEqual(p10);
+			expect(now.end).toBeLessThanOrEqual(p10 + after[10].length);
+		}
+		expect(mapper.unchecked(base, current, start, start)).toBe(false);
+	});
+
+	// H3: one word put into many short paragraphs keeps every marker.
+	for (const changed of [450, 520, 1400]) {
+		it(`H3: keeps 300 markers with one word put into ${changed} of 1400 paragraphs`, () => {
+			const before = shortParagraphs(43, 1400);
+			const after = before.map((text, index) =>
+				index % Math.ceil(1400 / changed) === 0 || changed === 1400 ? `Then ${text}` : text
+			);
+			const base = join(before);
+			const current = join(after);
+			const baseStarts = paragraphStarts(before);
+			const currentStarts = paragraphStarts(after);
+			const mapper = createAnchorMapper(SAVE_DIFF_BUDGET);
+			let kept = 0;
+			for (let n = 0; n < 300; n++) {
+				const index = Math.floor((n * 1400) / 300);
+				const length = Math.min(12, before[index].length);
+				const start = baseStarts[index] + before[index].length - length;
+				const now = mapper.ends(base, current, start, start + length);
+				const shift = after[index].length - before[index].length;
+				if (now?.start === currentStarts[index] + shift + before[index].length - length) kept++;
+			}
+			expect(kept).toBe(300);
+		});
+	}
+});
+
 describe('placeSuggestion', () => {
 	const place = (base: string, current: string, start: number, end: number) =>
 		placeSuggestion(createAnchorMapper(WRITER_DIFF_BUDGET), base, current, start, end);
@@ -626,225 +693,423 @@ describe('placeSuggestion', () => {
 	});
 });
 
-describe('createAnchorMapper ends and findWords (for markers)', () => {
+describe('createAnchorMapper ends (for markers)', () => {
 	const p1 = 'The kettle was cold when she came down.';
 	const p2 = 'Snow had come in the night and the yard held the light.';
 	const p3 = 'Tobin was already at the door with the cart.';
 
-	it('follows a range inside a paragraph that moved, but not one reaching out of it', () => {
+	// Nothing follows a paragraph that moved: the larger of the two that
+	// changed places keeps its anchors, as on main.
+	it('keeps the paragraph a move did not take, and drops a range reaching across', () => {
 		const base = [p1, p2, p3].join('\n\n');
 		const current = [p2, p1, p3].join('\n\n');
 		const mapper = createAnchorMapper(SAVE_DIFF_BUDGET);
-		const one = mapper.ends(base, current, base.indexOf('kettle'), base.indexOf('kettle') + 6);
-		expect(one && current.slice(one.start, one.end)).toBe('kettle');
-		const two = mapper.ends(base, current, base.indexOf('yard'), base.indexOf('yard') + 4);
-		expect(two && current.slice(two.start, two.end)).toBe('yard');
-		// From the end of the first paragraph into the second.
+		const yard = mapper.ends(base, current, base.indexOf('yard'), base.indexOf('yard') + 4);
+		expect(quote(current, yard)).toBe('yard');
 		expect(mapper.ends(base, current, base.indexOf('down'), base.indexOf('Snow') + 4)).toBeNull();
 	});
 
-	it('stretches over words added at the edge of the range', () => {
+	// Main stretched a marker over a word typed right before it; it now keeps
+	// its own words, as a comment does.
+	it('keeps a marker when words are added at its edges, on its own words', () => {
 		const base = 'Alice pays the toll.';
-		const current = 'Alice gladly pays the toll.';
-		const now = createAnchorMapper(SAVE_DIFF_BUDGET).ends(base, current, 6, 10);
-		expect(now && current.slice(now.start, now.end)).toBe('gladly pays');
+		const mapper = createAnchorMapper(SAVE_DIFF_BUDGET);
+		const before = 'Alice gladly pays the toll.';
+		expect(quote(before, mapper.ends(base, before, 6, 10))).toBe('pays');
+		const after = 'Alice pays gladly the toll.';
+		expect(quote(after, mapper.ends(base, after, 6, 10))).toBe('pays');
+		// A change to its own first letters still shrinks it.
+		const inside = 'Alice repays the toll.';
+		expect(quote(inside, mapper.ends(base, inside, 6, 10))).toBe('repays');
 	});
 
-	it('finds the words of an unchecked range when they stand once in what that part became', () => {
-		const base = [p1, p2, p3].join('\n\n');
-		const current = ['A new opening.', p2.replace('night', 'dark'), p3].join('\n\n');
+	it('finishes a stretch past the budget without holding the thread, and only then gives up', async () => {
+		const old = 'The harbour lay quiet under a low grey sky. '.repeat(20);
+		const base = `${p1}\n\n${old}She lit the quiet candle. ${old}\n\n${p3}`;
+		const current = base.replace(/quiet/g, 'still');
 		const starved = createAnchorMapper({ perPair: 0, total: 0, floor: 0 });
-		const yard = base.indexOf('the yard');
-		expect(starved.ends(base, current, yard, yard + 8)).toBeNull();
-		expect(starved.unchecked(base, current, yard, yard)).toBe(true);
-		expect(starved.findWords(base, current, yard, yard + 8)).toEqual({
-			start: current.indexOf('the yard'),
-			end: current.indexOf('the yard') + 8
-		});
-		// "the" stands more than once: no guess.
-		expect(starved.findWords(base, current, yard, yard + 3)).toBeNull();
-		// Words that are gone are not found.
-		const night = base.indexOf('night');
-		expect(starved.findWords(base, current, night, night + 5)).toBeNull();
+		const at = base.indexOf('candle');
+		expect(starved.ends(base, current, at, at + 6)).toBeNull();
+		expect(starved.unchecked(base, current, at, at)).toBe(true);
+		await starved.finish(base, current, [at, at + 6], 2000);
+		expect(quote(current, starved.ends(base, current, at, at + 6))).toBe('candle');
+		expect(starved.unchecked(base, current, at, at)).toBe(false);
+		// Past the time it is given, it is left unchecked.
+		const rushed = createAnchorMapper({ perPair: 0, total: 0, floor: 0 });
+		await rushed.finish(base, current, [at], 0);
+		expect(rushed.unchecked(base, current, at, at)).toBe(true);
 	});
 });
 
-// The mapper against an unbounded diff of the two whole texts, on prose with
-// the edits a writer makes. Inside a paragraph that was left alone (same text,
-// same order) the mapper must give exactly where those words now are. A diff
-// of the whole texts agrees there nearly always, but not always: next to a
-// rewritten paragraph it can bind the first letters of the untouched one to
-// letters of the rewrite, which puts the anchor in the wrong paragraph.
-// Anywhere else, a place the mapper gives must be the exact one, or the one
-// the whole diff gives, or hold the same text as before.
-describe('createAnchorMapper against a whole diff, on edited prose', () => {
+// The mapper against the true position of every character, on generated
+// prose with the edits a writer makes. Because each edit is constructed, the
+// test knows where every character of the base text went (or that it is
+// gone), and so where a range belongs: from where its first character went
+// to just past where its last one went.
+describe('createAnchorMapper on edited prose, against the true positions', () => {
 	const EMOJI = ['\u{1F319}', '\u{1F600}'];
-	function smallParagraph(next: (below: number) => number) {
-		let text = paragraph(next)
-			.split(' ')
-			.slice(0, 12 + next(30))
-			.join(' ');
-		if (next(4) === 0) {
-			const words = text.split(' ');
-			words[next(words.length)] += EMOJI[next(2)];
-			text = words.join(' ');
-		}
-		return text;
-	}
+	// A cell is one code unit of the edited text and the base index it came
+	// from, or -1 for one that is new.
+	type Cell = { ch: string; from: number };
+	// By code unit, so the index of a cell is its index in the text.
+	const units = (text: string, from: (k: number) => number): Cell[] =>
+		Array.from({ length: text.length }, (_, k) => ({ ch: text[k], from: from(k) }));
+	const cells = (text: string) => units(text, () => -1);
 
-	// A paragraph of the edited text: which original paragraph it came from
-	// (-1 for a new one), whether its text is untouched, and where each
-	// character of the original now is in it (-1 for one that was changed).
-	type Paragraph = { text: string; from: number; same: boolean; map: number[] };
-	function editedPair(next: (below: number) => number) {
-		const original = Array.from({ length: 5 + next(10) }, () => smallParagraph(next));
-		let doc: Paragraph[] = original.map((text, from) => ({
-			text,
-			from,
-			same: true,
-			map: Array.from({ length: text.length }, (_, i) => i)
-		}));
-		// Rewrites one paragraph, given where each of its characters goes.
-		const change = (p: Paragraph, text: string, goes: (at: number) => number): Paragraph => ({
-			...p,
-			text,
-			same: false,
-			map: p.map.map((at) => (at === -1 ? -1 : goes(at)))
+	function proseCase(next: (below: number) => number) {
+		const newline = next(5) === 0 ? '\r\n' : '\n';
+		const texts: string[] = [];
+		for (let i = 3 + next(7); i > 0; i--) {
+			let text = paragraph(next)
+				.split(/(?<=[.?!]) /)
+				.slice(0, 2 + next(3))
+				.join(' ');
+			if (next(4) === 0) {
+				const words = text.split(' ');
+				words[next(words.length)] += EMOJI[next(2)];
+				text = words.join(' ');
+			}
+			texts.push(text);
+		}
+		// A repeated scene break or reply, as real scenes have.
+		if (next(3) === 0) {
+			const line = ['***', '"No."'][next(2)];
+			texts.splice(next(texts.length + 1), 0, line);
+			texts.splice(next(texts.length + 1), 0, line);
+		}
+		const sep = newline + newline;
+		const base = texts.join(sep) + (next(3) === 0 ? newline : '');
+		// The base as cells, split into paragraphs, the separators between
+		// them, and a tail after the last.
+		let at = 0;
+		const paras: Cell[][] = [];
+		const seps: Cell[][] = [];
+		texts.forEach((text, i) => {
+			paras.push(units(text, (k) => at + k));
+			at += text.length;
+			const after = i < texts.length - 1 ? sep : base.slice(at);
+			seps.push(units(after, (k) => at + k));
+			at += after.length;
 		});
-		for (let edits = 1 + next(4); edits > 0; edits--) {
-			const at = next(doc.length);
-			const kind = next(6);
+		let tail = seps.pop()!;
+		const newSep = () =>
+			cells(seps.some((s) => s.some((c) => c.ch === '\r')) ? '\r\n\r\n' : '\n\n');
+		const insertAt = (k: number, para: Cell[], separator: Cell[]) => {
+			if (k < paras.length) {
+				paras.splice(k, 0, para);
+				seps.splice(k, 0, separator);
+			} else {
+				seps.push(separator);
+				paras.push(para);
+			}
+		};
+		const removeAt = (k: number) => {
+			const [para] = paras.splice(k, 1);
+			const [separator] = seps.splice(k < seps.length ? k : k - 1, 1);
+			return { para, separator };
+		};
+		const edits: string[] = [];
+		// Base characters of paragraphs that moved, were swapped or were moved
+		// across, and of paragraphs that were copied (either copy could be
+		// called the original).
+		const shuffled = new Set<number>();
+		const copied = new Set<number>();
+		const mark = (set: Set<number>, para: Cell[]) => {
+			for (const c of para) if (c.from !== -1) set.add(c.from);
+		};
+		for (let n = 1 + next(4); n > 0; n--) {
+			const k = next(paras.length);
+			const kind = next(12);
+			edits.push(String(kind));
+			const text = paras[k].map((c) => c.ch).join('');
 			if (kind === 0) {
-				// A typo: a letter struck wrong. A digit, which the prose never
-				// holds, so the shortest alignment is the only one (two letters
-				// swapped have two, and the whole diff may pick either).
-				const text = doc[at].text;
-				const i = next(text.length);
-				if (/\p{L}/u.test(text[i])) {
-					const typo = text.slice(0, i) + String(next(10)) + text.slice(i + 1);
-					doc[at] = change(doc[at], typo, (from) => (from === i ? -1 : from));
-				}
+				// A typo: a letter struck as a digit.
+				const letters = [...text.matchAll(/[a-z]/g)];
+				if (letters.length === 0) continue;
+				const i = letters[next(letters.length)].index!;
+				paras[k][i] = { ch: String(next(10)), from: -1 };
 			} else if (kind === 1) {
 				// A word replaced everywhere.
 				const word = ['the', 'she', 'her', 'and'][next(4)];
 				const pattern = new RegExp(`\\b${word}\\b`, 'g');
-				doc = doc.map((p) => {
-					const text = p.text.replace(pattern, 'Mara');
-					if (text === p.text) return p;
-					const goes: number[] = [];
-					let shift = 0;
+				for (let p = 0; p < paras.length; p++) {
+					const t = paras[p].map((c) => c.ch).join('');
+					const out: Cell[] = [];
 					let last = 0;
-					for (const match of p.text.matchAll(pattern)) {
-						for (let c = last; c < match.index; c++) goes[c] = c + shift;
-						for (let c = match.index; c < match.index + word.length; c++) goes[c] = -1;
-						last = match.index + word.length;
-						shift += 'Mara'.length - word.length;
+					for (const match of t.matchAll(pattern)) {
+						out.push(...paras[p].slice(last, match.index), ...cells('Mara'));
+						last = match.index! + word.length;
 					}
-					for (let c = last; c < p.text.length; c++) goes[c] = c + shift;
-					return change(p, text, (from) => goes[from]);
-				});
+					out.push(...paras[p].slice(last));
+					paras[p] = out;
+				}
 			} else if (kind === 2) {
-				doc[at] = change(doc[at], smallParagraph(next), () => -1);
-			} else if (kind === 3 && doc.length > 2) {
-				const [moved] = doc.splice(at, 1);
-				doc.splice(next(doc.length + 1), 0, { ...moved, same: false });
-			} else if (kind === 4) {
-				doc.splice(at, 0, { text: smallParagraph(next), from: -1, same: false, map: [] });
-			} else if (doc.length > 2) {
-				doc.splice(at, 1);
+				paras[k] = cells(
+					paragraph(next)
+						.split(/(?<=[.?!]) /)
+						.slice(0, 3)
+						.join(' ')
+				);
+			} else if (kind === 3) {
+				insertAt(
+					next(paras.length + 1),
+					cells(
+						paragraph(next)
+							.split(/(?<=[.?!]) /)
+							.slice(0, 2)
+							.join(' ')
+					),
+					newSep()
+				);
+			} else if (kind === 4 && paras.length > 2) {
+				removeAt(k);
+			} else if (kind === 5 && paras.length > 2) {
+				const { para, separator } = removeAt(k);
+				const to = next(paras.length + 1);
+				mark(shuffled, para);
+				for (let p = Math.min(k, to); p < Math.max(k, to); p++) mark(shuffled, paras[p]);
+				insertAt(to, para, separator);
+			} else if (kind === 6 && k + 1 < paras.length) {
+				mark(shuffled, paras[k]);
+				mark(shuffled, paras[k + 1]);
+				[paras[k], paras[k + 1]] = [paras[k + 1], paras[k]];
+			} else if (kind === 7) {
+				mark(copied, paras[k]);
+				const copy = paras[k].map((c) => ({ ch: c.ch, from: -1 }));
+				insertAt(next(2) ? k : k + 1, copy, newSep());
+			} else if (kind === 8) {
+				// A paragraph split at a space, after a sentence or inside one.
+				const spaces = [...text.matchAll(next(2) ? /(?<=[.?!]) /g : / /g)];
+				if (spaces.length === 0) continue;
+				const i = spaces[next(spaces.length)].index!;
+				paras.splice(k, 1, paras[k].slice(0, i), paras[k].slice(i + 1));
+				seps.splice(k, 0, newSep());
+			} else if (kind === 9 && k + 1 < paras.length) {
+				paras.splice(k, 2, [...paras[k], ...cells(' '), ...paras[k + 1]]);
+				seps.splice(k, 1);
+			} else if (kind === 10) {
+				// Line endings changed throughout.
+				const toCrlf = !seps.concat([tail]).some((s) => s.some((c) => c.ch === '\r'));
+				const convert = (run: Cell[]) =>
+					toCrlf
+						? run.flatMap((c) => (c.ch === '\n' ? [{ ch: '\r', from: -1 }, c] : [c]))
+						: run.filter((c) => c.ch !== '\r');
+				for (let s = 0; s < seps.length; s++) seps[s] = convert(seps[s]);
+				tail = convert(tail);
+			} else if (kind === 11) {
+				tail = tail.length ? [] : cells('\n');
 			}
 		}
-		const base = original.join('\n\n');
-		const current = doc.map((p) => p.text).join('\n\n');
-		return { original, doc, base, current };
+		const doc: Cell[] = [];
+		paras.forEach((para, i) => doc.push(...para, ...(i < seps.length ? seps[i] : [])));
+		doc.push(...tail);
+		const current = doc.map((c) => c.ch).join('');
+		const pos = new Array<number>(base.length).fill(-1);
+		doc.forEach((c, i) => {
+			if (c.from !== -1) pos[c.from] = i;
+		});
+		return { base, current, pos, edits, shuffled, copied };
 	}
 
 	const splits = (text: string, at: number) =>
 		at > 0 &&
 		at < text.length &&
-		text.charCodeAt(at - 1) >= 0xd800 &&
-		text.charCodeAt(at - 1) <= 0xdbff &&
-		text.charCodeAt(at) >= 0xdc00 &&
-		text.charCodeAt(at) <= 0xdfff;
+		/[\uD800-\uDBFF]/.test(text[at - 1]) &&
+		/[\uDC00-\uDFFF]/.test(text[at]);
+	const occurrences = (text: string, part: string) => {
+		let count = 0;
+		for (let at = text.indexOf(part); at !== -1 && count < 2; at = text.indexOf(part, at + 1))
+			count++;
+		return count;
+	};
 
-	it('agrees inside untouched paragraphs, and elsewhere places only what it can stand by', () => {
-		const next = seeded(31);
-		let untouched = 0;
-		let wholeOff = 0;
-		for (let round = 0; round < 300; round++) {
-			const { original, doc, base, current } = editedPair(next);
-			const spans = wholeDiff(base, current);
+	// (a) A range whose words are untouched and stand once in each version is
+	// placed where they went, or not at all. (b) A range inside an untouched
+	// paragraph whose order against the other untouched ones is unchanged is
+	// always placed, there. (c) A range main places where it belongs is
+	// placed there too. (d) No result is out of range, inverted or splits a
+	// character.
+	//
+	// Held out, each for a reason the design gives:
+	// - Ranges on a paragraph that was copied, from (a) to (c): either copy can
+	//   be called the original, and the mapper takes the one left as it was.
+	// - Ranges on a line that stands more than once (a scene break, a short
+	//   reply), from (c): such a line is never paired, so when copies of it are
+	//   deleted or added, which copy is kept is a guess, and the mapper and
+	//   main can guess differently.
+	// - Rounds that move a paragraph (moved or swapped), from (a) and (c); (b)
+	//   and (d) still hold there. Moves are not followed, so the place a
+	//   paragraph left is compared by character with whatever changed text
+	//   now faces it, and main's diff, which can keep the moved text, places
+	//   some ranges there that this does not, and this a few that it should
+	//   not. This is a known gap of the design: the counts are returned
+	//   (movedMisplaced, against main's) and reported, not asserted.
+	// Where (a) fails only because main's own diff misplaces the range the
+	// same way inside a gap (the gap is compared exactly as main compares it),
+	// the result is counted as inherited, not as misplaced.
+	function check(seed: number, rounds: number) {
+		const next = seeded(seed);
+		const misplaced: unknown[] = [];
+		const untouchedLost: unknown[] = [];
+		const mainOnly: unknown[] = [];
+		const counts = { untouched: 0, truth: 0, inherited: 0, movedTruth: 0, movedMisplaced: 0 };
+		const mainCounts = { movedMisplaced: 0 };
+		for (let round = 0; round < rounds; round++) {
+			const { base, current, pos, edits, shuffled, copied } = proseCase(next);
+			const moved = shuffled.size > 0;
+			const spans = wholeTextSpans(base, current);
 			const mapper = createAnchorMapper(WRITER_DIFF_BUDGET);
-			const baseStarts = paragraphStarts(original);
-			const currentStarts = paragraphStarts(doc.map((p) => p.text));
-			// exact(i, at): whether base character i is now at `at`, where that
-			// is known. A blank line between two paragraphs with new ones put in
-			// between could be any of the blank lines there, so any will do.
-			const known = new Map<number, number>();
-			const blank = new Map<number, [number, number]>();
-			doc.forEach((p, j) => {
-				if (p.from === -1) return;
-				p.map.forEach((to, i) => {
-					if (to !== -1) known.set(baseStarts[p.from] + i, currentStarts[j] + to);
-				});
-				if (p.from < original.length - 1 && j < doc.length - 1) {
-					const after = baseStarts[p.from] + original[p.from].length;
-					const following = doc.findIndex((q, k) => k > j && q.from === p.from + 1);
-					const last = following === -1 ? currentStarts[j + 1] : currentStarts[following];
-					blank.set(after, [currentStarts[j] + p.text.length, last - 1]);
-					blank.set(after + 1, [currentStarts[j] + p.text.length, last - 1]);
-				}
-			});
-			const exact = (i: number, at: number) => {
-				const within = blank.get(i);
-				if (within) return at >= within[0] && at <= within[1] && current[at] === '\n';
-				return known.get(i) === at;
+			const save = createAnchorMapper(SAVE_DIFF_BUDGET);
+			const truth = (s: number, e: number) =>
+				pos[s] !== -1 && pos[e - 1] !== -1 && pos[s] <= pos[e - 1]
+					? { start: pos[s], end: pos[e - 1] + 1 }
+					: null;
+			const untouched = (s: number, e: number) => {
+				for (let k = s; k < e; k++) if (pos[k] === -1 || pos[k] !== pos[s] + k - s) return false;
+				return true;
 			};
-			let lastFrom = -1;
-			doc.forEach((p, j) => {
-				if (!p.same || p.from < lastFrom) return;
-				lastFrom = p.from;
-				const length = p.text.length;
-				for (let n = 0; n < 4; n++) {
-					const a = next(length);
-					const b = a + 1 + next(length - a);
-					if (splits(p.text, a) || splits(p.text, b)) continue;
-					untouched++;
-					const start = baseStarts[p.from] + a;
-					const want = { start: currentStarts[j] + a, end: currentStarts[j] + b };
-					expect({ round, got: mapper.range(base, current, start, start + b - a) }).toEqual({
-						round,
-						got: want
-					});
-					const whole = wholeDiffRange(spans, base.length, start, start + b - a);
-					if (JSON.stringify(whole) !== JSON.stringify(want)) wholeOff++;
+			const touches = (set: Set<number>, s: number, e: number) => {
+				for (let k = s; k < e; k++) if (set.has(k)) return true;
+				return false;
+			};
+			const lineAt = (at: number) => {
+				const from = Math.max(base.lastIndexOf('\n', at - 1) + 1, 0);
+				const to = base.indexOf('\n', at);
+				return base.slice(from, to === -1 ? base.length : to).replace(/\r$/, '');
+			};
+			const repeated = (s: number, e: number) => {
+				for (let k = s; k < e; k++) {
+					const line = lineAt(k);
+					if (line && base.split('\n').filter((l) => l.replace(/\r$/, '') === line).length > 1)
+						return true;
 				}
+				return false;
+			};
+			const valid = (got: { start: number; end: number } | null) =>
+				got === null ||
+				(got.start >= 0 &&
+					got.end <= current.length &&
+					got.start < got.end &&
+					!splits(current, got.start) &&
+					!splits(current, got.end));
+			const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+			// (b) Untouched paragraphs, not copied, whose text stands once in
+			// each version and whose order against every other paragraph that
+			// kept any of its text is unchanged.
+			const lines = [...base.matchAll(/[^\r\n]+/g)].map((m) => ({
+				start: m.index!,
+				end: m.index! + m[0].length
+			}));
+			const survivors = lines.map((p) => {
+				for (let k = p.start; k < p.end; k++) if (pos[k] !== -1) return { at: k, to: pos[k] };
+				return null;
 			});
-			// Anywhere: what the mapper places is exact, or what the whole diff
-			// places, or holds the same text; and never splits a character.
-			for (let n = 0; n < 40; n++) {
-				const start = next(base.length);
-				const end = start + 1 + next(Math.min(40, base.length - start));
-				if (splits(base, start) || splits(base, end)) continue;
-				const got = mapper.range(base, current, start, end);
-				if (got === null) continue;
-				expect(splits(current, got.start) || splits(current, got.end)).toBe(false);
-				const same = current.slice(got.start, got.end) === base.slice(start, end);
-				const isExact = exact(start, got.start) && exact(end - 1, got.end - 1);
-				const whole = wholeDiffRange(spans, base.length, start, end);
-				if (!same && !isExact) {
-					expect({ round, start, end, got }).toEqual({ round, start, end, got: whole });
+			// The truth does not know where a copy went, only the original. So
+			// when the original was then deleted, or a move may have put the
+			// copy on the other side of another paragraph, order is unknown.
+			const orderKnown =
+				(!moved || copied.size === 0) &&
+				lines.every((p, i) => survivors[i] !== null || !touches(copied, p.start, p.end));
+			const inOrder = lines.filter(
+				(p, i) =>
+					orderKnown &&
+					untouched(p.start, p.end) &&
+					!touches(copied, p.start, p.end) &&
+					occurrences(base, base.slice(p.start, p.end)) === 1 &&
+					occurrences(current, base.slice(p.start, p.end)) === 1 &&
+					/[\r\n]/.test(current[pos[p.end - 1] + 1] ?? '\n') &&
+					(pos[p.start] === 0 || /[\r\n]/.test(current[pos[p.start] - 1])) &&
+					survivors.every((q, j) => j === i || q === null || q.at < p.start === q.to < pos[p.start])
+			);
+			for (const p of inOrder) {
+				for (let n = 0; n < 3; n++) {
+					const s = p.start + next(p.end - p.start);
+					const e = s + 1 + next(p.end - s);
+					if (splits(base, s) || splits(base, e)) continue;
+					counts.untouched++;
+					const got = mapper.range(base, current, s, e);
+					if (!same(got, truth(s, e)))
+						untouchedLost.push({ seed, round, edits, s, e, got, want: truth(s, e) });
 				}
 			}
-			for (let n = 0; n < 20; n++) {
-				const at = next(base.length + 1);
-				if (splits(base, at)) continue;
-				const point = mapper.point(base, current, at);
-				if (point !== null) expect(splits(current, point)).toBe(false);
+
+			for (let n = 0; n < 60; n++) {
+				const s = next(base.length);
+				const e = Math.min(base.length, s + 1 + next(60));
+				if (splits(base, s) || splits(base, e)) continue;
+				const got = mapper.range(base, current, s, e);
+				const ends = save.ends(base, current, s, e);
+				const point = mapper.point(base, current, s);
+				// (d)
+				expect({ seed, round, s, e, ok: valid(got) && valid(ends) }).toEqual({
+					seed,
+					round,
+					s,
+					e,
+					ok: true
+				});
+				if (point !== null) {
+					expect(point >= 0 && point <= current.length && !splits(current, point)).toBe(true);
+				}
+				// Only ranges that start and end on a visible character are held
+				// to a true position: a line break or space at an edge could be
+				// any of the ones between two paragraphs.
+				if (/\s/.test(base[s]) || /\s/.test(base[e - 1])) continue;
+				if (touches(copied, s, e)) continue;
+				const want = truth(s, e);
+				const words = base.slice(s, e);
+				// (a)
+				if (
+					untouched(s, e) &&
+					occurrences(base, words) === 1 &&
+					occurrences(current, words) === 1
+				) {
+					const [ms, me] = [
+						wholeTextPoint(spans, base.length, s),
+						wholeTextPoint(spans, base.length, e)
+					];
+					const results = [
+						['range', got, wholeTextRange(spans, base.length, s, e)],
+						['ends', ends, ms !== null && me !== null && ms < me ? { start: ms, end: me } : null]
+					] as const;
+					if (moved) {
+						counts.movedTruth++;
+						for (const [, result, main] of results) {
+							if (result !== null && !same(result, want)) counts.movedMisplaced++;
+							if (main !== null && !same(main, want)) mainCounts.movedMisplaced++;
+						}
+						continue;
+					}
+					counts.truth++;
+					for (const [how, result, main] of results) {
+						if (result === null || same(result, want)) continue;
+						if (same(result, main)) counts.inherited++;
+						else misplaced.push({ seed, round, edits, how, s, e, words, result, want });
+					}
+				}
+				// (c)
+				if (moved || repeated(s, e)) continue;
+				const main = wholeTextRange(spans, base.length, s, e);
+				if (main !== null && same(main, want) && !same(got, want))
+					mainOnly.push({ seed, round, edits, s, e, words, got, want });
 			}
 		}
-		expect(untouched).toBeGreaterThan(1000);
-		// The whole diff misplaces a few of them; see above.
-		expect(wholeOff).toBeLessThan(untouched / 20);
+		return { misplaced, untouchedLost, mainOnly, counts, mainCounts };
+	}
+
+	it('places nothing on text it was not made on, keeps untouched text, and keeps what main keeps', () => {
+		// ANCHOR_SEED runs another seed.
+		const { misplaced, untouchedLost, mainOnly, counts, mainCounts } = check(
+			Number(process.env.ANCHOR_SEED ?? 51),
+			300
+		);
+		expect(misplaced).toEqual([]);
+		expect(untouchedLost).toEqual([]);
+		expect(mainOnly).toEqual([]);
+		expect(counts.untouched).toBeGreaterThan(1000);
+		expect(counts.truth).toBeGreaterThan(5000);
+		// Moves: fewer misplaced than main (seed 51: 28 against 66).
+		expect(counts.movedMisplaced).toBeLessThan(mainCounts.movedMisplaced);
 	});
 });

@@ -330,6 +330,48 @@ describe('decideSuggestion', () => {
 		});
 	}
 
+	// Regressions from the review of the levelled comparison: an edit on a
+	// short line is never accepted onto another copy of that line, one at a
+	// time or several at once.
+	const shortLines: [string, string, string, string][] = [
+		[
+			'M1',
+			'She waited.\n"No."\n"No."\nHe left.',
+			'She waited.\n"No, never."\n"No."\nHe left then.',
+			'"No."'
+		],
+		[
+			'M2',
+			'She asked, "Will you come with me to the harbour?"\n"No."\nHe asked, "Is the road to the north still open?"\n"Not this week."',
+			'She asked, "Will you come with me to the harbour?"\nHe asked, "Is the road to the north still open?"\n"No."',
+			'"No."'
+		]
+	];
+	for (const [name, base, now, original] of shortLines) {
+		for (const bulk of [false, true]) {
+			it(`${name}: never accepts onto another copy of a short line${bulk ? ', in bulk' : ''}`, async () => {
+				await db.update(scenes).set({ bodyMd: base }).where(eq(scenes.id, sceneId));
+				const start = base.indexOf(original);
+				const { suggestionId } = (await suggest(
+					{ start, end: start + original.length },
+					'"Yes."'
+				)) as { ok: true; suggestionId: string };
+				await db.update(scenes).set({ bodyMd: now }).where(eq(scenes.id, sceneId));
+				const [view] = await listSuggestions(db, storyId);
+				expect(view.anchor).toBeNull();
+				if (bulk) {
+					const result = await decideSuggestions(db, authorId, storyId, [suggestionId], true);
+					expect(result.decided).toEqual([]);
+				} else {
+					expect(await decideSuggestion(db, authorId, storyId, suggestionId, true)).toMatchObject({
+						ok: false
+					});
+				}
+				expect(await sceneBody()).toBe(now);
+			});
+		}
+	}
+
 	it('refuses to accept once the author edited inside the passage', async () => {
 		const start = BODY.indexOf('quick brown');
 		const { suggestionId } = (await suggest(
