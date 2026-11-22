@@ -78,9 +78,9 @@ export const fetchClientDocument: FetchClientDocument = async (url) => {
 // Documents that could not be fetched or did not qualify, and when they may be
 // tried again, so a failing client is not fetched on every attempt. `keep`:
 // the host could not be reached, so a copy checked before still stands; a
-// document that did not qualify lets nobody in. Fetches
-// of one address already under way are shared. The app runs as one process
-// (see rate-limit.ts), so module-level state is enough.
+// document that did not qualify lets nobody in. Fetches of one address
+// already under way are shared. The app runs as one process (see
+// rate-limit.ts), so module-level state is enough.
 const failures = new Map<string, { until: number; keep: boolean }>();
 const fetching = new Map<string, Promise<OauthClient | null>>();
 const FAILED_SWEEP_THRESHOLD = 1000;
