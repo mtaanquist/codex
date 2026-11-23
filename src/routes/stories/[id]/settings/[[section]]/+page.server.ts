@@ -9,6 +9,7 @@ import { effectiveAssetConfig, createAsset, deleteAsset, s3AssetStore } from '#l
 import { publishStory } from '#lib/server/publish';
 import {
 	deleteDraft,
+	draftUsesCover,
 	listDrafts,
 	replaceCover,
 	saveDraft,
@@ -429,15 +430,24 @@ export const actions: Actions = {
 			return fail(400, { action: 'cover', message: 'Choose an image file.' });
 		}
 		const store = s3AssetStore(config);
+		// The old cover's space counts as free when it is about to be deleted.
+		const replaces =
+			story.coverAssetId && !(await draftUsesCover(db, story.id, story.coverAssetId))
+				? story.coverAssetId
+				: null;
 		const created = await createAsset(db, store, config, locals.user!.id, {
 			universeId: story.universeId,
 			kind: 'cover',
 			filename: file.name,
 			contentType: file.type,
-			bytes: Buffer.from(await file.arrayBuffer())
+			bytes: Buffer.from(await file.arrayBuffer()),
+			replaces
 		});
 		if (!created.ok) {
-			return fail(400, { action: 'cover', message: created.reason });
+			return fail(created.code === 'over_limit' ? 403 : 400, {
+				action: 'cover',
+				message: created.reason
+			});
 		}
 		// The replaced cover goes, unless a saved draft still shows it.
 		const unused = await replaceCover(db, story.id, created.id);

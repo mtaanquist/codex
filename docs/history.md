@@ -37,7 +37,7 @@ suffix to a 60-character base.
 
 Old slugs redirect (decided by Mads after round 1). A rename used to break a
 shared slug link, and a later story could take the freed slug and inherit
-it. `slug_history` (migration 0107) keeps each slug a rename moves off, per
+it. `slug_history` (migration 0108) keeps each slug a rename moves off, per
 account and kind, always for a universe and, for a story, once it has been
 published; an unpublished story's rename has no public link to protect,
 and reserving it would only push suffixes onto later drafts. Universes are
@@ -74,6 +74,47 @@ While there: the public reads checked `stories.deleted_at` but not the
 universe's, so a trashed universe's editions, covers, inline images and
 reader downloads stayed public until the purge. They now use `storyIsLive()`
 (`publicEdition`, `publicShelf`, `isPublicAsset`, `artifactForDownload`).
+
+Plans, usage accounting and quota enforcement (2026-11-23, `feat/quotas` on
+`staging/phase-10`, #858). Migration 0107 creates `plans` and
+`entitlements` as `schema.md` had them, seeds a default plan with no
+entitlement rows (no limits, so self-host is unchanged), clears any stray
+`users.plan_id` and adds its foreign key, and backfills
+`storage_used_bytes` from the asset rows in SQL, the way 0083 backfilled
+stale marks; a worker job was weighed and dropped, since the sum is one
+grouped update. Only `max_universes`, `max_stories` and `storage_bytes` are
+enforced. Counts are of live rows, the idiomatic choice (a writer at the
+limit expects the trash to make room), which means restoring is checked like
+a create; restoring a universe counts the live stories it brings back. The
+standalone-stories universe is a container, so it never counts. Every create
+runs its check inside its own transaction under
+`pg_advisory_xact_lock(hashtext('quota:<user>'))`, taken only when a limit
+applies, so the default plan pays one small read and no lock. A refused
+count throws `QuotaExceededError`, which rolls the create's transaction
+back, and the routes turn it into a 403 form message; `newStoryFromDraft`
+returns it as an `over_limit` failure, matching its other failures.
+`untrash` now runs each slug attempt as a savepoint, so a restore can run in
+the caller's transaction. Storage is one conditional `update ... where
+storage_used_bytes + n <= limit` in the same transaction as the asset
+insert, after the object is stored; a refused upload removes its object. A
+pre-check before the bucket write keeps an obviously oversized file from
+being sent at all. Deletes and universe purges subtract in the same
+transaction. Trashing keeps the images counted until the purge. Review
+round: the reserve now locks the account row and reads the limit under the
+lock (so a plan change mid-upload is honoured), and every storage path takes
+the account row before asset rows (`lockStorageOwners`), since a delete
+racing the account purge could otherwise deadlock. A replacement cover,
+avatar or badge is credited with the size of the image it replaces. A failed
+import deletes the images it stored. Reviving a trashed standalone universe
+for a new story checks room for its stories, and a second restore of the
+same row finds it live instead of counting it. Deleting one story for good
+still leaves its images (they belong to the universe); that is documented in
+the help and left for a follow-up. The admin recount locks each account row before summing, so an
+upload in flight is counted once. Admin got a Plans section (rename, limits,
+make default, new plan) and an Accounts block under Usage & storage with the
+plan picker per account, under the asset storage block, which was left
+alone. Plan deletion and the `public_archive` entitlement were left out: the
+per-account publishing switch already gates that.
 
 Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
 on `staging/bug-fixes`, staging review round 2). Review anchors count

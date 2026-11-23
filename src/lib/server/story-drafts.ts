@@ -27,6 +27,7 @@ import { uniqueSlug } from './slugs.ts';
 import { isSerializationFailure, isUniqueViolation } from './db-errors.ts';
 import { copiedSummaryStamp, summaryIsCurrent } from './summary-currency.ts';
 import { deleteAsset } from './assets.ts';
+import { holdCountQuota, quotaFailure } from './quotas.ts';
 import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
 import {
@@ -651,14 +652,21 @@ export async function newStoryFromDraft(
 	// A concurrent create can take the picked slug between the pick and the
 	// insert; the whole copy then rolls back and tries once more.
 	try {
-		return await copy(await uniqueSlug(db, 'stories', userId, name, 'story'));
+		try {
+			return await copy(await uniqueSlug(db, 'stories', userId, name, 'story'));
+		} catch (err) {
+			if (!isUniqueViolation(err)) throw err;
+			return await copy(await uniqueSlug(db, 'stories', userId, name, 'story'));
+		}
 	} catch (err) {
-		if (!isUniqueViolation(err)) throw err;
-		return await copy(await uniqueSlug(db, 'stories', userId, name, 'story'));
+		const reason = quotaFailure(err);
+		if (reason === undefined) throw err;
+		return { ok: false, code: 'over_limit', reason };
 	}
 
 	async function copy(slug: string) {
 		return await db.transaction(async (tx) => {
+			await holdCountQuota(tx, userId, { stories: 1 });
 			const [created] = await tx
 				.insert(stories)
 				.values({

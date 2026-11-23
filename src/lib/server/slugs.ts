@@ -207,6 +207,9 @@ export async function saveWithSlug(
  * they were without this story reads as out of date by its fingerprint.
  */
 export async function untrash(db: Database, table: Table, id: string) {
+	// Each attempt runs in a transaction of its own (a savepoint when the
+	// caller passed one), so a taken slug does not abort the caller's
+	// transaction.
 	const fallback = table === 'universes' ? 'universe' : 'story';
 	const attempt = (forceFresh: boolean) =>
 		db.transaction(async (tx) => {

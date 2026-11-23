@@ -48,7 +48,7 @@ users (
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
   preferences         jsonb not null default '{}',  -- theme, content width, autocomplete mode, entity underline toggle, library view, etc.
   plan_id             uuid references plans(id),    -- null falls back to the default plan; see Plans and entitlements
-  storage_used_bytes  bigint not null default 0,    -- reserved for quota enforcement; not maintained in v1
+  storage_used_bytes  bigint not null default 0,    -- bytes of uploaded files (sum of the account's assets.byte_size); checked against storage_bytes
   created_at          timestamptz not null,
   email_verified_at   timestamptz,          -- null until the email-confirm link is clicked
   approved_at         timestamptz,          -- null until admin approves
@@ -59,7 +59,7 @@ users (
 
 Sign-in succeeds only when **both** `email_verified_at` and `approved_at` are non-null. The two gates exist for different reasons: email verification confirms the address is real and reachable; approval is the operator's call about who gets to use the instance. Either may be skipped in a self-hosted single-user setup by setting both columns on the admin row at seed time.
 
-**Plans and entitlements.** What a user is allowed to do (quotas, access to a public archive, and so on) is expressed through a plan and its entitlements, modelled below. Every user is on a plan, and the default plan grants everything, which is the right setting for self-host. What is deliberately not here yet is billing: there is no payment processing and no subscription state. Assigning a plan is an admin action for now, and a future subscription layer can set `plan_id` without disturbing anything else. The `storage_used_bytes` counter exists for eventual quota enforcement but is not maintained in v1.
+**Plans and entitlements.** What a user is allowed to do (quotas, access to a public archive, and so on) is expressed through a plan and its entitlements, modelled below. Every user is on a plan, and the default plan grants everything, which is the right setting for self-host. What is deliberately not here yet is billing: there is no payment processing and no subscription state. Assigning a plan is an admin action for now, and a future subscription layer can set `plan_id` without disturbing anything else. The `storage_used_bytes` counter holds the bytes of the account's uploaded files and is kept in step with every asset insert and delete (see Plans and entitlements).
 
 ### Sessions and credentials
 
@@ -166,7 +166,7 @@ A personal access token is one `api_tokens` row of kind `personal` under a grant
 
 ### Plans and entitlements
 
-A plan is a named bundle of entitlements. Entitlements are key/value rows, so a new limit or capability can be added without a schema change. Self-host seeds a single default plan that grants everything; the hosted service can define more.
+A plan is a named bundle of entitlements. Entitlements are key/value rows, so a new limit or capability can be added without a schema change. Migration 0107 created both tables and seeds a single default plan (key `default`) with no entitlement rows, which grants everything; an admin can add more plans and pick the default. A partial unique index keeps one default at a time.
 
 ```sql
 plans (
@@ -189,7 +189,12 @@ entitlements (
 )
 ```
 
-Enforcement (rejecting a save or a create that exceeds an entitlement) is deferred; the model exists now so it does not require migrating live data later.
+Three keys are enforced (`quotas.ts`, the keys in `src/lib/quota.ts`); any other key is stored and ignored, and a missing row or a null value means no limit:
+
+- `max_universes` and `max_stories` count live rows only: a universe or story in the trash does not count, and a story counts only while its universe is live. The standalone-stories universe never counts as a universe. Every create path checks inside its own transaction under a per-account advisory lock (taken only when a limit applies), so creates at once cannot both take the last place: the library and plan-board creates, a story from a saved draft, and a story import (also checked before its images are stored, and named on the preview). Restoring from the trash is checked like a create; restoring a universe counts the live stories it brings back.
+- `storage_bytes` is checked against `users.storage_used_bytes`, the bytes of uploaded files (images, covers, avatars, badges; text and generated export files do not count). `createAsset` adds the bytes with one conditional update in the same transaction as the asset row, so two uploads at once cannot both pass; deleting an asset and purging a universe take their bytes back off. A trashed universe's images count until the purge. Migration 0107 backfilled the counter from the asset rows, and the admin Usage page can recount it (`recountStorageUsed`).
+
+`public_archive` is not wired: publishing stays gated by the per-account `users.public_archive_enabled` switch. Billing is not part of this.
 
 ### Universe and story
 

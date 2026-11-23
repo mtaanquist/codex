@@ -2,7 +2,7 @@
 // delete: it leaves every live read at once but sits restorable for the
 // window below, after which the worker purges it for good. The cascade is
 // shared with the account purge. Runs in the worker too.
-import { and, eq, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import {
 	assets,
@@ -21,6 +21,7 @@ import {
 } from './db/schema.ts';
 import { scheduleObjectDeletions } from './assets.ts';
 import { untrash } from './slugs.ts';
+import { holdCountQuota, lockStorageOwners, releaseStorage } from './quotas.ts';
 import { ENTITY_TYPES, entityTable } from './entity-lookups.ts';
 import { deleteStoryWithin, type Tx } from './story-delete.ts';
 import { ownedUniverseRow } from './universe-scope.ts';
@@ -50,10 +51,30 @@ export async function restoreUniverse(
 	userId: string,
 	universeId: string
 ): Promise<boolean> {
-	const universe = await ownedUniverseRow(db, userId, universeId, { deleted: true });
-	if (!universe) return false;
-	await untrash(db, 'universes', universe.id);
-	return true;
+	return db.transaction(async (tx) => {
+		// A second restore of the same universe waits here, then finds it live
+		// and does nothing, rather than counting it against the limit.
+		await tx.execute(
+			sql`select id from universes where id = ${universeId} and owner_id = ${userId} for update`
+		);
+		const universe = await ownedUniverseRow(tx, userId, universeId, { deleted: true });
+		if (!universe) return false;
+		// Its live stories come back with it, so they count as well.
+		const [inside] = await tx
+			.select({ standalone: universes.standalone, stories: count(stories.id) })
+			.from(universes)
+			.leftJoin(stories, and(eq(stories.universeId, universes.id), isNull(stories.deletedAt)))
+			.where(eq(universes.id, universe.id))
+			.groupBy(universes.id);
+		await holdCountQuota(
+			tx,
+			userId,
+			{ universes: inside.standalone ? 0 : 1, stories: inside.stories },
+			'restore'
+		);
+		await untrash(tx, 'universes', universe.id);
+		return true;
+	});
 }
 
 export type TrashedUniverse = {
@@ -140,6 +161,17 @@ export async function universeAssetKeys(db: Database | Tx, universeId: string): 
  * caller's transaction. Shared by the trash purge and the account purge.
  */
 export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<void> {
+	// The owners whose storage use the asset delete below changes, locked
+	// before any other row (see lockStorageOwners).
+	const owners = await tx
+		.selectDistinct({ ownerId: assets.ownerId })
+		.from(assets)
+		.where(eq(assets.universeId, universeId));
+	await lockStorageOwners(
+		tx,
+		owners.map((row) => row.ownerId)
+	);
+
 	// Stories first: each clears its scenes, chapters, markers, revisions,
 	// memberships, notes, publications, reviews, and mentions.
 	const storyRows = await tx
@@ -190,6 +222,10 @@ export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<v
 		await tx.delete(table).where(eq(table.universeId, universeId));
 	}
 	await tx.delete(entityCategories).where(eq(entityCategories.universeId, universeId));
-	await tx.delete(assets).where(eq(assets.universeId, universeId));
+	const freed = await tx
+		.delete(assets)
+		.where(eq(assets.universeId, universeId))
+		.returning({ ownerId: assets.ownerId, byteSize: assets.byteSize });
+	await releaseStorage(tx, freed);
 	await tx.delete(universes).where(eq(universes.id, universeId));
 }

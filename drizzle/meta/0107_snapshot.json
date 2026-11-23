@@ -1,5 +1,5 @@
 {
-	"id": "911c84e0-5caa-4421-b540-54045a77e2c1",
+	"id": "e5c636c4-ad6c-49ea-bcba-5afcff34ad10",
 	"prevId": "374617a1-5832-4484-8458-ac208b0d2f0a",
 	"version": "7",
 	"dialect": "postgresql",
@@ -1890,6 +1890,67 @@
 			},
 			"compositePrimaryKeys": {},
 			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.entitlements": {
+			"name": "entitlements",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "uuid",
+					"primaryKey": true,
+					"notNull": true,
+					"default": "gen_random_uuid()"
+				},
+				"plan_id": {
+					"name": "plan_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"key": {
+					"name": "key",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"value": {
+					"name": "value",
+					"type": "jsonb",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "now()"
+				}
+			},
+			"indexes": {},
+			"foreignKeys": {
+				"entitlements_plan_id_plans_id_fk": {
+					"name": "entitlements_plan_id_plans_id_fk",
+					"tableFrom": "entitlements",
+					"tableTo": "plans",
+					"columnsFrom": ["plan_id"],
+					"columnsTo": ["id"],
+					"onDelete": "no action",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"entitlements_plan_key": {
+					"name": "entitlements_plan_key",
+					"nullsNotDistinct": false,
+					"columns": ["plan_id", "key"]
+				}
+			},
 			"policies": {},
 			"checkConstraints": {},
 			"isRLSEnabled": false
@@ -4178,6 +4239,88 @@
 			"checkConstraints": {},
 			"isRLSEnabled": false
 		},
+		"public.plans": {
+			"name": "plans",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "uuid",
+					"primaryKey": true,
+					"notNull": true,
+					"default": "gen_random_uuid()"
+				},
+				"key": {
+					"name": "key",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"description": {
+					"name": "description",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"is_default": {
+					"name": "is_default",
+					"type": "boolean",
+					"primaryKey": false,
+					"notNull": true,
+					"default": false
+				},
+				"sort_order": {
+					"name": "sort_order",
+					"type": "integer",
+					"primaryKey": false,
+					"notNull": true,
+					"default": 0
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "now()"
+				}
+			},
+			"indexes": {
+				"plans_one_default_idx": {
+					"name": "plans_one_default_idx",
+					"columns": [
+						{
+							"expression": "is_default",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": true,
+					"where": "\"plans\".\"is_default\"",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
+			"foreignKeys": {},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {
+				"plans_key_unique": {
+					"name": "plans_key_unique",
+					"nullsNotDistinct": false,
+					"columns": ["key"]
+				}
+			},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
 		"public.publication_assets": {
 			"name": "publication_assets",
 			"schema": "",
@@ -6161,149 +6304,6 @@
 			"checkConstraints": {},
 			"isRLSEnabled": false
 		},
-		"public.slug_history": {
-			"name": "slug_history",
-			"schema": "",
-			"columns": {
-				"id": {
-					"name": "id",
-					"type": "uuid",
-					"primaryKey": true,
-					"notNull": true,
-					"default": "gen_random_uuid()"
-				},
-				"owner_id": {
-					"name": "owner_id",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"kind": {
-					"name": "kind",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"slug": {
-					"name": "slug",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": true
-				},
-				"story_id": {
-					"name": "story_id",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"universe_id": {
-					"name": "universe_id",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"created_at": {
-					"name": "created_at",
-					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": true,
-					"default": "now()"
-				}
-			},
-			"indexes": {
-				"slug_history_owner_kind_slug_idx": {
-					"name": "slug_history_owner_kind_slug_idx",
-					"columns": [
-						{
-							"expression": "owner_id",
-							"isExpression": false,
-							"asc": true,
-							"nulls": "last"
-						},
-						{
-							"expression": "kind",
-							"isExpression": false,
-							"asc": true,
-							"nulls": "last"
-						},
-						{
-							"expression": "slug",
-							"isExpression": false,
-							"asc": true,
-							"nulls": "last"
-						}
-					],
-					"isUnique": true,
-					"concurrently": false,
-					"method": "btree",
-					"with": {}
-				},
-				"slug_history_story_idx": {
-					"name": "slug_history_story_idx",
-					"columns": [
-						{
-							"expression": "story_id",
-							"isExpression": false,
-							"asc": true,
-							"nulls": "last"
-						}
-					],
-					"isUnique": false,
-					"concurrently": false,
-					"method": "btree",
-					"with": {}
-				},
-				"slug_history_universe_idx": {
-					"name": "slug_history_universe_idx",
-					"columns": [
-						{
-							"expression": "universe_id",
-							"isExpression": false,
-							"asc": true,
-							"nulls": "last"
-						}
-					],
-					"isUnique": false,
-					"concurrently": false,
-					"method": "btree",
-					"with": {}
-				}
-			},
-			"foreignKeys": {
-				"slug_history_owner_id_users_id_fk": {
-					"name": "slug_history_owner_id_users_id_fk",
-					"tableFrom": "slug_history",
-					"tableTo": "users",
-					"columnsFrom": ["owner_id"],
-					"columnsTo": ["id"],
-					"onDelete": "cascade",
-					"onUpdate": "no action"
-				},
-				"slug_history_story_id_stories_id_fk": {
-					"name": "slug_history_story_id_stories_id_fk",
-					"tableFrom": "slug_history",
-					"tableTo": "stories",
-					"columnsFrom": ["story_id"],
-					"columnsTo": ["id"],
-					"onDelete": "set null",
-					"onUpdate": "no action"
-				},
-				"slug_history_universe_id_universes_id_fk": {
-					"name": "slug_history_universe_id_universes_id_fk",
-					"tableFrom": "slug_history",
-					"tableTo": "universes",
-					"columnsFrom": ["universe_id"],
-					"columnsTo": ["id"],
-					"onDelete": "set null",
-					"onUpdate": "no action"
-				}
-			},
-			"compositePrimaryKeys": {},
-			"uniqueConstraints": {},
-			"policies": {},
-			"checkConstraints": {},
-			"isRLSEnabled": false
-		},
 		"public.stories": {
 			"name": "stories",
 			"schema": "",
@@ -7216,7 +7216,17 @@
 				}
 			},
 			"indexes": {},
-			"foreignKeys": {},
+			"foreignKeys": {
+				"users_plan_id_plans_id_fk": {
+					"name": "users_plan_id_plans_id_fk",
+					"tableFrom": "users",
+					"tableTo": "plans",
+					"columnsFrom": ["plan_id"],
+					"columnsTo": ["id"],
+					"onDelete": "no action",
+					"onUpdate": "no action"
+				}
+			},
 			"compositePrimaryKeys": {},
 			"uniqueConstraints": {
 				"users_email_unique": {

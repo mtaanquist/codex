@@ -74,10 +74,11 @@ export const users = pgTable('users', {
 	// The account's default print/PDF page setup; stories may override per
 	// key through stories.page_setup.
 	pageSetup: jsonb('page_setup').notNull().default({}),
-	// References plans(id) in the schema design; the constraint is added once
-	// the plans table exists. Null falls back to the default plan.
-	planId: uuid('plan_id'),
-	// Reserved for quota enforcement; not maintained in v1.
+	// The account's plan; null falls back to the default plan. See quotas.ts.
+	planId: uuid('plan_id').references((): AnyPgColumn => plans.id),
+	// Bytes of uploaded files the account owns (the sum of its assets'
+	// byte_size), kept in step by createAsset and every asset delete, and
+	// checked against the plan's storage_bytes. recountStorageUsed rebuilds it.
 	storageUsedBytes: bigint('storage_used_bytes', { mode: 'number' }).notNull().default(0),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	// Null until the email-confirm link is clicked.
@@ -99,6 +100,44 @@ export const users = pgTable('users', {
 	// the Assistant toggle in llm_config.
 	mcpEnabled: boolean('mcp_enabled').notNull().default(false)
 });
+
+// A named bundle of entitlements. Every account is on one: its own plan_id,
+// or the default plan when that is null. The seeded default plan has no
+// entitlement rows, which means no limits.
+export const plans = pgTable(
+	'plans',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		key: text('key').unique().notNull(),
+		name: text('name').notNull(),
+		description: text('description'),
+		isDefault: boolean('is_default').notNull().default(false),
+		sortOrder: integer('sort_order').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		uniqueIndex('plans_one_default_idx')
+			.on(table.isDefault)
+			.where(sql`${table.isDefault}`)
+	]
+);
+
+// One limit or capability of a plan. The value is a number, a boolean, or
+// null for unlimited; a missing row also means unlimited. Only the keys in
+// #lib/quota.ts are enforced.
+export const entitlements = pgTable(
+	'entitlements',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		planId: uuid('plan_id')
+			.references(() => plans.id)
+			.notNull(),
+		key: text('key').notNull(),
+		value: jsonb('value').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [unique('entitlements_plan_key').on(table.planId, table.key)]
+);
 
 // Server-side session rows so sessions can be listed and revoked; the cookie
 // carries the session id.
