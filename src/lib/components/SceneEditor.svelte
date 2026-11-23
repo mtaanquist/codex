@@ -55,6 +55,7 @@
 		spellCheck = 'off',
 		writingLanguage = '',
 		markers = [],
+		markersVersion = null,
 		imageUniverseId,
 		findText = null,
 		findAt = null,
@@ -92,6 +93,8 @@
 		spellCheck?: 'on' | 'off';
 		writingLanguage?: string;
 		markers?: SceneMarker[];
+		// The fingerprint of the text the markers' anchors count into.
+		markersVersion?: string | null;
 		// The page is switching to another scene: the text stays on screen but
 		// takes no input, so nothing is typed into a scene about to be replaced.
 		leaving?: boolean;
@@ -466,9 +469,10 @@
 	// Checking a marker off elsewhere (or creating one) changes the set of
 	// ids; rebuild the highlights. Markers the editor already shows keep their
 	// own mapped positions, which are newer than the server's; new ones map
-	// the server's anchors through edits not saved yet (see rebuiltMarkers),
-	// or wait for undo to bring back their words (see waitingMarkers).
-	// Same-set updates keep the editor's positions as they are.
+	// the server's anchors through the edits made after the text they count
+	// into (see rebuiltMarkers), or wait for undo to bring back their words
+	// (see waitingMarkers). Same-set updates keep the editor's positions as
+	// they are.
 	$effect(() => {
 		const incoming = markers
 			.map((marker) => marker.id)
@@ -476,16 +480,17 @@
 			.join(',');
 		const current = [...markerHandle.ids].sort().join(',');
 		if (!view || incoming === current) return;
+		const since = unsaved.from(markersVersion);
 		const rebuilt = rebuiltMarkers(
 			markers,
 			markerHandle.anchors(view),
 			markerHandle.ids,
-			unsaved.changes
+			since?.changes ?? null
 		);
 		markerHandle = markerExtensions(
 			rebuilt,
 			markSelection,
-			waitingMarkers(markers, rebuilt, markerHandle, unsaved.follow)
+			waitingMarkers(markers, rebuilt, markerHandle, since?.follow ?? null)
 		);
 		view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
 	});

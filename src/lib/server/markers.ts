@@ -337,6 +337,46 @@ export async function listSceneMarkers(db: Database, sceneId: string) {
 		.orderBy(asc(sceneMarkers.anchorStart));
 }
 
+// The open scene's markers with the fingerprint of the text their anchors
+// count into, read in one snapshot so a save landing between the two reads
+// cannot pair anchors with another text. The editor maps them through only
+// the edits it made after that text (see unsavedChanges in editor-markers).
+export async function readSceneMarkers(db: Database, sceneId: string) {
+	return await db.transaction(
+		async (tx) => {
+			const markers = await listSceneMarkers(tx, sceneId);
+			const [scene] = await tx
+				.select({ bodyMd: scenes.bodyMd })
+				.from(scenes)
+				.where(eq(scenes.id, sceneId));
+			return { markers, version: scene ? textHash(scene.bodyMd) : null };
+		},
+		{ isolationLevel: 'repeatable read', accessMode: 'read only' }
+	);
+}
+
+// The same for the continuous view: each scene with markers, its markers and
+// the fingerprint of its text.
+export async function readStoryMarkers(db: Database, storyId: string) {
+	return await db.transaction(
+		async (tx) => {
+			const byScene = await listStoryMarkersByScene(tx, storyId);
+			const ids = Object.keys(byScene);
+			const bodies = ids.length
+				? await tx
+						.select({ id: scenes.id, bodyMd: scenes.bodyMd })
+						.from(scenes)
+						.where(inArray(scenes.id, ids))
+				: [];
+			const versions = new Map(bodies.map((scene) => [scene.id, textHash(scene.bodyMd)]));
+			return Object.fromEntries(
+				ids.map((id) => [id, { markers: byScene[id], version: versions.get(id) ?? null }])
+			);
+		},
+		{ isolationLevel: 'repeatable read', accessMode: 'read only' }
+	);
+}
+
 export type StoryTodo = {
 	sceneId: string;
 	sceneTitle: string | null;

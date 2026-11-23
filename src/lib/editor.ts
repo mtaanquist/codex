@@ -4,9 +4,10 @@ import {
 	Transaction,
 	type EditorState,
 	type Extension,
+	type StateCommand,
 	type TransactionSpec
 } from '@codemirror/state';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
 import { markdownStyling, richModeExtension } from './editor-richtext';
@@ -30,6 +31,36 @@ export function commandMarkerExtensions(commandMarkers: MarkVisibility): Extensi
 export function nonPrintingFor(nonPrintingMarks: MarkVisibility): Extension {
 	return nonPrintingMarks === 'shown' ? nonPrintingExtension() : [];
 }
+
+// Undo and redo that always change the text. A step whose text change was
+// emptied by a change kept out of undo (an image placeholder taken out) stays
+// in the history while it carries marker or upload records, and a step of
+// keystrokes that cancel out (a letter typed and deleted) changes nothing
+// either; on their own, each would make one Ctrl+Z do nothing. Such steps are
+// taken together with the next one that changes the text.
+function changingText(command: StateCommand): StateCommand {
+	return (target) => {
+		let state = target.state;
+		let changed = false;
+		let ran = false;
+		const dispatch = (tr: Transaction) => {
+			state = tr.state;
+			if (!tr.changes.empty) changed = true;
+			target.dispatch(tr);
+		};
+		while (!changed && command({ state, dispatch })) ran = true;
+		return ran;
+	};
+}
+export const undoText = changingText(undo);
+export const redoText = changingText(redo);
+const textHistoryKeymap = historyKeymap.map((binding) =>
+	binding.run === undo
+		? { ...binding, run: undoText }
+		: binding.run === redo
+			? { ...binding, run: redoText }
+			: binding
+);
 
 // The CodeMirror base shared by every prose editor (scenes, entity bodies).
 // Markdown renders styled in both modes; rich mode additionally hides the
@@ -63,7 +94,7 @@ export function proseExtensions(opts: {
 	const nonPrinting = nonPrintingFor(opts.nonPrintingMarks ?? 'hidden');
 	return [
 		opts.compartments?.history ? opts.compartments.history.of(history()) : history(),
-		keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+		keymap.of([...defaultKeymap, ...textHistoryKeymap, ...searchKeymap]),
 		// Enter makes a paragraph (Shift+Enter is a soft break); the prose
 		// editors store markdown, where that is the natural break.
 		opts.plain ? [] : enterKeymap(),

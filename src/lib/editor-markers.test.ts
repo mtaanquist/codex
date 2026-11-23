@@ -314,6 +314,29 @@ describe('markerExtensions', () => {
 		const marked = (editor: ReturnType<typeof setup>) =>
 			editor.anchors().map((anchor) => editor.state.sliceDoc(anchor.anchorStart, anchor.anchorEnd));
 
+		it('does not move a marker onto redone words when the change took the words it had', () => {
+			const satOn = { id: 'sat-on', anchorStart: 8, anchorEnd: 14 };
+			const editor = setup([satOn]);
+			// Typing over "t on " leaves the marker on "sa".
+			editor.edit(10, 15, 'XYZ', false);
+			expect(marked(editor)).toEqual(['sa']);
+			editor.undo();
+			expect(marked(editor)).toEqual(['sat on']);
+			// "sa" and the space after "on" go outside undo; the marker keeps
+			// "t on".
+			editor.change(8, 10, '', false);
+			editor.change(12, 13, '', false);
+			expect(marked(editor)).toEqual(['t on']);
+			// Redo types over "t on" again; the marker had only "sa" then.
+			editor.redo();
+			expect(editor.state.doc.toString()).toBe('The cat XYZthe mat.');
+			expect(marked(editor)).toEqual([]);
+			// Undo gives back the text and marker from before the redo.
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe('The cat t onthe mat.');
+			expect(marked(editor)).toEqual(['t on']);
+		});
+
 		it('puts a marker back when the change shortened the text before its words', () => {
 			const editor = setup([mat]);
 			editor.edit(15, 22);
@@ -642,7 +665,7 @@ describe('rebuiltMarkers', () => {
 			// would, for words that are gone, which is all these tests need).
 			send() {
 				const sent = anchors();
-				unsaved.sent('');
+				unsaved.sent(textHash(state.doc.toString()));
 				return () => {
 					server = server.map(
 						(marker) =>
@@ -659,13 +682,16 @@ describe('rebuiltMarkers', () => {
 				editor.send()();
 			},
 			// What the SceneEditor does when the page data brings a changed set.
-			reload(incoming: SceneMarker[] = server) {
+			// version is the fingerprint of the text the anchors count into; by
+			// default the one the editor last heard was stored.
+			reload(incoming: SceneMarker[] = server, version = unsaved.version) {
 				server = incoming;
-				const rebuilt = rebuiltMarkers(incoming, anchors(), handle.ids, unsaved.changes);
+				const since = unsaved.from(version);
+				const rebuilt = rebuiltMarkers(incoming, anchors(), handle.ids, since?.changes ?? null);
 				handle = markerExtensions(
 					rebuilt,
 					() => {},
-					waitingMarkers(incoming, rebuilt, handle, unsaved.follow)
+					waitingMarkers(incoming, rebuilt, handle, since?.follow ?? null)
 				);
 				state = state.update({ effects: compartment.reconfigure(handle.extension) }).state;
 			},
@@ -719,6 +745,92 @@ describe('rebuiltMarkers', () => {
 		editor.reload([cat, sat]);
 		expect(editor.state.doc.toString()).toBe('The cat ran on the mat.');
 		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('places a new marker on all its words when undo brought them back inside a larger change', () => {
+		const catSat: SceneMarker = { id: 'cat-sat', anchorStart: 4, anchorEnd: 11 };
+		const editor = setupRebuild([mat]);
+		editor.edit(9, 10, '', false);
+		// Typing over "cat st", then undoing it, leaves one change over "cat sat"
+		// that puts back all but the "a".
+		editor.edit(4, 10, 'dog', false);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe('The cat st on the mat.');
+		editor.reload([catSat, mat]);
+		expect(editor.marked()).toEqual([
+			['cat-sat', 'cat st'],
+			['mat', 'mat']
+		]);
+	});
+
+	it('places a new marker on its own words, not on new words typed at its end', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(10, 11, 'X');
+		editor.reload([cat, sat]);
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sa']
+		]);
+	});
+
+	it('puts a waiting marker only on its words that undo brings back', () => {
+		const satOn: SceneMarker = { id: 'sat-on', anchorStart: 8, anchorEnd: 14 };
+		const editor = setupRebuild([cat]);
+		editor.edit(11, 14, 'X', false);
+		editor.edit(8, 11, '', false);
+		editor.reload([cat, satOn]);
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe('The cat satX the mat.');
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat-on', 'sat']
+		]);
+	});
+
+	describe('when a save lands while the page data is read', () => {
+		// "sat" once 'Oh. ' is typed in front.
+		const satAfterOh: SceneMarker = { id: 'sat', anchorStart: 12, anchorEnd: 15 };
+
+		it('maps a new marker counted into the text the save sent only through later edits', () => {
+			const editor = setupRebuild([cat]);
+			editor.edit(0, 0, 'Oh. ', false);
+			const sentText = editor.state.doc.toString();
+			const land = editor.send();
+			editor.edit(0, 0, 'Ah. ', false);
+			// The page data is read after the save is stored, before it answers.
+			editor.reload([cat, satAfterOh], textHash(sentText));
+			land();
+			expect(editor.marked()).toEqual([
+				['cat', 'cat'],
+				['sat', 'sat']
+			]);
+		});
+
+		it('maps a new marker counted into the text before the save through every edit since', () => {
+			const editor = setupRebuild([cat]);
+			editor.edit(0, 0, 'Oh. ', false);
+			// The page data is read before the save is stored, and arrives after
+			// it answered.
+			editor.save();
+			editor.edit(0, 0, 'Ah. ', false);
+			editor.reload([cat, sat], textHash(text));
+			expect(editor.state.doc.toString()).toBe('Ah. Oh. ' + text);
+			expect(editor.marked()).toEqual([
+				['cat', 'cat'],
+				['sat', 'sat']
+			]);
+		});
+
+		it('leaves out a new marker counted into a text this editor never had', () => {
+			const editor = setupRebuild([cat]);
+			editor.edit(0, 0, 'Oh. ', false);
+			editor.reload([cat, sat], textHash('Another window wrote this.'));
+			expect(editor.marked()).toEqual([['cat', 'cat']]);
+			// Nor does undo put it anywhere.
+			editor.undo();
+			expect(editor.marked()).toEqual([['cat', 'cat']]);
+		});
 	});
 
 	it('puts a new marker on its words when undo brings back words deleted before it arrived', () => {
@@ -1098,6 +1210,49 @@ describe('unsavedChanges', () => {
 		expect(unsaved.version).toBe('second');
 		unsaved.reset('newer');
 		expect(unsaved.version).toBe('newer');
+	});
+
+	describe('from', () => {
+		it('gives the edits after the text a save is sending, before it is heard to land', () => {
+			const unsaved = unsavedChanges('0123456789');
+			unsaved.record(insert(10, 0, 'ab'));
+			unsaved.sent(textHash('ab0123456789'));
+			unsaved.record(insert(12, 0, 'cd'));
+			expect(unsaved.from(textHash('ab0123456789'))?.changes.mapPos(5)).toBe(7);
+			expect(unsaved.from(textHash('0123456789'))?.changes.mapPos(5)).toBe(9);
+		});
+
+		it('still knows the text a landed save replaced', () => {
+			const unsaved = unsavedChanges('0123456789');
+			unsaved.record(insert(10, 0, 'ab'));
+			unsaved.sent(textHash('ab0123456789'));
+			unsaved.landed();
+			unsaved.record(insert(12, 0, 'cd'));
+			expect(unsaved.from(textHash('0123456789'))?.changes.mapPos(5)).toBe(9);
+			expect(unsaved.from(unsaved.version)?.changes.mapPos(5)).toBe(7);
+		});
+
+		it('knows nothing of a text it never had, nor of older texts once the newer text loads', () => {
+			const unsaved = unsavedChanges('0123456789');
+			expect(unsaved.from(textHash('other'))).toBeNull();
+			expect(unsaved.from(null)).toBeNull();
+			unsaved.record(insert(10, 0, 'ab'));
+			unsaved.reset(textHash('ab0123456789'));
+			expect(unsaved.from(textHash('0123456789'))).toBeNull();
+			expect(unsaved.from(textHash('ab0123456789'))?.changes.mapPos(5)).toBe(5);
+		});
+
+		it('follows a waiting marker from the text it counts into', () => {
+			const unsaved = unsavedChanges('0123456789');
+			unsaved.record(ChangeSet.of({ from: 2, to: 5 }, 10));
+			unsaved.sent(textHash('0156789'));
+			// "3" and "4" are deleted in the text the save sent; a marker on
+			// "234" in the loaded text waits for them.
+			const waiting = unsaved.from(textHash('0123456789'))!.follow(2, 5);
+			const back = ChangeSet.of({ from: 2, insert: '234' }, 7);
+			expect(waiting.locate(back)).toEqual({ from: 2, to: 5 });
+			waiting.release();
+		});
 	});
 
 	describe('while an image is uploading', () => {
