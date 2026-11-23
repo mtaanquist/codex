@@ -121,6 +121,26 @@ describe('markerExtensions', () => {
 		expect(next.anchors({ state } as EditorView)).toEqual([]);
 	});
 
+	it('keeps no records in an undo step for markers that were never shown', () => {
+		// Open markers with no position are held but never placed in the text.
+		const unplaced = Array.from({ length: 20 }, (_, i) => ({
+			id: `u${i}`,
+			anchorStart: null,
+			anchorEnd: null
+		}));
+		const editor = setup([marker, ...unplaced]);
+		for (let i = 0; i < 50; i++) editor.edit(0, 0, 'x');
+		let undone: Transaction | undefined;
+		undo({
+			state: editor.state,
+			dispatch: (tr: Transaction) => {
+				undone = tr;
+			}
+		});
+		expect(undone!.state.doc.toString()).toBe(doc);
+		expect(undone!.effects).toEqual([]);
+	});
+
 	describe('after deleting the marked words one character at a time', () => {
 		const sat = [{ id: 'm1', anchorStart: 8, anchorEnd: 11 }];
 		const backspaceSat = (editor: ReturnType<typeof setup>, joined: boolean) => {
