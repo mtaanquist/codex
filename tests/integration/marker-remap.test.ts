@@ -219,6 +219,30 @@ describe('remapPendingMarkers', () => {
 		expect(await anchorOf(markerId)).toBeNull();
 	});
 
+	// #1429: after the deletion was saved, undo puts the highlight back in the
+	// editor, and its next save sends the marker's anchor on the restored words.
+	it('anchors a detached marker again when an undo save sends its range', async () => {
+		const body = [A, MARKED, C].join('\n\n');
+		const { sceneId, markerId } = await sceneWith(body, 'lit the candle');
+		const write = (
+			bodyMd: string,
+			anchors: { id: string; anchorStart: number; anchorEnd: number }[]
+		) =>
+			saveSceneBody(db, sceneId, {
+				title: null,
+				bodyMd,
+				anchors,
+				baseHashes: null,
+				overwrite: false
+			});
+		await write([A, C].join('\n\n'), []);
+		expect(await anchorOf(markerId)).toBeNull();
+		const start = body.indexOf('lit the candle');
+		await write(body, [{ id: markerId, anchorStart: start, anchorEnd: start + 14 }]);
+		const at = await anchorOf(markerId);
+		expect(at && body.slice(at.start, at.end)).toBe('lit the candle');
+	});
+
 	it('leaves the anchors a Write save sends as they are', async () => {
 		const { sceneId, markerId } = await sceneWith(BEFORE, 'lit the candle');
 		const start = BEFORE.indexOf('the door');
