@@ -21,7 +21,9 @@ import { effectiveAssetConfig, createAsset, deleteAsset, s3AssetStore } from './
 import { createStoryEntity } from './create-entity';
 import { queueUniverseMentions } from './jobs';
 import { IMAGE_EXTENSIONS } from './media-types';
-import { holdCountQuota, holdStoryQuota, quotaFailure } from './quotas';
+import { accountLimits, holdCountQuota, holdStoryQuota, quotaFailure } from './quotas';
+import { imageLimit } from '../quota';
+import { formatBytes } from '../format';
 
 // Turns a parsed story zip into a new story in the chosen universe. The
 // preview names every collision and how it will resolve; the commit follows
@@ -109,6 +111,14 @@ export async function previewImport(
 		const reason = quotaFailure(err);
 		if (reason === undefined) throw err;
 		problems.unshift(reason);
+	}
+	const maxImage = imageLimit(await accountLimits(db, universe.ownerId));
+	for (const asset of plan.assets) {
+		if (asset.bytes.length > maxImage) {
+			problems.push(
+				`The image ${asset.path} is larger than ${formatBytes(maxImage)} and will not be imported.`
+			);
+		}
 	}
 	return {
 		storyTitle: plan.story.title,

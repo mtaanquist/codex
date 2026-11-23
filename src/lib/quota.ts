@@ -2,13 +2,32 @@ import { formatBytes, formatNumber } from './format.ts';
 
 // The plan entitlements Codex enforces. Any other key on a plan is stored but
 // has no effect. A missing row, or a null value, means no limit.
-export const QUOTA_KEYS = ['max_universes', 'max_stories', 'storage_bytes'] as const;
+export const QUOTA_KEYS = [
+	'max_universes',
+	'max_stories',
+	'storage_bytes',
+	'max_image_bytes'
+] as const;
 export type QuotaKey = (typeof QUOTA_KEYS)[number];
 export type Limits = Record<QuotaKey, number | null>;
 
-export const NO_LIMITS: Limits = { max_universes: null, max_stories: null, storage_bytes: null };
+export const NO_LIMITS: Limits = {
+	max_universes: null,
+	max_stories: null,
+	storage_bytes: null,
+	max_image_bytes: null
+};
 
 export const MEGABYTE = 1024 * 1024;
+
+/** The largest image any account can upload. A plan's max_image_bytes can
+ * only lower it; a missing limit, or a higher one, means this. */
+export const MAX_IMAGE_BYTES = 10 * MEGABYTE;
+
+/** The largest image the account's plan lets it upload. */
+export function imageLimit(limits: Limits): number {
+	return Math.min(MAX_IMAGE_BYTES, limits.max_image_bytes ?? MAX_IMAGE_BYTES);
+}
 
 /** A stored entitlement value as a limit: a whole number of zero or more, or
  * null (no limit) for anything else. */
@@ -26,14 +45,14 @@ export function parseLimitInput(text: string, max: number): number | null | unde
 	return n <= max ? n : undefined;
 }
 
-const NOUNS: Record<Exclude<QuotaKey, 'storage_bytes'>, [string, string]> = {
+const NOUNS: Record<'max_universes' | 'max_stories', [string, string]> = {
 	max_universes: ['universe', 'universes'],
 	max_stories: ['story', 'stories']
 };
 
 /** "3 universes", "1 story", "50 MB": a limit as the writer reads it. */
 export function limitPhrase(key: QuotaKey, limit: number): string {
-	if (key === 'storage_bytes') return formatBytes(limit);
+	if (key === 'storage_bytes' || key === 'max_image_bytes') return formatBytes(limit);
 	const [one, many] = NOUNS[key];
 	return `${formatNumber(limit)} ${limit === 1 ? one : many}`;
 }
@@ -46,6 +65,9 @@ export function quotaMessage(
 ): string {
 	const ask = 'ask the admin of this site to raise your limit.';
 	const phrase = limitPhrase(key, limit);
+	if (key === 'max_image_bytes') {
+		return `This image is larger than your account's limit of ${phrase} per image. Choose a smaller image, or ${ask}`;
+	}
 	if (key === 'storage_bytes') {
 		return `This image would take you past your account's limit of ${phrase} of uploaded images. To upload more, ${ask}`;
 	}
