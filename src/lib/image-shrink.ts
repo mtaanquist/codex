@@ -146,23 +146,45 @@ export async function shrinkImage(file: File, codec: ImageCodec = browserCodec):
 /**
  * A form action for plain (not enhanced) upload forms: on submit, it holds the
  * submit back, swaps each chosen image for shrinkImage's result, and submits
- * again.
+ * again. If the swap fails, the form goes with the files as chosen.
  */
 export function shrinkImagesOnSubmit(form: HTMLFormElement) {
 	let busy = false;
+	let again = false;
 	let ready = false;
+	let submitter: HTMLElement | null = null;
+
+	async function swapFiles() {
+		for (const input of form.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
+			const picked = [...(input.files ?? [])];
+			if (picked.length === 0) continue;
+			const shrunk: File[] = [];
+			for (const file of picked) shrunk.push(await shrinkImage(file));
+			// A file picked again meanwhile is left for the next pass.
+			const now = [...(input.files ?? [])];
+			if (now.length !== picked.length || now.some((file, i) => file !== picked[i])) continue;
+			const transfer = new DataTransfer();
+			for (const file of shrunk) transfer.items.add(file);
+			input.files = transfer.files;
+		}
+	}
+
 	async function onSubmit(event: SubmitEvent) {
 		if (ready) return;
 		event.preventDefault();
-		if (busy) return;
+		submitter = event.submitter;
+		// A submit while a pass runs (a second pick on a form that submits on
+		// change) runs one more pass on the files chosen now.
+		if (busy) {
+			again = true;
+			return;
+		}
 		busy = true;
 		try {
-			for (const input of form.querySelectorAll<HTMLInputElement>('input[type="file"]')) {
-				if (!input.files?.length) continue;
-				const transfer = new DataTransfer();
-				for (const file of input.files) transfer.items.add(await shrinkImage(file));
-				input.files = transfer.files;
-			}
+			do {
+				again = false;
+				await swapFiles().catch(() => {});
+			} while (again);
 		} finally {
 			busy = false;
 		}
@@ -170,7 +192,7 @@ export function shrinkImagesOnSubmit(form: HTMLFormElement) {
 		// covers exactly the one submit it starts.
 		ready = true;
 		try {
-			form.requestSubmit(event.submitter);
+			form.requestSubmit(submitter);
 		} finally {
 			ready = false;
 		}
