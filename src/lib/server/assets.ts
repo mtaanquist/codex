@@ -201,6 +201,10 @@ export type AssetInput = {
 	filename: string;
 	contentType: string;
 	bytes: Buffer;
+	// The image this one takes the place of (the avatar, cover or badge being
+	// swapped). It stays until the unused image sweep frees it, but counts as
+	// freed in the storage check, so a writer at the limit can still swap.
+	replaces?: string | null;
 };
 
 export async function createAsset(
@@ -260,7 +264,8 @@ export async function createAsset(
 			.select({ used: users.storageUsedBytes })
 			.from(users)
 			.where(eq(users.id, userId));
-		if ((owner?.used ?? 0) + input.bytes.length > limit) {
+		const credit = await replacedBytes(db, userId, input.replaces);
+		if ((owner?.used ?? 0) - credit + input.bytes.length > limit) {
 			return overStorageLimit(limit);
 		}
 	}
@@ -271,7 +276,12 @@ export async function createAsset(
 	let reserved: Awaited<ReturnType<typeof reserveStorage>>;
 	try {
 		reserved = await db.transaction(async (tx) => {
-			const result = await reserveStorage(tx, userId, input.bytes.length);
+			const result = await reserveStorage(
+				tx,
+				userId,
+				input.bytes.length,
+				await replacedBytes(tx, userId, input.replaces)
+			);
 			if (!result.ok) return result;
 			await tx.insert(assets).values({
 				id,
@@ -297,6 +307,20 @@ export async function createAsset(
 			: overStorageLimit(reserved.limit);
 	}
 	return { ok: true, id };
+}
+
+// The size of the user's own image being replaced, or 0.
+async function replacedBytes(
+	db: Database,
+	userId: string,
+	assetId: string | null | undefined
+): Promise<number> {
+	if (!assetId) return 0;
+	const [row] = await db
+		.select({ bytes: assets.byteSize })
+		.from(assets)
+		.where(and(eq(assets.id, assetId), eq(assets.ownerId, userId)));
+	return row?.bytes ?? 0;
 }
 
 function overStorageLimit(limit: number): ActionFailure {
@@ -454,12 +478,17 @@ export async function setUserAvatar(
 	userId: string,
 	input: { filename: string; contentType: string; bytes: Buffer }
 ): Promise<{ ok: true; id: string } | ActionFailure> {
+	const [current] = await db
+		.select({ avatarAssetId: users.avatarAssetId })
+		.from(users)
+		.where(eq(users.id, userId));
 	const result = await createAsset(db, store, config, userId, {
 		universeId: null,
 		kind: 'avatar',
 		filename: input.filename,
 		contentType: input.contentType,
-		bytes: input.bytes
+		bytes: input.bytes,
+		replaces: current?.avatarAssetId
 	});
 	if (!result.ok) return result;
 	await db.update(users).set({ avatarAssetId: result.id }).where(eq(users.id, userId));

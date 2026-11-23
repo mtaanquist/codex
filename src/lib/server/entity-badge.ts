@@ -13,9 +13,10 @@ import type { ActionFailure } from './action-result';
 // The per-entity badge: a palette colour, or an uploaded image (the image
 // wins). Both live on the entity row. These helpers resolve an entity id to
 // whichever of the three tables holds it, owner-scoped, and update it; the
-// image path mirrors the avatar flow (create, swap the reference, delete the
-// old). Entities are only ever removed by the universe purge, which sweeps
-// their assets by universeId, so there is no per-entity asset cleanup here.
+// image path mirrors the avatar flow (create, swap the reference, leave the
+// old for the unused image sweep). Entities are only ever removed by the
+// universe purge, which sweeps their assets by universeId, so there is no
+// per-entity asset cleanup here.
 
 async function updateBadge(
 	db: Database,
@@ -73,7 +74,8 @@ export async function setEntityBadgeImage(
 		kind: 'badge',
 		filename: input.filename,
 		contentType: input.contentType,
-		bytes: input.bytes
+		bytes: input.bytes,
+		replaces: ref.badgeAssetId
 	});
 	if (!created.ok) return created;
 	await updateBadge(db, ref.type, entityId, { badgeAssetId: created.id });

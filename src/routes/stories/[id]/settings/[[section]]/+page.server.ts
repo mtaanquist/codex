@@ -1,12 +1,12 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { isUuid, readingAddress } from '#lib/slug';
+import { isUuid } from '#lib/slug';
 import { and, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { stories } from '#lib/server/db/schema';
 import { storyTimeline } from '#lib/server/revisions';
 import { effectiveAssetConfig, createAsset, s3AssetStore } from '#lib/server/assets';
-import { publishStory } from '#lib/server/publish';
+import { publishStory, readingPageRef } from '#lib/server/publish';
 import {
 	deleteDraft,
 	listDrafts,
@@ -141,10 +141,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		// The first publish with no pen name set asks what name goes public.
 		displayName: locals.user!.displayName,
 		edition,
-		reading:
-			edition && archive?.handle && story.visibility !== 'private'
-				? { handle: archive.handle, story: readingAddress(story) }
-				: null,
+		// Null while readers cannot open it: no edition, private, taken down,
+		// or the author suspended.
+		reading: edition ? await readingPageRef(db, story.id) : null,
 		artifacts: edition ? await listEditionArtifacts(db, edition.id) : [],
 		exports: await listUserExports(db, locals.user!.id, { scope: 'story', targetId: story.id }),
 		reviewInvitations,
@@ -434,7 +433,8 @@ export const actions: Actions = {
 			kind: 'cover',
 			filename: file.name,
 			contentType: file.type,
-			bytes: Buffer.from(await file.arrayBuffer())
+			bytes: Buffer.from(await file.arrayBuffer()),
+			replaces: story.coverAssetId
 		});
 		if (!created.ok) {
 			return fail(created.code === 'over_limit' ? 403 : 400, {
