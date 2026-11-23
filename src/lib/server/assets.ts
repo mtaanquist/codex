@@ -360,7 +360,7 @@ export async function deleteAsset(db: Database, userId: string, assetId: string)
 			});
 		if (deleted.length === 0) return false;
 		await releaseStorage(tx, deleted);
-		await scheduleObjectDeletions(tx, [deleted[0].storageKey]);
+		await scheduleObjectDeletions(tx, deleted);
 		return true;
 	});
 }
@@ -377,16 +377,23 @@ type Inserter = Pick<Database, 'insert'>;
 // extraDays holds the object back that much longer than the usual wait, by
 // queueing it as if deleted in the future (the unused-image sweep does this,
 // so an image it freed can still be restored by hand for a while).
+// ownerId is the account the file belonged to (see purgeAccount).
 export async function scheduleObjectDeletions(
 	db: Inserter,
-	keys: string[],
+	objects: { storageKey: string; ownerId: string }[],
 	extraDays = 0
 ): Promise<void> {
-	if (keys.length === 0) return;
+	if (objects.length === 0) return;
 	const deletedAt = extraDays > 0 ? sql`now() + make_interval(days => ${extraDays})` : undefined;
 	await db
 		.insert(pendingObjectDeletions)
-		.values(keys.map((storageKey) => ({ storageKey, ...(deletedAt ? { deletedAt } : {}) })))
+		.values(
+			objects.map(({ storageKey, ownerId }) => ({
+				storageKey,
+				ownerId,
+				...(deletedAt ? { deletedAt } : {})
+			}))
+		)
 		.onConflictDoNothing();
 }
 

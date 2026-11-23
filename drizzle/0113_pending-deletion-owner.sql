@@ -1,0 +1,1 @@
+ALTER TABLE "pending_object_deletions" ADD COLUMN "owner_id" uuid;

@@ -29,7 +29,13 @@ forward by under a day. A story import picks its story id up front, and
 when its write fails it deletes the images it stored only once that story
 row is known to be absent (#1486): a commit whose reply was lost leaves the
 story with its images and reports the import as done, and a failed check
-leaves the images to the sweep.
+leaves the images to the sweep. Deleting an account left the files the
+sweep (or an earlier delete) had already queued in the bucket for the backup
+window plus 30 days (#1487): migration 0113 adds a nullable
+`pending_object_deletions.owner_id`, every queueing path fills it, and
+`purgeAccount` drops that account's queue rows in its transaction and removes
+the files with its other keys. `assets.unused_deleted` no longer logs the
+original filename; the rest of the row is still enough to restore one.
 
 Phase 10 staging review round 9 (2026-11-23, `fix/phase-10-review-9` on
 `staging/phase-10`). An image used and dropped again between two nightly

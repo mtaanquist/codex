@@ -245,7 +245,6 @@ type Freed = {
 	byteSize: number;
 	contentType: string;
 	kind: string;
-	filename: string;
 	universeId: string | null;
 	createdAt: string;
 };
@@ -326,7 +325,7 @@ async function deleteChunk(
 		const result = await tx.execute(sql`
 			delete from assets where id = any(string_to_array(${held.join(',')}, ',')::uuid[])
 			returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
-				byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
+				byte_size::float8 as "byteSize", content_type as "contentType", kind,
 				universe_id::text as "universeId", created_at::text as "createdAt"
 		`);
 		const gone = result.rows as Freed[];
@@ -342,14 +341,11 @@ async function freeAssetFiles(
 	gone: { ownerId: string; byteSize: number; storageKey: string }[]
 ): Promise<void> {
 	await releaseStorage(tx, gone);
-	await scheduleObjectDeletions(
-		tx,
-		gone.map((row) => row.storageKey),
-		FREED_OBJECT_EXTRA_DAYS
-	);
+	await scheduleObjectDeletions(tx, gone, FREED_OBJECT_EXTRA_DAYS);
 }
 
-/** Enough to put a freed image's row back by hand while its file is kept. */
+/** Enough to put a freed image's row back by hand while its file is kept.
+ * The original filename is left out of the log; any name will do. */
 function logFreed(row: Freed): void {
 	logEvent('info', 'assets.unused_deleted', row);
 }

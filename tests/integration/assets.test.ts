@@ -256,7 +256,7 @@ describe('deleteAsset', () => {
 
 describe('sweepDeletedObjects', () => {
 	async function queueAged(key: string, daysAgo: number) {
-		await scheduleObjectDeletions(db, [key]);
+		await scheduleObjectDeletions(db, [{ storageKey: key, ownerId }]);
 		await db
 			.update(pendingObjectDeletions)
 			.set({ deletedAt: new Date(Date.now() - daysAgo * 86_400_000) })
@@ -328,7 +328,10 @@ describe('sweepDeletedObjects', () => {
 		await db.delete(pendingObjectDeletions);
 		const { store } = memoryStore();
 		const keys = Array.from({ length: 2500 }, (_, i) => `bulk-${String(i).padStart(5, '0')}`);
-		await scheduleObjectDeletions(db, keys);
+		await scheduleObjectDeletions(
+			db,
+			keys.map((storageKey) => ({ storageKey, ownerId }))
+		);
 		await db
 			.update(pendingObjectDeletions)
 			.set({ deletedAt: new Date(Date.now() - 40 * 86_400_000) });

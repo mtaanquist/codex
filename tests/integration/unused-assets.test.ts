@@ -581,6 +581,24 @@ describe('a chunk that fails partway through', () => {
 	const loggedFreed = () =>
 		new Set(lines.filter((l) => l.event === 'assets.unused_deleted').map((l) => l.id));
 
+	it('logs what restoring the row needs, but not the original filename', async () => {
+		const freed = await image({ bytes: 3, unusedFor: LONG });
+		await sweepUnusedAssets(db);
+		const logged = lines.filter((l) => l.event === 'assets.unused_deleted');
+		expect(logged).toEqual([
+			expect.objectContaining({
+				id: freed,
+				ownerId,
+				storageKey: `codex-assets/${freed}`,
+				byteSize: 3,
+				contentType: 'image/png',
+				kind: 'inline',
+				universeId
+			})
+		]);
+		expect(logged[0]).not.toHaveProperty('filename');
+	});
+
 	it('has logged the deletions earlier chunks committed', async () => {
 		const { first, last } = await twoChunks();
 		await refuseDelete(last, 'P0001');

@@ -1073,7 +1073,11 @@ export const assets = pgTable(
 // finds every image it points at. See sweepDeletedObjects in assets.ts.
 export const pendingObjectDeletions = pgTable('pending_object_deletions', {
 	storageKey: text('storage_key').primaryKey(),
-	deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow()
+	deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+	// The account the file belonged to, so deleting that account removes it at
+	// once. No foreign key: the row outlives the account otherwise. Null for
+	// rows queued before migration 0113.
+	ownerId: uuid('owner_id')
 });
 
 // A user-requested export (account, story, or universe; zip or EPUB), built by

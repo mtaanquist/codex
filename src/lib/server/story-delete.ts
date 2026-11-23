@@ -200,13 +200,10 @@ export function trashedFor(deletedAt: AnyColumn, days?: number): SQL<boolean> {
 async function purgeStoryWithin(tx: Tx, storyId: string): Promise<void> {
 	// Capture the edition export keys before the rows cascade away.
 	const artifactRows = await tx
-		.select({ storageKey: exportArtifacts.storageKey })
+		.select({ storageKey: exportArtifacts.storageKey, ownerId: publications.ownerId })
 		.from(exportArtifacts)
 		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
 		.where(eq(publications.storyId, storyId));
 	await deleteStoryWithin(tx, storyId);
-	await scheduleObjectDeletions(
-		tx,
-		artifactRows.map((row) => row.storageKey)
-	);
+	await scheduleObjectDeletions(tx, artifactRows);
 }
