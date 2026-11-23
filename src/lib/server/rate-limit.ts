@@ -82,7 +82,9 @@ export function slidingRateLimit(
 export function refundSlidingRateLimit(key: string, at: number): void {
 	const times = logs.get(key);
 	const index = times ? times.lastIndexOf(at) : -1;
-	if (index >= 0) times!.splice(index, 1);
+	if (index < 0) return;
+	times!.splice(index, 1);
+	if (times!.length === 0) logs.delete(key);
 }
 
 // Per-user write budgets, keyed by user id. Autosave is debounced on the
@@ -134,4 +136,9 @@ export function exportLimit(userId: string, now: number = Date.now()): RateLimit
 export function resetRateLimits(): void {
 	windows.clear();
 	logs.clear();
+}
+
+// How many keys the sliding limiter holds. For tests; not used by the app.
+export function slidingRateLimitKeys(): number {
+	return logs.size;
 }

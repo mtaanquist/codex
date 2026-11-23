@@ -3681,6 +3681,22 @@ describe('limits', () => {
 		expect(elsewhere.status).toBe(401);
 	});
 
+	it('answers a bearer not shaped like an issued token without looking it up', async () => {
+		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
+		const queries = vi.spyOn(pool, 'query');
+		try {
+			const response = await send(list, { token: 'cdx_at_nope' });
+			expect(response.status).toBe(401);
+			expect(response.headers.get('www-authenticate')).toContain('error="invalid_token"');
+			const sql = queries.mock.calls.map(([query]) =>
+				typeof query === 'string' ? query : (query as { text: string }).text
+			);
+			expect(sql.some((text) => text.includes('"api_tokens"'))).toBe(false);
+		} finally {
+			queries.mockRestore();
+		}
+	});
+
 	it('still lets a valid token through from an address over the budget', async () => {
 		const list = { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} };
 		for (let i = 0; i < 121; i++) await send(list, { token: `cdx_at_guess${i}` });

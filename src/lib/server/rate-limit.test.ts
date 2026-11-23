@@ -3,6 +3,7 @@ import {
 	rateLimit,
 	refundSlidingRateLimit,
 	resetRateLimits,
+	slidingRateLimitKeys,
 	slidingRateLimit,
 	uploadLimit,
 	writeLimit
@@ -39,6 +40,13 @@ describe('rateLimit', () => {
 });
 
 describe('slidingRateLimit', () => {
+	it('forgets a key whose only call was refunded', () => {
+		slidingRateLimit('calls:solo', 2, 1000, 0);
+		refundSlidingRateLimit('calls:solo', 0);
+		expect(slidingRateLimitKeys()).toBe(0);
+		expect(slidingRateLimit('calls:solo', 1, 1000, 10).allowed).toBe(true);
+	});
+
 	it('gives back a refunded call, and only that one', () => {
 		const key = 'calls:refund';
 		expect(slidingRateLimit(key, 2, 1000, 0).allowed).toBe(true);

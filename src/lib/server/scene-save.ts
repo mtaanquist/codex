@@ -123,10 +123,19 @@ export async function saveSceneBody(
 			})
 			.where(eq(scenes.id, sceneId));
 		await recordRevision(tx, 'scene', sceneId, save.bodyMd);
-		// A save without anchors (the review centre's) still moves the text
-		// under the markers, so map them through the diff instead.
+		// The Write editor sends anchors only for the markers it highlights. Any
+		// other anchored marker (one the worker's sweep placed after the editor
+		// loaded it detached, one made in another tab, a resolved one) is mapped
+		// through the diff, as every marker is for a save without anchors (the
+		// review centre's).
+		await remapMarkerAnchors(
+			tx,
+			sceneId,
+			current.bodyMd,
+			save.bodyMd,
+			save.anchors?.map((anchor) => anchor.id)
+		);
 		if (save.anchors) await updateMarkerAnchors(tx, sceneId, save.anchors, save.bodyMd.length);
-		else await remapMarkerAnchors(tx, sceneId, current.bodyMd, save.bodyMd);
 		return { ok: true as const, wordCount: count, bodyChanged: true };
 	});
 }
