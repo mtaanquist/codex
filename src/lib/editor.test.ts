@@ -43,6 +43,20 @@ function setup(text: string, markers: { id: string; anchorStart: number; anchorE
 			});
 		},
 		load: (next: string) => showNewerText(view, next, historyCompartment),
+		// Whether the last transaction changed the text, which is what
+		// schedules an autosave.
+		changedBy(run: () => void) {
+			let changed = false;
+			const dispatch = view.dispatch;
+			view.dispatch = (spec) => {
+				const tr = state.update(spec);
+				changed ||= tr.docChanged;
+				state = tr.state;
+			};
+			run();
+			view.dispatch = dispatch;
+			return changed;
+		},
 		undo: () => run(undo),
 		redo: () => run(redo),
 		anchors: () => handle.anchors({ state } as EditorView)
@@ -92,5 +106,18 @@ describe('showNewerText', () => {
 		editor.undo();
 		expect(editor.text).toBe('The cow sat.');
 		expect(editor.anchors()).toEqual([{ id: 'm1', anchorStart: 8, anchorEnd: 11 }]);
+	});
+
+	it('reads Windows line breaks in the newer text as the editor does', () => {
+		const editor = setup('Intro\nThe end.', []);
+		editor.load('Intro!\r\nThe end.');
+		expect(editor.text).toBe('Intro!\nThe end.');
+		expect(editor.state.doc.lines).toBe(2);
+	});
+
+	it('changes nothing when only the line breaks differ, so no save follows', () => {
+		const editor = setup('a\nb', []);
+		expect(editor.changedBy(() => editor.load('a\r\nb'))).toBe(false);
+		expect(editor.text).toBe('a\nb');
 	});
 });

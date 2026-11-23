@@ -441,6 +441,32 @@ test('an image that could not be added stays reported while the writer types', a
 	await expect(notice).toHaveCount(0);
 });
 
+test('an image brought back by undo lands and its notice goes', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Undone ${Date.now()}`);
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assets', async (route) => {
+		await held;
+		await route.fulfill({ json: { path: '/assets/undone.png' } });
+	});
+	await editor(page).click();
+	await editor(page).evaluate((el) => {
+		const data = new DataTransfer();
+		data.items.add(new File(['png'], 'undone.png', { type: 'image/png' }));
+		el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+	});
+	await expect(page.locator('.cm-content')).toContainText('Uploading');
+	await page.keyboard.press('ControlOrMeta+A');
+	await page.keyboard.press('Delete');
+	release();
+	const notice = page.getByRole('alert').filter({ hasText: 'undone.png was not added' });
+	await expect(notice).toBeVisible();
+	await page.keyboard.press('ControlOrMeta+Z');
+	await expect(page.locator('.cm-content')).toContainText('![undone.png](/assets/undone.png)');
+	await expect(notice).toHaveCount(0);
+});
+
 test('an image the server refuses is reported with its reason', async ({ page }) => {
 	test.slow();
 	await newStory(page, `Refused ${Date.now()}`);
