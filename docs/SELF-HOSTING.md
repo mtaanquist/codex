@@ -391,7 +391,17 @@ scheduled ones; with
 After updating to the release that adds plans and storage limits, run
 **Admin > Usage & storage > Recount images** once if anyone uploaded images
 while the update was rolling out, so each account's storage total includes
-them.
+them. The same release builds new indexes on the image table and on the badge
+columns of characters, places and lore entries (migrations 0110 and 0111) with
+a plain `CREATE INDEX`, so writes to those tables wait while the indexes are
+built; on a large database, update at a quiet time.
+
+The nightly unused-image job (03:00 UTC) reads every table in the database,
+one table at a time. On a large database a single table's read can take a
+while (it is cut off after 2 hours 24 minutes), and while it runs Postgres
+cannot clean out rows deleted since it began, so tables can grow a little
+until the next vacuum. An update that changes the database cancels the job if
+it is running, and the job runs again the next night.
 
 If you used the bundled `minio` profile: it is now `rustfs`, with
 `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` in place of `MINIO_ROOT_USER` and
@@ -466,3 +476,8 @@ in place yet.
   `APP_SECRET` is unset. Set a long random value and keep it stable.
 - **A worker feature (email, backups, exports, mentions) does nothing.** The
   worker may be down. Check `docker compose ps` and the worker log.
+- **The unused-image job fails with "could not resize shared memory
+  segment".** Docker gives the Postgres container 64 MB of shared memory by
+  default, too little for the job's large reads on a big database. The bundled
+  `compose.yaml` sets `shm_size: 1g` on the `db` service; if you use your own
+  compose file, add the same line there.

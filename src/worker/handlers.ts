@@ -1235,13 +1235,19 @@ export function createHandlers(deps: WorkerDeps) {
 		// rows go and their bytes come back now; the objects are queued for the
 		// sweep above.
 		async sweepUnusedAssets() {
+			const progress = { count: 0, bytes: 0 };
 			try {
-				const result = await sweepUnusedAssets(db);
+				const result = await sweepUnusedAssets(db, progress);
 				if (result.count > 0) {
 					logEvent('info', 'assets.unused_sweep', { deleted: result.count, bytes: result.bytes });
 				}
 			} catch (error) {
-				logEvent('error', 'assets.unused_sweep_failed', errorFields(error));
+				// What the run freed before it failed stays freed.
+				logEvent('error', 'assets.unused_sweep_failed', {
+					deleted: progress.count,
+					bytes: progress.bytes,
+					...errorFields(error)
+				});
 				throw error;
 			}
 		},
