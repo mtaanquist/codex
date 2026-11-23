@@ -294,6 +294,9 @@ describe('universe and story limits', () => {
 		const world = await universe();
 		await createStoryInUniverse(db, ownerId, world.id, 'C');
 		await expect(standaloneUniverse(db, ownerId)).rejects.toBeInstanceOf(QuotaExceededError);
+		await expect(standaloneUniverse(db, ownerId)).rejects.toThrow(
+			/standalone stories are in the trash/
+		);
 		const [still] = await db
 			.select({ deletedAt: universes.deletedAt })
 			.from(universes)

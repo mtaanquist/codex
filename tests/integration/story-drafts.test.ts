@@ -44,7 +44,7 @@ import {
 	gatherDrafts,
 	gatherStory
 } from '../../src/lib/server/export';
-import { deleteStory } from '../../src/lib/server/story-delete';
+import { destroyStory, trashStory } from '../../src/lib/server/story-lifecycle';
 import { purgeUniverse } from '../../src/lib/server/universe-lifecycle';
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { zipBytes } from '../../src/lib/server/zip-stream';
@@ -684,7 +684,8 @@ describe('lifecycle', () => {
 
 	it('goes with the story when it is deleted', async () => {
 		await save();
-		await deleteStory(db, storyId, ownerId);
+		await trashStory(db, ownerId, storyId);
+		expect(await destroyStory(db, ownerId, storyId)).toBe(true);
 		expect(await db.select().from(storyDrafts)).toEqual([]);
 	});
 

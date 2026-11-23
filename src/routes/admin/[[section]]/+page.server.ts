@@ -61,7 +61,7 @@ import {
 	setUserPlan
 } from '#lib/server/plans';
 import { recountStorageUsed } from '#lib/server/quotas';
-import { MAX_IMAGE_BYTES, MEGABYTE, parseLimitInput, parseMegabytesInput } from '#lib/quota';
+import { MAX_IMAGE_BYTES, MEGABYTE, parseLimitInput, parseMegabytesField } from '#lib/quota';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
 import { appVersion } from '#lib/server/app-version';
@@ -361,10 +361,15 @@ export const actions: Actions = {
 		const planId = formText(data, 'planId');
 		const universes = parseLimitInput(formText(data, 'maxUniverses'), MAX_COUNT_LIMIT);
 		const stories = parseLimitInput(formText(data, 'maxStories'), MAX_COUNT_LIMIT);
-		const storageBytes = parseMegabytesInput(formText(data, 'storageMb'), MAX_STORAGE_MB);
+		const storageBytes = parseMegabytesField(
+			formText(data, 'storageMb'),
+			formText(data, 'storageBytes'),
+			MAX_STORAGE_MB
+		);
 		// 0 would refuse every image, so the smallest size is 0.1 MB.
-		const parsedImageBytes = parseMegabytesInput(
+		const parsedImageBytes = parseMegabytesField(
 			formText(data, 'maxImageMb'),
+			formText(data, 'maxImageBytes'),
 			MAX_IMAGE_BYTES / MEGABYTE
 		);
 		const imageBytes = parsedImageBytes === 0 ? undefined : parsedImageBytes;

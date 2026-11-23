@@ -113,7 +113,9 @@ async function reviveIfTrashed(db: Database, universe: typeof universes.$inferSe
 			.select({ n: count() })
 			.from(stories)
 			.where(and(eq(stories.universeId, universe.id), isNull(stories.deletedAt)));
-		if (inside.n > 0) await holdCountQuota(tx, universe.ownerId, { stories: inside.n + 1 });
+		if (inside.n > 0) {
+			await holdCountQuota(tx, universe.ownerId, { stories: inside.n + 1 }, 'revive');
+		}
 		await untrash(tx, 'universes', universe.id);
 	});
 	// Re-read: the restore may have given it a fresh slug.

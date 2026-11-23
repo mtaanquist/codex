@@ -3,12 +3,13 @@ import type { Database } from './auth.ts';
 import { scheduleObjectDeletions } from './assets.ts';
 import { releaseStorage } from './quotas.ts';
 import { logEvent } from './log.ts';
+import { SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS } from './queues.ts';
 
 // Frees the storage of uploaded images nothing uses any more: the worker's
-// sweepUnusedAssets, nightly and after a story is deleted for good. Deleting
-// an image a writer still uses is the one mistake this must never make, so
-// "used" is read as widely as possible: an image is in use while its id
-// appears anywhere in the database outside its own assets row. That is every
+// sweepUnusedAssets, nightly. Deleting an image a writer still uses is the
+// one mistake this must never make, so "used" is read as widely as possible:
+// an image is in use while its id appears anywhere in the database outside
+// its own assets row. That is every
 // uuid column (covers, avatars, badges, publication_assets) and the text of
 // every text, json and array column (scene and draft bodies, saved drafts,
 // staged drafts, frozen editions, history, notes, review suggestions, chat
@@ -36,6 +37,22 @@ export const FREED_OBJECT_EXTRA_DAYS = 30;
 
 // Images deleted per transaction, so each holds its locks briefly.
 const CHUNK = 100;
+
+// The reads below scan every row of every column, which on a large database
+// outlasts the worker pool's per-statement limit. They run in their own
+// read-only transaction with the limit raised to the job's expiry. A plain
+// read takes no lock a write waits on, so nothing is held up meanwhile.
+const LONG_READ_TIMEOUT_MS = SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS.expireInSeconds * 1000;
+
+async function longRead<T>(db: Database, read: (tx: Database) => Promise<T>): Promise<T> {
+	return await db.transaction(
+		async (tx) => {
+			await tx.execute(sql.raw(`set local statement_timeout = ${LONG_READ_TIMEOUT_MS}`));
+			return await read(tx);
+		},
+		{ accessMode: 'read only' }
+	);
+}
 
 const UUID_PATTERN = sql.raw(`'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'`);
 
@@ -97,7 +114,6 @@ const daysAgo = (days: number) => sql`now() - make_interval(days => ${days})`;
 // Unused long enough and uploaded long enough ago to delete.
 const dueSql = sql`coalesce(unreferenced_since <= ${daysAgo(UNREFERENCED_DAYS)}
 	and created_at <= ${daysAgo(UNUSED_ASSET_GRACE_DAYS)}, false)`;
-const ownedBy = (ownerId: string | undefined) => (ownerId ? sql`owner_id = ${ownerId}` : sql`true`);
 
 export type UnusedAsset = { id: string; ownerId: string; marked: boolean; due: boolean };
 
@@ -105,26 +121,26 @@ export type UnusedAsset = { id: string; ownerId: string; marked: boolean; due: b
  * The full read, in one statement: every column is read once, from one
  * snapshot, so a reference moving between tables while it runs (a staged
  * draft accepted into a scene) is seen in one of them. Returns the images
- * nothing uses (of one account, or all), and the marked ones in use again.
+ * nothing uses, and the marked ones in use again.
  */
 export async function scanAssetUse(
-	db: Database,
-	options: { ownerId?: string } = {}
+	db: Database
 ): Promise<{ unused: UnusedAsset[]; backInUse: string[] }> {
-	const columns = await referenceColumns(db);
-	const result = await db.execute(sql`
+	const result = await longRead(db, async (tx) =>
+		tx.execute(sql`
 		with scope as materialized (
 			select id::text as id, owner_id::text as owner_id,
 				unreferenced_since is not null as marked, ${dueSql} as due
-			from assets where ${ownedBy(options.ownerId)}
+			from assets
 		),
-		refs as materialized (select distinct id from (${referencesIn(columns, sql`select id from scope`)}) r)
+		refs as materialized (select distinct id from (${referencesIn(await referenceColumns(tx), sql`select id from scope`)}) r)
 		select scope.id, scope.owner_id as "ownerId", scope.marked, scope.due,
 			refs.id is not null as referenced
 		from scope left join refs on refs.id = scope.id
 		where refs.id is null or scope.marked
 		order by scope.owner_id, scope.id
-	`);
+	`)
+	);
 	const rows = result.rows as (UnusedAsset & { referenced: boolean })[];
 	return {
 		unused: rows
@@ -171,18 +187,16 @@ async function clearMarks(db: Database, ids: string[]): Promise<void> {
 /**
  * Which of the given image ids some row still references, by the same wide
  * reading as scanAssetUse, so a reference saved after an earlier full read is
- * caught. It reads every row of every column: never run it while holding
- * locks others wait on.
+ * caught. It reads every row of every column, so it runs once per sweep (not
+ * per chunk) and never while holding locks others wait on.
  */
-async function referencedAssetIds(
-	db: Database,
-	ids: string[],
-	columns?: Column[]
-): Promise<Set<string>> {
+async function referencedAssetIds(db: Database, ids: string[]): Promise<Set<string>> {
 	if (ids.length === 0) return new Set();
 	const wanted = sql`select unnest(string_to_array(${ids.join(',')}, ',')) as id`;
-	const result = await db.execute(
-		sql`select distinct id from (${referencesIn(columns ?? (await referenceColumns(db)), wanted)}) refs`
+	const result = await longRead(db, async (tx) =>
+		tx.execute(
+			sql`select distinct id from (${referencesIn(await referenceColumns(tx), wanted)}) refs`
+		)
 	);
 	return new Set((result.rows as { id: string }[]).map((row) => row.id));
 }
@@ -202,9 +216,9 @@ type Freed = {
 /**
  * Deletes the given due images (from scanAssetUse) that are still unused, a
  * chunk per transaction, and gives their bytes back. Every column is read
- * again for the chunk first, outside any lock, so a reference saved after the
- * full read is caught. Only then does a short transaction lock the owners'
- * account rows and then the image rows (the order every storage path takes,
+ * again for all of them first, outside any lock, so a reference saved after
+ * the full read is caught. Only then does a short transaction per chunk lock
+ * the owners' account rows and then the image rows (the order every storage path takes,
  * see lockStorageOwners), skipping any another session holds (those are left
  * for the next run), and delete the rows still marked for long enough. An
  * upload or profile save of the same account waits only for that short
@@ -216,18 +230,15 @@ export async function deleteUnusedAssets(
 	candidates: { id: string; ownerId: string }[]
 ): Promise<Freed[]> {
 	if (candidates.length === 0) return [];
-	const columns = await referenceColumns(db);
+	const referenced = await referencedAssetIds(
+		db,
+		candidates.map((row) => row.id)
+	);
+	await clearMarks(db, [...referenced]);
+	const stillUnused = candidates.filter((row) => !referenced.has(row.id));
 	const freed: Freed[] = [];
-	for (let start = 0; start < candidates.length; start += CHUNK) {
-		const chunk = candidates.slice(start, start + CHUNK);
-		const referenced = await referencedAssetIds(
-			db,
-			chunk.map((row) => row.id),
-			columns
-		);
-		await clearMarks(db, [...referenced]);
-		const unused = chunk.filter((row) => !referenced.has(row.id));
-		if (unused.length === 0) continue;
+	for (let start = 0; start < stillUnused.length; start += CHUNK) {
+		const unused = stillUnused.slice(start, start + CHUNK);
 		const ids = unused.map((row) => row.id).join(',');
 		const owners = [...new Set(unused.map((row) => row.ownerId))].sort().join(',');
 		const deleted = await db.transaction(async (tx) => {
@@ -283,13 +294,9 @@ function logFreed(row: Freed): void {
 	logEvent('info', 'assets.unused_deleted', row);
 }
 
-/** One run of the sweep, over every account or one: one full read, the
- * marks, then the deletes. */
-export async function sweepUnusedAssets(
-	db: Database,
-	options: { ownerId?: string } = {}
-): Promise<{ count: number; bytes: number }> {
-	const scan = await scanAssetUse(db, options);
+/** One run of the sweep: one full read, the marks, then the deletes. */
+export async function sweepUnusedAssets(db: Database): Promise<{ count: number; bytes: number }> {
+	const scan = await scanAssetUse(db);
 	await recordAssetUse(db, scan);
 	const freed = await deleteUnusedAssets(
 		db,

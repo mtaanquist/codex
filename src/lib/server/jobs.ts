@@ -44,8 +44,6 @@ import {
 	ASSISTANT_ENRICH_QUEUE,
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_QUEUE_OPTIONS,
-	SWEEP_UNUSED_ASSETS_QUEUE,
-	SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS,
 	LEGACY_ASSISTANT_REVIEW_QUEUE,
 	LEGACY_ASSISTANT_SUMMARIES_QUEUE,
 	ASSISTANT_JOB_EXPIRY_SECONDS,
@@ -75,7 +73,6 @@ function getBoss(): Promise<PgBoss> {
 		await boss.createQueue(EXPORT_ARTIFACTS_QUEUE);
 		await boss.createQueue(USER_EXPORT_QUEUE);
 		await boss.createQueue(MIGRATE_ASSETS_QUEUE);
-		await boss.createQueue(SWEEP_UNUSED_ASSETS_QUEUE, SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS);
 		await boss.createQueue(NOTIFICATION_DIGEST_QUEUE);
 		await boss.createQueue(REVIEWER_DIGEST_QUEUE);
 		await boss.createQueue(ASSISTANT_REVIEW_QUEUE, ASSISTANT_QUEUE_OPTIONS);
@@ -572,22 +569,6 @@ export async function queueAssetMigration(): Promise<boolean> {
 	} catch (error) {
 		logEvent('error', 'job.queue_failed', { queue: MIGRATE_ASSETS_QUEUE, ...errorFields(error) });
 		return false;
-	}
-}
-
-// Asks the worker for a run of the unused-image sweep over one account's
-// images, after it deleted a story for good, so the images that story alone
-// used start their wait now rather than at night. The queue keeps at most one
-// run per account waiting, and the nightly run apart from those.
-export async function queueUnusedAssetSweep(ownerId: string): Promise<void> {
-	try {
-		const boss = await getBoss();
-		await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, { ownerId }, { singletonKey: `owner:${ownerId}` });
-	} catch (error) {
-		logEvent('error', 'job.queue_failed', {
-			queue: SWEEP_UNUSED_ASSETS_QUEUE,
-			...errorFields(error)
-		});
 	}
 }
 

@@ -5,8 +5,7 @@ import {
 	ASSISTANT_ENRICH_QUEUE,
 	DIGEST_DELAY_SECONDS,
 	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	NOTIFICATION_DIGEST_QUEUE,
-	SWEEP_UNUSED_ASSETS_QUEUE
+	NOTIFICATION_DIGEST_QUEUE
 } from '../lib/server/queues.ts';
 import * as schema from '../lib/server/db/schema.ts';
 import type { Database } from '../lib/server/auth.ts';
@@ -1188,20 +1187,17 @@ export function createHandlers(deps: WorkerDeps) {
 					logEvent('error', 'purge.universe_failed', { universeId, ...errorFields(error) });
 				}
 			}
-			let storiesPurged = 0;
 			for (const storyId of await listStoriesDueForPurge(db)) {
 				try {
 					if (await purgeStory(db, storyId, { dueAfterDays: STORY_TRASH_DAYS })) {
-						storiesPurged += 1;
 						logEvent('info', 'purge.story', { storyId });
 					}
 				} catch (error) {
 					logEvent('error', 'purge.story_failed', { storyId, ...errorFields(error) });
 				}
 			}
-			// The sweep marks the images only those stories used, and frees them
-			// once they have stayed unused long enough.
-			if (storiesPurged > 0) await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, {});
+			// The images only those stories used are marked by the nightly
+			// unused-image sweep; none is due to go sooner than that anyway.
 		},
 
 		// Bucket objects of deleted rows, once no kept backup can still point at
@@ -1223,18 +1219,16 @@ export function createHandlers(deps: WorkerDeps) {
 		// Uploaded images nothing references any more: marked on the first run
 		// that finds them unused, deleted once unused for long enough. Their
 		// rows go and their bytes come back now; the objects are queued for the
-		// sweep above. A job with an ownerId looks only at that account.
-		async sweepUnusedAssets(jobs: Job<{ ownerId?: string }>[]) {
-			for (const job of jobs) {
-				const ownerId = typeof job.data?.ownerId === 'string' ? job.data.ownerId : undefined;
-				const result = await sweepUnusedAssets(db, { ownerId });
+		// sweep above.
+		async sweepUnusedAssets() {
+			try {
+				const result = await sweepUnusedAssets(db);
 				if (result.count > 0) {
-					logEvent('info', 'assets.unused_sweep', {
-						ownerId,
-						deleted: result.count,
-						bytes: result.bytes
-					});
+					logEvent('info', 'assets.unused_sweep', { deleted: result.count, bytes: result.bytes });
 				}
+			} catch (error) {
+				logEvent('error', 'assets.unused_sweep_failed', errorFields(error));
+				throw error;
 			}
 		},
 

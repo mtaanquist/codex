@@ -555,10 +555,6 @@ const OPS: Op[] = [
 		run: async (db) => ok(await purgeStory(db, S.story, { dueAfterDays: STORY_TRASH_DAYS }))
 	},
 	{ name: 'sweep unused images', run: async (db) => await sweepUnusedAssets(db) },
-	{
-		name: "sweep one account's unused images",
-		run: async (db) => await sweepUnusedAssets(db, { ownerId: S.user })
-	},
 	{ name: 'delete an image', run: async (db) => ok(await deleteAsset(db, S.user, S.image)) },
 	{
 		name: 'replace the avatar',

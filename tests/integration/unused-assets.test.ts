@@ -260,21 +260,6 @@ describe('sweepUnusedAssets', () => {
 		expect(Date.now() - since.getTime()).toBeLessThan(60_000);
 	});
 
-	it('looks only at one account when given one', async () => {
-		const [other] = await db
-			.insert(users)
-			.values({ email: 'other@example.com', displayName: 'O', passwordHash: 'x', role: 'user' })
-			.returning();
-		const mine = await image({ bytes: 5, unusedFor: LONG });
-		const theirs = await image({ bytes: 6, unusedFor: LONG, owner: other.id, universe: null });
-		const theirsUnmarked = await image({ owner: other.id, universe: null });
-		expect(await sweepUnusedAssets(db, { ownerId })).toEqual({ count: 1, bytes: 5 });
-		expect(await remaining([mine, theirs, theirsUnmarked])).toEqual(
-			new Set([theirs, theirsUnmarked])
-		);
-		expect((await marks([theirsUnmarked])).get(theirsUnmarked)).toBeNull();
-	});
-
 	it('deletes long unused images, gives the bytes back, and keeps the file a while', async () => {
 		const storyId = await story();
 		const orphan = await image({ bytes: 300, unusedFor: LONG });
@@ -446,5 +431,60 @@ describe('after a story is deleted for good', () => {
 		await sweepUnusedAssets(db);
 		expect(await remaining([id])).toEqual(new Set([id]));
 		expect((await marks([id])).get(id)).toBeNull();
+	});
+});
+
+// The worker's pool cancels a statement after a few minutes, but reading every
+// column of a large database can take longer. A lock another session holds on
+// a scanned table stands in for a slow read here: the wait counts toward
+// statement_timeout like work does.
+describe('reads on a pool with a short statement limit', () => {
+	let shortPool: pg.Pool;
+	let shortDb: Database;
+
+	beforeAll(() => {
+		shortPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, statement_timeout: 100 });
+		shortDb = drizzle(shortPool, { schema });
+	});
+
+	afterAll(async () => {
+		await shortPool.end();
+	});
+
+	// Runs read while another session holds an exclusive lock on notes for
+	// holdMs, and returns what it gave.
+	async function underLock<T>(read: () => Promise<T>, holdMs = 600): Promise<T> {
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('lock table notes in access exclusive mode');
+			const running = read();
+			// Seen as handled while the lock is held; the await below still throws.
+			running.catch(() => {});
+			await new Promise((resolve) => setTimeout(resolve, holdMs));
+			await holder.query('commit');
+			return await running;
+		} finally {
+			holder.release();
+		}
+	}
+
+	it('would cancel a plain read of a held table', async () => {
+		await expect(underLock(() => shortPool.query('select count(*) from notes'))).rejects.toThrow(
+			/statement timeout/
+		);
+	});
+
+	it('lets the full read run past it', async () => {
+		const orphan = await image();
+		const scan = await underLock(() => scanAssetUse(shortDb));
+		expect(scan.unused.map((row) => row.id)).toEqual([orphan]);
+	});
+
+	it('lets the read before the delete run past it', async () => {
+		const orphan = await image({ bytes: 9, unusedFor: LONG });
+		const candidates = await dueNow();
+		const freed = await underLock(() => deleteUnusedAssets(shortDb, candidates));
+		expect(freed.map((row) => row.id)).toEqual([orphan]);
 	});
 });

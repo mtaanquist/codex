@@ -10,7 +10,14 @@
 // (users.storage_used_bytes, kept by assets.ts); text is not counted.
 import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { NO_LIMITS, parseLimit, quotaMessage, QUOTA_KEYS, type Limits } from '../quota.ts';
+import {
+	NO_LIMITS,
+	parseLimit,
+	quotaMessage,
+	QUOTA_KEYS,
+	type Limits,
+	type QuotaAction
+} from '../quota.ts';
 
 /** Thrown inside a create's transaction so the whole create rolls back; the
  * route turns it into the message. */
@@ -76,7 +83,7 @@ export async function holdCountQuota(
 	tx: Database,
 	userId: string,
 	adding: { universes?: number; stories?: number },
-	action: 'create' | 'restore' = 'create'
+	action: QuotaAction = 'create'
 ): Promise<void> {
 	const addUniverses = adding.universes ?? 0;
 	const addStories = adding.stories ?? 0;

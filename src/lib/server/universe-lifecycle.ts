@@ -252,9 +252,11 @@ export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<v
 		await tx.delete(table).where(eq(table.universeId, universeId));
 	}
 	await tx.delete(entityCategories).where(eq(entityCategories.universeId, universeId));
+	// The 30 days start now, even over an earlier mark: that mark may be stale
+	// (a run that saw the image in use again would only clear it later).
 	await tx
 		.update(assets)
-		.set({ universeId: null, unreferencedSince: sql`coalesce(${assets.unreferencedSince}, now())` })
+		.set({ universeId: null, unreferencedSince: sql`now()` })
 		.where(eq(assets.universeId, universeId));
 	await tx.delete(universes).where(eq(universes.id, universeId));
 }
