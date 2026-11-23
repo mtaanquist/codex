@@ -25,7 +25,11 @@ image id in it, so no path and no later column can miss it. A table created
 later needs its own `CREATE TRIGGER`; the sweep refuses to delete while any
 table lacks one, and a test fails. The gap left is a save committed during a
 run's full read and undone before the next run, which can bring a deletion
-forward by under a day.
+forward by under a day. A story import picks its story id up front, and
+when its write fails it deletes the images it stored only once that story
+row is known to be absent (#1486): a commit whose reply was lost leaves the
+story with its images and reports the import as done, and a failed check
+leaves the images to the sweep.
 
 Phase 10 staging review round 9 (2026-11-23, `fix/phase-10-review-9` on
 `staging/phase-10`). An image used and dropped again between two nightly

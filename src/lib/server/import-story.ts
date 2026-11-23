@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Database } from './auth';
 import {
@@ -26,6 +27,7 @@ import { IMAGE_EXTENSIONS } from './media-types';
 import { accountLimits, holdCountQuota, holdStoryQuota, quotaFailure } from './quotas';
 import { imageLimit } from '../quota';
 import { formatBytes } from '../format';
+import { errorFields, logEvent } from './log';
 
 // Turns a parsed story zip into a new story in the chosen universe. The
 // preview names every collision and how it will resolve; the commit follows
@@ -191,6 +193,8 @@ export async function runImport(
 	let waitingDraftsCreated = 0;
 
 	let story: { id: string; slug: string };
+	// Picked here so a failed write can tell whether its commit went through.
+	const storyId = randomUUID();
 	// From the first stored image on, a failure deletes the images stored so
 	// far: nothing refers to them, and they would count against the storage
 	// limit for good.
@@ -242,6 +246,7 @@ export async function runImport(
 				const [created] = await tx
 					.insert(stories)
 					.values({
+						id: storyId,
 						universeId: universe.id,
 						ownerId: universe.ownerId,
 						title: plan.story.title,
@@ -400,10 +405,27 @@ export async function runImport(
 			story = await write(await pick());
 		}
 	} catch (err) {
-		for (const id of storedAssets) {
-			await deleteAsset(db, universe.ownerId, id).catch(() => {});
+		// A commit can land with its reply lost (the connection dropped), so the
+		// story may be there after all, linking these images. Only delete them
+		// once its row is known to be absent; if even that cannot be read, they
+		// are left for the unused-image sweep.
+		const landed = await db
+			.select({ id: stories.id, slug: stories.slug })
+			.from(stories)
+			.where(eq(stories.id, storyId))
+			.then(
+				(rows) => rows[0] ?? null,
+				() => undefined
+			);
+		if (landed === undefined) throw err;
+		if (landed === null) {
+			for (const id of storedAssets) {
+				await deleteAsset(db, universe.ownerId, id).catch(() => {});
+			}
+			throw err;
 		}
-		throw err;
+		logEvent('warn', 'import.commit_unconfirmed', { storyId, ...errorFields(err) });
+		story = landed;
 	}
 
 	// One universe-wide rebuild covers every imported scene.
