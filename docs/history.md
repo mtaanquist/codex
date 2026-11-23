@@ -13,6 +13,36 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Marker undo records through changes kept out of undo (2026-11-23,
+`fix/marker-review-5` on `staging/bug-fixes-4`, review of #1467). CodeMirror's
+history maps the effects it carries through a change kept out of undo
+(`addToHistory: false`) as if they were counted in the text after the edit,
+while the marker restore records count into the text before it, the one undo
+brings back. A failed upload removing its placeholder then threw a RangeError
+or put a marker back on the wrong words. Clamping in the effect's `map` was
+not enough, since the right mapping needs the undo change itself, which `map`
+does not see. Each history entry now carries one step (`src/lib/undo-steps.ts`)
+holding its own undo change and the list of mappings it was handed; the ranges are mapped
+when undo applies the step, over the undo change as it stood at each mapping,
+as history maps its own changes. Joined keystrokes complicate this: an older
+keystroke's step only knows its own part of the undo change, so every edit
+now carries a step (empty ones are dropped when nothing joined them) and the
+newest step supplies the mapping the older ones share. Telling a join apart
+from a change kept out of undo relies on history passing a ChangeSet for the
+join and a plain ChangeDesc otherwise; the tests cover both, so a CodeMirror
+change there fails loudly. The image upload line-break records from #1468 had
+the same fault (a RangeError when another upload failed after a placeholder's
+line was deleted) and use the same steps. With that in place, loading the newer text after a
+conflict is kept out of undo too, so Ctrl+Z can no longer bring back the older
+text and autosave it over the other window's words. Separately, the unsaved
+edits used to trim letters shared at the ends of a replacement, so "sat" typed
+over as "sun" counted its "s" as the stored word and a new marker on "sat"
+landed on "sun". Now only text put back exactly (a deletion and its undo,
+noticed after each edit) counts as unchanged. The cost is that text put back
+by undo inside a span later typed over in part counts as new, so a new marker
+there can come out shorter or wait for the next save; that errs towards a
+short marker rather than one on words the writer typed.
+
 Image upload line breaks and lost-image notice (2026-11-23,
 `fix/image-upload-review-5` on `staging/bug-fixes-4`, review of #1463). A
 placeholder used to take whatever line break followed it, so a writer who

@@ -13,7 +13,7 @@
 	import { textHash } from '#lib/text-hash';
 	import { refreshAll } from '$app/navigation';
 	import { EditorView, keymap } from '@codemirror/view';
-	import { Compartment, EditorState, Prec } from '@codemirror/state';
+	import { Compartment, EditorState, Prec, Transaction } from '@codemirror/state';
 	import {
 		proseExtensions,
 		commandMarkerExtensions,
@@ -229,7 +229,8 @@
 	}
 
 	// Only the part that differs is replaced, so marker highlights outside it
-	// stay.
+	// stay. Undo does not bring the replaced text back: that would save it over
+	// the other window's words.
 	function showServerText(view: EditorView, newer: SceneConflict) {
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
@@ -245,7 +246,8 @@
 		)
 			tail++;
 		view.dispatch({
-			changes: { from: head, to: doc.length - tail, insert: next.slice(head, next.length - tail) }
+			changes: { from: head, to: doc.length - tail, insert: next.slice(head, next.length - tail) },
+			annotations: Transaction.addToHistory.of(false)
 		});
 		unsaved.reset(textHash(next));
 		swaps++;

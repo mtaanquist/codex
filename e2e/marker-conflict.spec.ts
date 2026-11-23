@@ -142,6 +142,63 @@ test('a marker made over text changed in another window loads the newer text', a
 	);
 });
 
+// Undo after the newer text loads must not bring the older text back, or the
+// next autosave would store it over the other window's words.
+test('undo after the newer text loads keeps the other window words', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Shoal ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	const landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The shoal lay bare.');
+	await landed;
+
+	const other = await page.context().newPage();
+	await gotoReady(other, page.url());
+	const otherEditor = other.getByRole('textbox', { name: 'Scene text' });
+	await expect(otherEditor).toContainText('The shoal lay bare.');
+	const otherLanded = saved(other);
+	await otherEditor.click();
+	await other.keyboard.press('ControlOrMeta+Home');
+	await other.keyboard.type('Ebb. ');
+	await otherLanded;
+	await other.close();
+
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+End');
+	for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft');
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await expect(page.getByText('now shows the newer version')).toBeVisible();
+	await expect(editor).toHaveText('Ebb. The shoal lay bare.');
+
+	// Undo takes back this window's own typing, not the loaded text.
+	const undoSaved = saved(page);
+	await page.keyboard.press('ControlOrMeta+z');
+	await expect(editor).toContainText('Ebb.');
+	await expect(editor).not.toContainText('bare.');
+	await undoSaved;
+	const redoSaved = saved(page);
+	await page.keyboard.press('ControlOrMeta+Shift+z');
+	await expect(editor).toHaveText('Ebb. The shoal lay bare.');
+	await redoSaved;
+
+	// Markers work as usual afterwards.
+	const created = page.waitForResponse(
+		(r) => r.url().includes('/markers') && r.request().method() === 'POST' && r.ok()
+	);
+	await page.keyboard.press('ControlOrMeta+End');
+	for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft');
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await created;
+	await expect(page.locator('.todo-marker')).toHaveText(['bare.']);
+
+	await page.reload();
+	await expect(page.getByRole('textbox', { name: 'Scene text' })).toHaveText(
+		'Ebb. The shoal lay bare.'
+	);
+	await expect(page.locator('.todo-marker')).toHaveText(['bare.']);
+});
+
 // Keep mine settles the conflict, so the message about it goes too.
 test('keeping this version clears the marker message', async ({ page }) => {
 	test.slow();
