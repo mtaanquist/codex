@@ -13,6 +13,7 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+<<<<<<< HEAD
 Per-image size limit per plan (2026-11-23, `feat/image-size-limit` on
 `staging/phase-10`, #1451). `max_image_bytes` joins the enforced keys in
 `src/lib/quota.ts`, so `listPlans`, `savePlan` and `accountLimits` pick it up
@@ -38,6 +39,8 @@ profile section. The avatar hint on the account page now names
 the account's own limit. Stacked on #1450 (`feat/image-downscale`), since
 both touch the same help article and history.
 
+=======
+>>>>>>> origin/staging/phase-10
 Large images shrink in the browser (2026-11-23, `feat/image-downscale` on
 `staging/phase-10`, #1450). Images used to be stored exactly as uploaded. Now
 `shrinkImage` (`src/lib/image-shrink.ts`) scales a still image longer than
