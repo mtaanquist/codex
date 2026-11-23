@@ -1,5 +1,6 @@
 import {
 	ChangeSet,
+	EditorState,
 	StateEffect,
 	Text,
 	StateField,
@@ -26,6 +27,16 @@ export type SceneMarker = {
 
 type MarkerRange = { id: string; from: number; to: number };
 
+// A marker that reached the editor while its words were deleted and not yet
+// saved (see waitingMarkers), with where its words are followed through the
+// edits (see unsavedChanges().follow).
+export type WaitingMarker = { id: string } & Followed;
+
+type Followed = {
+	locate: (changes: ChangeSet) => { from: number; to: number } | null;
+	release: () => void;
+};
+
 // Sets a marker back to the range it had before an undone edit, putting it
 // back if the edit had deleted its words. Carried in the undo history, so it
 // maps through later changes like the text does.
@@ -48,7 +59,7 @@ function markerMark(id: string, from: number, to: number) {
 	return Decoration.mark({ class: 'todo-marker', todoId: id }).range(from, to);
 }
 
-function markerField(markers: SceneMarker[]) {
+function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 	const held = new Set(markers.map((marker) => marker.id));
 	// Markers this set has placed in the text, at load or by a restore. Only
 	// these can be brought back by undo, so only these need a drop record;
@@ -134,7 +145,23 @@ function markerField(markers: SceneMarker[]) {
 			...[...touched.values()].map((range) => restoreMarker.of(range))
 		];
 	});
-	return { field, extension: [field, undoable] };
+	// Undo or redo that brings back the words of a waiting marker puts the
+	// marker on them. As a restore on the transaction, the redo step records
+	// taking it away again like any other restore.
+	const placeWaiting = EditorState.transactionExtender.of((tr) => {
+		if (tr.changes.empty || !(tr.isUserEvent('undo') || tr.isUserEvent('redo'))) return null;
+		const effects = waiting.flatMap((marker) => {
+			if (shown.has(marker.id)) return [];
+			const range = marker.locate(tr.changes);
+			return range ? [restoreMarker.of({ id: marker.id, ...range })] : [];
+		});
+		return effects.length ? { effects } : null;
+	});
+	return {
+		field,
+		extension: [field, undoable, placeWaiting],
+		placed: (id: string) => shown.has(id)
+	};
 }
 
 const todoLine = Decoration.line({ class: 'todo-line' });
@@ -167,6 +194,9 @@ export type MarkerHandle = {
 	extension: Extension;
 	anchors(view: EditorView): { id: string; anchorStart: number; anchorEnd: number }[];
 	ids: string[];
+	waiting: WaitingMarker[];
+	// Whether this set has shown the marker.
+	placed(id: string): boolean;
 };
 
 // One scene's marker behaviour: highlights, the text-line detector, and
@@ -174,9 +204,10 @@ export type MarkerHandle = {
 // refreshes the page data.
 export function markerExtensions(
 	markers: SceneMarker[],
-	onMark: (from: number, to: number) => void
+	onMark: (from: number, to: number) => void,
+	waiting: WaitingMarker[] = []
 ): MarkerHandle {
-	const { field, extension } = markerField(markers);
+	const { field, extension, placed } = markerField(markers, waiting);
 
 	const markKeymap = keymap.of([
 		{
@@ -204,7 +235,9 @@ export function markerExtensions(
 			}
 			return anchors;
 		},
-		ids: markers.map((marker) => marker.id)
+		ids: markers.map((marker) => marker.id),
+		waiting,
+		placed
 	};
 }
 
@@ -238,6 +271,34 @@ export function rebuiltMarkers(
 			? { id: marker.id, anchorStart: from, anchorEnd: to }
 			: { id: marker.id, anchorStart: null, anchorEnd: null };
 	});
+}
+
+// The markers a rebuild could not place because their words are deleted and
+// not saved yet: the new ones, and those the previous set was still waiting
+// on. Undo that brings their words back puts them there (they would otherwise
+// only come back on a reload). follow is unsavedChanges().follow.
+export function waitingMarkers(
+	incoming: SceneMarker[],
+	rebuilt: SceneMarker[],
+	previous: MarkerHandle,
+	follow: (start: number, end: number) => Followed
+): WaitingMarker[] {
+	const held = new Set(previous.ids);
+	const before = new Map(
+		previous.waiting
+			.filter((marker) => !previous.placed(marker.id))
+			.map((marker) => [marker.id, marker])
+	);
+	const waiting = incoming.flatMap((marker, index): WaitingMarker[] => {
+		if (rebuilt[index].anchorStart !== null) return [];
+		const kept = before.get(marker.id);
+		if (kept) return [kept];
+		const { anchorStart: start, anchorEnd: end } = marker;
+		if (held.has(marker.id) || start === null || end === null || start >= end) return [];
+		return [{ id: marker.id, ...follow(start, end) }];
+	});
+	for (const marker of previous.waiting) if (!waiting.includes(marker)) marker.release();
+	return waiting;
 }
 
 // The edits made since the text the server last stored, for rebuiltMarkers.
@@ -282,11 +343,16 @@ export function unsavedChanges(text: string) {
 				}
 			};
 		},
-		sent(sentVersion: string) {
+		// cuts are the ranges of the editor text the save leaves out (an image
+		// still uploading), so the base after landing is the text the server
+		// stores, and the edits since put them back in.
+		sent(sentVersion: string, cuts: readonly { from: number; to: number }[] = []) {
+			const shown = total.apply(base);
+			const toStored = ChangeSet.of(mergedRanges(cuts), shown.length);
 			sending = {
-				text: total.apply(base),
+				text: toStored.apply(shown),
 				version: sentVersion,
-				since: ChangeSet.empty(total.newLength)
+				since: toStored.invert(shown)
 			};
 		},
 		landed() {
@@ -296,6 +362,27 @@ export function unsavedChanges(text: string) {
 				total = sending.since;
 			}
 			sending = null;
+		},
+		// Follows a range of the text the server holds now through every edit
+		// after it until released, for a marker waiting on its words. locate
+		// maps it, as rebuiltMarkers maps a new marker, on through the given
+		// changes (the next transaction's), and gives null while none of its
+		// words are back.
+		follow(start: number, end: number) {
+			const pin = { start: base, since: total };
+			pins.add(pin);
+			return {
+				locate(next: ChangeSet): { from: number; to: number } | null {
+					if (next.length !== pin.since.newLength || end > pin.start.length) return null;
+					const mapping = net(pin.since.compose(next), pin.start);
+					const at = mapping.mapPos(start, 1);
+					const to = mapping.mapPos(end, -1);
+					return at < to ? { from: at, to } : null;
+				},
+				release() {
+					pins.delete(pin);
+				}
+			};
 		},
 		// The editor now shows exactly what the server holds.
 		reset(resetVersion: string) {
@@ -311,6 +398,17 @@ export function unsavedChanges(text: string) {
 			return version;
 		}
 	};
+}
+
+// Sorted, with overlapping or touching ranges joined, as ChangeSet.of needs.
+function mergedRanges(ranges: readonly { from: number; to: number }[]) {
+	const merged: { from: number; to: number }[] = [];
+	for (const range of [...ranges].sort((a, b) => a.from - b.from)) {
+		const last = merged.at(-1);
+		if (last && range.from <= last.to) last.to = Math.max(last.to, range.to);
+		else merged.push({ ...range });
+	}
+	return merged;
 }
 
 // changes as applied to before, with the text each replacement puts back

@@ -82,3 +82,41 @@ test('a marker is not made while the scene was changed in another window', async
 	await created;
 	await expect(page.locator('.todo-marker')).toHaveText(['dawn.']);
 });
+
+// The same, when this window has no edits of its own to save: the marker is
+// refused, and the writer is offered the versions instead of a retry that
+// can never work.
+test('a marker made over text changed in another window brings up the choice', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Ford ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	const landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The ford ran high.');
+	await landed;
+
+	const other = await page.context().newPage();
+	await gotoReady(other, page.url());
+	const otherEditor = other.getByRole('textbox', { name: 'Scene text' });
+	await expect(otherEditor).toContainText('The ford ran high.');
+	const otherLanded = saved(other);
+	await otherEditor.click();
+	await other.keyboard.press('ControlOrMeta+Home');
+	await other.keyboard.type('Snow. ');
+	await otherLanded;
+	await other.close();
+
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+End');
+	for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft');
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await expect(
+		page.getByText('Choose which version to keep, then mark the words again.')
+	).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Load newer version' })).toBeVisible();
+	await expect(page.locator('.todo-marker')).toHaveCount(0);
+
+	await page.getByRole('button', { name: 'Load newer version' }).click();
+	await expect(editor).toContainText('Snow. The ford ran high.');
+	await expect(page.locator('.todo-marker')).toHaveCount(0);
+});

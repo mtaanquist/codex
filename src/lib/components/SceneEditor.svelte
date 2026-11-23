@@ -29,6 +29,7 @@
 		markerExtensions,
 		rebuiltMarkers,
 		unsavedChanges,
+		waitingMarkers,
 		type MarkerHandle,
 		type SceneMarker
 	} from '#lib/editor-markers';
@@ -202,7 +203,7 @@
 		save: async ({ keepalive }) => {
 			if (!view) return;
 			const stored = storedText(view.state);
-			unsaved.sent(textHash(stored.text));
+			unsaved.sent(textHash(stored.text), stored.cuts);
 			await saver.save({
 				keepalive,
 				title: titleValue,
@@ -251,10 +252,12 @@
 	// this editor last saved (the writer can keep typing meanwhile, and a save
 	// can fail). The server refuses the marker when it holds another text by
 	// then, such as a later save of this editor that landed first; the mark
-	// is then tried once more. While the scene was changed in another window
-	// the server holds text this editor has not seen, so nothing is marked
-	// until the writer picks a version. The page data refresh then re-renders
-	// the highlights.
+	// is then tried once more, after a save of the text on screen even when
+	// nothing is waiting to save, so a scene changed elsewhere (another
+	// window, the review centre, find and replace) shows up as a conflict.
+	// While the scene was changed in another window the server holds text
+	// this editor has not seen, so nothing is marked until the writer picks a
+	// version. The page data refresh then re-renders the highlights.
 	async function markSelection(from: number, to: number) {
 		markError = null;
 		if (conflict) {
@@ -289,6 +292,7 @@
 					return;
 				}
 				if (response?.status !== 409) break;
+				if (attempt === 0) autosave.schedule();
 			}
 			markError = 'The TODO marker could not be made. Try again.';
 		} finally {
@@ -425,7 +429,8 @@
 	// Checking a marker off elsewhere (or creating one) changes the set of
 	// ids; rebuild the highlights. Markers the editor already shows keep their
 	// own mapped positions, which are newer than the server's; new ones map
-	// the server's anchors through edits not saved yet (see rebuiltMarkers).
+	// the server's anchors through edits not saved yet (see rebuiltMarkers),
+	// or wait for undo to bring back their words (see waitingMarkers).
 	// Same-set updates keep the editor's positions as they are.
 	$effect(() => {
 		const incoming = markers
@@ -434,10 +439,16 @@
 			.join(',');
 		const current = [...markerHandle.ids].sort().join(',');
 		if (!view || incoming === current) return;
-		const shown = markerHandle.anchors(view);
+		const rebuilt = rebuiltMarkers(
+			markers,
+			markerHandle.anchors(view),
+			markerHandle.ids,
+			unsaved.changes
+		);
 		markerHandle = markerExtensions(
-			rebuiltMarkers(markers, shown, markerHandle.ids, unsaved.changes),
-			markSelection
+			rebuilt,
+			markSelection,
+			waitingMarkers(markers, rebuilt, markerHandle, unsaved.follow)
 		);
 		view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
 	});
