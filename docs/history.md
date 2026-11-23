@@ -53,6 +53,27 @@ fresh server anchors (after marking or checking off) is not emptied by old
 history. A seeded random test (1500 edit, undo and redo sequences on three
 markers) checks that whenever undo or redo returns to text seen before, the
 markers match what they were then.
+Third follow-up (`fix/marker-rebuild-review-1` on `staging/bug-fixes-4`,
+review of #1447 and #1448). Rebuilding the marker set before an autosave
+(#1448) mapped the server's anchors through the combined unsaved edits for
+every marker not highlighted, including one the editor held but whose words
+the writer had deleted; the combined change can lose the step that removed
+it, so it came back over the replacement text. Only markers new to the
+editor are mapped now; a held one that is not shown comes back detached and
+undo can still restore it. Recording "gone" only for markers the set had
+shown (#1447) missed a marker that a rebuilt set loaded detached and undo
+then restored, so redo left it on the redone text; a transaction that
+restores a marker now also records it as gone for the reverse step. Making a
+marker after a failed flush sent the selection's screen positions against
+older server text; the selection is now followed through later edits and
+mapped back through the unsaved ones, and words the server does not hold yet
+are refused with a plain message. Not fixed: a page refresh can read the
+server's anchors after an in-flight save commits but before the editor
+learns it landed, so a new marker's anchors are mapped through those edits
+twice. The page load reads the body and the markers in separate queries and
+carries no save version, so telling the two cases apart needs the markers
+read to return the version of the text they count into; since the first fix
+above, only a marker new to the editor arriving mid-save is exposed.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write

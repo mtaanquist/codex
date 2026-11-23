@@ -371,43 +371,82 @@ describe('rebuiltMarkers', () => {
 	const sat: SceneMarker = { id: 'sat', anchorStart: 8, anchorEnd: 11 };
 	const mat: SceneMarker = { id: 'mat', anchorStart: 19, anchorEnd: 22 };
 
-	function setupRebuild(markers: SceneMarker[]) {
+	function setupRebuild(markers: SceneMarker[], initial = text) {
 		const compartment = new Compartment();
 		let handle = markerExtensions(markers, () => {});
 		let state = EditorState.create({
-			doc: text,
+			doc: initial,
 			extensions: [history({ newGroupDelay: 1e9 }), compartment.of(handle.extension)]
 		});
-		let unsaved = ChangeSet.empty(text.length).desc;
-		const marked = () =>
-			handle
-				.anchors({ state } as EditorView)
-				.map((anchor) => [anchor.id, state.sliceDoc(anchor.anchorStart, anchor.anchorEnd)]);
-		return {
+		const unsaved = unsavedChanges(initial.length);
+		// The markers as the server stores them.
+		let server = markers;
+		const anchors = () => handle.anchors({ state } as EditorView);
+		const apply = (tr: Transaction) => {
+			if (!tr.changes.empty) unsaved.record(tr.changes.desc);
+			state = tr.state;
+		};
+		const editor = {
 			get state() {
 				return state;
 			},
-			edit(from: number, to: number, insert = '') {
-				const tr = state.update({ changes: { from, to, insert }, userEvent: 'input' });
-				unsaved = unsaved.composeDesc(tr.changes.desc);
-				state = tr.state;
+			get server() {
+				return server;
+			},
+			anchors,
+			marked: () =>
+				anchors().map((anchor) => [
+					anchor.id,
+					state.sliceDoc(anchor.anchorStart, anchor.anchorEnd)
+				]),
+			edit(from: number, to: number, insert = '', joined = true) {
+				apply(
+					state.update({
+						changes: { from, to, insert },
+						userEvent: insert ? 'input.type' : 'delete.backward',
+						annotations: joined ? [] : [isolateHistory.of('full')]
+					})
+				);
+			},
+			// An autosave as the SceneEditor runs it: send() takes the text and
+			// anchors, and the function it returns is the save landing. The server
+			// detaches a marker the save sends no anchors for (its diff mapping
+			// would, for words that are gone, which is all these tests need).
+			send() {
+				const sent = anchors();
+				unsaved.sent();
+				return () => {
+					server = server.map(
+						(marker) =>
+							sent.find((anchor) => anchor.id === marker.id) ?? {
+								id: marker.id,
+								anchorStart: null,
+								anchorEnd: null
+							}
+					);
+					unsaved.landed();
+				};
+			},
+			save() {
+				editor.send()();
 			},
 			// What the SceneEditor does when the page data brings a changed set.
-			reload(incoming: SceneMarker[]) {
-				const current = handle.anchors({ state } as EditorView);
-				handle = markerExtensions(rebuiltMarkers(incoming, current, unsaved), () => {});
+			reload(incoming: SceneMarker[] = server) {
+				server = incoming;
+				handle = markerExtensions(
+					rebuiltMarkers(incoming, anchors(), handle.ids, unsaved.changes),
+					() => {}
+				);
 				state = state.update({ effects: compartment.reconfigure(handle.extension) }).state;
 			},
-			undo() {
-				undo({
-					state,
-					dispatch: (tr: Transaction) => {
-						state = tr.state;
-					}
-				});
+			// The server's set without one marker, as checking it off leaves it.
+			checkOff(id: string) {
+				editor.reload(server.filter((marker) => marker.id !== id));
 			},
-			marked
+			undo: () => undo({ state, dispatch: apply }),
+			redo: () => redo({ state, dispatch: apply })
 		};
+		return editor;
 	}
 
 	it('keeps the other markers on their words when one is checked off before the save', () => {
@@ -461,6 +500,143 @@ describe('rebuiltMarkers', () => {
 		expect(editor.state.doc.toString()).toBe(text);
 		expect(editor.marked()).toEqual([['mat', 'mat']]);
 	});
+
+	const long = 'The cat sat on the mat and the dog ran far away.';
+	const dog: SceneMarker = { id: 'dog', anchorStart: 31, anchorEnd: 34 };
+	const the: SceneMarker = { id: 'the', anchorStart: 0, anchorEnd: 3 };
+
+	it('does not bring back a marker whose words were typed over before the save', () => {
+		const editor = setupRebuild([dog, the], long);
+		// Type "big" before "dog", then select "gdog" and type "g cat".
+		editor.edit(31, 31, 'big');
+		editor.edit(33, 37, 'g cat');
+		expect(editor.state.doc.toString()).toBe(
+			'The cat sat on the mat and the big cat ran far away.'
+		);
+		expect(editor.marked()).toEqual([['the', 'The']]);
+		editor.checkOff('the');
+		expect(editor.marked()).toEqual([]);
+		editor.save();
+		expect(editor.server).toEqual([{ id: 'dog', anchorStart: null, anchorEnd: null }]);
+	});
+
+	it('does not bring a deleted marker back over new words on redo after a save and a reload', () => {
+		const editor = setupRebuild([dog, the], long);
+		// Type before "dog", then delete it along with part of the typing.
+		editor.edit(31, 31, 'xy');
+		editor.edit(32, 36, 'xy');
+		editor.save();
+		editor.checkOff('the');
+		expect(editor.marked()).toEqual([]);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe(long);
+		expect(editor.marked()).toEqual([['dog', 'dog']]);
+		editor.redo();
+		expect(editor.state.doc.toString()).toBe('The cat sat on the mat and the xxy ran far away.');
+		expect(editor.marked()).toEqual([]);
+	});
+
+	it('places a new marker through the edits made while a save was on its way', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(0, 0, 'Oh. ');
+		const land = editor.send();
+		editor.edit(0, 0, 'Ah. ');
+		land();
+		// "sat" in the text the server holds, which has "Oh. " in front.
+		editor.reload([cat, { id: 'sat', anchorStart: 12, anchorEnd: 15 }]);
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
+	});
+
+	// Random edits, undos, redos, autosaves (some still on their way at the
+	// next step) and marker sets reloaded with one checked off. A reload must
+	// not move the markers that stay, and undo and redo must still put them
+	// back as they were. Seeded, so a failure reproduces.
+	it('keeps markers right through random edits, saves and reloads', () => {
+		const markers = [
+			{ id: 'a', anchorStart: 4, anchorEnd: 11 },
+			{ id: 'b', anchorStart: 19, anchorEnd: 30 },
+			{ id: 'c', anchorStart: 31, anchorEnd: 34 },
+			{ id: 'd', anchorStart: 0, anchorEnd: 3 },
+			{ id: 'e', anchorStart: 39, anchorEnd: 42 }
+		];
+		const kept = new Set(['a', 'b', 'c']);
+		const failures: string[] = [];
+		for (let seed = 1; seed <= 1500; seed++) {
+			let n = seed;
+			const random = () => {
+				n = (n * 1103515245 + 12345) & 0x7fffffff;
+				return n / 0x7fffffff;
+			};
+			const editor = setupRebuild(markers, long);
+			const snapshot = () =>
+				editor.state.doc.toString() +
+				JSON.stringify(editor.anchors().filter((anchor) => kept.has(anchor.id)));
+			const seen = new Map<string, Set<string>>();
+			const remember = () => {
+				const doc = editor.state.doc.toString();
+				if (!seen.has(doc)) seen.set(doc, new Set());
+				seen.get(doc)!.add(snapshot());
+			};
+			const steps: string[] = [];
+			const fail = (why: string) => failures.push(`seed ${seed} ${why}: ${steps.join('; ')}`);
+			const checkOffs = ['d', 'e'];
+			let land: (() => void) | null = null;
+			const randomEdit = () => {
+				const length = editor.state.doc.length;
+				const from = Math.floor(random() * (length + 1));
+				const to = Math.min(length, from + Math.floor(random() * 8));
+				const insert = random() < 0.5 ? '' : 'xyz'.slice(0, 1 + Math.floor(random() * 3));
+				const joined = random() < 0.6;
+				if (from === to && !insert) return;
+				steps.push(`edit(${from}, ${to}, '${insert}', ${joined})`);
+				editor.edit(from, to, insert, joined);
+				remember();
+			};
+			const check = (command: 'undo' | 'redo') => {
+				steps.push(`${command}()`);
+				editor[command]();
+				const known = seen.get(editor.state.doc.toString());
+				if (known && !known.has(snapshot())) fail(command);
+			};
+			// One save at a time: a save on its way lands before the next is sent.
+			const save = () => {
+				if (land) {
+					steps.push('land()');
+					land();
+					land = null;
+				} else {
+					steps.push('send()');
+					land = editor.send();
+				}
+			};
+			const reload = () => {
+				const before = snapshot();
+				const id = checkOffs.shift();
+				steps.push(`checkOff(${id})`);
+				if (id) editor.checkOff(id);
+				else editor.reload();
+				if (snapshot() !== before) fail('reload moved');
+			};
+			remember();
+			const edits = 1 + Math.floor(random() * 8);
+			for (let i = 0; i < edits; i++) randomEdit();
+			for (let i = 0; i < 10; i++) {
+				const pick = random();
+				if (pick < 0.3) check('undo');
+				else if (pick < 0.5) check('redo');
+				else if (pick < 0.6) save();
+				else if (pick < 0.75) reload();
+				else randomEdit();
+			}
+			while (undoDepth(editor.state)) check('undo');
+			const want = long + JSON.stringify(markers.filter((marker) => kept.has(marker.id)));
+			if (snapshot() !== want) fail('final');
+		}
+		expect(failures.slice(0, 3)).toEqual([]);
+	});
 });
 
 describe('unsavedChanges', () => {
@@ -493,5 +669,44 @@ describe('unsavedChanges', () => {
 		expect(unsaved.changes.mapPos(5)).toBe(9);
 		unsaved.landed();
 		expect(unsaved.changes.mapPos(5)).toBe(5);
+	});
+
+	describe('pin', () => {
+		// "gate" in 'The gate scene.'
+		const text = 'The gate scene.';
+
+		it('gives a selection in the text the server holds when a save failed', () => {
+			const unsaved = unsavedChanges(text.length);
+			unsaved.record(insert(text.length, 0, 'Oh. '));
+			// "gate" is now at 8-12 on screen.
+			const pinned = unsaved.pin(8, 12);
+			unsaved.sent();
+			// The save fails: landed() never runs.
+			expect(pinned()).toEqual({ from: 4, to: 8 });
+		});
+
+		it('follows edits made while the save was on its way', () => {
+			const unsaved = unsavedChanges(text.length);
+			unsaved.record(insert(text.length, 0, 'Oh. '));
+			const pinned = unsaved.pin(8, 12);
+			unsaved.sent();
+			unsaved.record(insert(text.length + 4, 0, 'Ah. '));
+			unsaved.landed();
+			// The server holds 'Oh. The gate scene.'
+			expect(pinned()).toEqual({ from: 8, to: 12 });
+		});
+
+		it('gives nothing for words the server does not hold yet', () => {
+			const unsaved = unsavedChanges(text.length);
+			unsaved.record(insert(text.length, 0, 'Oh. '));
+			expect(unsaved.pin(0, 3)()).toBeNull();
+		});
+
+		it('keeps only the stored part of a selection that runs into unsaved words', () => {
+			const unsaved = unsavedChanges(text.length);
+			unsaved.record(insert(text.length, 8, 'way'));
+			// "gateway" on screen.
+			expect(unsaved.pin(4, 11)()).toEqual({ from: 4, to: 8 });
+		});
 	});
 });

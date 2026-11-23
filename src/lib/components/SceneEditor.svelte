@@ -36,6 +36,7 @@
 	import EditorToolbar from './EditorToolbar.svelte';
 	import CoauthorPanel from './CoauthorPanel.svelte';
 	import SceneConflictBanner from './SceneConflictBanner.svelte';
+	import FormStatus from './FormStatus.svelte';
 	import SelectionMenu from './SelectionMenu.svelte';
 	import type { ViewItem } from './ViewMenu.svelte';
 
@@ -237,16 +238,30 @@
 	}
 	const scheduleSave = autosave.schedule;
 
-	// A new marker's anchors must land against saved text, so the prose is
-	// flushed first; the page data refresh then re-renders the highlights.
+	// Why the last Ctrl/Cmd+Alt+M made no marker; cleared by the next edit.
+	let markError = $state<string | null>(null);
+
+	// A new marker's anchors must count into the text the server holds. The
+	// prose is flushed first, and the selection is then mapped onto whatever
+	// the server ended up with: the flush can fail (a conflict, a server
+	// error) and the writer can keep typing meanwhile. The page data refresh
+	// then re-renders the highlights.
 	async function markSelection(from: number, to: number) {
+		markError = null;
+		const pinned = unsaved.pin(from, to);
 		await autosave.flush();
+		const anchor = pinned();
+		if (!anchor) {
+			markError = 'These words are not saved yet. Mark them once the scene has saved.';
+			return;
+		}
 		const response = await fetch(`/api/scenes/${sceneId}/markers`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ anchorStart: from, anchorEnd: to })
-		});
-		if (response.ok) await refreshAll();
+			body: JSON.stringify({ anchorStart: anchor.from, anchorEnd: anchor.to })
+		}).catch(() => null);
+		if (response?.ok) await refreshAll();
+		else markError = 'The TODO marker could not be made. Try again.';
 	}
 
 	// At the visual top or bottom of this editor, vertical arrows hand
@@ -377,9 +392,9 @@
 
 	// Checking a marker off elsewhere (or creating one) changes the set of
 	// ids; rebuild the highlights. Markers the editor already shows keep their
-	// own mapped positions, which are newer than the server's; the others map
-	// the server's anchors through edits not saved yet. Same-set updates keep
-	// the editor's positions as they are.
+	// own mapped positions, which are newer than the server's; new ones map
+	// the server's anchors through edits not saved yet (see rebuiltMarkers).
+	// Same-set updates keep the editor's positions as they are.
 	$effect(() => {
 		const incoming = markers
 			.map((marker) => marker.id)
@@ -388,7 +403,10 @@
 		const current = [...markerHandle.ids].sort().join(',');
 		if (!view || incoming === current) return;
 		const shown = markerHandle.anchors(view);
-		markerHandle = markerExtensions(rebuiltMarkers(markers, shown, unsaved.changes), markSelection);
+		markerHandle = markerExtensions(
+			rebuiltMarkers(markers, shown, markerHandle.ids, unsaved.changes),
+			markSelection
+		);
 		view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
 	});
 
@@ -550,7 +568,9 @@
 					assistantContinuation && storyId ? continuationExtensions(storyId) : [],
 					boundaryKeymap(),
 					EditorView.updateListener.of((update) => {
-						if (update.docChanged) unsaved.record(update.changes.desc);
+						if (!update.docChanged) return;
+						unsaved.record(update.changes.desc);
+						markError = null;
 					}),
 					onFocus
 						? EditorView.updateListener.of((update) => {
@@ -587,6 +607,7 @@
 		{#if conflict}
 			<SceneConflictBanner onLoadNewer={loadNewer} onKeepMine={keepMine} paused={leaving} />
 		{/if}
+		<FormStatus error={markError} live />
 		<div class="editor-cm" bind:this={editorEl}></div>
 	</div>
 {:else}
@@ -634,6 +655,7 @@
 					oninput={scheduleSave}
 					onchange={flushTitle}
 				/>
+				<FormStatus error={markError} live />
 				<div class="editor-cm" bind:this={editorEl}></div>
 			</div>
 		</div>
