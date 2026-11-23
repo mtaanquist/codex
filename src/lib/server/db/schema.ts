@@ -1036,27 +1036,37 @@ export const exportArtifacts = pgTable(
 // backups bucket) and served through the app. The row is the source of
 // truth for type and ownership; the object key is just the asset id under
 // the configured prefix.
-export const assets = pgTable('assets', {
-	id: uuid('id').primaryKey().defaultRandom(),
-	ownerId: uuid('owner_id')
-		.references(() => users.id)
-		.notNull(),
-	// Scope; null for account-level images such as an avatar.
-	universeId: uuid('universe_id').references(() => universes.id),
-	// 'cover' | 'inline' | 'avatar' | ...
-	kind: text('kind').notNull(),
-	filename: text('filename').notNull(),
-	contentType: text('content_type').notNull(),
-	byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
-	// Key in the storage bucket.
-	storageKey: text('storage_key').notNull(),
-	width: integer('width'),
-	height: integer('height'),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-	// When the unused-image sweep first found nothing using this image, or
-	// null while something does. See unused-assets.ts.
-	unreferencedSince: timestamp('unreferenced_since', { withTimezone: true })
-});
+export const assets = pgTable(
+	'assets',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		ownerId: uuid('owner_id')
+			.references(() => users.id)
+			.notNull(),
+		// Scope; null for account-level images such as an avatar.
+		universeId: uuid('universe_id').references(() => universes.id),
+		// 'cover' | 'inline' | 'avatar' | ...
+		kind: text('kind').notNull(),
+		filename: text('filename').notNull(),
+		contentType: text('content_type').notNull(),
+		byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+		// Key in the storage bucket.
+		storageKey: text('storage_key').notNull(),
+		width: integer('width'),
+		height: integer('height'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// When the unused-image sweep first found nothing using this image, or
+		// null while something does. See unused-assets.ts.
+		unreferencedSince: timestamp('unreferenced_since', { withTimezone: true })
+	},
+	// For the universe purge's unlink, the storage recount and account deletion.
+	(table) => [
+		index('assets_universe_idx')
+			.on(table.universeId)
+			.where(sql`${table.universeId} is not null`),
+		index('assets_owner_idx').on(table.ownerId)
+	]
+);
 
 // Bucket objects whose rows are gone, waiting out the backup retention window
 // before the worker removes them, so restoring an older database dump still

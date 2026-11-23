@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { asc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -10,6 +10,21 @@ import { parseDocument } from '../../src/lib/server/import-document';
 import { previewImport, runImport } from '../../src/lib/server/import-story';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
+
+// A slug to hand back once in place of a fresh pick, as if a concurrent
+// create took the pick between uniqueSlug and the insert.
+const stalePick = vi.hoisted(() => ({ slug: null as string | null }));
+vi.mock('../../src/lib/server/slugs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../src/lib/server/slugs')>();
+	return {
+		...actual,
+		uniqueSlug: async (...args: Parameters<typeof actual.uniqueSlug>) => {
+			const slug = stalePick.slug;
+			stalePick.slug = null;
+			return slug ?? actual.uniqueSlug(...args);
+		}
+	};
+});
 
 let pool: pg.Pool;
 let db: Database;
@@ -141,6 +156,25 @@ describe('document import end to end', () => {
 		expect(sceneRows.every((s) => s.status === 'draft')).toBe(true);
 		expect(sceneRows[0].chapterId).toBe(chapterRows[0].id);
 		expect(sceneRows[0].wordCount).toBeGreaterThan(0);
+	});
+
+	it('picks a fresh slug once when a concurrent create took the first pick', async () => {
+		await db
+			.insert(stories)
+			.values({ universeId: universe.id, ownerId, title: 'Halden', slug: 'halden' });
+		const plan = await parseDocument(
+			buildDocx(['Chapter One', 'The gate opened.', 'Chapter Two', 'They paid.'], {
+				title: 'Halden'
+			}),
+			'halden.docx'
+		);
+		stalePick.slug = 'halden';
+		const result = await runImport(db, universe, plan);
+		expect(result.slug).toBe('halden-2');
+		// The counts are of the attempt that committed, not both.
+		expect(result.sceneCount).toBe(2);
+		expect(await db.select().from(stories)).toHaveLength(2);
+		expect(await db.select().from(scenes)).toHaveLength(2);
 	});
 
 	it('reports embedded images as skipped when asset storage is not configured', async () => {
