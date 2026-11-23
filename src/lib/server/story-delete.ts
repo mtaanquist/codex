@@ -166,7 +166,9 @@ export async function deleteStory(db: Database, storyId: string, userId: string)
 
 // Hard-deletes a story with no owner check, for the trash purge. The stored
 // export files of the story's editions, whose rows cascade away with the
-// publications, are queued for the deferred object sweep.
+// publications, are queued for the deferred object sweep. The images the story
+// alone used are not touched here: the caller asks for a run of the unused
+// image sweep (sweepUnusedAssets), which frees them in the background.
 export async function purgeStory(db: Database, storyId: string): Promise<void> {
 	await db.transaction(async (tx) => {
 		// Capture the edition export keys before the rows cascade away.

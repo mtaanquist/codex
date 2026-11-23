@@ -5,7 +5,8 @@ import {
 	ASSISTANT_ENRICH_QUEUE,
 	DIGEST_DELAY_SECONDS,
 	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	NOTIFICATION_DIGEST_QUEUE
+	NOTIFICATION_DIGEST_QUEUE,
+	SWEEP_UNUSED_ASSETS_QUEUE
 } from '../lib/server/queues.ts';
 import * as schema from '../lib/server/db/schema.ts';
 import type { Database } from '../lib/server/auth.ts';
@@ -30,6 +31,7 @@ import { listAccountsDueForPurge, purgeAccount } from '../lib/server/account-del
 import { listUniversesDueForPurge, purgeUniverse } from '../lib/server/universe-lifecycle.ts';
 import { listStoriesDueForPurge } from '../lib/server/story-lifecycle.ts';
 import { purgeStory } from '../lib/server/story-delete.ts';
+import { sweepUnusedAssets } from '../lib/server/unused-assets.ts';
 import {
 	assetMigrationSource,
 	clearAssetMigrationSource,
@@ -1181,14 +1183,18 @@ export function createHandlers(deps: WorkerDeps) {
 					logEvent('error', 'purge.universe_failed', { universeId, ...errorFields(error) });
 				}
 			}
+			let storiesPurged = 0;
 			for (const storyId of await listStoriesDueForPurge(db)) {
 				try {
 					await purgeStory(db, storyId);
+					storiesPurged += 1;
 					logEvent('info', 'purge.story', { storyId });
 				} catch (error) {
 					logEvent('error', 'purge.story_failed', { storyId, ...errorFields(error) });
 				}
 			}
+			// The images only those stories used are freed by the sweep.
+			if (storiesPurged > 0) await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, {});
 		},
 
 		// Bucket objects of deleted rows, once no kept backup can still point at
@@ -1204,6 +1210,16 @@ export function createHandlers(deps: WorkerDeps) {
 					kept: result.kept,
 					failed: result.failed
 				});
+			}
+		},
+
+		// Uploaded images nothing references any more, past the grace period.
+		// Their rows go and their bytes come back now; the objects are queued
+		// for the sweep above.
+		async sweepUnusedAssets() {
+			const result = await sweepUnusedAssets(db);
+			if (result.count > 0) {
+				logEvent('info', 'assets.unused_sweep', { deleted: result.count, bytes: result.bytes });
 			}
 		},
 

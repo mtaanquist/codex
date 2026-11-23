@@ -6,7 +6,8 @@ import {
 	PURGE_UNIVERSES_QUEUE,
 	RECONCILE_MENTIONS_QUEUE,
 	REMAP_MARKERS_QUEUE,
-	SWEEP_DELETED_OBJECTS_QUEUE
+	SWEEP_DELETED_OBJECTS_QUEUE,
+	SWEEP_UNUSED_ASSETS_QUEUE
 } from '../lib/server/queues.ts';
 
 // The fixed sweeps the worker registers at startup, all in UTC. The backup
@@ -16,6 +17,9 @@ export const WORKER_SCHEDULES: readonly { queue: string; cron: string }[] = [
 	{ queue: PURGE_ACCOUNTS_QUEUE, cron: '30 * * * *' },
 	// The universe trash sweep, offset from the account one.
 	{ queue: PURGE_UNIVERSES_QUEUE, cron: '45 * * * *' },
+	// Unused images an hour before the object sweep; the objects they leave
+	// wait out the backup window like any other deleted row's.
+	{ queue: SWEEP_UNUSED_ASSETS_QUEUE, cron: '0 3 * * *' },
 	{ queue: SWEEP_DELETED_OBJECTS_QUEUE, cron: '0 4 * * *' },
 	// Old review progress goes once a day; nothing is time critical about it.
 	{ queue: PURGE_REVIEW_RUNS_QUEUE, cron: '15 4 * * *' },
