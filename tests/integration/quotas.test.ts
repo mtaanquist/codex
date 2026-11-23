@@ -555,6 +555,22 @@ describe('storage', () => {
 		]);
 	});
 
+	it('warns before an import when its images do not fit in the storage left', async () => {
+		await limitOwner({ storage_bytes: 10_000 });
+		await pool.query('update users set storage_used_bytes = 4000 where id = $1', [ownerId]);
+		const world = await universe();
+		const plan = importPlan('Pictures');
+		plan.assets = [
+			{ id: 'a', path: 'assets/one.png', bytes: png(3000) },
+			{ id: 'b', path: 'assets/two.png', bytes: png(3000) }
+		];
+		expect((await previewImport(db, world, plan)).problems).toEqual([]);
+		plan.assets.push({ id: 'c', path: 'assets/three.png', bytes: png(2000) });
+		expect((await previewImport(db, world, plan)).problems).toEqual([
+			'The images in this file take 7.8 KB, but you have 5.9 KB of image storage left. Images that do not fit will not be imported.'
+		]);
+	});
+
 	it('keeps the 10 MB ceiling when a plan sets a higher per-image limit', async () => {
 		await limitOwner({ max_image_bytes: 50 * MEGABYTE });
 		const { store } = memoryStore();

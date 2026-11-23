@@ -10,7 +10,8 @@ import {
 	placeStoryMemberships,
 	placeStoryNotes,
 	scenes,
-	stories
+	stories,
+	users
 } from './db/schema';
 import { entityNameColumn, entityTable, type EntityType } from './entity-lookups';
 import { uniqueSlug } from './slugs';
@@ -112,11 +113,27 @@ export async function previewImport(
 		if (reason === undefined) throw err;
 		problems.unshift(reason);
 	}
-	const maxImage = imageLimit(await accountLimits(db, universe.ownerId));
+	const limits = await accountLimits(db, universe.ownerId);
+	const maxImage = imageLimit(limits);
+	let imageBytes = 0;
 	for (const asset of plan.assets) {
 		if (asset.bytes.length > maxImage) {
 			problems.push(
 				`The image ${asset.path} is larger than ${formatBytes(maxImage)} and will not be imported.`
+			);
+		} else {
+			imageBytes += asset.bytes.length;
+		}
+	}
+	if (limits.storage_bytes !== null && imageBytes > 0) {
+		const [owner] = await db
+			.select({ used: users.storageUsedBytes })
+			.from(users)
+			.where(eq(users.id, universe.ownerId));
+		const left = Math.max(0, limits.storage_bytes - (owner?.used ?? 0));
+		if (imageBytes > left) {
+			problems.push(
+				`The images in this file take ${formatBytes(imageBytes)}, but you have ${formatBytes(left)} of image storage left. Images that do not fit will not be imported.`
 			);
 		}
 	}

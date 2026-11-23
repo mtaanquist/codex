@@ -11,7 +11,8 @@ import {
 	relativeShort,
 	dayKey,
 	spentPhrase,
-	capStopPhrase
+	capStopPhrase,
+	formatBytes
 } from './format';
 
 // Local-time dates, so the output does not depend on the runner's timezone.
@@ -131,5 +132,20 @@ describe('capStopPhrase', () => {
 			'before the next request could take it past your spend cap, having spent about $1.70'
 		);
 		expect(capStopPhrase(1.7, true)).toMatch(/about \$1\.70 \(estimated\)$/);
+	});
+});
+
+describe('formatBytes', () => {
+	it('picks the largest unit that keeps the number under 1024', () => {
+		expect(formatBytes(1)).toBe('1 byte');
+		expect(formatBytes(512)).toBe('512 bytes');
+		expect(formatBytes(1536)).toBe('1.5 KB');
+		expect(formatBytes(5 * 1024 * 1024)).toBe('5 MB');
+	});
+
+	it('moves up a unit when rounding reaches 1024', () => {
+		expect(formatBytes(1024 * 1024 - 1)).toBe('1 MB');
+		expect(formatBytes(1024 * 1024 * 1024 - 1)).toBe('1 GB');
+		expect(formatBytes(1024 * 1023.9)).toBe('1023.9 KB');
 	});
 });

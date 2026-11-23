@@ -14,6 +14,7 @@ import {
 	UNREFERENCED_DAYS,
 	UNUSED_ASSET_GRACE_DAYS
 } from '../../src/lib/server/unused-assets';
+import { cancelLongReads, CANCEL_ON_MIGRATE_APP_NAME } from '../../src/lib/server/db/migrate';
 import { purgeStory } from '../../src/lib/server/story-delete';
 import { trashStory } from '../../src/lib/server/story-lifecycle';
 import { createStoryInUniverse, createUniverse } from '../../src/lib/server/story-create';
@@ -486,5 +487,46 @@ describe('reads on a pool with a short statement limit', () => {
 		const candidates = await dueNow();
 		const freed = await underLock(() => deleteUnusedAssets(shortDb, candidates));
 		expect(freed.map((row) => row.id)).toEqual([orphan]);
+	});
+});
+
+// A migration's ALTER TABLE would wait behind a read that runs for hours, and
+// everything after it behind the ALTER, so the migrator cancels the sweep's
+// reads. They name themselves for that only while they run.
+describe('a migration starting during the full read', () => {
+	async function sweepReads() {
+		const { rows } = await pool.query(
+			'select count(*)::int as n from pg_stat_activity where application_name = $1',
+			[CANCEL_ON_MIGRATE_APP_NAME]
+		);
+		return rows[0].n as number;
+	}
+
+	it('cancels it, and the sweep fails without changing anything', async () => {
+		const orphan = await image();
+		const holder = await pool.connect();
+		const migrator = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('lock table notes in access exclusive mode');
+			const running = sweepUnusedAssets(db);
+			running.catch(() => {});
+			for (let i = 0; i < 50 && (await sweepReads()) === 0; i++) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			expect(await cancelLongReads(migrator)).toBe(1);
+			await expect(running).rejects.toThrow();
+			await holder.query('commit');
+		} finally {
+			holder.release();
+			migrator.release();
+		}
+		expect((await marks([orphan])).get(orphan)).toBeNull();
+	});
+
+	it('leaves the connection unnamed once the read is done', async () => {
+		await image();
+		await scanAssetUse(db);
+		expect(await sweepReads()).toBe(0);
 	});
 });

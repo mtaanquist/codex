@@ -13,6 +13,22 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 6 (2026-11-23, `fix/phase-10-review-6` on
+`staging/phase-10`). The sweep matched ids as text (`id::text = any(...)`),
+which skips the primary key index, so each 100-image chunk scanned `users`
+and `assets` while holding owners' rows; it now compares uuids. A sweep read
+of up to hours holds a lock on every table it reads, so a deploy's ALTER
+TABLE would queue behind it and the app's queries behind the ALTER. The long
+reads now set `application_name` to `codex-unused-asset-sweep` for their
+transaction, and `runMigrations`, when a migration is pending, cancels those
+backends first and logs it; the run fails and the next night's retries. Each
+read's limit is now the job's expiry / 2.5, so both reads fit in one run and
+an expired job never overlaps a read still going. The import preview warns
+when the bundled images do not fit in the storage left. `formatBytes`
+rounds before picking the unit ("1 MB", not "1024 KB"). A legacy
+uuid-shaped slug was linked as is and then looked up as an id, a dead link;
+public story and universe links (`slugAddress`) use the id instead.
+
 Phase 10 staging review round 5 (2026-11-23, `fix/phase-10-review-5` on
 `staging/phase-10`). The unused-image sweep's whole-database reads ran under
 the worker pool's five-minute statement limit, so on a large database they

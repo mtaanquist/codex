@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { isPublicRef, readingAddress, isUuid, isValidSlug, slugify, SLUG_MAX } from './slug';
+import {
+	isPublicRef,
+	readingAddress,
+	isUuid,
+	isValidSlug,
+	slugAddress,
+	slugify,
+	SLUG_MAX
+} from './slug';
 
 describe('slugify', () => {
 	it('lowercases and hyphenates', () => {
@@ -79,5 +87,12 @@ describe('readingAddress', () => {
 	it('links a listed story by slug and an unlisted one by id', () => {
 		expect(readingAddress({ ...story, visibility: 'public' })).toBe('book-of-ash');
 		expect(readingAddress({ ...story, visibility: 'unlisted' })).toBe(story.id);
+	});
+
+	it('links by id when an old slug is shaped like a uuid', () => {
+		const slug = '00000000-1111-4222-8333-444444444444';
+		expect(readingAddress({ ...story, slug, visibility: 'public' })).toBe(story.id);
+		expect(slugAddress({ id: story.id, slug: slug.toUpperCase() })).toBe(story.id);
+		expect(slugAddress(story)).toBe('book-of-ash');
 	});
 });

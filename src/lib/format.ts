@@ -126,11 +126,13 @@ export function formatBytes(bytes: number): string {
 	const units = ['KB', 'MB', 'GB', 'TB'];
 	let value = bytes / 1024;
 	let unit = 0;
-	while (value >= 1024 && unit < units.length - 1) {
+	const round = (n: number) => Math.round(n * 10) / 10;
+	// Rounded before the unit is picked, so 1023.96 KB reads "1 MB", not "1024 KB".
+	while (round(value) >= 1024 && unit < units.length - 1) {
 		value /= 1024;
 		unit += 1;
 	}
-	const rounded = Math.round(value * 10) / 10;
+	const rounded = round(value);
 	return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} ${units[unit]}`;
 }
 

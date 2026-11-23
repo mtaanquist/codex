@@ -3,7 +3,7 @@ import { resolve } from '$app/paths';
 import type { PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { publicAuthorIdentity, publicUniverse, publicUniverseRedirect } from '#lib/server/publish';
-import { isUuid } from '#lib/slug';
+import { isUuid, slugAddress } from '#lib/slug';
 import { OLD_SLUG_REDIRECT_HEADERS } from '#lib/server/slugs';
 import { authorNameOrHandle } from '#lib/author-name';
 
@@ -32,7 +32,7 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 	}
 	return {
 		handle,
-		slug: universe.slug,
+		slug: slugAddress(universe),
 		name: universe.name,
 		shelf: universe.shelf,
 		author: authorNameOrHandle(identity, handle)
