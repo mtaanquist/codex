@@ -7,15 +7,18 @@ import {
 } from '@codemirror/state';
 import { history, isolateHistory, moveLineDown, redo, undo } from '@codemirror/commands';
 import {
+	clearCopies,
 	finishUpload,
 	hasPendingUploads,
+	lostImageMessage,
 	settleUploads,
 	startUpload,
 	storedText,
 	uploadFailure,
 	uploadPlaced,
 	uploadTracking,
-	withoutRanges
+	withoutRanges,
+	withoutUndoAdvice
 } from './editor-images';
 
 describe('withoutRanges', () => {
@@ -157,9 +160,14 @@ describe('upload placeholder through undo and everyday edits', () => {
 		return next;
 	}
 
+	// What the editor dispatches when an upload finishes: the result, then
+	// the removal of any copies of its placeholder.
 	function finish(state: EditorState, id: number, replacement: string | null = image) {
 		const spec = finishUpload(state, id, replacement);
-		return settle(spec ? state.update(spec).state : state);
+		let next = spec ? state.update(spec).state : state;
+		const copies = clearCopies(next, id);
+		if (copies) next = next.update(copies).state;
+		return settle(next);
 	}
 
 	function edit(state: EditorState, spec: TransactionSpec) {
@@ -322,6 +330,97 @@ describe('upload placeholder through undo and everyday edits', () => {
 		expect(uploadPlaced(state, placed.id)).toBe(false);
 		state = finish(state, placed.id);
 		expect(state.doc.toString()).toBe('Newer.\n');
+	});
+});
+
+describe('a copied placeholder', () => {
+	const image = '![a.png](/assets/a.png)\n';
+	const placeholder = '![Uploading a.png...]()';
+
+	function run(state: EditorState, command: StateCommand) {
+		let next = state;
+		command({ state, dispatch: (tr: Transaction) => (next = tr.state) });
+		return next;
+	}
+
+	// The writer copies the placeholder line and pastes it at the top.
+	function copied(doc: string, at: number) {
+		let state = EditorState.create({ doc, extensions: [uploadTracking, history()] });
+		const { id, spec } = startUpload(at, 'a.png', state);
+		state = state.update(spec).state;
+		state = state.update({
+			changes: { from: 0, insert: `${placeholder}\n` },
+			annotations: isolateHistory.of('full')
+		}).state;
+		return { id, state };
+	}
+
+	function finish(state: EditorState, id: number, replacement: string | null = image) {
+		const spec = finishUpload(state, id, replacement);
+		let next = spec ? state.update(spec).state : state;
+		const copies = clearCopies(next, id);
+		if (copies) next = next.update(copies).state;
+		return next;
+	}
+
+	it('is left out of the stored text while the upload runs', () => {
+		const { state } = copied('One.\nTwo.', 5);
+		expect(state.doc.toString()).toBe(`${placeholder}\nOne.\n${placeholder}\nTwo.`);
+		expect(storedText(state).text).toBe('One.\nTwo.');
+	});
+
+	it('is removed when the image lands, and only the tracked one turns into it', () => {
+		const { id, state } = copied('One.\nTwo.', 5);
+		const done = finish(state, id);
+		expect(done.doc.toString()).toBe(`One.\n${image}Two.`);
+		expect(storedText(done).text).toBe(`One.\n${image}Two.`);
+	});
+
+	it('is removed when the upload fails', () => {
+		const { id, state } = copied('One.\nTwo.', 5);
+		expect(finish(state, id, null).doc.toString()).toBe('One.\nTwo.');
+	});
+
+	it('is removed outside undo history, so undo takes back the image', () => {
+		const { id, state } = copied('One.\nTwo.', 5);
+		let next = run(finish(state, id), undo);
+		const spec = settleUploads(next);
+		if (spec) next = next.update(spec).state;
+		expect(next.doc.toString()).toBe('One.\nTwo.');
+	});
+
+	it('is kept out when the tracked placeholder was deleted too', () => {
+		const { id, state } = copied('One.\nTwo.', 5);
+		const line = state.doc.line(3);
+		let next = state.update({ changes: { from: line.from, to: line.to + 1 } }).state;
+		next = next.update({ changes: { from: next.doc.length, insert: `\n${placeholder}` } }).state;
+		expect(next.doc.toString()).toBe(`${placeholder}\nOne.\nTwo.\n${placeholder}`);
+		expect(storedText(next).text).toBe('One.\nTwo.\n');
+		expect(finish(next, id).doc.toString()).toBe('One.\nTwo.\n');
+	});
+
+	it('leaves the same words alone when they are part of a longer line', () => {
+		const { id, state } = copied('One.\nTwo.', 5);
+		const typed = `Say ${placeholder} here.`;
+		const next = state.update({ changes: { from: state.doc.length, insert: `\n${typed}` } }).state;
+		expect(storedText(next).text).toBe(`One.\nTwo.\n${typed}`);
+		expect(finish(next, id).doc.toString()).toBe(`One.\n${image}Two.\n${typed}`);
+	});
+});
+
+describe('the lost-image notice', () => {
+	it('drops the advice to undo once undo can no longer bring the line back', () => {
+		expect(lostImageMessage('a.png')).toBe(
+			'The image a.png was not added because its "Uploading" line was changed or removed. Undo to bring it back, or add the image again.'
+		);
+		expect(withoutUndoAdvice(lostImageMessage('a.png'))).toBe(
+			'The image a.png was not added because its "Uploading" line was changed or removed. Add the image again.'
+		);
+	});
+
+	it('leaves other image messages as they are', () => {
+		const failure = uploadFailure('a.png', 500);
+		expect(withoutUndoAdvice(failure)).toBe(failure);
 	});
 });
 

@@ -10,6 +10,16 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Copied upload placeholders and marker notices (2026-11-23,
+`fix/editor-notices-1476-1479` on `staging/bug-fixes-4`, #1476, #1479). A
+copy of an "Uploading" line the writer pasted elsewhere is not tracked, so it
+was saved and never replaced. While its upload runs, any whole line that is
+exactly that placeholder text is now cut from saves, and the copies are
+removed when the upload finishes. Only whole lines count, so the same words
+inside a longer line stay, and the removal is kept out of undo history: in the
+landing's undo step, undo would bring the copies back after the upload is no
+longer running, and they would then be saved.
+
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
