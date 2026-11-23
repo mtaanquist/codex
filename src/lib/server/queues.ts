@@ -29,10 +29,13 @@ export const SWEEP_UNUSED_ASSETS_QUEUE = 'sweep-unused-assets';
 // Queued only by the nightly schedule. One run queued and one running at
 // most, so they never pile up; a run reads the whole database, so it is
 // given hours rather than the default quarter hour (its long reads lift the
-// worker's statement limit to fit inside it, see unused-assets.ts).
+// worker's statement limit to fit inside it, see unused-assets.ts). A failed
+// run is not retried: the likely cause is a migration that cancelled it, and
+// the next night's run starts over anyway.
 export const SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS = {
 	policy: 'stately',
-	expireInSeconds: 6 * 60 * 60
+	expireInSeconds: 6 * 60 * 60,
+	retryLimit: 0
 } as const;
 export const MIGRATE_ASSETS_QUEUE = 'migrate-assets';
 // The Assistant queues are exclusive: one queued or running job per

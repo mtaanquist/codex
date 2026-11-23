@@ -13,7 +13,7 @@ import { gatherStory, type ExportScene } from './export.ts';
 import { getDraft } from './story-drafts.ts';
 import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
-import { isUniqueViolation } from './db-errors.ts';
+import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
@@ -147,6 +147,15 @@ export async function publishStory(
 		// story; the loser rolls back rather than leaving two current rows.
 		if (isUniqueViolation(error)) {
 			return { ok: false, reason: 'Another publish just finished. Reload the page and try again.' };
+		}
+		// An image the prose names was deleted between the read and the link
+		// (the lock above should prevent it; this keeps it from being a 500).
+		if (isForeignKeyViolation(error)) {
+			return {
+				ok: false,
+				reason:
+					'One of the images in this story was just deleted. Check the story and publish again.'
+			};
 		}
 		throw error;
 	}

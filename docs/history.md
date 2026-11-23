@@ -61,6 +61,43 @@ main's second callback: the extension keeps the failure messages and hands
 each to `onFound` when an image lands. Lost-image messages stay, since undo
 can still bring their line back.
 
+Phase 10 leftover lows (server) (2026-11-23, `fix/phase-10-lows-a` on
+`staging/phase-10`). A story import took the account's quota lock at the
+start of its transaction, so a create, restore or import in another tab
+could wait out the whole import (#1489). It now writes everything first and
+takes the lock at the end, with the story row already in, so the count
+includes it; the row goes in under the column's placeholder slug and takes
+the picked one after the lock, because a create holding the quota lock may be
+waiting on that slug and the import would otherwise deadlock with it. The
+retry after a clash only fires on `stories_owner_slug_idx` now (#1494). An
+avatar, cover or badge upload read the image it replaced before the storage
+transaction, so two at once could both count the same old image as freed
+(#1490); `createAsset` now takes a slot (row and column), locks the account
+and then that row, reads the current image, and sets the new one in the
+same transaction. That also removes the window in which the sweep could
+delete a badge image between upload and save (#1488); a publish whose image
+link fails its foreign key gets a plain message instead of a 500 (its read
+already locks the images, so this is a backstop, tested by a trigger that
+deletes the image). `restoreStory` locks the account row and then the universe
+row shared before the story row and the quota lock, so a universe trash in
+flight is waited for (the account row first, because the account and
+universe purges lock it first and then take universe and story in opposite
+orders; the lock-order suite caught that).
+A universe purge still holds the owner's account row for the whole cascade:
+taking it later would bring back the deadlock with an account purge, so that
+is documented instead. The sweep (#1492) reads a table at a time, each in its
+own snapshot, instead of everything in one; the clear-on-write trigger makes
+a reference missed by a move between tables harmless (marked once, cleared
+next run). Its reads hold a shared advisory lock, which the migrator takes
+exclusively after cancelling them, so a cancel that lands between statements
+no longer lets a new read slip in front of the ALTER. The sweep job is not
+retried, a failed run logs what it freed, and a chunk refused by a foreign
+key is retried one image at a time, so only the referenced image is kept
+(its mark cleared). The compose files give Postgres 1 GB of shared memory. The
+plain `CREATE INDEX` in 0110 and 0111 is noted for upgraders rather than
+rewritten. `slug_history.kind` gets a check constraint (migration 0114,
+#1495).
+
 Phase 10 leftover lows (UI, admin, docs) (2026-11-23,
 `fix/phase-10-lows-b` on `staging/phase-10`). A restore refused at a count
 limit now says that moving another universe or story to the trash makes

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import pg from 'pg';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { randomUUID } from 'node:crypto';
@@ -11,14 +11,19 @@ import {
 	deleteUnusedAssets,
 	FREED_OBJECT_EXTRA_DAYS,
 	referenceColumns,
-	referencedAssetIdsQuery,
+	referencedIdsQuery,
 	scanAssetUse,
 	sweepUnusedAssets,
+	SweepPausedError,
 	tablesWithoutMarkTrigger,
 	UNREFERENCED_DAYS,
 	UNUSED_ASSET_GRACE_DAYS
 } from '../../src/lib/server/unused-assets';
-import { cancelLongReads, CANCEL_ON_MIGRATE_APP_NAME } from '../../src/lib/server/db/migrate';
+import {
+	cancelLongReads,
+	CANCEL_ON_MIGRATE_APP_NAME,
+	holdOffLongReads
+} from '../../src/lib/server/db/migrate';
 import { purgeStory } from '../../src/lib/server/story-delete';
 import { trashStory } from '../../src/lib/server/story-lifecycle';
 import { createStoryInUniverse, createUniverse } from '../../src/lib/server/story-create';
@@ -457,11 +462,12 @@ describe('a write that stores an image id', () => {
 describe('the read before the delete', () => {
 	// Bound once per column, a large backlog sent the list hundreds of times
 	// over and the sweep failed every night without freeing anything.
-	it('binds the id list once however many columns it reads', async () => {
+	it('binds the wanted ids once however many columns it reads', async () => {
 		const ids = Array.from({ length: 20_000 }, () => randomUUID());
 		const columns = await referenceColumns(db);
 		expect(columns.length).toBeGreaterThan(50);
-		const { params } = new PgDialect().sqlToQuery(referencedAssetIdsQuery(columns, ids));
+		const wanted = sql`select unnest(string_to_array(${ids.join(',')}, ',')) as id`;
+		const { params } = new PgDialect().sqlToQuery(referencedIdsQuery(columns, wanted));
 		expect(params).toEqual([ids.join(',')]);
 	});
 
@@ -470,7 +476,8 @@ describe('the read before the delete', () => {
 		const kept = await image();
 		await scene(storyId, link(kept.toUpperCase()));
 		const ids = [...Array.from({ length: 20_000 }, () => randomUUID()), kept];
-		const result = await db.execute(referencedAssetIdsQuery(await referenceColumns(db), ids));
+		const wanted = sql`select unnest(string_to_array(${ids.join(',')}, ',')) as id`;
+		const result = await db.execute(referencedIdsQuery(await referenceColumns(db), wanted));
 		expect(result.rows).toEqual([{ id: kept }]);
 	});
 });
@@ -599,26 +606,28 @@ describe('a chunk that fails partway through', () => {
 		expect(logged[0]).not.toHaveProperty('filename');
 	});
 
-	it('has logged the deletions earlier chunks committed', async () => {
+	it('has logged and counted the deletions earlier chunks committed', async () => {
 		const { first, last } = await twoChunks();
 		await refuseDelete(last, 'P0001');
-		await expect(sweepUnusedAssets(db)).rejects.toThrow();
+		const progress = { count: 0, bytes: 0 };
+		await expect(sweepUnusedAssets(db, progress)).rejects.toThrow();
 		expect(await remaining([...first, last])).toEqual(new Set([last]));
 		expect(loggedFreed()).toEqual(new Set(first));
+		expect(progress).toEqual({ count: 100, bytes: 100 });
 	});
 
-	it('skips a chunk a foreign key refuses and carries on with the rest', async () => {
+	it('keeps only the image a foreign key refuses and frees the rest of its chunk', async () => {
 		const { first, last } = await twoChunks();
-		// The refused image sits in the first chunk; the second chunk still goes.
-		await refuseDelete(first[0], '23503');
-		expect(await sweepUnusedAssets(db)).toEqual({ count: 1, bytes: 1 });
-		expect(await remaining([...first, last])).toEqual(new Set(first));
-		expect(loggedFreed()).toEqual(new Set([last]));
-		expect(lines.some((l) => l.event === 'assets.unused_delete_skipped')).toBe(true);
-		// Their marks are cleared, so they are found unused again from the start.
-		const left = await marks(first);
-		expect([...left.values()].every((since) => since === null)).toBe(true);
-		expect(await used()).toBe(100);
+		const [refused, ...others] = first;
+		await refuseDelete(refused, '23503');
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 100, bytes: 100 });
+		expect(await remaining([...first, last])).toEqual(new Set([refused]));
+		expect(loggedFreed()).toEqual(new Set([...others, last]));
+		const skipped = lines.filter((l) => l.event === 'assets.unused_delete_skipped');
+		expect(skipped.map((l) => l.id)).toEqual([refused]);
+		// Its mark is cleared, so it is found unused again from the start.
+		expect((await marks([refused])).get(refused)).toBeNull();
+		expect(await used()).toBe(1);
 	});
 });
 
@@ -751,6 +760,34 @@ describe('a migration starting during the full read', () => {
 			named.release();
 			migrator.release();
 		}
+	});
+
+	it('keeps new reads from starting while the migrator holds them off', async () => {
+		const orphan = await image();
+		const holder = await pool.connect();
+		const migrator = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('lock table notes in access exclusive mode');
+			const running = sweepUnusedAssets(db);
+			running.catch(() => {});
+			for (let i = 0; i < 250 && (await blockedSweepReads()) === 0; i++) {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			expect(await holdOffLongReads(migrator)).toBe(1);
+			await expect(running).rejects.toThrow();
+			await holder.query('rollback');
+			// The migrations are still running: a new run does not start a read.
+			await expect(sweepUnusedAssets(db)).rejects.toBeInstanceOf(SweepPausedError);
+		} finally {
+			await holder.query('rollback');
+			holder.release();
+			// The migrator's session ends, and the lock with it.
+			migrator.release(true);
+		}
+		expect((await marks([orphan])).get(orphan)).toBeNull();
+		await sweepUnusedAssets(db);
+		expect((await marks([orphan])).get(orphan)).toBeInstanceOf(Date);
 	});
 
 	it('leaves the connection unnamed once the read is done', async () => {

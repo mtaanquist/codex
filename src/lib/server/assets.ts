@@ -1,11 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { and, asc, eq, gt, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, lte, sql, type SQL } from 'drizzle-orm';
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import type { Database } from './auth.ts';
 import { errorFields, logEvent } from './log.ts';
-import { assets, exportArtifacts, pendingObjectDeletions, universes, users } from './db/schema.ts';
+import {
+	assets,
+	characters,
+	exportArtifacts,
+	loreEntries,
+	pendingObjectDeletions,
+	places,
+	stories,
+	universes,
+	users
+} from './db/schema.ts';
 import { isMissingObject, sharedS3Client } from './s3-client.ts';
 import { sniffImageType } from './media-types.ts';
 import { encryptSecret, secretsAvailable } from './crypto.ts';
@@ -195,17 +205,53 @@ export function s3AssetStore(config: AssetConfig): AssetObjectStore {
 	};
 }
 
+// The row and column an avatar, cover or badge goes into. createAsset locks
+// the row, reads the image it holds now, and points it at the new one, all in
+// the transaction that checks the storage limit, so two uploads at once cannot
+// both count the same old image as freed. The caller checks the row is the
+// writer's own.
+export type AssetSlot =
+	| { table: typeof users; column: 'avatarAssetId'; id: string }
+	| { table: typeof stories; column: 'coverAssetId'; id: string }
+	| {
+			table: typeof characters | typeof places | typeof loreEntries;
+			column: 'badgeAssetId';
+			id: string;
+	  };
+
 export type AssetInput = {
 	universeId: string | null;
 	kind: 'inline' | 'cover' | 'avatar' | 'badge';
 	filename: string;
 	contentType: string;
 	bytes: Buffer;
-	// The image this one takes the place of (the avatar, cover or badge being
-	// swapped). It stays until the unused image sweep frees it, but counts as
-	// freed in the storage check, so a writer at the limit can still swap.
-	replaces?: string | null;
+	// Where the image goes. The image it takes the place of stays until the
+	// unused image sweep frees it, but counts as freed in the storage check, so
+	// a writer at the limit can still swap.
+	slot?: AssetSlot;
 };
+
+// The slot's row and column, typed loosely: every slot table has an id and
+// the named uuid column.
+function slotParts(slot: AssetSlot) {
+	const table = slot.table as typeof users;
+	const column = (slot.table as unknown as Record<string, typeof users.avatarAssetId>)[slot.column];
+	return { table, column, where: eq(table.id, slot.id) as SQL };
+}
+
+// The image the slot holds now: undefined when its row is gone. With lock,
+// the row is locked until the transaction ends.
+async function slotImage(
+	db: Database,
+	slot: AssetSlot | undefined,
+	lock = false
+): Promise<string | null | undefined> {
+	if (!slot) return null;
+	const { table, column, where } = slotParts(slot);
+	const query = db.select({ asset: column }).from(table).where(where);
+	const [row] = lock ? await query.for('no key update') : await query;
+	return row ? row.asset : undefined;
+}
 
 export async function createAsset(
 	db: Database,
@@ -264,7 +310,7 @@ export async function createAsset(
 			.select({ used: users.storageUsedBytes })
 			.from(users)
 			.where(eq(users.id, userId));
-		const credit = await replacedBytes(db, userId, input.replaces);
+		const credit = await replacedBytes(db, userId, await slotImage(db, input.slot));
 		if ((owner?.used ?? 0) - credit + input.bytes.length > limit) {
 			return overStorageLimit(limit);
 		}
@@ -273,14 +319,18 @@ export async function createAsset(
 	const id = randomUUID();
 	const storageKey = `${config.prefix}/${id}`;
 	await store.put(storageKey, input.bytes, contentType);
-	let reserved: Awaited<ReturnType<typeof reserveStorage>>;
+	let reserved: Awaited<ReturnType<typeof reserveStorage>> | { ok: false; gone: true };
 	try {
 		reserved = await db.transaction(async (tx) => {
+			// The account row before the slot's row (see lockStorageOwners).
+			await lockStorageOwners(tx, [userId]);
+			const current = await slotImage(tx, input.slot, true);
+			if (current === undefined) return { ok: false as const, gone: true as const };
 			const result = await reserveStorage(
 				tx,
 				userId,
 				input.bytes.length,
-				await replacedBytes(tx, userId, input.replaces)
+				await replacedBytes(tx, userId, current)
 			);
 			if (!result.ok) return result;
 			await tx.insert(assets).values({
@@ -293,6 +343,13 @@ export async function createAsset(
 				byteSize: input.bytes.length,
 				storageKey
 			});
+			if (input.slot) {
+				const { table, where } = slotParts(input.slot);
+				await tx
+					.update(table)
+					.set({ [input.slot.column]: id } as Partial<typeof table.$inferInsert>)
+					.where(where);
+			}
 			return result;
 		});
 	} catch (error) {
@@ -302,6 +359,9 @@ export async function createAsset(
 	}
 	if (!reserved.ok) {
 		await store.remove(storageKey).catch(() => {});
+		if ('gone' in reserved) {
+			return { ok: false, code: 'not_found', reason: 'This no longer exists. Reload the page.' };
+		}
 		return reserved.limit === null
 			? { ok: false, code: 'not_found', reason: 'This account no longer exists.' }
 			: overStorageLimit(reserved.limit);
@@ -485,21 +545,34 @@ export async function setUserAvatar(
 	userId: string,
 	input: { filename: string; contentType: string; bytes: Buffer }
 ): Promise<{ ok: true; id: string } | ActionFailure> {
-	const [current] = await db
-		.select({ avatarAssetId: users.avatarAssetId })
-		.from(users)
-		.where(eq(users.id, userId));
-	const result = await createAsset(db, store, config, userId, {
+	return await createAsset(db, store, config, userId, {
 		universeId: null,
 		kind: 'avatar',
 		filename: input.filename,
 		contentType: input.contentType,
 		bytes: input.bytes,
-		replaces: current?.avatarAssetId
+		slot: { table: users, column: 'avatarAssetId', id: userId }
 	});
-	if (!result.ok) return result;
-	await db.update(users).set({ avatarAssetId: result.id }).where(eq(users.id, userId));
-	return { ok: true, id: result.id };
+}
+
+/** Uploads a cover for the writer's own story and points the story at it.
+ * The replaced cover is left for the unused image sweep. */
+export async function setStoryCover(
+	db: Database,
+	store: AssetObjectStore,
+	config: AssetConfig,
+	userId: string,
+	story: { id: string; universeId: string },
+	input: { filename: string; contentType: string; bytes: Buffer }
+): Promise<{ ok: true; id: string } | ActionFailure> {
+	return await createAsset(db, store, config, userId, {
+		universeId: story.universeId,
+		kind: 'cover',
+		filename: input.filename,
+		contentType: input.contentType,
+		bytes: input.bytes,
+		slot: { table: stories, column: 'coverAssetId', id: story.id }
+	});
 }
 
 // ============ Storage migration ============

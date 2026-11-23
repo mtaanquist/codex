@@ -339,3 +339,13 @@ describe('public redirects from old slugs', () => {
 		expect(await publicUniverseRedirect(db, 'inkwright', 'ember-reach')).toBeNull();
 	});
 });
+
+describe('the kind column', () => {
+	it('refuses a kind other than story or universe', async () => {
+		await expect(
+			pool.query(`insert into slug_history (owner_id, kind, slug) values ($1, 'chapter', 'x')`, [
+				ownerId
+			])
+		).rejects.toMatchObject({ code: '23514', constraint: 'slug_history_kind_check' });
+	});
+});

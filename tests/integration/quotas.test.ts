@@ -20,6 +20,7 @@ import {
 	createAsset,
 	deleteAsset,
 	ObjectNotFoundError,
+	setStoryCover,
 	setUserAvatar,
 	type AssetConfig,
 	type AssetObjectStore
@@ -335,6 +336,30 @@ describe('universe and story limits', () => {
 		expect(home.deletedAt).toBeNull();
 	});
 
+	it('restores no story into a universe going to the trash at the same time', async () => {
+		await limitOwner({ max_stories: 5 });
+		const world = await universe();
+		const story = await createStoryInUniverse(db, ownerId, world.id, 'Only');
+		await trashStory(db, ownerId, story.id);
+		const holder = await pool.connect();
+		let settled = false;
+		let restoring: Promise<boolean> | undefined;
+		try {
+			await holder.query('begin');
+			await holder.query('update universes set deleted_at = now() where id = $1', [world.id]);
+			restoring = restoreStory(db, ownerId, story.id).finally(() => {
+				settled = true;
+			});
+			restoring.catch(() => {});
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			expect(settled).toBe(false);
+		} finally {
+			await holder.query('commit');
+			holder.release();
+		}
+		expect(await restoring).toBe(false);
+	});
+
 	it('treats a second restore of the same story as done, not over the limit', async () => {
 		await limitOwner({ max_stories: 1 });
 		const world = await universe();
@@ -377,6 +402,49 @@ describe('universe and story limits', () => {
 		for (const r of results.filter((r) => r.status === 'rejected')) {
 			expect((r as PromiseRejectedResult).reason).toBeInstanceOf(QuotaExceededError);
 		}
+	});
+
+	// An import takes the quota lock only once its writes are done, so a
+	// create in another tab does not wait out the whole import, and the import
+	// still counts what that create added.
+	it('lets a create go ahead while an import is still writing, then counts it', async () => {
+		await limitOwner({ max_stories: 1 });
+		const world = await universe();
+		const [aldric] = await db
+			.insert(characters)
+			.values({ universeId: world.id, ownerId, name: 'Aldric' })
+			.returning({ id: characters.id });
+		// Holding the character stalls the import partway, at its note.
+		const holder = await pool.connect();
+		let importing: Promise<unknown> | undefined;
+		try {
+			await holder.query('begin');
+			await holder.query('select id from characters where id = $1 for update', [aldric.id]);
+			importing = runImport(db, world, {
+				...importPlan('Imported'),
+				notes: [{ kind: 'character', name: 'Aldric', notesMd: 'Limps.' }]
+			});
+			importing.catch(() => {});
+			for (let i = 0; i < 100; i++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n > 0) break;
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			const created = await Promise.race([
+				createStoryInUniverse(db, ownerId, world.id, 'Typed'),
+				new Promise((resolve) => setTimeout(() => resolve('waited'), 2000))
+			]);
+			expect(created).not.toBe('waited');
+		} finally {
+			await holder.query('commit');
+			holder.release();
+		}
+		await expect(importing).rejects.toBeInstanceOf(QuotaExceededError);
+		const titles = (await db.select({ title: stories.title }).from(stories)).map((r) => r.title);
+		expect(titles).toEqual(['Typed']);
 	});
 
 	it('takes no lock and refuses nothing on a plan without limits', async () => {
@@ -491,34 +559,76 @@ describe('storage', () => {
 		expect(await db.select().from(assets)).toHaveLength(4);
 	});
 
+	// Each swap counts as freed the image it actually replaces: two at once
+	// cannot both count the same old avatar.
+	it('gives two avatar swaps at once credit for different images', async () => {
+		await limitOwner({ storage_bytes: 500 });
+		const { store } = memoryStore();
+		const avatar = (bytes: number) =>
+			setUserAvatar(db, store, config, ownerId, {
+				filename: 'a.png',
+				contentType: 'image/png',
+				bytes: png(bytes)
+			});
+		expect((await avatar(400)).ok).toBe(true);
+		const results = await Promise.all([avatar(150), avatar(150)]);
+		expect(results.filter((r) => r.ok)).toHaveLength(1);
+		expect(await used()).toBe(550);
+		const [row] = await db
+			.select({ avatar: users.avatarAssetId })
+			.from(users)
+			.where(eq(users.id, ownerId));
+		const winner = results.find((r) => r.ok) as { ok: true; id: string };
+		expect(row.avatar).toBe(winner.id);
+	});
+
 	it('counts a replaced cover as freed, but only one the writer owns', async () => {
 		await limitOwner({ storage_bytes: 500 });
 		const { store } = memoryStore();
-		const upload = (userId: string, bytes: number, replaces?: string) =>
-			createAsset(db, store, config, userId, {
-				universeId: null,
-				kind: 'cover',
+		const world = await universe();
+		const story = await createStoryInUniverse(db, ownerId, world.id, 'Covered');
+		const cover = (bytes: number) =>
+			setStoryCover(db, store, config, ownerId, story, {
 				filename: 'c.png',
 				contentType: 'image/png',
-				bytes: png(bytes),
-				replaces
+				bytes: png(bytes)
 			});
-		const first = await upload(ownerId, 400);
+		const first = await cover(400);
 		if (!first.ok) throw new Error('expected an upload');
-		expect((await upload(ownerId, 300)).ok).toBe(false);
-		const second = await upload(ownerId, 300, first.id);
+		// A plain upload has nothing to count as freed.
+		expect(
+			(
+				await createAsset(db, store, config, ownerId, {
+					universeId: null,
+					kind: 'inline',
+					filename: 'c.png',
+					contentType: 'image/png',
+					bytes: png(300)
+				})
+			).ok
+		).toBe(false);
+		const second = await cover(300);
 		if (!second.ok) throw new Error('expected a swap');
 		expect(await used()).toBe(700);
+		const [row] = await db
+			.select({ cover: stories.coverAssetId })
+			.from(stories)
+			.where(eq(stories.id, story.id));
+		expect(row.cover).toBe(second.id);
 		// The old cover still counts, so swapping again at the limit is refused.
-		expect(await upload(ownerId, 300, second.id)).toMatchObject({
-			ok: false,
-			code: 'over_limit'
-		});
+		expect(await cover(300)).toMatchObject({ ok: false, code: 'over_limit' });
 		expect(await used()).toBe(700);
-		const theirs = await upload(otherId, 400);
+		const theirs = await createAsset(db, store, config, otherId, {
+			universeId: null,
+			kind: 'cover',
+			filename: 'c.png',
+			contentType: 'image/png',
+			bytes: png(400)
+		});
 		if (!theirs.ok) throw new Error('expected an upload');
+		await db.update(stories).set({ coverAssetId: theirs.id }).where(eq(stories.id, story.id));
 		await limitOwner({ storage_bytes: 800 });
-		expect((await upload(ownerId, 300, theirs.id)).ok).toBe(false);
+		expect((await cover(300)).ok).toBe(false);
 	});
 
 	it('checks an upload against the plan as it is when the file lands', async () => {
