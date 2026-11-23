@@ -11,6 +11,7 @@
 	import AdminUsers from './AdminUsers.svelte';
 	import AdminAi from './AdminAi.svelte';
 	import AdminUsage from './AdminUsage.svelte';
+	import AdminPlans from './AdminPlans.svelte';
 	import AdminPublished from './AdminPublished.svelte';
 	import AdminBackups from './AdminBackups.svelte';
 	import AdminAudit from './AdminAudit.svelte';
@@ -100,6 +101,18 @@
 				<span class="lbl">Users &amp; access</span>
 				{#if pending.length > 0}<span class="nav-badge">{pending.length}</span>{/if}
 			</a>
+			<a class="nav-item" class:active={active === 'plans'} href={sectionHref('plans')}>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.7"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9h10M7 13h6M7 17h4" /></svg
+				>
+				<span class="lbl">Plans</span>
+			</a>
 			<a class="nav-item" class:active={active === 'ai'} href={sectionHref('ai')}>
 				<svg
 					viewBox="0 0 24 24"
@@ -133,7 +146,6 @@
 					/><rect x="18" y="13" width="3" height="4" rx="0.5" /></svg
 				>
 				<span class="lbl">Usage &amp; storage</span>
-				<span class="nav-badge muted">soon</span>
 			</a>
 			<a class="nav-item" class:active={active === 'published'} href={sectionHref('published')}>
 				<svg
@@ -222,6 +234,11 @@
 	<!-- ========== USERS & ACCESS ========== -->
 	<section class="admin-section" class:active={active === 'users'}>
 		<AdminUsers {data} {form} />
+	</section>
+
+	<!-- ========== PLANS ========== -->
+	<section class="admin-section" class:active={active === 'plans'}>
+		<AdminPlans {data} {form} />
 	</section>
 
 	<!-- ========== AI (stub) ========== -->

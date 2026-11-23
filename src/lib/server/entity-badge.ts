@@ -72,7 +72,8 @@ export async function setEntityBadgeImage(
 		kind: 'badge',
 		filename: input.filename,
 		contentType: input.contentType,
-		bytes: input.bytes
+		bytes: input.bytes,
+		replaces: ref.badgeAssetId
 	});
 	if (!created.ok) return created;
 	await updateBadge(db, ref.type, entityId, { badgeAssetId: created.id });

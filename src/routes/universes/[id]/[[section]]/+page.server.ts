@@ -12,6 +12,7 @@ import { trashUniverse, UNIVERSE_TRASH_DAYS } from '#lib/server/universe-lifecyc
 import { parseStoryZip, StoryZipError, type ImportPlan } from '#lib/import-markdown';
 import { parseDocument, DocumentImportError } from '#lib/server/import-document';
 import { previewImport, runImport } from '#lib/server/import-story';
+import { quotaFailure } from '#lib/server/quotas';
 import { effectiveAssetConfig } from '#lib/server/assets';
 import { listUserExports, markExportFailed, requestExport } from '#lib/server/user-exports';
 import { queueUserExport } from '#lib/server/jobs';
@@ -246,9 +247,15 @@ export const actions: Actions = {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
 		const upload = await planFromUpload(await request.formData());
 		if (upload.fail) return upload.fail;
-		return {
-			action: 'import' as const,
-			imported: await runImport(db, universe, upload.plan as ImportPlan)
-		};
+		try {
+			return {
+				action: 'import' as const,
+				imported: await runImport(db, universe, upload.plan as ImportPlan)
+			};
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { action: 'import' as const, message });
+		}
 	}
 };

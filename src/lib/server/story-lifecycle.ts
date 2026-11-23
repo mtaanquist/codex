@@ -7,6 +7,7 @@ import { and, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { stories, universes } from './db/schema.ts';
 import { untrash } from './slugs.ts';
+import { holdCountQuota } from './quotas.ts';
 import { purgeStory } from './story-delete.ts';
 import { UNIVERSE_TRASH_DAYS } from './universe-lifecycle.ts';
 
@@ -53,10 +54,18 @@ export async function restoreStory(
 	userId: string,
 	storyId: string
 ): Promise<boolean> {
-	const story = await ownedStoryRow(db, userId, storyId, { deleted: true });
-	if (!story) return false;
-	await untrash(db, 'stories', story.id);
-	return true;
+	return db.transaction(async (tx) => {
+		// A second restore of the same story waits here, then finds it live and
+		// does nothing, rather than counting it against the limit.
+		await tx.execute(
+			sql`select id from stories where id = ${storyId} and owner_id = ${userId} for update`
+		);
+		const story = await ownedStoryRow(tx, userId, storyId, { deleted: true });
+		if (!story) return false;
+		await holdCountQuota(tx, userId, { stories: 1 }, 'restore');
+		await untrash(tx, 'stories', story.id);
+		return true;
+	});
 }
 
 export type TrashedStory = {

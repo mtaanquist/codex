@@ -52,6 +52,16 @@ import {
 	s3AssetStore,
 	saveAssetStorage
 } from '#lib/server/assets';
+import {
+	createPlan,
+	listAccountUsage,
+	listPlans,
+	savePlan,
+	setDefaultPlan,
+	setUserPlan
+} from '#lib/server/plans';
+import { recountStorageUsed } from '#lib/server/quotas';
+import { MEGABYTE, parseLimitInput } from '#lib/quota';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
 import { appVersion } from '#lib/server/app-version';
@@ -63,6 +73,10 @@ function formatUptime(seconds: number): string {
 	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
 	return `${Math.floor(seconds / 86400)}d`;
 }
+
+// Upper bounds for typed limits, well past any real use.
+const MAX_COUNT_LIMIT = 100_000;
+const MAX_STORAGE_MB = 100_000_000;
 
 function requireAdmin(locals: App.Locals) {
 	if (locals.user?.role !== 'admin') error(404, 'Not found');
@@ -90,6 +104,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		assetStorage: await assetStorageView(db),
 		assetMigrationPending: (await assetMigrationSource(db)) !== null,
 		assetMigration: await assetMigrationResult(db),
+		plans: await listPlans(db),
+		usage: await listAccountUsage(db),
 		smtp: await smtpView(db),
 		egress: await egressPolicy(db),
 		externalAccess: await mcpInstanceEnabled(db),
@@ -330,6 +346,75 @@ export const actions: Actions = {
 		requireAdmin(locals);
 		await clearAssetMigrationSource(db);
 		return { scope: 'storage', done: true };
+	},
+	createPlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const result = await createPlan(db, formText(await request.formData(), 'name'));
+		if (!result.ok) return fail(400, { scope: 'plans', message: result.reason });
+		return { scope: 'plans', done: true };
+	},
+	savePlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const data = await request.formData();
+		const planId = formText(data, 'planId');
+		const universes = parseLimitInput(formText(data, 'maxUniverses'), MAX_COUNT_LIMIT);
+		const stories = parseLimitInput(formText(data, 'maxStories'), MAX_COUNT_LIMIT);
+		const storageMb = parseLimitInput(formText(data, 'storageMb'), MAX_STORAGE_MB);
+		if (universes === undefined || stories === undefined) {
+			return fail(400, {
+				scope: 'plans',
+				planId,
+				message: `Limits are whole numbers from 0 to ${MAX_COUNT_LIMIT}, or blank for no limit.`
+			});
+		}
+		if (storageMb === undefined) {
+			return fail(400, {
+				scope: 'plans',
+				planId,
+				message: `Storage is a whole number of MB from 0 to ${MAX_STORAGE_MB}, or blank for no limit.`
+			});
+		}
+		if (!isUuid(planId)) {
+			return fail(400, { scope: 'plans', message: 'That plan does not exist.' });
+		}
+		const result = await savePlan(db, planId, {
+			name: formText(data, 'name'),
+			limits: {
+				max_universes: universes,
+				max_stories: stories,
+				storage_bytes: storageMb === null ? null : storageMb * MEGABYTE
+			}
+		});
+		if (!result.ok) return fail(400, { scope: 'plans', planId, message: result.reason });
+		return { scope: 'plans', planId, saved: true };
+	},
+	setDefaultPlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const planId = formText(await request.formData(), 'planId');
+		if (!isUuid(planId) || !(await setDefaultPlan(db, planId))) {
+			return fail(400, { scope: 'plans', message: 'That plan does not exist.' });
+		}
+		return { scope: 'plans', done: true };
+	},
+	// Blank plan id puts the account back on the default plan.
+	setUserPlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const data = await request.formData();
+		const userId = formText(data, 'userId');
+		const planId = formText(data, 'planId');
+		if (
+			!isUuid(userId) ||
+			(planId !== '' && !isUuid(planId)) ||
+			!(await setUserPlan(db, userId, planId || null))
+		) {
+			return fail(400, { scope: 'usage', message: 'That account could not be updated.' });
+		}
+		return { scope: 'usage', done: true };
+	},
+	recountStorage: async ({ locals }) => {
+		requireAdmin(locals);
+		await recountStorageUsed(db);
+		return { scope: 'usage', recounted: true };
 	},
 	saveSmtp: async ({ request, locals }) => {
 		requireAdmin(locals);

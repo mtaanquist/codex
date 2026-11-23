@@ -40,6 +40,8 @@ const { gatherStory } = await import('../../src/lib/server/export');
 const { saveSceneBody } = await import('../../src/lib/server/scene-save');
 const { restoreUniverse } = await import('../../src/lib/server/universe-lifecycle');
 const { legacyJobCategories } = await import('../../src/worker/handlers');
+const { accountLimits } = await import('../../src/lib/server/quotas');
+const { NO_LIMITS } = await import('../../src/lib/quota');
 
 const id = (suffix: string) => `00000000-0000-4000-8000-0000000000${suffix}`;
 const USER = id('a1');
@@ -295,6 +297,15 @@ describe('upgrading from the previous release', () => {
 			overwrite: false
 		});
 		expect(result.ok).toBe(true);
+	});
+
+	it('counts the images stored before the upgrade, on a default plan with no limits', async () => {
+		const { rows } = await pool.query(
+			'select storage_used_bytes::int as used, plan_id from users where id = $1',
+			[USER]
+		);
+		expect(rows).toEqual([{ used: 3345, plan_id: null }]);
+		expect(await accountLimits(db, USER)).toEqual(NO_LIMITS);
 	});
 
 	it('restores the universe trashed before the upgrade, whole', async () => {

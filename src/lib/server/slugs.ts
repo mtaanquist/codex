@@ -57,11 +57,15 @@ export async function untrash(db: Database, table: 'universes' | 'stories', id: 
 					.from(stories)
 					.where(eq(stories.id, id));
 	if (!row) return;
+	// Each attempt in a transaction of its own (a savepoint when the caller
+	// passed one), so a taken slug does not abort the caller's transaction.
 	const revive = (slug?: string) => {
 		const values = slug ? { deletedAt: null, slug } : { deletedAt: null };
-		return table === 'universes'
-			? db.update(universes).set(values).where(eq(universes.id, id))
-			: db.update(stories).set(values).where(eq(stories.id, id));
+		return db.transaction(async (tx) => {
+			await (table === 'universes'
+				? tx.update(universes).set(values).where(eq(universes.id, id))
+				: tx.update(stories).set(values).where(eq(stories.id, id)));
+		});
 	};
 	const fallback = table === 'universes' ? 'universe' : 'story';
 	const fresh = () => uniqueSlug(db, table, row.ownerId, row.name, fallback);

@@ -137,7 +137,12 @@ export const actions: Actions = {
 		const { story, universe } = await ownedStory(params.id, locals.user!.id);
 		const title = formText(await request.formData(), 'title');
 		const result = await newStoryFromDraft(db, locals.user!.id, story, params.draft, title);
-		if (!result.ok) return fail(400, { action: 'newStory', message: result.reason });
+		if (!result.ok) {
+			return fail(result.code === 'over_limit' ? 403 : 400, {
+				action: 'newStory',
+				message: result.reason
+			});
+		}
 		await queueUniverseMentions(universe.id);
 		redirect(303, `/stories/${result.slug}`);
 	}

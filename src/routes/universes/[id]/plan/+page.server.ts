@@ -8,6 +8,7 @@ import { storyStatus } from '#lib/dashboard';
 import { ownedUniverse } from '#lib/server/universe-access';
 import { planActions } from '#lib/server/plan-actions';
 import { createStoryInUniverse } from '#lib/server/story-create';
+import { quotaFailure } from '#lib/server/quotas';
 import {
 	entityAppearances,
 	entityMentionCount,
@@ -198,7 +199,14 @@ export const actions: Actions = {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
 		const title = formText(await request.formData(), 'title').trim();
 		if (!title) return fail(400, { scope: 'story', message: 'Give the story a title.' });
-		const story = await createStoryInUniverse(db, locals.user!.id, universe.id, title);
+		let story;
+		try {
+			story = await createStoryInUniverse(db, locals.user!.id, universe.id, title);
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { scope: 'story', message });
+		}
 		redirect(303, `/stories/${story.slug}`);
 	}
 };
