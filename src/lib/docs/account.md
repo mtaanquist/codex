@@ -467,9 +467,10 @@ with a "use my account setting" option.
 ## Limits on your account
 
 The person who runs your Codex can set limits on how many universes and stories
-your account can have and how much space your uploaded images can take. If you
-reach one, Codex tells you which limit it is and does not make the new universe
-or story, restore it from the trash, or store the image. To go past a limit,
+your account can have, how much space your uploaded images can take, and how
+large one image can be (never more than 10 MB). If you reach one, Codex tells
+you which limit it is and does not make the new universe or story, restore it
+from the trash, or store the image. To go past a limit,
 ask the admin of your site to raise it.
 
 Universes and stories in the trash do not count toward the limits, so moving

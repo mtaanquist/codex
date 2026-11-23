@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData, ActionData } from './$types';
 	import FormStatus from '#lib/components/FormStatus.svelte';
-	import { MEGABYTE } from '#lib/quota';
+	import { MAX_IMAGE_BYTES, MEGABYTE } from '#lib/quota';
 	import { formatNumber, pluralSuffix } from '#lib/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -21,8 +21,9 @@
 	<p class="admin-eyebrow">Instance</p>
 	<h1 class="admin-title">Plans</h1>
 	<p class="admin-lede">
-		A plan sets how many universes and stories an account can have and how much space its uploaded
-		images can take. Leave a limit blank for no limit. Accounts are on the default plan unless you
+		A plan sets how many universes and stories an account can have, how much space its uploaded
+		images can take, and how large one image can be. Leave a limit blank for no limit (a blank
+		largest image means {MAX_IMAGE_BYTES / MEGABYTE} MB). Accounts are on the default plan unless you
 		pick another for them under Usage &amp; storage.
 	</p>
 </div>
@@ -103,6 +104,25 @@
 						/>
 						<span class="field-hint">
 							Counts uploaded images, covers, and avatars. Text does not count.
+						</span>
+					</div>
+				</div>
+				<div class="field">
+					<label for="plan-image-{plan.id}">Largest image (MB)</label>
+					<div>
+						<input
+							id="plan-image-{plan.id}"
+							class="input short"
+							type="number"
+							name="maxImageMb"
+							min="1"
+							max={MAX_IMAGE_BYTES / MEGABYTE}
+							placeholder={String(MAX_IMAGE_BYTES / MEGABYTE)}
+							value={storageValue(plan.limits.max_image_bytes)}
+						/>
+						<span class="field-hint">
+							The most one uploaded image can be. Leave it blank for {MAX_IMAGE_BYTES / MEGABYTE} MB,
+							the most any plan allows.
 						</span>
 					</div>
 				</div>

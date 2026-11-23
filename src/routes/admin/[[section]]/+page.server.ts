@@ -61,7 +61,7 @@ import {
 	setUserPlan
 } from '#lib/server/plans';
 import { recountStorageUsed } from '#lib/server/quotas';
-import { MEGABYTE, parseLimitInput } from '#lib/quota';
+import { MAX_IMAGE_BYTES, MEGABYTE, parseLimitInput } from '#lib/quota';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
 import { appVersion } from '#lib/server/app-version';
@@ -362,6 +362,9 @@ export const actions: Actions = {
 		const universes = parseLimitInput(formText(data, 'maxUniverses'), MAX_COUNT_LIMIT);
 		const stories = parseLimitInput(formText(data, 'maxStories'), MAX_COUNT_LIMIT);
 		const storageMb = parseLimitInput(formText(data, 'storageMb'), MAX_STORAGE_MB);
+		// 0 would refuse every image, so the smallest size is 1 MB.
+		const parsedImageMb = parseLimitInput(formText(data, 'maxImageMb'), MAX_IMAGE_BYTES / MEGABYTE);
+		const imageMb = parsedImageMb === 0 ? undefined : parsedImageMb;
 		if (universes === undefined || stories === undefined) {
 			return fail(400, {
 				scope: 'plans',
@@ -376,6 +379,13 @@ export const actions: Actions = {
 				message: `Storage is a whole number of MB from 0 to ${MAX_STORAGE_MB}, or blank for no limit.`
 			});
 		}
+		if (imageMb === undefined) {
+			return fail(400, {
+				scope: 'plans',
+				planId,
+				message: `The largest image is a whole number of MB from 1 to ${MAX_IMAGE_BYTES / MEGABYTE}, or blank for ${MAX_IMAGE_BYTES / MEGABYTE} MB, the most any plan allows.`
+			});
+		}
 		if (!isUuid(planId)) {
 			return fail(400, { scope: 'plans', message: 'That plan does not exist.' });
 		}
@@ -384,7 +394,8 @@ export const actions: Actions = {
 			limits: {
 				max_universes: universes,
 				max_stories: stories,
-				storage_bytes: storageMb === null ? null : storageMb * MEGABYTE
+				storage_bytes: storageMb === null ? null : storageMb * MEGABYTE,
+				max_image_bytes: imageMb === null ? null : imageMb * MEGABYTE
 			}
 		});
 		if (!result.ok) return fail(400, { scope: 'plans', planId, message: result.reason });

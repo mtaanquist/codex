@@ -61,6 +61,31 @@ queues frees every unused image past the grace, the story's and any other. Becau
 image out of a scene usually frees nothing while the scene exists; the help
 says so.
 
+Per-image size limit per plan (2026-11-23, `feat/image-size-limit` on
+`staging/phase-10`, #1451). `max_image_bytes` joins the enforced keys in
+`src/lib/quota.ts`, so `listPlans`, `savePlan` and `accountLimits` pick it up
+with no new code, and it needs no migration (entitlements are key/value
+rows). The fixed 10 MB cap moved from `assets.ts` (`MAX_ASSET_BYTES`) to
+`MAX_IMAGE_BYTES` in `quota.ts`, since the admin form and the account page
+both need it. It stays the hard ceiling: an upload over it is still refused
+as invalid (400) with the old wording, before the plan is read, so a plan
+value above it (only possible by editing the database) can never raise it.
+Under the ceiling, an upload over the plan's value is `over_limit` (403)
+with a message naming the size. The check is in `createAsset`, before the
+object is stored, and reuses the limits read for the storage pre-check, so
+an upload still reads the plan once outside the transaction. It does not
+need to be re-checked under the account lock the way storage is: nothing
+two uploads do at once changes the answer. The admin enters whole MB from 1
+to 10 (blank is the ceiling; 0 would refuse every image, and the message
+telling the writer to choose a smaller image could not be followed); a
+higher value is refused with a message saying so rather than quietly
+clamped, so the admin never saves something other than what they typed.
+Review round 1 added the import preview line naming each bundled image the
+limit will skip, and read the limit on the account page only for the
+profile section. The avatar hint on the account page now names
+the account's own limit. Stacked on #1450 (`feat/image-downscale`), since
+both touch the same help article and history.
+
 Large images shrink in the browser (2026-11-23, `feat/image-downscale` on
 `staging/phase-10`, #1450). Images used to be stored exactly as uploaded. Now
 `shrinkImage` (`src/lib/image-shrink.ts`) scales a still image longer than

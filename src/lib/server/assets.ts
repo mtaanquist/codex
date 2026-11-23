@@ -23,7 +23,8 @@ import {
 } from './settings.ts';
 import type { ActionFailure } from './action-result.ts';
 import { accountLimits, lockStorageOwners, releaseStorage, reserveStorage } from './quotas.ts';
-import { quotaMessage } from '../quota.ts';
+import { MAX_IMAGE_BYTES, quotaMessage } from '../quota.ts';
+import { formatBytes } from '../format.ts';
 
 // Uploaded images live in an S3-compatible bucket, separate from the backups
 // bucket, which holds database dumps only. Deleting an image removes its row
@@ -194,8 +195,6 @@ export function s3AssetStore(config: AssetConfig): AssetObjectStore {
 	};
 }
 
-export const MAX_ASSET_BYTES = 10 * 1024 * 1024;
-
 export type AssetInput = {
 	universeId: string | null;
 	kind: 'inline' | 'cover' | 'avatar' | 'badge';
@@ -215,8 +214,20 @@ export async function createAsset(
 ): Promise<{ ok: true; id: string } | ActionFailure> {
 	if (input.bytes.length === 0)
 		return { ok: false, code: 'invalid', reason: 'That image file is empty.' };
-	if (input.bytes.length > MAX_ASSET_BYTES) {
-		return { ok: false, code: 'invalid', reason: 'That image is larger than 10 MB.' };
+	if (input.bytes.length > MAX_IMAGE_BYTES) {
+		return {
+			ok: false,
+			code: 'invalid',
+			reason: `That image is larger than ${formatBytes(MAX_IMAGE_BYTES)}.`
+		};
+	}
+	const limits = await accountLimits(db, userId);
+	if (limits.max_image_bytes !== null && input.bytes.length > limits.max_image_bytes) {
+		return {
+			ok: false,
+			code: 'over_limit',
+			reason: quotaMessage('max_image_bytes', limits.max_image_bytes)
+		};
 	}
 	// Trust the bytes, not the client-supplied content type: sniff the magic
 	// number and store (and later serve) the detected type, so arbitrary bytes
@@ -255,7 +266,7 @@ export async function createAsset(
 	}
 	// Checked once here so a file that cannot fit is never sent to the bucket,
 	// and again, binding, with the insert below.
-	const limit = (await accountLimits(db, userId)).storage_bytes;
+	const limit = limits.storage_bytes;
 	if (limit !== null) {
 		const [owner] = await db
 			.select({ used: users.storageUsedBytes })

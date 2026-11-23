@@ -50,9 +50,9 @@ import {
 	trashUniverse
 } from '../../src/lib/server/universe-lifecycle';
 import { newStoryFromDraft, saveDraft } from '../../src/lib/server/story-drafts';
-import { runImport } from '../../src/lib/server/import-story';
+import { previewImport, runImport } from '../../src/lib/server/import-story';
 import type { ImportPlan } from '../../src/lib/import-markdown';
-import { NO_LIMITS, type Limits } from '../../src/lib/quota';
+import { MAX_IMAGE_BYTES, MEGABYTE, NO_LIMITS, type Limits } from '../../src/lib/quota';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
@@ -471,6 +471,79 @@ describe('storage', () => {
 			bytes: png(20)
 		});
 		expect(refused).toMatchObject({ ok: false, code: 'over_limit' });
+	});
+
+	it("refuses an image over the plan's per-image limit, naming it", async () => {
+		await limitOwner({ max_image_bytes: 2 * MEGABYTE });
+		const { store, objects } = memoryStore();
+		const upload = (bytes: number) =>
+			createAsset(db, store, config, ownerId, {
+				universeId: null,
+				kind: 'inline',
+				filename: 'a.png',
+				contentType: 'image/png',
+				bytes: png(bytes)
+			});
+		const refused = await upload(2 * MEGABYTE + 1);
+		expect(refused).toMatchObject({ ok: false, code: 'over_limit' });
+		expect(!refused.ok && refused.reason).toContain('limit of 2 MB per image');
+		expect(objects.size).toBe(0);
+		expect(await used()).toBe(0);
+		expect((await upload(2 * MEGABYTE)).ok).toBe(true);
+		// Another account on the default plan is not held to it.
+		const other = await createAsset(db, store, config, otherId, {
+			universeId: null,
+			kind: 'inline',
+			filename: 'b.png',
+			contentType: 'image/png',
+			bytes: png(2 * MEGABYTE + 1)
+		});
+		expect(other.ok).toBe(true);
+	});
+
+	it('names the images an import will skip for the per-image limit', async () => {
+		await limitOwner({ max_image_bytes: MEGABYTE });
+		const world = await universe();
+		const plan = importPlan('Pictures');
+		plan.assets = [
+			{ id: 'a', path: 'assets/small.png', bytes: png(MEGABYTE) },
+			{ id: 'b', path: 'assets/big.png', bytes: png(MEGABYTE + 1) }
+		];
+		const preview = await previewImport(db, world, plan);
+		expect(preview.problems).toEqual([
+			'The image assets/big.png is larger than 1 MB and will not be imported.'
+		]);
+	});
+
+	it('keeps the 10 MB ceiling when a plan sets a higher per-image limit', async () => {
+		await limitOwner({ max_image_bytes: 50 * MEGABYTE });
+		const { store } = memoryStore();
+		const result = await createAsset(db, store, config, ownerId, {
+			universeId: null,
+			kind: 'inline',
+			filename: 'a.png',
+			contentType: 'image/png',
+			bytes: png(MAX_IMAGE_BYTES + 1)
+		});
+		expect(result).toMatchObject({ ok: false, code: 'invalid' });
+	});
+
+	it('holds avatars and badges to the per-image limit too', async () => {
+		await limitOwner({ max_image_bytes: 1000 });
+		const { store } = memoryStore();
+		const image = { filename: 'a.png', contentType: 'image/png', bytes: png(1001) };
+		expect(await setUserAvatar(db, store, config, ownerId, image)).toMatchObject({
+			ok: false,
+			code: 'over_limit'
+		});
+		const world = await universe();
+		const [character] = await db
+			.insert(characters)
+			.values({ universeId: world.id, ownerId, name: 'Aldric' })
+			.returning({ id: characters.id });
+		expect(
+			await setEntityBadgeImage(db, store, config, ownerId, character.id, image)
+		).toMatchObject({ ok: false, code: 'over_limit' });
 	});
 
 	it('takes a purged universe off its owner', async () => {
