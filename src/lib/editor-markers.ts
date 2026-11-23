@@ -230,15 +230,14 @@ export function markerExtensions(
 // checked off, one made). A marker the editor still highlights keeps its own
 // mapped range, which is newer than the server's. A marker the editor held
 // but no longer shows (its words are gone) comes back with no anchors, so it
-// stays held and undo can still put it back, as does a new one the server
-// holds with no anchors. A marker new to the editor is
-// placed on the server's anchors only when settled gives the edits from the
-// text they count into to the editor text exactly (see
-// unsavedChanges().settledFrom); otherwise it is left out of the set and
-// waits until this editor's own save has landed and the markers are read
-// again. Mapping it through unsaved edits could put it on the wrong words or
-// cut it short, since those edits, joined into one change, cannot always say
-// which words are the stored ones.
+// stays held and undo can still put it back; a new one the server holds with
+// no anchors joins with none. Any other new marker is placed on the server's
+// anchors only when settled gives the edits from the text they count into to
+// the editor text exactly (see unsavedChanges().settledFrom); otherwise it is
+// left out of the set and waits until this editor's own save has landed and
+// the markers are read again. Mapping it through unsaved edits could put it
+// on the wrong words or cut it short, since those edits, joined into one
+// change, cannot always say which words are the stored ones.
 export function rebuiltMarkers(
 	incoming: SceneMarker[],
 	current: { id: string; anchorStart: number; anchorEnd: number }[],
