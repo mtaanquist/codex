@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { limitPhrase, MEGABYTE, parseLimit, parseLimitInput, quotaMessage } from './quota';
+import {
+	imageLimit,
+	limitPhrase,
+	MAX_IMAGE_BYTES,
+	MEGABYTE,
+	NO_LIMITS,
+	parseLimit,
+	parseLimitInput,
+	quotaMessage
+} from './quota';
 import { formatBytes } from './format';
 
 describe('parseLimit', () => {
@@ -33,11 +42,20 @@ describe('parseLimitInput', () => {
 	});
 });
 
+describe('imageLimit', () => {
+	it('is the ceiling unless the plan sets a lower size', () => {
+		expect(imageLimit(NO_LIMITS)).toBe(MAX_IMAGE_BYTES);
+		expect(imageLimit({ ...NO_LIMITS, max_image_bytes: 2 * MEGABYTE })).toBe(2 * MEGABYTE);
+		expect(imageLimit({ ...NO_LIMITS, max_image_bytes: 50 * MEGABYTE })).toBe(MAX_IMAGE_BYTES);
+	});
+});
+
 describe('quota wording', () => {
 	it('names the limit with the right noun', () => {
 		expect(limitPhrase('max_universes', 1)).toBe('1 universe');
 		expect(limitPhrase('max_stories', 12)).toBe('12 stories');
 		expect(limitPhrase('storage_bytes', 50 * MEGABYTE)).toBe('50 MB');
+		expect(limitPhrase('max_image_bytes', 2 * MEGABYTE)).toBe('2 MB');
 	});
 
 	it('tells the writer which limit they hit and who to ask', () => {
@@ -46,10 +64,15 @@ describe('quota wording', () => {
 		expect(create).toContain('ask the admin');
 		expect(quotaMessage('max_universes', 2, 'restore')).toMatch(/^Restoring this/);
 		expect(quotaMessage('storage_bytes', MEGABYTE)).toContain('1 MB of uploaded images');
+		expect(quotaMessage('max_image_bytes', 2 * MEGABYTE)).toContain('limit of 2 MB per image');
 	});
 
 	it('keeps to plain ASCII', () => {
-		for (const text of [quotaMessage('max_universes', 2), quotaMessage('storage_bytes', 9)]) {
+		for (const text of [
+			quotaMessage('max_universes', 2),
+			quotaMessage('storage_bytes', 9),
+			quotaMessage('max_image_bytes', MEGABYTE)
+		]) {
 			expect(text).toMatch(/^[\x20-\x7e]+$/);
 		}
 	});

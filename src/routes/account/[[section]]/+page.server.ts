@@ -87,6 +87,8 @@ import { listPasskeys, removePasskey } from '#lib/server/passkeys';
 import { reauthLimit } from '#lib/server/reauth';
 import QRCode from 'qrcode';
 import { formText } from '#lib/server/validation';
+import { accountLimits } from '#lib/server/quotas';
+import { imageLimit } from '#lib/quota';
 import {
 	createPersonalToken,
 	listGrants,
@@ -190,6 +192,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		displayName: user.displayName,
 		email: user.email,
 		assetsConfigured: (await effectiveAssetConfig(db)) !== null,
+		maxImageBytes: imageLimit(await accountLimits(db, user.id)),
 		isAdmin: user.role === 'admin',
 		origin: publicOrigin(url),
 		profile,
