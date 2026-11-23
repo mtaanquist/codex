@@ -46,26 +46,40 @@ async function hasPendingMigrations(client: pg.Client, entries: JournalEntry[]):
 	return entries[entries.length - 1].when > applied;
 }
 
+// The sweep's reads this role may signal. The name is checked in the same
+// statement as the cancel, so a pooled connection that has since moved on to
+// other work is not cancelled.
+const LONG_READS = `from pg_stat_activity
+	where application_name = $1 and datname = current_database() and pid <> pg_backend_pid()
+		and (pg_has_role(usesysid, 'USAGE') or pg_has_role('pg_signal_backend', 'USAGE'))`;
+
 /** Cancels the long reads that would hold up a migration; returns how many. */
 export async function cancelLongReads(client: pg.ClientBase): Promise<number> {
-	// pg_cancel_backend raises an error, rather than returning false, for a
-	// backend this role may not signal, so those are left out here and any
-	// refusal still left is logged and passed over: the migration then waits
-	// for that read to end instead of not starting at all.
-	const { rows } = await client.query<{ pid: number }>(
-		`select pid from pg_stat_activity
-		where application_name = $1 and datname = current_database() and pid <> pg_backend_pid()
-			and (pg_has_role(usesysid, 'USAGE') or pg_has_role('pg_signal_backend', 'USAGE'))`,
-		[CANCEL_ON_MIGRATE_APP_NAME]
-	);
+	const count = (rows: { cancelled: boolean }[]) => rows.filter((row) => row.cancelled).length;
+	try {
+		const { rows } = await client.query<{ cancelled: boolean }>(
+			`select pg_cancel_backend(pid) as cancelled ${LONG_READS}`,
+			[CANCEL_ON_MIGRATE_APP_NAME]
+		);
+		return count(rows);
+	} catch {
+		// pg_cancel_backend raises an error, rather than returning false, for a
+		// backend this role still may not signal (a superuser's), which fails the
+		// whole statement. Cancel one at a time instead, logging and passing over
+		// a refusal: the migration then waits for that read to end instead of not
+		// starting at all.
+	}
+	const { rows } = await client.query<{ pid: number }>(`select pid ${LONG_READS}`, [
+		CANCEL_ON_MIGRATE_APP_NAME
+	]);
 	let cancelled = 0;
 	for (const { pid } of rows) {
 		try {
 			const result = await client.query<{ cancelled: boolean }>(
-				'select pg_cancel_backend($1) as cancelled',
-				[pid]
+				`select pg_cancel_backend(pid) as cancelled ${LONG_READS} and pid = $2`,
+				[CANCEL_ON_MIGRATE_APP_NAME, pid]
 			);
-			if (result.rows[0]?.cancelled) cancelled += 1;
+			cancelled += count(result.rows);
 		} catch (error) {
 			console.warn(
 				`Could not cancel long-running read ${pid}: ${error instanceof Error ? error.message : String(error)}`

@@ -13,6 +13,24 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 8 (2026-11-23, `fix/phase-10-review-8` on
+`staging/phase-10`). The sweep's read before the delete bound the due id list
+once per column it reads (about 400), so a large backlog sent hundreds of MB
+of parameters and failed every night; the list is now bound once in a
+`wanted` CTE every column's part reads, as the full read's `scope` does. Not
+batched: each batch would read every column again. `purgeUniverse` locks the
+owner's account row even when the universe has no images, so it takes rows
+in the account purge's order; the lock-order suite gained that case.
+`cancelLongReads` cancels in the statement that matches the application
+name, so a pooled connection that moved on is not cancelled, and falls back
+to one pid at a time (name re-checked in the cancel) when a refusal fails the
+statement. Partial indexes on the three badge columns (migration 0110) speed
+the foreign-key check on each sweep delete. The import preview leaves out the
+per-image and storage warnings when image storage is not set up.
+`reviveIfTrashed` re-reads the trash state under its row lock: a home another
+request revived is returned as is (no second quota check), and one purged
+meanwhile is replaced by a new standalone universe.
+
 Phase 10 staging review round 7 (2026-11-23, `fix/phase-10-review-7` on
 `staging/phase-10`). The sweep committed each delete chunk on its own but
 logged `assets.unused_deleted` only after the last one, so a later chunk that

@@ -771,6 +771,13 @@
 			"when": 1795431993158,
 			"tag": "0109_unreferenced-since",
 			"breakpoints": true
+		},
+		{
+			"idx": 110,
+			"version": "7",
+			"when": 1795445917014,
+			"tag": "0110_badge-asset-indexes",
+			"breakpoints": true
 		}
 	]
 }
