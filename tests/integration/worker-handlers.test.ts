@@ -13,6 +13,7 @@ import {
 	assistantDrafts,
 	chapters,
 	characters,
+	entityMentions,
 	notifications,
 	reviewComments,
 	reviewers,
@@ -736,6 +737,61 @@ describe('a details read for one entry', () => {
 				'The Assistant stopped reading for details about Bram before the next request could take it past your spend cap, having spent about $1.25, with 3 suggestions left on the entry. Raise the cap in settings, then select "Suggest details with the Assistant" on the entry again.'
 			].sort()
 		);
+	});
+
+	it('says when stories muted during the read left nothing to read, or no summary (#1419)', async () => {
+		const { owner, data } = await seedRead();
+		const results = [
+			{ suggestions: [], scenes: 4, requests: 0, skipped: 'all' as const },
+			{ suggestions: found(2), scenes: 4, requests: 1, skipped: 'summary' as const },
+			{ suggestions: [], scenes: 4, requests: 1, skipped: 'summary' as const }
+		];
+		const { handlers } = harness({ enrichEntityFromText: async () => results.shift()! });
+
+		for (let i = 0; i < 3; i++) await handlers.assistantEnrich([job(data)]);
+
+		expect((await titles(owner.id)).sort()).toEqual(
+			[
+				'The Assistant read nothing for Bram, because the story it would read has the Assistant turned off or is in the trash. Turn the Assistant back on for the story, or restore it from the trash, then select "Suggest details with the Assistant" on the entry again.',
+				'The Assistant left 2 suggestions for Bram, but no summary, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, select "Suggest details with the Assistant" on the entry again.',
+				'The Assistant found nothing new to suggest for Bram, and no summary, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, select "Suggest details with the Assistant" on the entry again.'
+			].sort()
+		);
+	});
+
+	it('says the stories were muted or trashed when that happened before the read started (#1430)', async () => {
+		const { owner, universe, story, character, data } = await seedRead();
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId: story.id, globalPosition: 1, bodyMd: 'Bram in the MUTED-BOOK.' })
+			.returning({ id: scenes.id });
+		await db.insert(entityMentions).values({
+			sourceType: 'scene',
+			sourceId: scene.id,
+			targetType: 'character',
+			targetId: character.id,
+			position: 0,
+			surroundingText: 'Bram in the MUTED-BOOK.'
+		});
+		// Muted after the read was queued. The real read runs with no model set
+		// up, so a request sent anywhere would fail the job.
+		await db
+			.update(stories)
+			.set({ llmConfig: { enabled: false } })
+			.where(eq(stories.id, story.id));
+		const { handlers, completed } = harness();
+
+		await handlers.assistantEnrich([
+			job({ ...data, read: { entityId: character.id, name: 'Bram', mode: 'scenes' as const } })
+		]);
+
+		expect(await titles(owner.id)).toEqual([
+			'The Assistant read nothing for Bram, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then select "Suggest details with the Assistant" on the entry again.'
+		]);
+		expect(await hrefs(owner.id)).toEqual([
+			`/universes/${universe.id}/plan?entity=${character.id}`
+		]);
+		expect(completed).toEqual([]);
 	});
 
 	it("says nothing for an entry that is gone or not the writer's", async () => {

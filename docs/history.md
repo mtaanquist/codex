@@ -368,6 +368,63 @@ transaction. A suspended author's shelf, story and universe pages,
 redirects, covers, images, avatar and reader downloads answer as not found
 until the suspension is lifted (#1441).
 
+Undo brings back a marker whose words were deleted (2026-11-23,
+`fix/marker-undo-reattach` on `staging/bug-fixes-2`, #1429). Since #1415 a
+Write save detaches a marker whose words the writer deleted, and undo did not
+bring it back: CodeMirror drops an emptied mark decoration and the marker
+field is not part of the undo history. The editor now registers the marker
+field with `invertedEffects`, so an edit that drops a marker stores its old
+range in the undo step; undoing it adds the highlight back on the restored
+words and the next autosave sends the anchor again. Chosen over having the
+server re-place a detached marker when "its words reappear": the server keeps
+no copy of a marker's words, and matching text would risk landing on another
+copy of the same phrase. The editor's own history maps the range exactly.
+Not covered: an undo after a reload, which has no history to undo from.
+Review follow-up (`fix/marker-undo-partial`): recording only the edit that
+emptied the marker restored a too-short range, because earlier keystrokes had
+already shrunk the highlight (backspacing "sat" and undoing left the marker on
+"s"), and partial deletes were never restored at all. Every edit that cuts
+into a marker now records the range it had just before that edit, as
+CodeMirror's own highlight example does, and the restore widens the marker to
+the union of its current range and the recorded one, so the order in which a
+joined undo step applies its effects does not matter and a marker is never
+added twice.
+Second follow-up (`fix/marker-undo-widen` on `staging/bug-fixes-3`, #1437):
+the union could widen a marker. Within one joined undo step, what was left of
+the highlight could map back to a position before the restored words (type
+over the start of a marker, then delete from just before it into the typed
+text), and the union took that edge. Redo had the same weakness the other
+way: mapping through a joined step's composed change could stretch a cut
+marker over words typed next to it, or keep a deleted marker alive over its
+replacement text. CodeMirror's mapping through a composed change is not exact
+at the change's edges, so the editor no longer relies on it for touched
+markers. Every edit now records, for each marker it touches (overlaps or
+borders), the exact range before the edit, and for each held marker already
+gone, that it was gone; undo and redo set those markers to the recorded state
+instead of merging. A joined step lists its effects earliest last, so the
+state from before the whole step is applied last and wins. The "gone"
+records are scoped to the marker set that made them, so a set rebuilt from
+fresh server anchors (after marking or checking off) is not emptied by old
+history. A seeded random test (1500 edit, undo and redo sequences on three
+markers) checks that whenever undo or redo returns to text seen before, the
+markers match what they were then.
+
+Markers a Write save does not mention (2026-11-22,
+`fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write
+autosave sends anchors only for the markers its editor highlights, and the
+save used to write those and leave every other marker's offsets alone. A
+marker the `remap-markers` sweep placed after the editor loaded it detached
+therefore stayed at its offsets while the writer typed above it, and ended
+up on the wrong words. A save with anchors now also maps every anchored
+marker it did not mention through the old-to-new comparison, as a save
+without anchors does (so a resolved marker, or one made in another tab,
+keeps up too, and one whose words were deleted is detached). Fixed on the
+server rather than by having the editor send detached ids: it covers every
+marker the editor does not track, and a stale tab needs no reload. Skipping
+the sweep when the scene was saved after the row was made would not have
+helped, since the sweep runs before the writer types. The editor still
+shows such a marker without a highlight until the scene is opened again.
+
 Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
 on `staging/bug-fixes`, staging review round 2). Review anchors count
 characters in the stored body, where \r\n is two: the guest review page

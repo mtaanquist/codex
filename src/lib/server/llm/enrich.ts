@@ -17,6 +17,7 @@ import {
 	ENRICH_TEXT_REPLY_TOKENS,
 	enrichTextBudget,
 	entityExcerpts,
+	excerptsWithheld,
 	estimateEnrich,
 	formatExcerpts,
 	splitExcerptParts,
@@ -193,6 +194,9 @@ export type EnrichTextResult = {
 	spentUsd?: number;
 	// Set when the entity is not the user's, or not in the scope's universe.
 	missing?: boolean;
+	// Set when stories muted or trashed since the read was queued left nothing
+	// to read ('all'), or took the part the summary is asked from ('summary').
+	skipped?: 'all' | 'summary';
 };
 
 // The entity a read or an estimate is about, when it is the user's and in the
@@ -227,23 +231,24 @@ async function entityInScope(
 	return story?.universeId === universeId;
 }
 
-// The scenes of a part whose story the Assistant still reads. A universe-wide
-// read covers several stories and the gateway checks a story's mute only on a
-// request scoped to that story, so each part is checked as it is sent: a story
-// muted or trashed while earlier parts are read is left out of the rest.
+// The parts as the Assistant may still read them: each part's scenes whose
+// story is not muted or trashed. A universe-wide read covers several stories
+// and the gateway checks a story's mute only on a request scoped to that story,
+// so the parts left are checked before each one is sent: a story muted or
+// trashed while earlier parts are read is left out of the rest.
 async function stillReadable(
 	db: Database,
 	scope: EnrichScope,
-	part: ExcerptScene[]
-): Promise<ExcerptScene[]> {
-	if (!('universeId' in scope)) return part;
-	const ids = [...new Set(part.map((scene) => scene.storyId))];
+	parts: ExcerptScene[][]
+): Promise<ExcerptScene[][]> {
+	if (!('universeId' in scope)) return parts;
+	const ids = [...new Set(parts.flat().map((scene) => scene.storyId))];
 	const open = await db
 		.select({ id: stories.id })
 		.from(stories)
 		.where(and(inArray(stories.id, ids), isNull(stories.deletedAt), storyAssistantOn()));
 	const readable = new Set(open.map((row) => row.id));
-	return part.filter((scene) => readable.has(scene.storyId));
+	return parts.map((part) => part.filter((scene) => readable.has(scene.storyId)));
 }
 
 // The button's read, run as a background job: the full text of the scenes that
@@ -271,7 +276,11 @@ export async function enrichEntityFromText(
 	const kind = entity.type === 'lore_entry' ? ('lore' as const) : entity.type;
 
 	const excerpts = await entityExcerpts(db, { ...opts, kind });
-	if (excerpts.length === 0) return none;
+	if (excerpts.length === 0) {
+		// Muted or trashed stories hold the only scenes it would read.
+		const withheld = await excerptsWithheld(db, { ...opts, kind });
+		return withheld ? { ...none, skipped: 'all' } : none;
+	}
 	const budget = await enrichTextBudget(db, opts.userId, opts.scope);
 	const parts = splitExcerptParts(excerpts, budget.partTokens);
 	// Keyed by the job, so a retry carries on from what it already spent.
@@ -302,6 +311,7 @@ export async function enrichEntityFromText(
 	let requests = 0;
 	let failure: unknown;
 	let capped = false;
+	let summaryAsked = false;
 	for (const index of parts.keys()) {
 		if (opts.signal?.aborted) {
 			failure = opts.signal.reason ?? new Error('stopped');
@@ -311,9 +321,13 @@ export async function enrichEntityFromText(
 			capped = true;
 			break;
 		}
-		const last = index === parts.length - 1;
-		const part = await stillReadable(db, opts.scope, parts[index]);
+		const [part, ...later] = await stillReadable(db, opts.scope, parts.slice(index));
 		if (part.length === 0) continue;
+		// The last part with anything left to read, so a story muted after the
+		// read began does not take the summary request with its part. Asked
+		// once: a story unmuted after an earlier part asked can make a later
+		// part last too.
+		const last = !summaryAsked && later.every((rest) => rest.length === 0);
 		const content = buildEnrichTextMessage(
 			// The summary is asked for once, from the last part, which also has
 			// what the earlier parts found.
@@ -345,6 +359,7 @@ export async function enrichEntityFromText(
 				deps
 			);
 			requests += 1;
+			if (last) summaryAsked = true;
 			if (result.cutOff) {
 				throw new ReplyCutOffError(CUT_OFF_ADVICE);
 			}
@@ -353,11 +368,12 @@ export async function enrichEntityFromText(
 			const proposals = parseEnrichResponse(result.content).filter(
 				(p) => p.field !== 'summary' || (last && !summaryClosed)
 			);
-			const before = found.length;
+			const earlier = new Set(found);
 			found = mergeProposals(found, proposals);
-			// Only what this part added; the summary comes from the last part
-			// alone, so it is last here too, where staging stops.
-			const fresh = found.slice(before);
+			// Only what this part added. Picked out by identity, not position: a
+			// part read after the summary's (see last above) adds finds ahead of
+			// it, since mergeProposals keeps the summary at the end.
+			const fresh = found.filter((p) => !earlier.has(p));
 			if (fresh.length) {
 				suggestions.push(
 					...(await stageEntitySuggestions(db, {
@@ -386,10 +402,19 @@ export async function enrichEntityFromText(
 			...errorFields(failure)
 		});
 	}
+	// A story muted or trashed after the read began can leave nothing to read,
+	// or empty the parts after the last one sent, so the summary is never asked
+	// for. Said only when the read otherwise ran to the end.
+	let skipped: EnrichTextResult['skipped'];
+	if (!failure && !capped) {
+		if (requests === 0) skipped = 'all';
+		else if (!summaryAsked && !summaryClosed) skipped = 'summary';
+	}
 	return {
 		suggestions,
 		scenes: new Set(excerpts.map((scene) => scene.id)).size,
 		requests,
+		...(skipped ? { skipped } : {}),
 		...(failure ? { partial: true } : {}),
 		// A cut-off reply is something the writer can fix in the settings.
 		...(failure instanceof ReplyCutOffError ? { partialNote: failure.message } : {}),
