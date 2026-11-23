@@ -6,6 +6,7 @@
 	import EntityBadge from './EntityBadge.svelte';
 	import FormStatus from './FormStatus.svelte';
 	import { del, put, upload } from '#lib/api';
+	import { shrinkImage } from '#lib/image-shrink';
 
 	// The entity badge and its little menu: palette swatches and the image
 	// actions. Colour and image post straight to the badge endpoint (not the
@@ -85,7 +86,7 @@
 		closePicker();
 		error = null;
 		const data = new FormData();
-		data.set('file', file);
+		data.set('file', await shrinkImage(file));
 		const result = await upload<{ id: string }>(
 			`/api/entities/${entityId}/badge`,
 			data,

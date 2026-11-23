@@ -13,6 +13,29 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Large images shrink in the browser (2026-11-23, `feat/image-downscale` on
+`staging/phase-10`, #1450). Images used to be stored exactly as uploaded. Now
+`shrinkImage` (`src/lib/image-shrink.ts`) scales a still image longer than
+2560 px down to that on its long edge and re-encodes it as WebP at quality
+0.85, with `createImageBitmap(file, { imageOrientation: 'from-image' })` so a
+phone photo comes out upright, and an `OffscreenCanvas` (a plain canvas where
+there is none). It keeps the original whenever it cannot do better: the image
+fits already, the copy is not smaller, the browser hands back another type
+(Safari's canvas could not encode WebP until recently and falls back to PNG),
+or decoding fails. Animation is detected from the first 64 KB rather than by
+decoding: every GIF is skipped (counting GIF frames means walking the whole
+file, and a large still GIF is rare), and so is a PNG with `acTL` before its
+first `IDAT`, a WebP with the VP8X animation flag, and an AVIF branded
+`avis`. A PNG whose first `IDAT` is past the 64 KB read is treated as
+animated, so it goes up unchanged. The decision logic is unit-tested through
+an injected codec; the canvas path itself runs only in a browser. The editor
+and the badge picker post with fetch, so they call it directly; the cover and
+avatar forms are plain form posts, so `shrinkImagesOnSubmit` holds the submit,
+swaps the input's files through a `DataTransfer`, and submits again. Story
+import sends the archive to the server, which extracts its images there; that
+path is unchanged. No server dependency was added, and the server checks are
+the same.
+
 Public pages at /@handle/slug (2026-11-22, `feat/public-slug-pages` on
 `staging/phase-10`, #854). The roadmap assumed `(owner_id, slug)` made
 `/@handle/<slug>` collision-free, but stories and universes keep separate
