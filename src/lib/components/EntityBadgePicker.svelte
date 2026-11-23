@@ -38,6 +38,8 @@
 	// svelte-ignore state_referenced_locally
 	let badgeAssetId = $state(initialBadgeAssetId);
 	let menuOpen = $state(false);
+	// True while a picked image shrinks and uploads; the badge shows it.
+	let uploading = $state(false);
 	let trigger = $state<HTMLButtonElement>();
 	let fileInput = $state<HTMLInputElement>();
 	let dialogEl = $state<HTMLDivElement>();
@@ -85,13 +87,19 @@
 		if (!file) return;
 		closePicker();
 		error = null;
-		const data = new FormData();
-		data.set('file', await shrinkImage(file));
-		const result = await upload<{ id: string }>(
-			`/api/entities/${entityId}/badge`,
-			data,
-			'Could not upload the image. Try again.'
-		);
+		uploading = true;
+		let result;
+		try {
+			const data = new FormData();
+			data.set('file', await shrinkImage(file));
+			result = await upload<{ id: string }>(
+				`/api/entities/${entityId}/badge`,
+				data,
+				'Could not upload the image. Try again.'
+			);
+		} finally {
+			uploading = false;
+		}
 		if (!result.ok) return fail(result.message);
 		badgeAssetId = result.id;
 		await refreshAll();
@@ -121,12 +129,16 @@
 	<button
 		bind:this={trigger}
 		class="badge-pick-btn"
+		class:uploading
 		type="button"
 		aria-haspopup="dialog"
 		aria-expanded={menuOpen}
-		title="Change the badge colour or image"
-		aria-label="Change the badge colour or image"
+		aria-busy={uploading}
+		aria-disabled={uploading}
+		title={uploading ? 'Uploading the image...' : 'Change the badge colour or image'}
+		aria-label={uploading ? 'Uploading the image...' : 'Change the badge colour or image'}
 		onclick={() => {
+			if (uploading) return;
 			menuOpen = !menuOpen;
 			error = null;
 		}}
@@ -205,6 +217,10 @@
 	}
 	.badge-pick-btn:hover {
 		opacity: 0.9;
+	}
+	.badge-pick-btn.uploading {
+		opacity: 0.45;
+		cursor: progress;
 	}
 	.badge-menu {
 		position: absolute;

@@ -8,6 +8,7 @@ import {
 	parseLimit,
 	megabytesValue,
 	parseLimitInput,
+	imageMegabytesValue,
 	parseMegabytesField,
 	parseMegabytesInput,
 	quotaMessage
@@ -65,7 +66,12 @@ describe('quota wording', () => {
 		const create = quotaMessage('max_stories', 3);
 		expect(create).toContain('limit of 3 stories');
 		expect(create).toContain('ask the admin');
-		expect(quotaMessage('max_universes', 2, 'restore')).toMatch(/^Restoring this/);
+		const restore = quotaMessage('max_universes', 2, 'restore');
+		expect(restore).toMatch(/^Restoring this.*limit of 2 universes/);
+		expect(restore).toContain('move another universe to the trash');
+		expect(restore).toContain('ask the admin');
+		expect(restore).toContain('still deleted for good');
+		expect(quotaMessage('max_stories', 3, 'restore')).toContain('move another story to the trash');
 		expect(quotaMessage('max_stories', 3, 'revive')).toMatch(
 			/^Your standalone stories are in the trash.*limit of 3 stories/
 		);
@@ -76,6 +82,7 @@ describe('quota wording', () => {
 	it('keeps to plain ASCII', () => {
 		for (const text of [
 			quotaMessage('max_universes', 2),
+			quotaMessage('max_stories', 2, 'restore'),
 			quotaMessage('storage_bytes', 9),
 			quotaMessage('max_image_bytes', MEGABYTE)
 		]) {
@@ -124,6 +131,19 @@ describe('megabyte limits', () => {
 			expect(saved).not.toBeUndefined();
 			expect(megabytesValue(saved ?? null)).toBe(shown);
 		}
+	});
+});
+
+describe('imageMegabytesValue', () => {
+	it('shows a stored per-image limit above the ceiling as the ceiling', () => {
+		expect(imageMegabytesValue(15 * MEGABYTE)).toBe('10');
+		expect(imageMegabytesValue(2 * MEGABYTE)).toBe('2');
+		expect(imageMegabytesValue(null)).toBe('');
+	});
+
+	it('gives a value the form can save unchanged', () => {
+		const stored = String(15 * MEGABYTE);
+		expect(parseMegabytesField(imageMegabytesValue(15 * MEGABYTE), stored, 10)).toBe(10 * MEGABYTE);
 	});
 });
 

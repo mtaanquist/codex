@@ -10,6 +10,7 @@ import {
 import { rateLimitUploads } from '#lib/server/write-guard';
 import { throwActionError } from '#lib/server/action-result';
 import { readJson } from '#lib/server/validation';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The entity badge: PUT sets a palette colour (null clears it), POST uploads
 // an image, DELETE removes the image. Owner-scoped inside the helpers, which
@@ -27,7 +28,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	rateLimitUploads(locals.user!.id);
 	const config = await effectiveAssetConfig(db);
-	if (!config) error(503, 'Image uploads are not set up on this server.');
+	if (!config) error(503, ASSETS_OFF_MESSAGE);
 	const data = await request.formData();
 	const file = data.get('file');
 	if (!(file instanceof File) || file.size === 0) error(400, 'Choose an image to upload.');

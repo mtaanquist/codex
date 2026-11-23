@@ -7,14 +7,11 @@ import { queueSceneMentions } from './jobs';
 import { replaceWholeWord, wholeWordMatches } from '#lib/prose-replace';
 import { wordCount } from '#lib/word-count';
 import { toLf } from '#lib/line-endings';
+import { likePattern } from './sql-like';
 
 // Renaming an entity can sweep the old name out of the prose: count first
 // so the offer says what it will touch, then replace with a revision per
 // changed scene so it is undoable from History.
-
-function likePattern(find: string): string {
-	return `%${find.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
-}
 
 // Live scenes in the universe whose prose contains the text at all; the
 // whole-word check happens in code on this shortlist.

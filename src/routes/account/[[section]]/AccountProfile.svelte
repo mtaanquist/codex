@@ -12,6 +12,7 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let avatarForm = $state<HTMLFormElement | null>(null);
+	let avatarShrinking = $state(false);
 	let profileForm = $state<HTMLFormElement | null>(null);
 
 	// Claiming the handle is the first step into public, so with no pen name
@@ -91,10 +92,13 @@
 							action="?/uploadAvatar"
 							enctype="multipart/form-data"
 							bind:this={avatarForm}
-							use:shrinkImagesOnSubmit
+							use:shrinkImagesOnSubmit={{
+								maxBytes: data.maxImageBytes,
+								onBusy: (busy) => (avatarShrinking = busy)
+							}}
 						>
-							<label class="btn btn-secondary btn-sm">
-								Upload photo
+							<label class="btn btn-secondary btn-sm" aria-busy={avatarShrinking}>
+								{avatarShrinking ? 'Uploading...' : 'Upload photo'}
 								<input
 									type="file"
 									name="file"

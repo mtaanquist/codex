@@ -4,6 +4,7 @@ import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { effectiveAssetConfig, getObjectOrNull, s3AssetStore } from '#lib/server/assets';
 import { exportForDownload } from '#lib/server/user-exports';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // Streams a finished user export to its owner. The file was built in the
 // worker and stored in the asset bucket; this only checks ownership and
@@ -11,7 +12,7 @@ import { exportForDownload } from '#lib/server/user-exports';
 export const GET: RequestHandler = async ({ params, locals }) => {
 	if (!locals.user) error(404, 'Not found');
 	const config = await effectiveAssetConfig(db);
-	if (!config) error(503, 'assets are not configured');
+	if (!config) error(503, ASSETS_OFF_MESSAGE);
 
 	const row = await exportForDownload(db, params.id, locals.user.id);
 	if (!row || !row.storageKey) error(404, 'Not found');

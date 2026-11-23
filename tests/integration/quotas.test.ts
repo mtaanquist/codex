@@ -26,6 +26,7 @@ import {
 } from '../../src/lib/server/assets';
 import {
 	accountLimits,
+	countLive,
 	holdCountQuota,
 	QuotaExceededError,
 	recountStorageUsed
@@ -34,7 +35,9 @@ import {
 	createPlan,
 	listAccountUsage,
 	listPlans,
+	recountStorageBatch,
 	savePlan,
+	USAGE_PAGE_SIZE,
 	setDefaultPlan,
 	setUserPlan
 } from '../../src/lib/server/plans';
@@ -718,7 +721,7 @@ describe('account usage', () => {
 			contentType: 'image/png',
 			bytes: png(64)
 		});
-		const usage = await listAccountUsage(db);
+		const usage = (await listAccountUsage(db)).accounts;
 		expect(usage.find((u) => u.id === ownerId)).toMatchObject({
 			planId: null,
 			universes: 1,
@@ -731,5 +734,88 @@ describe('account usage', () => {
 			storageBytes: 0
 		});
 		expect(await db.select().from(universes)).toHaveLength(3);
+		// The page's grouped counts agree with the ones the limits use.
+		expect(usage.find((u) => u.id === ownerId)).toMatchObject(await countLive(db, ownerId));
+	});
+
+	async function manyAccounts(n: number) {
+		await db.insert(users).values(
+			Array.from({ length: n }, (_, i) => ({
+				email: `many-${i}@example.com`,
+				displayName: `Many ${i}`,
+				passwordHash: 'x',
+				role: 'user' as const,
+				storageUsedBytes: i
+			}))
+		);
+	}
+
+	it('pages through the accounts, biggest image use first', async () => {
+		await manyAccounts(USAGE_PAGE_SIZE + 3);
+		const total = USAGE_PAGE_SIZE + 5;
+		const first = await listAccountUsage(db);
+		expect(first).toMatchObject({ total, page: 0, hasMore: true });
+		expect(first.accounts).toHaveLength(USAGE_PAGE_SIZE);
+		expect(first.accounts[0].storageBytes).toBe(USAGE_PAGE_SIZE + 2);
+		const second = await listAccountUsage(db, { page: 1 });
+		expect(second).toMatchObject({ total, page: 1, hasMore: false });
+		expect(second.accounts).toHaveLength(5);
+		const ids = new Set([...first.accounts, ...second.accounts].map((u) => u.id));
+		expect(ids.size).toBe(total);
+		expect((await listAccountUsage(db, { page: -4 })).page).toBe(0);
+	});
+
+	it('finds accounts by email or name, with LIKE wildcards taken as typed', async () => {
+		await manyAccounts(3);
+		expect((await listAccountUsage(db, { query: 'QUOTA@' })).accounts.map((u) => u.id)).toEqual([
+			ownerId
+		]);
+		const byName = await listAccountUsage(db, { query: 'many 1' });
+		expect(byName.total).toBe(1);
+		expect(byName.accounts[0].email).toBe('many-1@example.com');
+		expect((await listAccountUsage(db, { query: '%' })).total).toBe(0);
+		expect((await listAccountUsage(db, { query: '  ' })).total).toBe(5);
+	});
+});
+
+describe('batched storage recount', () => {
+	it('recounts every account a batch at a time', async () => {
+		const { store } = memoryStore();
+		await createAsset(db, store, config, ownerId, {
+			universeId: null,
+			kind: 'avatar',
+			filename: 'a.png',
+			contentType: 'image/png',
+			bytes: png(120)
+		});
+		await db.insert(users).values({
+			email: 'third@example.com',
+			displayName: 'T',
+			passwordHash: 'x',
+			role: 'user'
+		});
+		await db.update(users).set({ storageUsedBytes: 99_999 });
+		let after: string | null = null;
+		let total = 0;
+		let batches = 0;
+		do {
+			const batch: { recounted: number; next: string | null } = await recountStorageBatch(
+				db,
+				after,
+				2
+			);
+			total += batch.recounted;
+			after = batch.next;
+			batches++;
+		} while (after);
+		expect(total).toBe(3);
+		expect(batches).toBe(2);
+		expect(await used()).toBe(120);
+		expect(await used(otherId)).toBe(0);
+	});
+
+	it('says there is nothing more when the last batch is exactly full', async () => {
+		const first = await recountStorageBatch(db, null, 2);
+		expect(first).toEqual({ recounted: 2, next: null });
 	});
 });

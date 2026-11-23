@@ -57,8 +57,10 @@ export function isPublicRef(value: string): boolean {
 
 /**
  * The public address of a story or universe listed by slug. A uuid-shaped
- * ref is always looked up as an id, so a slug of that shape (set before
- * isValidSlug refused them) is linked by the id instead.
+ * ref is always looked up as an id, so a slug of that shape is linked by the
+ * id instead. Such a slug comes from a title that slugifies to a uuid, saved
+ * by the 0035 backfill or by a create or rename before uniqueSlug began
+ * giving those a suffix.
  */
 export function slugAddress(item: { id: string; slug: string }): string {
 	return isUuid(item.slug.toLowerCase()) ? item.id : item.slug;

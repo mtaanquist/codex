@@ -30,6 +30,8 @@ import {
 	type ExportFormat
 } from '#lib/server/user-exports';
 import { exportLimit, uploadLimit } from '#lib/server/rate-limit';
+import { accountLimits } from '#lib/server/quotas';
+import { imageLimit, MAX_IMAGE_BYTES } from '#lib/quota';
 import { STORY_TRASH_DAYS, trashStory } from '#lib/server/story-lifecycle';
 import { saveStoryDetails } from '#lib/server/story-details';
 import { publications, users } from '#lib/server/db/schema';
@@ -55,6 +57,7 @@ import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The current edition, if the story has been published.
 async function currentEdition(storyId: string) {
@@ -137,6 +140,11 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		timeline,
 		trashDays: STORY_TRASH_DAYS,
 		assetsConfigured,
+		// Only the Cover section uses it.
+		maxImageBytes:
+			params.section === 'cover'
+				? imageLimit(await accountLimits(db, locals.user!.id))
+				: MAX_IMAGE_BYTES,
 		archive,
 		// The first publish with no pen name set asks what name goes public.
 		displayName: locals.user!.displayName,
@@ -360,7 +368,7 @@ export const actions: Actions = {
 			return fail(400, { action: 'exports', message: 'Publish an edition first.' });
 		}
 		if (!(await effectiveAssetConfig(db))) {
-			return fail(400, { action: 'exports', message: 'Assets are not configured on this server.' });
+			return fail(400, { action: 'exports', message: ASSETS_OFF_MESSAGE });
 		}
 		if (!(await queueExportArtifacts(edition.id))) {
 			return fail(500, { action: 'exports', message: 'Could not queue the export run.' });
@@ -420,7 +428,7 @@ export const actions: Actions = {
 		}
 		const config = await effectiveAssetConfig(db);
 		if (!config) {
-			return fail(400, { action: 'cover', message: 'Assets are not configured on this server.' });
+			return fail(400, { action: 'cover', message: ASSETS_OFF_MESSAGE });
 		}
 		const data = await request.formData();
 		const file = data.get('cover');

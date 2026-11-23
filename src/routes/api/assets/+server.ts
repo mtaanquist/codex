@@ -6,6 +6,7 @@ import { effectiveAssetConfig, createAsset, s3AssetStore } from '#lib/server/ass
 import { rateLimitUploads } from '#lib/server/write-guard';
 import { formText } from '#lib/server/validation';
 import { logEvent } from '#lib/server/log';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // Accepts an image upload (multipart form: file, kind, universeId) and
 // returns the app-served path for it.
@@ -16,7 +17,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		logEvent('warn', 'assets.not_configured', {
 			detail: 'set the asset bucket in Admin > Usage & storage or the ASSET_S3_* variables'
 		});
-		error(503, 'Image uploads are not set up on this server. Ask the person who runs it.');
+		error(503, ASSETS_OFF_MESSAGE);
 	}
 
 	const form = await request.formData();
