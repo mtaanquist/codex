@@ -7,6 +7,7 @@ import { and, eq, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { stories, universes } from './db/schema.ts';
 import { untrash } from './slugs.ts';
+import { holdCountQuota } from './quotas.ts';
 import { purgeStory } from './story-delete.ts';
 import { UNIVERSE_TRASH_DAYS } from './universe-lifecycle.ts';
 
@@ -53,10 +54,13 @@ export async function restoreStory(
 	userId: string,
 	storyId: string
 ): Promise<boolean> {
-	const story = await ownedStoryRow(db, userId, storyId, { deleted: true });
-	if (!story) return false;
-	await untrash(db, 'stories', story.id);
-	return true;
+	return db.transaction(async (tx) => {
+		const story = await ownedStoryRow(tx, userId, storyId, { deleted: true });
+		if (!story) return false;
+		await holdCountQuota(tx, userId, { stories: 1 }, 'restore');
+		await untrash(tx, 'stories', story.id);
+		return true;
+	});
 }
 
 export type TrashedStory = {

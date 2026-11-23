@@ -22,6 +22,8 @@ import {
 	type StoredS3
 } from './settings.ts';
 import type { ActionFailure } from './action-result.ts';
+import { accountLimits, releaseStorage, reserveStorage } from './quotas.ts';
+import { quotaMessage } from '../quota.ts';
 
 // Uploaded images live in an S3-compatible bucket, separate from the backups
 // bucket, which holds database dumps only. Deleting an image removes its row
@@ -239,24 +241,49 @@ export async function createAsset(
 		if (!universe) return { ok: false, code: 'not_found', reason: 'That universe does not exist.' };
 	}
 
+	// Checked once here so a file that cannot fit is never sent to the bucket,
+	// and again, binding, with the insert below.
+	const limit = (await accountLimits(db, userId)).storage_bytes;
+	const overLimit: ActionFailure = {
+		ok: false,
+		code: 'over_limit',
+		reason: quotaMessage('storage_bytes', limit ?? 0)
+	};
+	if (limit !== null) {
+		const [owner] = await db
+			.select({ used: users.storageUsedBytes })
+			.from(users)
+			.where(eq(users.id, userId));
+		if ((owner?.used ?? 0) + input.bytes.length > limit) return overLimit;
+	}
+
 	const id = randomUUID();
 	const storageKey = `${config.prefix}/${id}`;
 	await store.put(storageKey, input.bytes, contentType);
+	let stored: boolean;
 	try {
-		await db.insert(assets).values({
-			id,
-			ownerId: userId,
-			universeId: input.universeId,
-			kind: input.kind,
-			filename: input.filename.slice(0, 255) || 'upload',
-			contentType,
-			byteSize: input.bytes.length,
-			storageKey
+		stored = await db.transaction(async (tx) => {
+			if (!(await reserveStorage(tx, userId, input.bytes.length, limit))) return false;
+			await tx.insert(assets).values({
+				id,
+				ownerId: userId,
+				universeId: input.universeId,
+				kind: input.kind,
+				filename: input.filename.slice(0, 255) || 'upload',
+				contentType,
+				byteSize: input.bytes.length,
+				storageKey
+			});
+			return true;
 		});
 	} catch (error) {
 		// No orphaned objects: if the row cannot land, the object goes too.
 		await store.remove(storageKey).catch(() => {});
 		throw error;
+	}
+	if (!stored) {
+		await store.remove(storageKey).catch(() => {});
+		return overLimit;
 	}
 	return { ok: true, id };
 }
@@ -284,8 +311,13 @@ export async function deleteAsset(db: Database, userId: string, assetId: string)
 		const deleted = await tx
 			.delete(assets)
 			.where(and(eq(assets.id, assetId), eq(assets.ownerId, userId)))
-			.returning({ storageKey: assets.storageKey });
+			.returning({
+				storageKey: assets.storageKey,
+				ownerId: assets.ownerId,
+				byteSize: assets.byteSize
+			});
 		if (deleted.length === 0) return false;
+		await releaseStorage(tx, deleted);
 		await scheduleObjectDeletions(tx, [deleted[0].storageKey]);
 		return true;
 	});

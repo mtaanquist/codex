@@ -2,11 +2,14 @@ import { fail, redirect } from '@sveltejs/kit';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { isUniqueViolation } from '#lib/server/db-errors';
-import { entityCategories, universes } from '#lib/server/db/schema';
-import { uniqueSlug } from '#lib/server/slugs';
+import { universes } from '#lib/server/db/schema';
 import { isUuid } from '#lib/slug';
-import { createStoryInUniverse, standaloneUniverse } from '#lib/server/story-create';
+import {
+	createStoryInUniverse,
+	createUniverse,
+	standaloneUniverse
+} from '#lib/server/story-create';
+import { holdCountQuota, quotaFailure } from '#lib/server/quotas';
 import { storyStatus } from '#lib/dashboard';
 import { storyCoverColor } from '#lib/entity-color';
 import {
@@ -145,27 +148,13 @@ export const actions: Actions = {
 		if (!name) {
 			return fail(400, { scope: 'universe', message: 'Give the universe a name.' });
 		}
-		const create = (slug: string) =>
-			db.transaction(async (tx) => {
-				const [row] = await tx
-					.insert(universes)
-					.values({ ownerId: locals.user!.id, name, slug })
-					.returning();
-				// Every universe starts with a couple of categories; users rename
-				// and extend from there.
-				await tx.insert(entityCategories).values([
-					{ universeId: row.id, ownerId: locals.user!.id, name: 'Lore', sortOrder: 0 },
-					{ universeId: row.id, ownerId: locals.user!.id, name: 'Faction', sortOrder: 1 }
-				]);
-				return row;
-			});
 		let universe;
 		try {
-			universe = await create(await uniqueSlug(db, 'universes', locals.user.id, name, 'universe'));
+			universe = await createUniverse(db, locals.user.id, name);
 		} catch (err) {
-			// A concurrent create took the slug between the pick and the insert.
-			if (!isUniqueViolation(err)) throw err;
-			universe = await create(await uniqueSlug(db, 'universes', locals.user.id, name, 'universe'));
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { scope: 'universe', message });
 		}
 		redirect(303, `/universes/${universe.slug}`);
 	},
@@ -189,7 +178,14 @@ export const actions: Actions = {
 		if (!universe) {
 			return fail(404, { scope: 'story', universeId, message: 'That universe does not exist.' });
 		}
-		const story = await createStoryInUniverse(db, locals.user.id, universe.id, title);
+		let story;
+		try {
+			story = await createStoryInUniverse(db, locals.user.id, universe.id, title);
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { scope: 'story', universeId, message });
+		}
 		redirect(303, `/stories/${story.slug}`);
 	},
 	// The header's "New story": a story on its own, filed under the owner's
@@ -200,8 +196,18 @@ export const actions: Actions = {
 		if (!title) {
 			return fail(400, { scope: 'standalone', message: 'Give the story a title.' });
 		}
-		const universe = await standaloneUniverse(db, locals.user.id);
-		const story = await createStoryInUniverse(db, locals.user.id, universe.id, title);
+		let story;
+		try {
+			// Checked first too, so a refused story does not leave the
+			// standalone universe made for it.
+			await holdCountQuota(db, locals.user.id, { stories: 1 });
+			const universe = await standaloneUniverse(db, locals.user.id);
+			story = await createStoryInUniverse(db, locals.user.id, universe.id, title);
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { scope: 'standalone', message });
+		}
 		redirect(303, `/stories/${story.slug}`);
 	},
 	restoreUniverse: async ({ request, locals }) => {
@@ -211,7 +217,14 @@ export const actions: Actions = {
 		if (!isUuid(universeId)) {
 			return fail(404, { scope: 'trash', message: 'That universe is not in the trash.' });
 		}
-		const ok = await restoreUniverse(db, locals.user.id, universeId);
+		let ok;
+		try {
+			ok = await restoreUniverse(db, locals.user.id, universeId);
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { scope: 'trash', message });
+		}
 		if (!ok) return fail(404, { scope: 'trash', message: 'That universe is not in the trash.' });
 		return { scope: 'trash', restored: true };
 	},
@@ -232,7 +245,15 @@ export const actions: Actions = {
 		if (!locals.user) redirect(303, '/login');
 		const data = await request.formData();
 		const storyId = formText(data, 'storyId');
-		if (!isUuid(storyId) || !(await restoreStory(db, locals.user.id, storyId))) {
+		let ok;
+		try {
+			ok = isUuid(storyId) && (await restoreStory(db, locals.user.id, storyId));
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { scope: 'story-trash', message });
+		}
+		if (!ok) {
 			return fail(404, { scope: 'story-trash', message: 'That story is not in the trash.' });
 		}
 		return { scope: 'story-trash', restored: true };

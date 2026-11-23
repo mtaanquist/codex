@@ -3,6 +3,7 @@
 export const SECTIONS = [
 	'overview',
 	'users',
+	'plans',
 	'ai',
 	'usage',
 	'published',

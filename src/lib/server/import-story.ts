@@ -21,6 +21,7 @@ import { effectiveAssetConfig, createAsset, s3AssetStore } from './assets';
 import { createStoryEntity } from './create-entity';
 import { queueUniverseMentions } from './jobs';
 import { IMAGE_EXTENSIONS } from './media-types';
+import { holdCountQuota, quotaFailure } from './quotas';
 
 // Turns a parsed story zip into a new story in the chosen universe. The
 // preview names every collision and how it will resolve; the commit follows
@@ -101,6 +102,14 @@ export async function previewImport(
 		.from(stories)
 		.where(eq(stories.universeId, universe.id));
 	const resolutions = await resolveNotes(db, universe.id, plan.notes);
+	const problems = [...plan.problems];
+	try {
+		await holdCountQuota(db, universe.ownerId, { stories: 1 });
+	} catch (err) {
+		const reason = quotaFailure(err);
+		if (reason === undefined) throw err;
+		problems.unshift(reason);
+	}
 	return {
 		storyTitle: plan.story.title,
 		titleTaken: titleRows.some((row) => row.title === plan.story.title),
@@ -112,7 +121,7 @@ export async function previewImport(
 		waitingDraftCount: plan.waitingDrafts?.length ?? 0,
 		assetCount: plan.assets.length,
 		assetsConfigured: (await effectiveAssetConfig(db)) !== null,
-		problems: plan.problems
+		problems
 	};
 }
 
@@ -134,6 +143,9 @@ export async function runImport(
 	plan: ImportPlan
 ): Promise<ImportResult> {
 	const problems = [...plan.problems];
+	// Refuse before storing any image when the account has no room for the
+	// story; the check inside the transaction below is the binding one.
+	await holdCountQuota(db, universe.ownerId, { stories: 1 });
 
 	// Assets first, outside the transaction: object storage is not
 	// transactional anyway, and a failed import at worst leaves unreferenced
@@ -179,6 +191,7 @@ export async function runImport(
 	let waitingDraftsCreated = 0;
 
 	const story = await db.transaction(async (tx) => {
+		await holdCountQuota(tx, universe.ownerId, { stories: 1 });
 		const [created] = await tx
 			.insert(stories)
 			.values({

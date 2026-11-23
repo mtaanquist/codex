@@ -13,6 +13,40 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Plans, usage accounting and quota enforcement (2026-11-23, `feat/quotas` on
+`staging/phase-10`, #858). Migration 0107 creates `plans` and
+`entitlements` as `schema.md` had them, seeds a default plan with no
+entitlement rows (no limits, so self-host is unchanged), clears any stray
+`users.plan_id` and adds its foreign key, and backfills
+`storage_used_bytes` from the asset rows in SQL, the way 0083 backfilled
+stale marks; a worker job was weighed and dropped, since the sum is one
+grouped update. Only `max_universes`, `max_stories` and `storage_bytes` are
+enforced. Counts are of live rows, the idiomatic choice (a writer at the
+limit expects the trash to make room), which means restoring is checked like
+a create; restoring a universe counts the live stories it brings back. The
+standalone-stories universe is a container, so it never counts. Every create
+runs its check inside its own transaction under
+`pg_advisory_xact_lock(hashtext('quota:<user>'))`, taken only when a limit
+applies, so the default plan pays one small read and no lock. A refused
+count throws `QuotaExceededError`, which rolls the create's transaction
+back, and the routes turn it into a 403 form message; `newStoryFromDraft`
+returns it as an `over_limit` failure, matching its other failures.
+`untrash` now runs each slug attempt as a savepoint, so a restore can run in
+the caller's transaction. Storage is one conditional `update ... where
+storage_used_bytes + n <= limit` in the same transaction as the asset
+insert, after the object is stored; a refused upload removes its object. A
+pre-check before the bucket write keeps an obviously oversized file from
+being sent at all. Deletes and universe purges subtract in the same
+transaction. Trashing keeps the images counted until the purge. Replacing a
+cover, avatar or badge uploads the new file before the old one goes, so near
+the limit a replacement can be refused even though the net change is small;
+left as is. The admin recount locks each account row before summing, so an
+upload in flight is counted once. Admin got a Plans section (rename, limits,
+make default, new plan) and an Accounts block under Usage & storage with the
+plan picker per account, under the asset storage block, which was left
+alone. Plan deletion and the `public_archive` entitlement were left out: the
+per-account publishing switch already gates that.
+
 Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
 on `staging/bug-fixes`, staging review round 2). Review anchors count
 characters in the stored body, where \r\n is two: the guest review page

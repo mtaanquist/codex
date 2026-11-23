@@ -3,10 +3,12 @@ import type { Database } from './auth';
 import { isUniqueViolation } from './db-errors.ts';
 import { entityCategories, stories, universes } from './db/schema';
 import { uniqueSlug, untrash } from './slugs';
+import { holdCountQuota } from './quotas.ts';
 
 // Creates a story with a readable slug, shared by the library's new-story
 // card and the universe plan board. Retries once when a concurrent create
-// takes the picked slug between the pick and the insert.
+// takes the picked slug between the pick and the insert. Throws
+// QuotaExceededError when the account is at its story limit.
 export async function createStoryInUniverse(
 	db: Database,
 	ownerId: string,
@@ -14,14 +16,46 @@ export async function createStoryInUniverse(
 	title: string
 ) {
 	const create = (slug: string) =>
-		db.insert(stories).values({ universeId, ownerId, title, slug }).returning();
+		db.transaction(async (tx) => {
+			await holdCountQuota(tx, ownerId, { stories: 1 });
+			const [story] = await tx
+				.insert(stories)
+				.values({ universeId, ownerId, title, slug })
+				.returning();
+			return story;
+		});
 	try {
-		const [story] = await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
-		return story;
+		return await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
 	} catch (err) {
 		if (!isUniqueViolation(err)) throw err;
-		const [story] = await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
-		return story;
+		return await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
+	}
+}
+
+// Every universe starts with a couple of categories; writers rename and
+// extend from there.
+async function addStarterCategories(db: Database, universeId: string, ownerId: string) {
+	await db.insert(entityCategories).values([
+		{ universeId, ownerId, name: 'Lore', sortOrder: 0 },
+		{ universeId, ownerId, name: 'Faction', sortOrder: 1 }
+	]);
+}
+
+// Creates a universe from the library, with the same slug retry as a story.
+// Throws QuotaExceededError when the account is at its universe limit.
+export async function createUniverse(db: Database, ownerId: string, name: string) {
+	const create = (slug: string) =>
+		db.transaction(async (tx) => {
+			await holdCountQuota(tx, ownerId, { universes: 1 });
+			const [row] = await tx.insert(universes).values({ ownerId, name, slug }).returning();
+			await addStarterCategories(tx, row.id, ownerId);
+			return row;
+		});
+	try {
+		return await create(await uniqueSlug(db, 'universes', ownerId, name, 'universe'));
+	} catch (err) {
+		if (!isUniqueViolation(err)) throw err;
+		return await create(await uniqueSlug(db, 'universes', ownerId, name, 'universe'));
 	}
 }
 
@@ -54,10 +88,7 @@ export async function standaloneUniverse(db: Database, ownerId: string) {
 			.returning();
 		// The same starter categories every universe gets, so lore entries
 		// (which need a category) work here too.
-		await db.insert(entityCategories).values([
-			{ universeId: created.id, ownerId, name: 'Lore', sortOrder: 0 },
-			{ universeId: created.id, ownerId, name: 'Faction', sortOrder: 1 }
-		]);
+		await addStarterCategories(db, created.id, ownerId);
 		return created;
 	} catch (err) {
 		// A concurrent request created it between the select and the insert.
