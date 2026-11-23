@@ -230,6 +230,36 @@ describe('reading the scenes around an entity', () => {
 		expect(prompts[0]).not.toContain('Bram on the road');
 	});
 
+	it('says every story was muted or trashed when that left nothing to read (#1430)', async () => {
+		const muted = await makeStory('The Quiet Book');
+		const trashed = await makeStory('The Lost Book');
+		await writeScenes(muted, ['Bram in the MUTED-BOOK.']);
+		await writeScenes(trashed, ['Bram in the TRASHED-BOOK.']);
+		await writeScenes(storyId, ['The tide turned.']);
+		await saveStoryLlmOverride(db, muted, { enabled: false });
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, trashed));
+
+		const result = await read('scenes', { universeId });
+		expect(prompts).toHaveLength(0);
+		expect(result).toEqual({ suggestions: [], scenes: 0, requests: 0, skipped: 'all' });
+		// The story scope reads only its own story, which has no mention.
+		expect(await read('scenes')).toEqual({ suggestions: [], scenes: 0, requests: 0 });
+		expect(await read('scenes', { storyId: muted })).toMatchObject({ skipped: 'all' });
+		expect(prompts).toHaveLength(0);
+	});
+
+	it('does not count a trashed scene in a muted story as left out (#1430)', async () => {
+		const muted = await makeStory('The Quiet Book');
+		const [id] = await writeScenes(muted, ['Bram in the MUTED-BOOK.']);
+		await saveStoryLlmOverride(db, muted, { enabled: false });
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, id));
+		expect(await read('scenes', { universeId })).toEqual({
+			suggestions: [],
+			scenes: 0,
+			requests: 0
+		});
+	});
+
 	it('leaves out a trashed scene, as a mention and as a neighbour', async () => {
 		const ids = await writeScenes(storyId, [
 			'TRASHED-NEIGHBOUR scene.',
@@ -341,14 +371,14 @@ describe('reading the whole book', () => {
 	it('reads nothing of a story the Assistant is muted on, or one in the trash', async () => {
 		await writeScenes(storyId, ['FIRST the old man watched.', 'Bram counted the boats.']);
 		await saveStoryLlmOverride(db, storyId, { enabled: false });
-		expect((await read('book')).scenes).toBe(0);
-		expect((await read('scenes')).scenes).toBe(0);
+		expect(await read('book')).toMatchObject({ scenes: 0, skipped: 'all' });
+		expect(await read('scenes')).toMatchObject({ scenes: 0, skipped: 'all' });
 		await saveStoryLlmOverride(db, storyId, { enabled: null });
 		expect((await read('book')).scenes).toBe(2);
 
 		prompts = [];
 		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
-		expect((await read('book')).scenes).toBe(0);
+		expect(await read('book')).toMatchObject({ scenes: 0, skipped: 'all' });
 		expect(prompts).toHaveLength(0);
 	});
 
@@ -456,6 +486,53 @@ describe('a text too long for one request', () => {
 		expect(prompts.join('\n')).not.toContain('Bram THREE');
 		expect(prompts.join('\n')).not.toContain('Bram in the open.');
 		expect(prompts[1]).toContain('OPEN-BOOK');
+		expect(result.partial).toBeUndefined();
+	});
+
+	// Reads the universe, muting a story while the first part is being read.
+	const readMutingDuringFirst = (story: string) =>
+		enrichEntityFromText(
+			db,
+			{ userId: ownerId, scope: { universeId }, entityId: bram, mode: 'scenes' },
+			{
+				...deps,
+				provider: {
+					...stubProvider,
+					async respond(...args) {
+						if (prompts.length === 0) await saveStoryLlmOverride(db, story, { enabled: false });
+						return stubProvider.respond(...args);
+					}
+				}
+			}
+		);
+
+	it('asks for the summary from the last part left when a muted story empties the final part (#1419)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const middle = await makeStory('The Middle Book');
+		await writeScenes(middle, [long('THREE'), long('FOUR')]);
+		const quiet = await makeStory('The Quiet Book');
+		await writeScenes(quiet, [long('FIVE')]);
+		replies = [
+			'{"aliases":["The Grey"],"details":[],"summary":null}',
+			'{"aliases":[],"details":[],"summary":"A harbourmaster."}'
+		];
+		const result = await readMutingDuringFirst(quiet);
+		expect(prompts).toHaveLength(2);
+		expect(prompts.join('\n')).not.toContain('Bram FIVE');
+		expect(prompts[1]).toContain('Bram THREE');
+		expect(prompts[1]).not.toContain('do not propose a summary');
+		expect(result.suggestions.map((s) => s.value).sort()).toEqual(['A harbourmaster.', 'The Grey']);
+		expect(result.skipped).toBeUndefined();
+	});
+
+	it('says no summary was asked for when the story muted held every part after the first (#1419)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const quiet = await makeStory('The Quiet Book');
+		await writeScenes(quiet, [long('THREE')]);
+		const result = await readMutingDuringFirst(quiet);
+		expect(prompts).toHaveLength(1);
+		expect(prompts[0]).toContain('do not propose a summary');
+		expect(result.skipped).toBe('summary');
 		expect(result.partial).toBeUndefined();
 	});
 

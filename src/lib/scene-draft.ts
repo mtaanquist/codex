@@ -178,12 +178,13 @@ export type SceneDraftView = {
 
 // The brief a failed draft is tried again with. A draft of one scene is not
 // told about its chapter, so for a scene of a chapter run the chapter brief
-// comes first, then the scene's own.
+// comes first, then the scene's own. When both do not fit the brief box, the
+// chapter brief is cut so the scene's own words stay whole.
 export function retryBrief(draft: Pick<SceneDraftView, 'brief' | 'chapterBrief'>): string {
-	return [draft.chapterBrief?.trim(), draft.brief.trim()]
-		.filter(Boolean)
-		.join('\n\n')
-		.slice(0, MAX_DRAFT_BRIEF_CHARS);
+	const scene = draft.brief.trim().slice(0, MAX_DRAFT_BRIEF_CHARS);
+	const room = MAX_DRAFT_BRIEF_CHARS - (scene ? scene.length + 2 : 0);
+	const chapter = (draft.chapterBrief?.trim() ?? '').slice(0, Math.max(room, 0)).trimEnd();
+	return [chapter, scene].filter(Boolean).join('\n\n');
 }
 
 // How much of the scene drafted just before rides with the next scene's

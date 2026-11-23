@@ -365,8 +365,18 @@ export function createHandlers(deps: WorkerDeps) {
 				title = `The Assistant stopped reading for details about ${name} ${capStopPhrase(result.spentUsd ?? 0)}${left}. Raise the cap in settings, then ${DETAILS_AGAIN}.`;
 			} else if (result.partial) {
 				title = `The Assistant stopped partway through reading for details about ${name}${left}. ${result.partialNote ?? `To read the rest, ${DETAILS_AGAIN}.`}`;
+			} else if (result.skipped === 'all') {
+				// States the current state only: nothing records when a story was muted
+				// or trashed, or whether the mentions in a readable story were removed.
+				title = `The Assistant read nothing for ${name}, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then ${DETAILS_AGAIN}.`;
 			} else if (result.scenes === 0) {
 				title = `The Assistant found no scenes that mention ${name}, so there was nothing to read.`;
+			} else if (result.skipped === 'summary') {
+				const found =
+					staged > 0
+						? `left ${count(staged)} for ${name}, but no summary`
+						: `found nothing new to suggest for ${name}, and no summary`;
+				title = `The Assistant ${found}, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, ${DETAILS_AGAIN}.`;
 			} else if (staged === 0) {
 				title = `The Assistant read ${result.scenes} ${result.scenes === 1 ? 'scene' : 'scenes'} and found nothing new to suggest for ${name}.`;
 			} else {
@@ -377,6 +387,7 @@ export function createHandlers(deps: WorkerDeps) {
 				scenes: result.scenes,
 				requests: result.requests,
 				staged,
+				...(result.skipped ? { skipped: result.skipped } : {}),
 				...(result.partial ? { partial: true } : {}),
 				...(result.capped ? { capped: true } : {})
 			});

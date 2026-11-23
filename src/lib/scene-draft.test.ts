@@ -86,4 +86,20 @@ describe('retryBrief', () => {
 		const long = 'x'.repeat(MAX_DRAFT_BRIEF_CHARS);
 		expect(retryBrief({ brief: long, chapterBrief: long })).toHaveLength(MAX_DRAFT_BRIEF_CHARS);
 	});
+
+	it("keeps the scene's own brief whole and trims the chapter brief to fit", () => {
+		const chapter = 'c'.repeat(MAX_DRAFT_BRIEF_CHARS - 10);
+		const scene = 'She reaches the quay at dusk.';
+		const result = retryBrief({ brief: scene, chapterBrief: chapter });
+		expect(result).toHaveLength(MAX_DRAFT_BRIEF_CHARS);
+		expect(result.endsWith(`\n\n${scene}`)).toBe(true);
+		expect(result.startsWith('ccc')).toBe(true);
+	});
+
+	it('drops the chapter brief when the scene brief fills the box', () => {
+		const scene = 's'.repeat(MAX_DRAFT_BRIEF_CHARS);
+		expect(retryBrief({ brief: scene, chapterBrief: 'Ilse flees.' })).toBe(scene);
+		const nearlyFull = 's'.repeat(MAX_DRAFT_BRIEF_CHARS - 1);
+		expect(retryBrief({ brief: nearlyFull, chapterBrief: 'Ilse flees.' })).toBe(nearlyFull);
+	});
 });
