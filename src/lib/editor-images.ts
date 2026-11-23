@@ -1,5 +1,11 @@
 import { EditorView } from '@codemirror/view';
-import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state';
+import {
+	EditorState,
+	StateEffect,
+	StateField,
+	type Extension,
+	type TransactionSpec
+} from '@codemirror/state';
 import { landsWhilePaused } from './editor-paused';
 
 // Paste or drop an image into the prose: it uploads and lands as a
@@ -12,7 +18,7 @@ import { landsWhilePaused } from './editor-paused';
 // image at the spot it was dropped even if the author keeps typing, and keeps
 // several images pasted at once in order.
 
-type Pending = { id: number; from: number; to: number };
+type Pending = { id: number; from: number; to: number; text: string };
 
 const addPending = StateEffect.define<Pending>();
 const removePending = StateEffect.define<number>();
@@ -22,11 +28,19 @@ const pendingField = StateField.define<Pending[]>({
 	update(value, tr) {
 		let next = value;
 		if (tr.docChanged) {
-			next = next.map((p) => ({
-				id: p.id,
-				from: tr.changes.mapPos(p.from, -1),
-				to: tr.changes.mapPos(p.to, 1)
-			}));
+			// Text typed against either edge stays outside the placeholder. An
+			// edit that touches the placeholder itself (deleting it, typing over
+			// it, swapping in a whole newer text) cancels the upload, so a
+			// finished upload only ever replaces its own untouched placeholder.
+			next = next
+				.map((p) => ({
+					...p,
+					from: tr.changes.mapPos(p.from, 1),
+					to: tr.changes.mapPos(p.to, -1)
+				}))
+				.filter(
+					(p) => p.to - p.from === p.text.length && tr.newDoc.sliceString(p.from, p.to) === p.text
+				);
 		}
 		for (const effect of tr.effects) {
 			if (effect.is(addPending)) next = [...next, effect.value];
@@ -70,6 +84,40 @@ export function hasPendingUploads(state: EditorState): boolean {
 	return (state.field(pendingField, false) ?? []).length > 0;
 }
 
+// The transaction that puts an upload's placeholder at a position.
+export function startUpload(at: number, fileName: string) {
+	const id = nextId++;
+	const text = `![Uploading ${fileName}...]()\n`;
+	const spec: TransactionSpec = {
+		changes: { from: at, insert: text },
+		effects: addPending.of({ id, from: at, to: at + text.length, text }),
+		scrollIntoView: true
+	};
+	return { id, spec, length: text.length };
+}
+
+// The transaction that swaps a finished upload's placeholder for its result
+// (null removes it, the failed-upload case), or null when the placeholder is
+// gone.
+export function finishUpload(
+	state: EditorState,
+	id: number,
+	replacement: string | null
+): TransactionSpec | null {
+	const marker = state.field(pendingField).find((p) => p.id === id);
+	if (!marker) return null;
+	return {
+		changes: { from: marker.from, to: marker.to, insert: replacement ?? '' },
+		effects: removePending.of(id),
+		// Even while the page swaps the scene: the editor's last save then
+		// carries it, where waiting could lose it with the editor.
+		annotations: landsWhilePaused.of(true),
+		scrollIntoView: replacement !== null
+	};
+}
+
+export const uploadTracking: Extension = pendingField;
+
 export function imageUploadExtension(universeId: string): Extension {
 	// Replace a placeholder's current (mapped) range; a null replacement just
 	// removes it, the failed-upload case.
@@ -78,16 +126,8 @@ export function imageUploadExtension(universeId: string): Extension {
 		// mid-upload); dispatching on a destroyed view throws. Its DOM is detached
 		// once destroyed, so skip the update.
 		if (!view.dom.isConnected) return;
-		const marker = view.state.field(pendingField).find((p) => p.id === id);
-		if (!marker) return;
-		view.dispatch({
-			changes: { from: marker.from, to: marker.to, insert: replacement ?? '' },
-			effects: removePending.of(id),
-			// Even while the page swaps the scene: the editor's last save then
-			// carries it, where waiting could lose it with the editor.
-			annotations: landsWhilePaused.of(true),
-			scrollIntoView: replacement !== null
-		});
+		const spec = finishUpload(view.state, id, replacement);
+		if (spec) view.dispatch(spec);
 	}
 
 	async function resolve(view: EditorView, file: File, id: number) {
@@ -114,14 +154,9 @@ export function imageUploadExtension(universeId: string): Extension {
 	function start(view: EditorView, files: File[], pos: number) {
 		let at = pos;
 		for (const file of files) {
-			const id = nextId++;
-			const placeholder = `![Uploading ${file.name}...]()\n`;
-			view.dispatch({
-				changes: { from: at, insert: placeholder },
-				effects: addPending.of({ id, from: at, to: at + placeholder.length }),
-				scrollIntoView: true
-			});
-			at += placeholder.length;
+			const { id, spec, length } = startUpload(at, file.name);
+			view.dispatch(spec);
+			at += length;
 			void resolve(view, file, id);
 		}
 	}
@@ -131,7 +166,7 @@ export function imageUploadExtension(universeId: string): Extension {
 	}
 
 	return [
-		pendingField,
+		uploadTracking,
 		EditorView.domEventHandlers({
 			paste(event, view) {
 				const files = imageFiles(event.clipboardData);
