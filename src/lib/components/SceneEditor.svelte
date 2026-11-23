@@ -307,6 +307,7 @@
 			for (let attempt = 0; attempt < 2; attempt++) {
 				await autosave.flush();
 				if (overtaken()) return;
+				uploading = false;
 				const anchor = pinned.at();
 				if (!anchor) {
 					markError = 'These words are not saved yet. Mark them once the scene has saved.';
