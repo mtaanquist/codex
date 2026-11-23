@@ -33,7 +33,8 @@ import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { setSceneStatus } from '../../src/lib/server/scene-status';
 import { rebuildSceneMentions } from '../../src/lib/server/mentions';
 import { saveStoryDetails } from '../../src/lib/server/story-details';
-import { trashStory } from '../../src/lib/server/story-lifecycle';
+import { restoreStory, trashStory } from '../../src/lib/server/story-lifecycle';
+import { saveUniverseDetails } from '../../src/lib/server/universe-details';
 import { purgeStory } from '../../src/lib/server/story-delete';
 import { saveEntity } from '../../src/lib/server/entity-save';
 import { saveAccountLlmConfig, saveStoryLlmOverride } from '../../src/lib/server/llm/config';
@@ -391,7 +392,7 @@ const OPS: Op[] = [
 			await saveStoryDetails(
 				db,
 				S.user,
-				{ id: S.story, title: 'Turns' },
+				{ id: S.story },
 				{
 					title: 'Other Turns',
 					author: null,
@@ -406,7 +407,24 @@ const OPS: Op[] = [
 		name: 'mute story for the Assistant',
 		run: async (db) => await saveStoryLlmOverride(db, S.story, { enabled: false })
 	},
+	{
+		name: 'rename universe',
+		run: async (db) =>
+			await saveUniverseDetails(
+				db,
+				S.user,
+				{ id: S.universe },
+				{ name: 'Other Lockland', descriptionMd: null, establishedSetting: false }
+			)
+	},
 	{ name: 'trash story', run: async (db) => ok(await trashStory(db, S.user, S.story)) },
+	{
+		name: 'restore story',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+		},
+		run: async (db) => ok(await restoreStory(db, S.user, S.story))
+	},
 	{ name: 'purge story', run: async (db) => await purgeStory(db, S.story) },
 	{
 		name: 'delete trashed scene for good',

@@ -114,6 +114,7 @@ export const actions: Actions = {
 			descriptionMd,
 			establishedSetting
 		});
+		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.
 		if (slug !== universe.slug) redirect(303, `/universes/${slug}`);
 		return { action: 'update', saved: true };

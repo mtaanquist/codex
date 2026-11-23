@@ -84,21 +84,26 @@ async function reservedSlugs(
 	return rows.map((row) => row.slug);
 }
 
-// Serialises slug changes (renames and restores) within one account. Taken
-// inside the caller's transaction and released at its end. Creates do not
-// take it; the live unique index catches a clash with one.
+// Serialises slug changes (renames and restores) within one account. Always
+// taken after the row's own FOR UPDATE lock, inside the caller's transaction,
+// and released at its end. Creates do not take it; the live unique index
+// catches a clash with one.
 async function lockSlugs(tx: Tx, ownerId: string) {
 	await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`slugs:${ownerId}`}))`);
 }
 
-// True once the story (or a story in the universe) has been published: only
-// then can an old slug have been in a public link worth keeping.
-async function everPublished(tx: Tx, table: Table, id: string): Promise<boolean> {
+// Whether a slug a row moves off is worth reserving. A story's is, once the
+// story has been published: before that no public link can name it, and
+// reserving it would only push suffixes onto later drafts. A purged story
+// takes its history with it, so the question never outlives it. A universe's
+// always is: its stories' editions can be purged while the universe lives on,
+// and that must not free an address readers may have shared.
+async function reserveOnRename(tx: Tx, table: Table, id: string): Promise<boolean> {
+	if (table === 'universes') return true;
 	const [row] = await tx
 		.select({ id: publications.id })
 		.from(publications)
-		.innerJoin(stories, eq(publications.storyId, stories.id))
-		.where(table === 'universes' ? eq(stories.universeId, id) : eq(stories.id, id))
+		.where(eq(publications.storyId, id))
 		.limit(1);
 	return Boolean(row);
 }
@@ -117,52 +122,64 @@ async function forgetOwnSlug(tx: Tx, table: Table, ownerId: string, id: string, 
 		);
 }
 
-async function currentSlug(tx: Tx, table: Table, id: string): Promise<string | null> {
-	const target = table === 'universes' ? universes : stories;
-	const [row] = await tx
-		.select({ slug: target.slug })
-		.from(target)
-		.where(eq(target.id, id))
-		.for('update');
-	return row?.slug ?? null;
+// The row, locked for the rest of the transaction.
+async function lockedRow(tx: Tx, table: Table, id: string) {
+	const [row] =
+		table === 'universes'
+			? await tx
+					.select({ ownerId: universes.ownerId, name: universes.name, slug: universes.slug })
+					.from(universes)
+					.where(eq(universes.id, id))
+					.for('update')
+			: await tx
+					.select({ ownerId: stories.ownerId, name: stories.title, slug: stories.slug })
+					.from(stories)
+					.where(eq(stories.id, id))
+					.for('update');
+	return row ?? null;
 }
 
 /**
- * Saves a universe or story whose name may have changed, with its slug. In
- * one transaction under the account's slug lock: reads the slug the row has
- * now, picks a new one from newName (null keeps it), lets write save the row,
- * then records the move. A slug it takes back stops being its history; once
- * it has been published, the slug it leaves is reserved for it, so the old
- * public link redirects and no other work of the account can take it.
- * Retries once if a concurrent create takes the pick. Returns the slug.
+ * Saves a universe or story with a name that may have changed, and its slug.
+ * In one transaction: locks the row and compares the name with the one it has
+ * now, so a save that read an older name cannot leave the slug behind. On a
+ * rename it also takes the account's slug lock, picks a new slug, lets write
+ * save the row, and records the move: a slug it takes back stops being its
+ * history, and the slug it leaves is reserved for it (see reserveOnRename), so
+ * an old public link redirects and no other work of the account can take it.
+ * Retries once if a concurrent create takes the pick. Returns the slug, or
+ * null when the row no longer exists.
  */
 export async function saveWithSlug(
 	db: Database,
 	table: Table,
-	ownerId: string,
 	id: string,
-	newName: string | null,
+	name: string,
 	write: (tx: Tx, slug: string) => Promise<void>
-): Promise<string> {
+): Promise<string | null> {
 	const fallback = table === 'universes' ? 'universe' : 'story';
 	const attempt = () =>
 		db.transaction(async (tx) => {
-			await lockSlugs(tx, ownerId);
-			const current = (await currentSlug(tx, table, id)) ?? '';
-			const slug =
-				newName === null ? current : await uniqueSlug(tx, table, ownerId, newName, fallback, id);
+			const row = await lockedRow(tx, table, id);
+			if (!row) return null;
+			if (row.name === name) {
+				await write(tx, row.slug);
+				return row.slug;
+			}
+			await lockSlugs(tx, row.ownerId);
+			const slug = await uniqueSlug(tx, table, row.ownerId, name, fallback, id);
 			await write(tx, slug);
-			if (slug !== current) {
-				await forgetOwnSlug(tx, table, ownerId, id, slug);
-				if (await everPublished(tx, table, id)) {
+			if (slug !== row.slug) {
+				await forgetOwnSlug(tx, table, row.ownerId, id, slug);
+				if (await reserveOnRename(tx, table, id)) {
 					// Under the lock the old slug carries no other reservation (it was
 					// this row's live slug until now), so a conflict is its own row.
 					await tx
 						.insert(slugHistory)
 						.values({
-							ownerId,
+							ownerId: row.ownerId,
 							kind: historyKind(table),
-							slug: current,
+							slug: row.slug,
 							...(table === 'universes' ? { universeId: id } : { storyId: id })
 						})
 						.onConflictDoNothing();
@@ -190,33 +207,23 @@ export async function saveWithSlug(
  * they were without this story reads as out of date by its fingerprint.
  */
 export async function untrash(db: Database, table: Table, id: string) {
-	const [row] =
-		table === 'universes'
-			? await db
-					.select({ ownerId: universes.ownerId, name: universes.name })
-					.from(universes)
-					.where(eq(universes.id, id))
-			: await db
-					.select({ ownerId: stories.ownerId, name: stories.title })
-					.from(stories)
-					.where(eq(stories.id, id));
-	if (!row) return;
 	const fallback = table === 'universes' ? 'universe' : 'story';
 	const attempt = (forceFresh: boolean) =>
 		db.transaction(async (tx) => {
+			const row = await lockedRow(tx, table, id);
+			if (!row) return;
 			await lockSlugs(tx, row.ownerId);
-			const current = (await currentSlug(tx, table, id)) ?? '';
 			const reserved = await reservedSlugs(
 				tx,
 				table,
 				row.ownerId,
-				eq(slugHistory.slug, current),
+				eq(slugHistory.slug, row.slug),
 				id
 			);
 			const slug =
 				forceFresh || reserved.length > 0
 					? await uniqueSlug(tx, table, row.ownerId, row.name, fallback, id)
-					: current;
+					: row.slug;
 			if (table === 'universes') {
 				await tx.update(universes).set({ deletedAt: null, slug }).where(eq(universes.id, id));
 			} else {

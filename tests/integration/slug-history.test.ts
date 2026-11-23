@@ -119,10 +119,9 @@ async function publishedStory(title: string) {
 	return story;
 }
 
-describe('a rename before anything was published', () => {
+describe('a story renamed before it was published', () => {
 	it('reserves nothing, since no public link can name the old slug', async () => {
 		expect(await renameStory(storyId, 'Ember Rising')).toBe('ember-rising');
-		expect(await renameUniverse('Far Shore')).toBe('far-shore');
 		expect(await db.select().from(slugHistory)).toEqual([]);
 		expect((await createStoryInUniverse(db, ownerId, universeId, 'Ember')).slug).toBe('ember');
 	});
@@ -210,6 +209,24 @@ describe('reserving old slugs', () => {
 		// Whichever landed second moved off the first one's slug, not the stale one.
 		const other = story.slug === 'cinder' ? 'ember-rising' : 'cinder';
 		expect(slugs).toEqual([other, 'ember'].sort());
+	});
+
+	it('keeps the slug with the title when a save read an older title', async () => {
+		// The settings page loaded with 'Ember'; meanwhile another tab renamed
+		// it. Saving the old form puts 'Ember' back, and the slug follows.
+		const [stale] = await db.select().from(stories).where(eq(stories.id, storyId));
+		await renameStory(storyId, 'Cinder');
+		expect(await saveStoryDetails(db, ownerId, stale, details('Ember'))).toBe('ember');
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		expect(story).toMatchObject({ title: 'Ember', slug: 'ember' });
+	});
+
+	it('reserves a universe slug even after its published stories are purged', async () => {
+		await purgeStory(db, storyId);
+		await renameUniverse('Far Shore');
+		expect(await uniqueSlug(db, 'universes', ownerId, 'Ember Reach', 'universe')).toBe(
+			'ember-reach-2'
+		);
 	});
 
 	it('goes with the account', async () => {

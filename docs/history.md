@@ -38,13 +38,16 @@ suffix to a 60-character base.
 Old slugs redirect (decided by Mads after round 1). A rename used to break a
 shared slug link, and a later story could take the freed slug and inherit
 it. `slug_history` (migration 0107) keeps each slug a rename moves off, per
-account and kind, once the story (or a story in the universe) has been
-published; a rename before that has no public link to protect, and
-reserving it would only push suffixes onto later drafts. `saveStoryDetails`
-and the new `saveUniverseDetails` go through `saveWithSlug`, which takes a
-per-account advisory lock, reads the current slug inside the transaction
-(review round 2: two renames at once used to retire a stale slug and lose
-the one in between), picks, saves and records. `uniqueSlug` counts history
+account and kind, always for a universe and, for a story, once it has been
+published; an unpublished story's rename has no public link to protect,
+and reserving it would only push suffixes onto later drafts. Universes are
+reserved regardless (review round 3): judging them by their stories'
+publications failed once those stories were purged. `saveStoryDetails`
+and the new `saveUniverseDetails` go through `saveWithSlug`, which locks the
+row, compares the name it holds now (review round 3: a form that read an
+older name could leave the slug behind), and on a rename takes a
+per-account advisory lock, picks, saves and records (review round 2: two
+renames at once used to retire a stale slug and lose the one in between). `uniqueSlug` counts history
 as taken, except a story's own old slugs, so renaming back works. A restore
 from the trash whose slug became another story's old slug picks a fresh one,
 since coming back under it would re-point that story's links; it runs under

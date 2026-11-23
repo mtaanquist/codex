@@ -212,6 +212,7 @@ export const actions: Actions = {
 			styleNotes,
 			coverColor
 		});
+		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.
 		if (slug !== story.slug) redirect(303, `/stories/${slug}/settings`);
 		return { action: 'update', saved: true };

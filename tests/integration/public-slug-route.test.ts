@@ -89,11 +89,11 @@ const loadStory = (story: string, search = '') =>
 		} as never)
 	);
 
-const loadUniverse = (universe: string) =>
+const loadUniverse = (universe: string, search = '') =>
 	outcome(() =>
 		universePage.load({
 			params: { handle: 'inkwright', universe },
-			url: new URL(`http://localhost/@inkwright/universes/${universe}`)
+			url: new URL(`http://localhost/@inkwright/universes/${universe}${search}`)
 		} as never)
 	);
 
@@ -136,9 +136,9 @@ describe('old slugs on the public pages', () => {
 			descriptionMd: null,
 			establishedSetting: false
 		});
-		expect(await loadUniverse('ember-reach')).toEqual({
+		expect(await loadUniverse('ember-reach', '?ref=news')).toEqual({
 			status: 308,
-			location: '/@inkwright/universes/far-shore'
+			location: '/@inkwright/universes/far-shore?ref=news'
 		});
 		expect(await loadUniverse('never-was')).toEqual({ status: 404, location: undefined });
 	});
