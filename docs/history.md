@@ -13,6 +13,20 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 leftover review fixes (2026-11-23, `fix/phase-10-leftover-mediums`
+on `staging/phase-10`). An image used and dropped again between two nightly
+sweeps kept its old unused mark (#1484). Round 9 left a save-time clear out
+because markdown is written by about a dozen paths; a shared helper would
+still rely on every new path calling it, and a stricter sweep cannot see a
+use that came and went between two runs. Migration 0112 instead adds one
+`clear_asset_marks` row trigger to every table but `assets`: it reads the new
+row whole as text, the way the sweep reads columns, and nulls the mark of any
+image id in it, so no path and no later column can miss it. A table created
+later needs its own `CREATE TRIGGER`; the sweep refuses to delete while any
+table lacks one, and a test fails. The gap left is a save committed during a
+run's full read and undone before the next run, which can bring a deletion
+forward by under a day.
+
 Phase 10 staging review round 9 (2026-11-23, `fix/phase-10-review-9` on
 `staging/phase-10`). An image used and dropped again between two nightly
 sweeps keeps its old unused mark, so it can be deleted while an open tab's

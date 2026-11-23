@@ -14,6 +14,7 @@ import {
 	referencedAssetIdsQuery,
 	scanAssetUse,
 	sweepUnusedAssets,
+	tablesWithoutMarkTrigger,
 	UNREFERENCED_DAYS,
 	UNUSED_ASSET_GRACE_DAYS
 } from '../../src/lib/server/unused-assets';
@@ -22,6 +23,7 @@ import { purgeStory } from '../../src/lib/server/story-delete';
 import { trashStory } from '../../src/lib/server/story-lifecycle';
 import { createStoryInUniverse, createUniverse } from '../../src/lib/server/story-create';
 import { saveDraft } from '../../src/lib/server/story-drafts';
+import { saveUniverseDetails } from '../../src/lib/server/universe-details';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
@@ -378,6 +380,77 @@ describe('sweepUnusedAssets', () => {
 		} finally {
 			holder.release();
 		}
+	});
+});
+
+// The sweep sees only what is stored when it runs; a write in between that
+// puts an image back is caught by the trigger on every table instead.
+describe('a write that stores an image id', () => {
+	it('starts the period over for an image used only between two runs', async () => {
+		// Taken out of the description 29 days ago, pasted back and saved, then
+		// taken out again the same day.
+		const back = await image({ unusedFor: UNREFERENCED_DAYS - 1 });
+		const universe = { id: universeId };
+		const details = { name: 'World', establishedSetting: false };
+		await saveUniverseDetails(db, ownerId, universe, { ...details, descriptionMd: link(back) });
+		expect((await marks([back])).get(back)).toBeNull();
+		await saveUniverseDetails(db, ownerId, universe, { ...details, descriptionMd: 'Cut.' });
+
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
+		expect(await remaining([back])).toEqual(new Set([back]));
+		const since = (await marks([back])).get(back)!;
+		expect(Date.now() - since.getTime()).toBeLessThan(60_000);
+	});
+
+	it('clears the mark from an insert or update in any column, in any casing', async () => {
+		const storyId = await story();
+		const ids = {
+			note: await image({ unusedFor: 5 }),
+			cover: await image({ unusedFor: 5 }),
+			bio: await image({ unusedFor: 5 }),
+			draft: await image({ unusedFor: 5 }),
+			upper: await image({ unusedFor: 5 }),
+			untouched: await image({ unusedFor: 5 })
+		};
+		await pool.query(`insert into notes (owner_id, story_id, body_md) values ($1, $2, $3)`, [
+			ownerId,
+			storyId,
+			link(ids.note)
+		]);
+		await pool.query('update stories set cover_asset_id = $1 where id = $2', [ids.cover, storyId]);
+		await pool.query('update users set bio_md = $1 where id = $2', [link(ids.bio), ownerId]);
+		await pool.query(
+			`insert into story_drafts (story_id, owner_id, label, content) values ($1, $2, 'Kept', $3)`,
+			[storyId, ownerId, JSON.stringify({ scenes: [{ bodyMd: link(ids.draft) }] })]
+		);
+		await scene(storyId, link(ids.upper.toUpperCase()));
+
+		const after = await marks(Object.values(ids));
+		for (const [name, id] of Object.entries(ids)) {
+			expect([name, after.get(id) === null]).toEqual([name, name !== 'untouched']);
+		}
+	});
+
+	it('is on every table the sweep reads', async () => {
+		expect(await tablesWithoutMarkTrigger(db)).toEqual([]);
+		const tables = new Set((await referenceColumns(db)).map((column) => column.table));
+		const { rows } = await pool.query(
+			`select c.relname from pg_trigger t join pg_class c on c.oid = t.tgrelid
+			 where t.tgname = 'clear_asset_marks'`
+		);
+		const guarded = new Set(rows.map((row: { relname: string }) => row.relname));
+		expect([...tables].filter((table) => !guarded.has(table))).toEqual([]);
+	});
+
+	it('deletes nothing while a table is missing it', async () => {
+		const long = await image({ unusedFor: LONG });
+		await pool.query('alter table notes disable trigger clear_asset_marks');
+		try {
+			await expect(sweepUnusedAssets(db)).rejects.toThrow('notes');
+		} finally {
+			await pool.query('alter table notes enable trigger clear_asset_marks');
+		}
+		expect(await remaining([long])).toEqual(new Set([long]));
 	});
 });
 
