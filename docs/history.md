@@ -41,6 +41,20 @@ by undo inside a span later typed over in part counts as new, so a new marker
 there can come out shorter or wait for the next save; that errs towards a
 short marker rather than one on words the writer typed.
 
+Image upload line breaks and lost-image notice (2026-11-23,
+`fix/image-upload-review-5` on `staging/bug-fixes-4`, review of #1463). A
+placeholder used to take whatever line break followed it, so a writer who
+joined its line onto the next (Backspace on the blank line below, Delete at
+its end) lost their own paragraph break on save, a failed upload, or a redo.
+The inserted break is now tracked by position, and the newline after the
+placeholder goes with it only while that break is still in the text. Mapping
+cannot follow a break an undo or redo puts back, so `invertedEffects` stores
+its position in the history; the effect counts only when that same
+transaction inserted a newline there, because a joined undo step can carry it
+while removing the placeholder and its break together. The "image was not
+added" message moved out of `markError`, which every edit clears, into its own
+notice that stays until dismissed.
+
 Image uploads through undo and moved lines (2026-11-23,
 `fix/image-upload-review-4` on `staging/bug-fixes-4`, review of #1463). The
 #1463 fix stopped a finished upload from replacing text it did not insert by

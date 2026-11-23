@@ -243,6 +243,67 @@ describe('upload placeholder through undo and everyday edits', () => {
 		expect(state.doc.toString()).toBe('One.\nTwo.');
 	});
 
+	describe("when the writer joins the placeholder's line break away", () => {
+		// A blank line between two paragraphs; the image is pasted on it.
+		const doc = 'Para1\n\nPara2';
+		const afterBreak = 6 + placeholder.length + 1;
+
+		function joined(how: 'backspace' | 'delete') {
+			const placed = pasted(doc, 6);
+			const changes =
+				how === 'backspace'
+					? { from: afterBreak - 1, to: afterBreak }
+					: { from: 6 + placeholder.length, to: afterBreak };
+			const state = edit(placed.state, { changes });
+			expect(state.doc.toString()).toBe(`Para1\n${placeholder}\nPara2`);
+			return { id: placed.id, state };
+		}
+
+		it('keeps the paragraph break out of what is saved', () => {
+			for (const how of ['backspace', 'delete'] as const) {
+				expect(storedText(joined(how).state).text).toBe('Para1\n\nPara2');
+			}
+		});
+
+		it('keeps the paragraph break when the upload fails', () => {
+			const { id, state } = joined('backspace');
+			expect(finish(state, id, null).doc.toString()).toBe('Para1\n\nPara2');
+		});
+
+		it('lands the image without taking the paragraph break', () => {
+			const { id, state } = joined('backspace');
+			expect(finish(state, id).doc.toString()).toBe(`Para1\n${image}Para2`);
+		});
+
+		it('keeps the paragraph break when a redo brings the placeholder back after a failure', () => {
+			const placed = pasted(doc, 6);
+			// The paste and the join are one undo step.
+			let state = placed.state.update({
+				changes: { from: afterBreak - 1, to: afterBreak }
+			}).state;
+			state = run(state, undo);
+			expect(state.doc.toString()).toBe(doc);
+			state = finish(state, placed.id, null);
+			state = settle(run(state, redo));
+			expect(state.doc.toString()).toBe('Para1\n\nPara2');
+		});
+
+		it('still removes its own line break once an undo puts it back', () => {
+			const { id, state: joinedState } = joined('backspace');
+			const state = run(joinedState, undo);
+			expect(state.doc.toString()).toBe(`Para1\n${placeholder}\n\nPara2`);
+			expect(storedText(state).text).toBe(doc);
+			expect(finish(state, id, null).doc.toString()).toBe(doc);
+		});
+
+		it('keeps the line break after a redo joins it away again', () => {
+			const { id, state: joinedState } = joined('backspace');
+			const state = run(run(joinedState, undo), redo);
+			expect(state.doc.toString()).toBe(`Para1\n${placeholder}\nPara2`);
+			expect(finish(state, id, null).doc.toString()).toBe(doc);
+		});
+	});
+
 	it('gives the same file pasted twice its own placeholder', () => {
 		const first = pasted('One.\n', 5);
 		const second = startUpload(first.state.doc.length, 'a.png', first.state);
