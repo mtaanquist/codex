@@ -14,6 +14,7 @@ import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet } from '
 import type { ViewUpdate } from '@codemirror/view';
 import { findTodoLines } from './todo-markers';
 import { textHash } from './text-hash';
+import { defineUndoSteps } from './undo-steps';
 
 // TODO markers in the editor: plain "TODO:" lines get a line highlight
 // straight from the text, and selection markers (rows in scene_markers)
@@ -43,89 +44,24 @@ type Followed = {
 const restoreMarker = StateEffect.define<MarkerRange>();
 
 // What one edit's undo (or one undo's redo) does to markers, carried in the
-// undo history. ranges sets markers back to exactly the ranges they had just
-// before the edit, counted in the text from before it (the text undo brings
-// back). drops takes away markers that were gone before the edit: without it,
-// a marker that undo put back could map onto the replacement text on redo and
-// survive. Drops apply across a marker set rebuilt in between, since a
-// rebuild keeps the positions the editor shows and never places a held marker
-// it was not showing.
-//
-// History maps what it carries through each change kept out of undo (an image
-// placeholder taken out, newer text loaded), but hands that change over
-// counted in the text after the edit, not before it. So the step keeps those
-// changes in mapped and its ranges are mapped when undo applies it (see
-// placeSteps). When history joins a keystroke onto the undo step before it,
-// it maps the keystroke's step once through the earlier undo change, which is
-// counted in the right text; that comes first in mapped.
-type MarkerStep = {
-	drops: string[];
-	ranges: MarkerRange[];
-	// The edit's undo, as history keeps it before any mapping.
-	undo: ChangeDesc;
-	mapped: readonly ChangeDesc[];
-};
+// undo history (see undo-steps). A range sets a marker back to exactly the
+// range it had just before the edit. A drop takes away a marker that was gone
+// before the edit: without it, a marker that undo put back could map onto the
+// replacement text on redo and survive. Drops apply across a marker set
+// rebuilt in between, since a rebuild keeps the positions the editor shows and
+// never places a held marker it was not showing.
+type MarkerRecord = MarkerRange | { drop: string };
+const markerSteps = defineUndoSteps<MarkerRecord>();
 
-const markerStep = StateEffect.define<MarkerStep>({
-	map: (step, mapping) => {
-		if (mapping.empty) return step;
-		// A step with nothing to put back is kept only for placeSteps to map
-		// the steps of earlier keystrokes it joined. One that joined none is
-		// dropped, so history can still drop an undo step a change kept out of
-		// undo has emptied.
-		if (!step.mapped.length && !isJoin(mapping) && !step.drops.length && !step.ranges.length)
-			return undefined;
-		return { ...step, mapped: [...step.mapped, mapping] };
-	}
-});
-
-// History joins a keystroke on with the earlier undo change itself, a
-// ChangeSet; a change kept out of undo comes as a plain description.
-function isJoin(mapping: ChangeDesc) {
-	return mapping instanceof ChangeSet;
-}
-
-// The drops and ranges of an undo or redo's steps (newest first, as history
-// lists them), with the ranges in the text it produces. A change kept out of
-// undo is counted in the text before the undo, so each step maps it over the
-// undo change as it was then, as history maps its own changes. A step only
-// knows its own part of that change: once a later keystroke has joined it,
-// the change is taken from that keystroke's step, which saw the same
-// mappings (the same objects) after it joined.
-function placeSteps(steps: MarkerStep[]) {
-	const known = new Map<ChangeDesc, ChangeDesc>();
-	return steps.map((step) => {
-		let undo: ChangeDesc | null = step.undo;
-		let ranges: MarkerRange[] = step.ranges;
-		step.mapped.forEach((mapping, index) => {
-			let over = known.get(mapping);
-			if (index === 0 && isJoin(mapping)) {
-				over = mapping;
-				undo = undo!.composeDesc(mapping);
-			} else if (over) {
-				undo = null;
-			} else if (undo && undo.length === mapping.length) {
-				over = mapping.mapDesc(undo, true);
-				undo = undo.mapDesc(mapping);
-				known.set(mapping, over);
-			} else {
-				undo = null;
-				ranges = [];
-				return;
-			}
-			ranges = ranges.flatMap(({ id, from, to }) => {
-				if (to > over.length) return [];
-				const start = over.mapPos(from, 1);
-				const end = over.mapPos(to, -1);
-				return start < end ? [{ id, from: start, to: end }] : [];
-			});
-		});
-		return { drops: step.drops, ranges };
+function placeMarkers(tr: Transaction) {
+	return markerSteps.place(tr, (record, over) => {
+		if ('drop' in record) return record;
+		const { id, from, to } = record;
+		if (to > over.length) return null;
+		const start = over.mapPos(from, 1);
+		const end = over.mapPos(to, -1);
+		return start < end ? { id, from: start, to: end } : null;
 	});
-}
-
-function stepsOf(tr: Transaction) {
-	return tr.effects.flatMap((effect) => (effect.is(markerStep) ? [effect.value] : []));
 }
 
 function markerMark(id: string, from: number, to: number) {
@@ -170,16 +106,17 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 					add: [markerMark(id, from, to)]
 				});
 			};
-			const steps = placeSteps(stepsOf(tr));
+			const steps = placeMarkers(tr);
 			let next = 0;
 			for (const effect of tr.effects) {
 				if (effect.is(restoreMarker)) restore(effect.value);
-				if (!effect.is(markerStep)) continue;
-				const { drops, ranges } = steps[next++];
-				for (const id of drops) {
-					value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
+				if (!markerSteps.is(effect)) continue;
+				for (const record of steps[next++]) {
+					if ('drop' in record) {
+						const id = record.drop;
+						value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
+					} else restore(record);
 				}
-				ranges.forEach(restore);
 			}
 			return value;
 		},
@@ -215,18 +152,13 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 		// this set has shown it yet: undo can restore a marker that loaded with
 		// no position, and the redo step must take it away again.
 		const restored = [
-			...placeSteps(stepsOf(tr)).flatMap((step) => step.ranges),
+			...placeMarkers(tr)
+				.flat()
+				.flatMap((record) => ('drop' in record ? [] : [record])),
 			...tr.effects.flatMap((effect) => (effect.is(restoreMarker) ? [effect.value] : []))
 		].flatMap((range) => (held.has(range.id) ? [range.id] : []));
 		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
-		return [
-			markerStep.of({
-				drops: gone,
-				ranges: [...touched.values()],
-				undo: tr.changes.invertedDesc,
-				mapped: []
-			})
-		];
+		return [markerSteps.of(tr, [...gone.map((id) => ({ drop: id })), ...touched.values()])];
 	});
 	// Undo or redo that brings back the words of a waiting marker puts the
 	// marker on them. As a restore on the transaction, the redo step records

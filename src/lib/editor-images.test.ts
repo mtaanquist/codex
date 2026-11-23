@@ -323,3 +323,30 @@ describe('upload placeholder through undo and everyday edits', () => {
 		expect(state.doc.toString()).toBe('Newer.\n');
 	});
 });
+
+describe('a line break put back by undo after a change kept out of undo', () => {
+	// Another upload failing removes its placeholder outside undo history; the
+	// first upload's line break must still be found where undo puts it back.
+	it('tracks the line break again, so a failed upload removes it', () => {
+		let state = EditorState.create({
+			doc: 'First line.\nSecond line here.',
+			extensions: [history(), uploadTracking]
+		});
+		const dispatch = (tr: Transaction) => {
+			state = tr.state;
+		};
+		const first = startUpload(12, 'a-very-long-file-name.png', state);
+		dispatch(state.update(first.spec));
+		const second = startUpload(0, 'b.png', state);
+		dispatch(state.update(second.spec));
+		const at = state.doc.toString().indexOf('![Uploading a-very');
+		dispatch(state.update({ changes: { from: at, to: state.doc.length }, userEvent: 'delete' }));
+		dispatch(state.update(finishUpload(state, second.id, null)!));
+		undo({ state, dispatch });
+		expect(state.doc.toString()).toBe(
+			'First line.\n![Uploading a-very-long-file-name.png...]()\nSecond line here.'
+		);
+		dispatch(state.update(finishUpload(state, first.id, null)!));
+		expect(state.doc.toString()).toBe('First line.\nSecond line here.');
+	});
+});

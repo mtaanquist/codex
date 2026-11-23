@@ -21,8 +21,8 @@ while the marker restore records count into the text before it, the one undo
 brings back. A failed upload removing its placeholder then threw a RangeError
 or put a marker back on the wrong words. Clamping in the effect's `map` was
 not enough, since the right mapping needs the undo change itself, which `map`
-does not see. Each history entry now carries one marker step holding its own
-undo change and the list of mappings it was handed; the ranges are mapped
+does not see. Each history entry now carries one step (`src/lib/undo-steps.ts`)
+holding its own undo change and the list of mappings it was handed; the ranges are mapped
 when undo applies the step, over the undo change as it stood at each mapping,
 as history maps its own changes. Joined keystrokes complicate this: an older
 keystroke's step only knows its own part of the undo change, so every edit
@@ -30,7 +30,9 @@ now carries a step (empty ones are dropped when nothing joined them) and the
 newest step supplies the mapping the older ones share. Telling a join apart
 from a change kept out of undo relies on history passing a ChangeSet for the
 join and a plain ChangeDesc otherwise; the tests cover both, so a CodeMirror
-change there fails loudly. With that in place, loading the newer text after a
+change there fails loudly. The image upload line-break records from #1468 had
+the same fault (a RangeError when another upload failed after a placeholder's
+line was deleted) and use the same steps. With that in place, loading the newer text after a
 conflict is kept out of undo too, so Ctrl+Z can no longer bring back the older
 text and autosave it over the other window's words. Separately, the unsaved
 edits used to trim letters shared at the ends of a replacement, so "sat" typed

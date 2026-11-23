@@ -145,10 +145,9 @@ describe('markerExtensions', () => {
 			}
 		});
 		expect(undone!.state.doc.toString()).toBe(doc);
-		const records = undone!.effects.flatMap((effect) => {
-			const step = effect.value as { drops: string[]; ranges: unknown[] };
-			return [...step.drops, ...step.ranges];
-		});
+		const records = undone!.effects.flatMap(
+			(effect) => (effect.value as { records: unknown[] }).records
+		);
 		expect(records).toEqual([]);
 	});
 

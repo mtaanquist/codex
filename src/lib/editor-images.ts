@@ -11,6 +11,7 @@ import {
 } from '@codemirror/state';
 import { invertedEffects, isolateHistory } from '@codemirror/commands';
 import { landsWhilePaused } from './editor-paused';
+import { defineUndoSteps } from './undo-steps';
 
 // Paste or drop an image into the prose: it uploads and lands as a
 // markdown image pointing at the app-served path. Markdown is the stored
@@ -46,10 +47,9 @@ type Pending = {
 
 const addPending = StateEffect.define<Pending>();
 const settlePending = StateEffect.define<{ id: number; result: string | null }>();
-// Carried by an undo or redo that puts an upload's deleted line break back.
-const restoreBreak = StateEffect.define<{ id: number; pos: number }>({
-	map: (value, mapping) => ({ ...value, pos: mapping.mapPos(value.pos, 1) })
-});
+// Where an edit deleted an upload's line break, carried in the undo history
+// (see undo-steps) so an undo or redo that puts it back can track it again.
+const breakSteps = defineUndoSteps<{ id: number; pos: number }>();
 
 // Where the line break at `pos` is after `changes`, or null if they deleted it.
 function mapBreak(changes: ChangeSet, newDoc: Text, pos: number | null): number | null {
@@ -110,19 +110,22 @@ const pendingField = StateField.define<Pending[]>({
 					: { ...p, placed: true, from: at, to: at + p.text.length };
 			});
 		}
+		const restored = breakSteps.place(tr, (record, over) =>
+			record.pos < over.length ? { ...record, pos: over.mapPos(record.pos, 1) } : null
+		);
+		for (const { id, pos } of restored.flat()) {
+			// Only when this transaction put a line break back there: a joined
+			// undo step can carry the record while removing the placeholder and
+			// its break together.
+			if (insertsBreak(tr, pos)) {
+				next = next.map((p) => (p.id === id ? { ...p, lineBreak: pos } : p));
+			}
+		}
 		for (const effect of tr.effects) {
 			if (effect.is(addPending)) next = [...next, effect.value];
 			else if (effect.is(settlePending)) {
 				const { id, result } = effect.value;
 				next = next.map((p) => (p.id === id ? { ...p, result } : p));
-			} else if (effect.is(restoreBreak)) {
-				// Only when this transaction put a line break back there: a
-				// joined undo step can carry the effect while removing the
-				// placeholder and its break together.
-				const { id, pos } = effect.value;
-				if (insertsBreak(tr, pos)) {
-					next = next.map((p) => (p.id === id ? { ...p, lineBreak: pos } : p));
-				}
 			}
 		}
 		return next;
@@ -263,11 +266,20 @@ export function settleUploads(state: EditorState): TransactionSpec | null {
 // follow it there, so the history carries where it goes.
 const breakHistory = invertedEffects.of((tr) => {
 	if (!tr.docChanged) return [];
-	return (tr.startState.field(pendingField, false) ?? []).flatMap((p) =>
-		p.lineBreak !== null && mapBreak(tr.changes, tr.newDoc, p.lineBreak) === null
-			? [restoreBreak.of({ id: p.id, pos: p.lineBreak })]
-			: []
-	);
+	// With no uploads there is nothing for this step or an earlier one to
+	// put back.
+	const pending = tr.startState.field(pendingField, false);
+	if (!pending?.length) return [];
+	return [
+		breakSteps.of(
+			tr,
+			pending.flatMap((p) =>
+				p.lineBreak !== null && mapBreak(tr.changes, tr.newDoc, p.lineBreak) === null
+					? [{ id: p.id, pos: p.lineBreak }]
+					: []
+			)
+		)
+	];
 });
 
 export const uploadTracking: Extension = [pendingField, breakHistory];
