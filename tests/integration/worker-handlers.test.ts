@@ -752,7 +752,7 @@ describe('a details read for one entry', () => {
 
 		expect((await titles(owner.id)).sort()).toEqual(
 			[
-				'The Assistant read nothing for Bram: every story it was going to read has since been muted for the Assistant or moved to the trash. Turn the Assistant back on for a story, then select "Suggest details with the Assistant" on the entry again.',
+				'The Assistant read nothing for Bram, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then select "Suggest details with the Assistant" on the entry again.',
 				'The Assistant left 2 suggestions for Bram, but no summary, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, select "Suggest details with the Assistant" on the entry again.',
 				'The Assistant found nothing new to suggest for Bram, and no summary, because a story was muted for the Assistant or moved to the trash while it was reading. To get a summary, select "Suggest details with the Assistant" on the entry again.'
 			].sort()
@@ -786,7 +786,7 @@ describe('a details read for one entry', () => {
 		]);
 
 		expect(await titles(owner.id)).toEqual([
-			'The Assistant read nothing for Bram: every story it was going to read has since been muted for the Assistant or moved to the trash. Turn the Assistant back on for a story, then select "Suggest details with the Assistant" on the entry again.'
+			'The Assistant read nothing for Bram, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then select "Suggest details with the Assistant" on the entry again.'
 		]);
 		expect(await hrefs(owner.id)).toEqual([
 			`/universes/${universe.id}/plan?entity=${character.id}`
