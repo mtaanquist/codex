@@ -26,7 +26,14 @@ case) replaces `uuid` on these routes; a malformed address is still a router
 404. `publicEdition` and the new `publicUniverse` take either form and scope
 the lookup by the handle's owner (`stories.owner_id = publications.owner_id`,
 `universes.owner_id` through `users.handle`). The shelf, the story menu and
-the publish confirmation now hand out slug links. No redirect from the id
+the publish confirmation now hand out slug links. Review round 1 caught that
+this made unlisted stories guessable from their titles, so a slug resolves
+only a public story and an unlisted one keeps its id address
+(`readingAddress`). It also caught that `src/params.ts` is loaded by Node
+itself during the build, where `#lib/slug` has no extension to resolve: the
+build failed in CI until it imported `./lib/slug.ts`. The matcher also
+accepts slugs up to 100 characters, since the 0035 backfill could append a
+suffix to a 60-character base. No redirect from the id
 address to the slug one: the id is the address that survives a rename.
 
 The universe page shows the name and the shelf's own query narrowed to that

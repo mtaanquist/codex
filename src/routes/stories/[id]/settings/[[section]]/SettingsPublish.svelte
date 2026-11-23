@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { formatDateTime } from '#lib/format';
+	import { readingAddress } from '#lib/slug';
 	import { tick } from 'svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
@@ -80,10 +81,10 @@
 				<a
 					href={resolve('/@[handle]/[story=ref]', {
 						handle: data.archive.handle,
-						story: data.story.slug
+						story: readingAddress(data.story)
 					})}
 				>
-					/@{data.archive.handle}/{data.story.slug}
+					/@{data.archive.handle}/{readingAddress(data.story)}
 				</a>.
 			</p>
 		{/if}

@@ -22,6 +22,7 @@ import {
 	publicProfile,
 	publicShelf,
 	publicUniverse,
+	publicUniverseLink,
 	publishStory,
 	readingPageRef,
 	takedownPublication,
@@ -427,7 +428,11 @@ describe('slug addresses', () => {
 		expect(await publicEdition(db, 'inkwright', 'no-such-story')).toBeNull();
 		// The shelf hands out the slug, and so does the owner's menu link.
 		expect((await publicShelf(db, 'inkwright')).map((book) => book.slug)).toEqual(['book-of-ash']);
-		expect(await readingPageRef(db, storyId)).toEqual({ handle: 'inkwright', slug: 'book-of-ash' });
+		expect(await readingPageRef(db, storyId)).toEqual({
+			handle: 'inkwright',
+			story: 'book-of-ash'
+		});
+		expect(bySlug?.address).toBe('book-of-ash');
 	});
 
 	it("never serves one author's story under another handle", async () => {
@@ -440,14 +445,21 @@ describe('slug addresses', () => {
 		expect(await publicEdition(db, 'inkwright', rivalStoryId!)).toBeNull();
 	});
 
-	it('keeps visibility: unlisted by link, private and unpublished never', async () => {
+	it('keeps an unlisted story at its id only; private and unpublished never', async () => {
 		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
 		// Not yet published: a live story with that slug is not a page.
-		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+		expect(await publicEdition(db, 'inkwright', storyId)).toBeNull();
 		await publishStory(db, authorId, storyId);
-		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).not.toBeNull();
-		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		// The title-derived slug is guessable, so an unlisted story answers
+		// only at its id, and its links use the id.
 		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+		expect((await publicEdition(db, 'inkwright', storyId))?.address).toBe(storyId);
+		expect(await readingPageRef(db, storyId)).toEqual({ handle: 'inkwright', story: storyId });
+
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await publicEdition(db, 'inkwright', storyId)).toBeNull();
+		// The story menu offers no reading page that would 404.
+		expect(await readingPageRef(db, storyId)).toBeNull();
 	});
 
 	it('serves the frozen edition, never the live draft, by slug too', async () => {
@@ -575,6 +587,21 @@ describe('public universe page', () => {
 		expect(await publicUniverse(db, 'rival', universeId)).toBeNull();
 		expect(await publicUniverse(db, 'inkwright', rivalUniverseId)).toBeNull();
 		expect((await publicUniverse(db, 'inkwright', 'ember-reach'))?.id).toBe(universeId);
+	});
+
+	it('links a story to its universe page only while that page exists', async () => {
+		expect(await publicUniverseLink(db, 'inkwright', universeId)).toBeNull();
+		await publishStory(db, authorId, storyId);
+		expect(await publicUniverseLink(db, 'inkwright', universeId)).toEqual({
+			name: 'The Ember Reach',
+			slug: 'ember-reach'
+		});
+		expect(await publicUniverseLink(db, 'rival', universeId)).toBeNull();
+		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
+		expect(await publicUniverseLink(db, 'inkwright', universeId)).toBeNull();
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		await db.update(universes).set({ standalone: true }).where(eq(universes.id, universeId));
+		expect(await publicUniverseLink(db, 'inkwright', universeId)).toBeNull();
 	});
 
 	it('lets a story and a universe share a slug, each at its own address', async () => {

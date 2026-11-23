@@ -1,5 +1,5 @@
 import { defineParams } from '@sveltejs/kit/params';
-import { isPublicRef } from '#lib/slug';
+import { isPublicRef } from './lib/slug.ts';
 
 // Restricts a route param to a UUID, so a malformed id (e.g. /@handle/foo)
 // gets a clean 404 from the router instead of reaching a uuid-typed query

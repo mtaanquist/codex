@@ -49,7 +49,8 @@ export type UniverseRef = { slug: string; name: string };
 // A story's public reading page, when it has one. Absent when the story has
 // no published edition, or the owner has no public handle: the menu then
 // leaves the item out rather than offering a dead link.
-export type ReadingRef = { handle: string; slug: string };
+// story is its address: the slug when listed, the id when unlisted.
+export type ReadingRef = { handle: string; story: string };
 
 export type StoryRef = { slug: string; title: string; reading?: ReadingRef | null };
 
@@ -156,7 +157,7 @@ export function storyCrumb(story: StoryRef, at: StoryAt = null): Crumb {
 				label: 'Public reading page',
 				href: resolve('/@[handle]/[story=ref]', {
 					handle: story.reading.handle,
-					story: story.reading.slug
+					story: story.reading.story
 				}),
 				current: at === 'reading'
 			}

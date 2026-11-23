@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { publicEdition, publicUniverse, type EditionContent } from '#lib/server/publish';
+import { publicEdition, publicUniverseLink, type EditionContent } from '#lib/server/publish';
 import { listEditionArtifacts } from '#lib/server/export-artifacts';
 import { authorName } from '#lib/author-name';
 import { wordCount } from '#lib/word-count';
@@ -13,8 +13,9 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	const handle = params.handle.toLowerCase();
 	const edition = await publicEdition(db, handle, params.story.toLowerCase());
 	if (!edition) error(404, 'Not found');
-	// Links built here use the slug, the address the shelf hands out.
-	const story = edition.slug;
+	// Links built here use the story's own address: the slug when it is
+	// listed, the id when it is unlisted.
+	const story = edition.address;
 
 	// The reader chrome names the author: their own credit on the story if they
 	// gave one, else the name on their account. Never the raw handle.
@@ -51,13 +52,13 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	// The universe's public page, when it has one (some story in it is listed
 	// on the shelf). The id comes from the edition, so this never names a
 	// universe the reader could not already reach.
-	const universe = await publicUniverse(db, handle, edition.universeId);
+	const universe = await publicUniverseLink(db, handle, edition.universeId);
 
 	return {
 		handle,
 		story,
 		gate: false as const,
-		universe: universe && { name: universe.name, slug: universe.slug },
+		universe,
 		title: edition.title,
 		author,
 		words,

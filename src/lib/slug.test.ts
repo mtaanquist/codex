@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPublicRef, isUuid, isValidSlug, slugify, SLUG_MAX } from './slug';
+import { isPublicRef, readingAddress, isUuid, isValidSlug, slugify, SLUG_MAX } from './slug';
 
 describe('slugify', () => {
 	it('lowercases and hyphenates', () => {
@@ -61,11 +61,23 @@ describe('isPublicRef', () => {
 		expect(isPublicRef('Book-Of-Ash')).toBe(true);
 	});
 
+	it('accepts the longer slugs the 0035 backfill could write', () => {
+		expect(isPublicRef(`${'a'.repeat(SLUG_MAX)}-2-8f3a`)).toBe(true);
+	});
+
 	it('rejects anything that is neither', () => {
 		expect(isPublicRef('')).toBe(false);
 		expect(isPublicRef('two words')).toBe(false);
 		expect(isPublicRef('book_of_ash')).toBe(false);
 		expect(isPublicRef('../etc')).toBe(false);
-		expect(isPublicRef('a'.repeat(SLUG_MAX + 1))).toBe(false);
+		expect(isPublicRef('a'.repeat(101))).toBe(false);
+	});
+});
+
+describe('readingAddress', () => {
+	const story = { id: '8f3a1c2e-1234-4abc-9def-001122334455', slug: 'book-of-ash' };
+	it('links a listed story by slug and an unlisted one by id', () => {
+		expect(readingAddress({ ...story, visibility: 'public' })).toBe('book-of-ash');
+		expect(readingAddress({ ...story, visibility: 'unlisted' })).toBe(story.id);
 	});
 });

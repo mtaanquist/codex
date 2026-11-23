@@ -1,5 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { isUuid } from '#lib/slug';
+import { isUuid, readingAddress } from '#lib/slug';
 import { and, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
@@ -141,7 +141,10 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		// The first publish with no pen name set asks what name goes public.
 		displayName: locals.user!.displayName,
 		edition,
-		reading: edition && archive?.handle ? { handle: archive.handle, slug: story.slug } : null,
+		reading:
+			edition && archive?.handle && story.visibility !== 'private'
+				? { handle: archive.handle, story: readingAddress(story) }
+				: null,
 		artifacts: edition ? await listEditionArtifacts(db, edition.id) : [],
 		exports: await listUserExports(db, locals.user!.id, { scope: 'story', targetId: story.id }),
 		reviewInvitations,
