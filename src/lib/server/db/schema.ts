@@ -250,10 +250,11 @@ export const stories = pgTable(
 	]
 );
 
-// Slugs a story or universe has moved off by a rename. Two jobs: a public link
-// made before the rename redirects to the current address, and no other story
-// (or universe) of the account can take the old slug, so an old link never
-// opens a different work. A purge keeps the reservation (the target goes null
+// Slugs a story or universe has moved off by a rename, once it (or, for a
+// universe, a story in it) has been published. Two jobs: a public link made
+// before the rename redirects to the current address, and no other story (or
+// universe) of the account can take the old slug, so an old link never opens
+// a different work. A purge keeps the reservation (the target goes null
 // and the old link 404s); deleting the account removes the rows. Not authored
 // content, so it stays out of exports.
 export const slugHistory = pgTable(

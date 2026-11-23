@@ -110,7 +110,29 @@ async function renameUniverse(title: string) {
 	});
 }
 
+// A published story with a scene, so it can be renamed into history.
+async function publishedStory(title: string) {
+	const story = await createStoryInUniverse(db, ownerId, universeId, title);
+	await db.insert(scenes).values({ storyId: story.id, globalPosition: 1, bodyMd: 'Words.' });
+	const published = await publishStory(db, ownerId, story.id);
+	if (!published.ok) throw new Error(published.reason);
+	return story;
+}
+
+describe('a rename before anything was published', () => {
+	it('reserves nothing, since no public link can name the old slug', async () => {
+		expect(await renameStory(storyId, 'Ember Rising')).toBe('ember-rising');
+		expect(await renameUniverse('Far Shore')).toBe('far-shore');
+		expect(await db.select().from(slugHistory)).toEqual([]);
+		expect((await createStoryInUniverse(db, ownerId, universeId, 'Ember')).slug).toBe('ember');
+	});
+});
+
 describe('reserving old slugs', () => {
+	beforeEach(async () => {
+		await publishStory(db, ownerId, storyId);
+	});
+
 	it('keeps the slug a rename moves off, for that story', async () => {
 		expect(await renameStory(storyId, 'Ember Rising')).toBe('ember-rising');
 		const rows = await db.select().from(slugHistory);
@@ -160,12 +182,34 @@ describe('reserving old slugs', () => {
 
 	it('moves a restored story off a slug another story reserved meanwhile', async () => {
 		await trashStory(db, ownerId, storyId);
-		const taker = await createStoryInUniverse(db, ownerId, universeId, 'Ember');
+		const taker = await publishedStory('Ember');
 		expect(taker.slug).toBe('ember');
 		await renameStory(taker.id, 'Cinder');
 		await restoreStory(db, ownerId, storyId);
 		const [restored] = await db.select().from(stories).where(eq(stories.id, storyId));
 		expect(restored.slug).toBe('ember-2');
+	});
+
+	it('comes back as current when a restore lands on its own old slug', async () => {
+		await renameStory(storyId, 'Ember Rising');
+		await trashStory(db, ownerId, storyId);
+		// Something else takes its live slug, so the restore picks from its
+		// title, which is now free only as its own old slug.
+		await db.insert(stories).values({ universeId, ownerId, title: 'Taker', slug: 'ember-rising' });
+		await db.update(stories).set({ title: 'Ember' }).where(eq(stories.id, storyId));
+		await restoreStory(db, ownerId, storyId);
+		const [restored] = await db.select().from(stories).where(eq(stories.id, storyId));
+		expect(restored.slug).toBe('ember');
+		expect(await db.select().from(slugHistory)).toEqual([]);
+	});
+
+	it('records each slug when one story is renamed twice at once', async () => {
+		await Promise.all([renameStory(storyId, 'Ember Rising'), renameStory(storyId, 'Cinder')]);
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		const slugs = (await db.select().from(slugHistory)).map((row) => row.slug).sort();
+		// Whichever landed second moved off the first one's slug, not the stale one.
+		const other = story.slug === 'cinder' ? 'ember-rising' : 'cinder';
+		expect(slugs).toEqual([other, 'ember'].sort());
 	});
 
 	it('goes with the account', async () => {
@@ -194,11 +238,9 @@ describe('public redirects from old slugs', () => {
 	});
 
 	it('never redirects to a story that is not readable at its slug', async () => {
-		await renameStory(storyId, 'Ember Rising');
-		// Not published yet.
-		expect(await publicStoryRedirect(db, 'inkwright', 'ember')).toBeNull();
 		const published = await publishStory(db, ownerId, storyId);
 		if (!published.ok) throw new Error(published.reason);
+		await renameStory(storyId, 'Ember Rising');
 
 		// Unlisted: the redirect would give its id away.
 		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
@@ -226,11 +268,13 @@ describe('public redirects from old slugs', () => {
 	});
 
 	it('sends an old universe slug to the current one while its page shows', async () => {
-		await renameUniverse('Far Shore');
-		// Nothing listed in it yet: no page, so no redirect.
-		expect(await publicUniverseRedirect(db, 'inkwright', 'ember-reach')).toBeNull();
 		await publishStory(db, ownerId, storyId);
+		await renameUniverse('Far Shore');
 		expect(await publicUniverseRedirect(db, 'inkwright', 'ember-reach')).toBe('far-shore');
+		// Nothing listed in it: no page, so no redirect.
+		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
+		expect(await publicUniverseRedirect(db, 'inkwright', 'ember-reach')).toBeNull();
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
 		expect(await publicUniverseRedirect(db, 'rival', 'ember-reach')).toBeNull();
 		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, universeId));
 		expect(await publicUniverseRedirect(db, 'inkwright', 'ember-reach')).toBeNull();

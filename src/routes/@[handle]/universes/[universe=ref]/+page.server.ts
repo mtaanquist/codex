@@ -11,7 +11,7 @@ import { authorNameOrHandle } from '#lib/author-name';
 // like the shelf, and like the shelf it shows only frozen editions. A
 // universe with nothing listed is a 404, so its name never leaks. A slug
 // the universe had before a rename redirects permanently to the current one.
-export const load: PageServerLoad = async ({ params }) => {
+export const load: PageServerLoad = async ({ params, url }) => {
 	const handle = params.handle.toLowerCase();
 	const ref = params.universe.toLowerCase();
 	const [universe, identity] = await Promise.all([
@@ -21,7 +21,10 @@ export const load: PageServerLoad = async ({ params }) => {
 	if (!universe) {
 		const moved = isUuid(ref) ? null : await publicUniverseRedirect(db, handle, ref);
 		if (moved)
-			redirect(308, resolve('/@[handle]/universes/[universe=ref]', { handle, universe: moved }));
+			redirect(
+				308,
+				resolve('/@[handle]/universes/[universe=ref]', { handle, universe: moved }) + url.search
+			);
 		error(404, 'Not found');
 	}
 	return {

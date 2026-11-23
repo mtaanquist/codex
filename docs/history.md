@@ -38,11 +38,18 @@ suffix to a 60-character base.
 Old slugs redirect (decided by Mads after round 1). A rename used to break a
 shared slug link, and a later story could take the freed slug and inherit
 it. `slug_history` (migration 0107) keeps each slug a rename moves off, per
-account and kind: `saveStoryDetails` and the new `saveUniverseDetails` write
-it in the rename's transaction (`retireSlug`), and `uniqueSlug` counts it as
-taken, except a story's own old slugs, so renaming back works. A restore
+account and kind, once the story (or a story in the universe) has been
+published; a rename before that has no public link to protect, and
+reserving it would only push suffixes onto later drafts. `saveStoryDetails`
+and the new `saveUniverseDetails` go through `saveWithSlug`, which takes a
+per-account advisory lock, reads the current slug inside the transaction
+(review round 2: two renames at once used to retire a stale slug and lose
+the one in between), picks, saves and records. `uniqueSlug` counts history
+as taken, except a story's own old slugs, so renaming back works. A restore
 from the trash whose slug became another story's old slug picks a fresh one,
-since coming back under it would re-point that story's links. The public
+since coming back under it would re-point that story's links; it runs under
+the same lock, so a rename cannot reserve the slug between the check and
+the revive. Trashing still frees a story's current slug, unchanged. The public
 loaders redirect with 308 (SvelteKit's permanent redirect) only when the
 target is readable at its slug, which keeps an unlisted story's id out of
 any redirect. Purge keeps the reservation with a null target (safer than

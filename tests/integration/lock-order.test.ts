@@ -139,7 +139,7 @@ const ROWS: { table: string; key: Key }[] = [
 ];
 
 // The advisory locks the write paths take (row-locks.ts, revisions.ts,
-// review.ts, story-drafts.ts).
+// review.ts, story-drafts.ts, slugs.ts).
 const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the story-scenes lock', advisory: () => `story-scenes:${S.story}` },
 	...(['A', 'B', 'C', 'D', 'T'] as const).map((key) => ({
@@ -149,7 +149,8 @@ const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the revision lock of character Aldric', advisory: () => `character:${S.aldric}` },
 	{ name: 'the revision lock of place Quay', advisory: () => `place:${S.quay}` },
 	{ name: 'the revision lock of lore entry Toll', advisory: () => `lore_entry:${S.toll}` },
-	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` }
+	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` },
+	{ name: 'the slug lock of the account', advisory: () => `slugs:${S.user}` }
 ];
 
 const TARGETS: Target[] = [...ROWS.map((row) => ({ ...row, name: NAMES[row.key] })), ...ADVISORY];
@@ -390,7 +391,7 @@ const OPS: Op[] = [
 			await saveStoryDetails(
 				db,
 				S.user,
-				{ id: S.story, title: 'Turns', slug: 'turns' },
+				{ id: S.story, title: 'Turns' },
 				{
 					title: 'Other Turns',
 					author: null,
