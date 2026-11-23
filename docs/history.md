@@ -10,8 +10,56 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
+on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
+short or waiting when unsaved edits partly cancel out in one combined change)
+is closed by no longer mapping new markers through unsaved edits at all. A
+marker new to the editor (made in another window, or one's own read back while
+typing) is placed only when `unsavedChanges().settledFrom(markersVersion)`
+says the text on screen is the stored text its anchors count into: the last
+save landed, nothing was typed since it was sent, and the fingerprints match
+(the only edits left put back an uploading image the save cut). Otherwise it
+is left out of the set. When the editor's own save lands with nothing typed
+since (autosave `onSettled`), a waiting marker re-checks, and the page data is
+read again when its fingerprint is older (once per pair of fingerprints, so a
+text changed elsewhere does not refresh in a loop); the server maps markers the save
+sent no anchors for through the save (`remapMarkerAnchors`), so the anchors
+then fit as they are. A writer who keeps typing gets it at the next save that
+lands while idle; a failed save or a conflict keeps it waiting until a save
+lands (after Load newer version or Keep mine) or a reload. Mapping through
+only the edits after the matching save was considered and left out: those are
+still one combined change and can partly cancel out the same way. Removed:
+`unsavedChanges().from()` and the older texts it kept, `waitingMarkers`, and
+the undo path that put a waiting new marker on words undo brought back. So a
+new marker that arrives while its words are deleted and unsaved is detached by
+the save, and undo after that brings back the words without it; markers
+already shown still come back with undo as before.
+
+Copied upload placeholders and marker notices (2026-11-23,
+`fix/editor-notices-1476-1479` on `staging/bug-fixes-4`, #1476, #1479). A
+copy of an "Uploading" line the writer pasted elsewhere is not tracked, so it
+was saved and never replaced. While its upload runs, any whole line that is
+exactly that placeholder text is now cut from saves, and the copies are
+removed when the upload finishes. Only whole lines count, so the same words
+inside a longer line stay, and the removal is kept out of undo history: in the
+landing's undo step, undo would bring the copies back after the upload is no
+longer running, and they would then be saved.
+
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
+
+Merging main's image upload rework into Phase 10 (2026-11-23,
+`chore/phase-10-sync-main-2` on `staging/phase-10`). Main's undo-aware
+placeholders (#1480) replaced the upload code that Phase 10 had moved into
+`uploadImage`, so `uploadImage` now builds on main's flow: it shrinks the
+image, posts it, and turns a refusal into main's `uploadFailure` message,
+which now also passes on the reason for a 403 (an account limit, such as
+the storage limit). The refused-image banner (`ImageUploadNotice`) is gone;
+the message goes into main's lost-images notice instead. Clearing that
+message once a later image is added (#1491) uses
+main's second callback: the extension keeps the failure messages and hands
+each to `onFound` when an image lands. Lost-image messages stay, since undo
+can still bring their line back.
 
 Phase 10 leftover lows (UI, admin, docs) (2026-11-23,
 `fix/phase-10-lows-b` on `staging/phase-10`). A restore refused at a count
@@ -430,6 +478,112 @@ transaction. A suspended author's shelf, story and universe pages,
 redirects, covers, images, avatar and reader downloads answer as not found
 until the suspension is lifted (#1441).
 
+Marker limits after the #1448 reviews (2026-11-23,
+`fix/marker-limits-1477-1478` on `staging/bug-fixes-4`, #1478 and part of
+#1477). The page data's markers now carry the fingerprint of the text their
+anchors count into, read with the markers in one repeatable-read snapshot
+(`readSceneMarkers`, `readStoryMarkers`), and `unsavedChanges().from()` maps
+them only through the edits made after that text: the one a save is sending
+(stored, not yet answered), the last one the editor heard was stored, or one
+of the three before it. An unknown text (changed elsewhere) places no new
+marker until a reload. This closes the race the third follow-up left open.
+The unsaved edits now also keep each deletion that held stored words with
+the stored offset of every character (a "grave"), and an insertion of exactly
+that text at that place (undo, mostly) restores those offsets, so text undo
+brings back inside a larger combined change counts as stored character by
+character instead of all new. A new or waiting marker is placed from its
+first stored character still there to its last, rather than by mapping its
+ends, which could end it on words typed over its last ones. In the review
+fuzz, new markers placed short or wrong fell from 170 to 12 in 3000 seeds;
+what is left is keystrokes joined into one undo step whose put-back mixes
+with other unsaved edits, since the step comes back in one insertion that
+matches no single deletion. Joining graves for runs of deletions was tried
+and cleared 1 of those, so it was left out. An undo record whose range a
+change kept out of undo took entirely now takes the marker away instead of
+leaving what mapping put on the redone words (the rare marker on other words;
+none left in 10,000 seeds with deletions kept out of undo, which is all the
+app makes). Ctrl+Z and redo now pass over steps that change no text (one
+emptied by a change kept out of undo, or keystrokes that cancel out) and
+undo the next one with them (`undoText` in `src/lib/editor.ts`).
+
+Undo cleared when newer text loads (2026-11-23, `fix/review-6` on
+`staging/bug-fixes-4`, part of #1448). Loading the other window's text (Load
+newer version, or the automatic load after a refused marker) kept the change
+out of undo, but CodeMirror carried the older undo steps across it, so Ctrl+Z
+replayed the writer's old edits onto the newer words, garbled, and autosave
+stored them. Every older step was taken on text that is no longer there, so
+the history is now cleared: CodeMirror has no command for that, so the history
+extension sits in a compartment and `showNewerText` (`src/lib/editor.ts`)
+takes it out and puts it back. Marker undo records also need `keepsSome` now,
+like `rebuiltMarkers`, so a change kept out of undo that replaced a marker's
+words cannot land it on the new words, and a redo that drops a marker whose
+words it leaves alone records its range so the following undo restores it. A
+refused or failed image upload now says so in the lost-image notice instead of
+just removing its placeholder.
+
+Marker undo records through changes kept out of undo (2026-11-23,
+`fix/marker-review-5` on `staging/bug-fixes-4`, review of #1467). CodeMirror's
+history maps the effects it carries through a change kept out of undo
+(`addToHistory: false`) as if they were counted in the text after the edit,
+while the marker restore records count into the text before it, the one undo
+brings back. A failed upload removing its placeholder then threw a RangeError
+or put a marker back on the wrong words. Clamping in the effect's `map` was
+not enough, since the right mapping needs the undo change itself, which `map`
+does not see. Each history entry now carries one step (`src/lib/undo-steps.ts`)
+holding its own undo change and the list of mappings it was handed; the ranges are mapped
+when undo applies the step, over the undo change as it stood at each mapping,
+as history maps its own changes. Joined keystrokes complicate this: an older
+keystroke's step only knows its own part of the undo change, so every edit
+now carries a step (empty ones are dropped when nothing joined them) and the
+newest step supplies the mapping the older ones share. Telling a join apart
+from a change kept out of undo relies on history passing a ChangeSet for the
+join and a plain ChangeDesc otherwise; the tests cover both, so a CodeMirror
+change there fails loudly. The image upload line-break records from #1468 had
+the same fault (a RangeError when another upload failed after a placeholder's
+line was deleted) and use the same steps. With that in place, loading the newer text after a
+conflict is kept out of undo too, so Ctrl+Z can no longer bring back the older
+text and autosave it over the other window's words. Separately, the unsaved
+edits used to trim letters shared at the ends of a replacement, so "sat" typed
+over as "sun" counted its "s" as the stored word and a new marker on "sat"
+landed on "sun". Now only text put back exactly (a deletion and its undo,
+noticed after each edit) counts as unchanged. The cost is that text put back
+by undo inside a span later typed over in part counts as new, so a new marker
+there can come out shorter or wait for the next save; that errs towards a
+short marker rather than one on words the writer typed.
+
+Image upload line breaks and lost-image notice (2026-11-23,
+`fix/image-upload-review-5` on `staging/bug-fixes-4`, review of #1463). A
+placeholder used to take whatever line break followed it, so a writer who
+joined its line onto the next (Backspace on the blank line below, Delete at
+its end) lost their own paragraph break on save, a failed upload, or a redo.
+The inserted break is now tracked by position, and the newline after the
+placeholder goes with it only while that break is still in the text. Mapping
+cannot follow a break an undo or redo puts back, so `invertedEffects` stores
+its position in the history; the effect counts only when that same
+transaction inserted a newline there, because a joined undo step can carry it
+while removing the placeholder and its break together. The "image was not
+added" message moved out of `markError`, which every edit clears, into its own
+notice that stays until dismissed.
+
+Image uploads through undo and moved lines (2026-11-23,
+`fix/image-upload-review-4` on `staging/bug-fixes-4`, review of #1463). The
+#1463 fix stopped a finished upload from replacing text it did not insert by
+dropping the upload once its placeholder changed, but everyday edits change it
+(Enter at the end of its line, undo then redo of the paste, a moved line), so
+the placeholder was saved and the image lost. The tracked placeholder is now
+only the image text, without its line break, and each placeholder's text is
+unique in its editor. An edit that breaks the tracking is followed by a
+search for that exact text, accepted only when it appears exactly once, so an
+upload still never touches anything but its own placeholder. A finished upload
+keeps its result, so a placeholder that an undo brings back still turns into
+the image. Undoing a landed image brings the placeholder back. The editor
+then removes it outside undo history, so Ctrl+Z removes the image. This
+works because the landing replaced the line break as well, so redo still
+re-inserts the whole image line. Removing the placeholder inside the undo
+transaction (a transaction filter) was rejected: the history's remaining
+steps assume the document the undo alone produces, so the next undo would
+delete the wrong text.
+
 Undo brings back a marker whose words were deleted (2026-11-23,
 `fix/marker-undo-reattach` on `staging/bug-fixes-2`, #1429). Since #1415 a
 Write save detaches a marker whose words the writer deleted, and undo did not
@@ -470,6 +624,72 @@ fresh server anchors (after marking or checking off) is not emptied by old
 history. A seeded random test (1500 edit, undo and redo sequences on three
 markers) checks that whenever undo or redo returns to text seen before, the
 markers match what they were then.
+Third follow-up (`fix/marker-rebuild-review-1` on `staging/bug-fixes-4`,
+review of #1447 and #1448). Rebuilding the marker set before an autosave
+(#1448) mapped the server's anchors through the combined unsaved edits for
+every marker not highlighted, including one the editor held but whose words
+the writer had deleted; the combined change can lose the step that removed
+it, so it came back over the replacement text. Only markers new to the
+editor are mapped now; a held one that is not shown comes back detached and
+undo can still restore it. Recording "gone" only for markers the set had
+shown (#1447) missed a marker that a rebuilt set loaded detached and undo
+then restored, so redo left it on the redone text; a transaction that
+restores a marker now also records it as gone for the reverse step. Making a
+marker after a failed flush sent the selection's screen positions against
+older server text; the selection is now followed through later edits and
+mapped back through the unsaved ones, and words the server does not hold yet
+are refused with a plain message. Not fixed: a page refresh can read the
+server's anchors after an in-flight save commits but before the editor
+learns it landed, so a new marker's anchors are mapped through those edits
+twice. The page load reads the body and the markers in separate queries and
+carries no save version, so telling the two cases apart needs the markers
+read to return the version of the text they count into; since the first fix
+above, only a marker new to the editor arriving mid-save is exposed.
+Fourth follow-up (`fix/marker-rebuild-review-2` on `staging/bug-fixes-4`,
+second review of #1448). The "gone" records were still scoped to the set
+that wrote them, so a rebuild between undo and redo let redo leave a marker
+on the replacement text. The scope dated from when a rebuild placed held
+markers from server anchors; now that a rebuild keeps shown positions and
+detaches held hidden markers, a record from an older set is still true, so
+the scope is gone. The unsaved-edits record composed every edit into one
+change, and a deletion followed by its undo composed into a replacement of
+the span, collapsing a new marker inside it to an edge; it now keeps the
+texts too and leaves out of each replacement what it puts back unchanged at
+either end. Marking while the "changed in another window" notice is up is
+refused, since the server holds text this editor never saw. A marker POST
+now carries the fingerprint of the text its anchors count into and the
+server refuses it (scene row locked while checking) when a later save landed
+first; the editor tries once more. The page-load half (anchors read beside a
+save that has landed but not answered) stays open for the reason above.
+Fifth follow-up (`fix/marker-rebuild-review-3` on `staging/bug-fixes-4`,
+third review of #1448). While an image uploads, its placeholder line is in
+the editor text but not in what the save stores, and the unsaved-edits
+record took the editor text as the stored one, so after the save positions
+were off by the placeholder's length; a save now passes the ranges it leaves
+out, and the edits since the save put them back in. A marker refused twice
+by the server while this editor had nothing to save (the scene changed by
+the review centre, find and replace, or another window) said "try again",
+which could never work; the retry now saves the text on screen first, so a
+change elsewhere comes up as the usual conflict notice. A marker that
+reached the editor while its words were deleted and not saved had no undo
+record, so undo brought the words back but not the highlight; it now waits,
+followed through later edits and saves, and undo or redo that brings any of
+its words back places it. Not fixed: a new marker placed through unsaved
+edits that only partly cancel inside one combined change can still land on
+fewer of its words than are there (net() trims only a replacement's
+unchanged ends). A character diff per replacement clears it in the fuzz, but
+in prose it would align single common letters, so it is left for a word
+level approach if it matters.
+Sixth follow-up (`fix/marker-review-4` on `staging/bug-fixes-4`, fourth
+review of #1448). Saving the text on screen to surface a change elsewhere
+was wrong for an idle editor: its text is the older one, the notice claimed
+unsaved edits, and Keep mine would have put the old text over the newer
+one. The marker refusal now carries the scene's text, and an editor with
+nothing waiting to save (and no image uploading) shows it, replacing only
+the part that differs so other highlights stay, and asks the writer to mark
+again. A waiting marker, and a new one mapped through unsaved edits, is
+placed only when at least one of its original characters is back; mapping
+alone put it on new words typed where its words had been.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write

@@ -17,12 +17,15 @@ import {
 	deleteMarker,
 	listSceneMarkers,
 	listStoryTodos,
+	readSceneMarkers,
+	readStoryMarkers,
 	setMarkerResolved,
 	updateMarkerAnchors
 } from '../../src/lib/server/markers';
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { recordRevision, restoreRevision } from '../../src/lib/server/revisions';
 import type { Database } from '../../src/lib/server/auth';
+import { textHash } from '../../src/lib/text-hash';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 import {
 	join,
@@ -99,6 +102,67 @@ describe('createMarker', () => {
 		expect(await createMarker(db, strangerId, sceneId, 0, 5)).toMatchObject({
 			ok: false,
 			code: 'not_found'
+		});
+	});
+
+	// The editor counts the anchors into the text it last saved; a save from
+	// another window, or this editor's next one, may have landed first.
+	it('refuses anchors counted into a text the scene no longer holds', async () => {
+		expect(
+			await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash('Other words.'))
+		).toMatchObject({
+			ok: false,
+			code: 'conflict',
+			// The editor loads it when it has no edits of its own to keep.
+			scene: { bodyMd: BODY, title: 'Toll' }
+		});
+		expect(await listSceneMarkers(db, sceneId)).toHaveLength(0);
+		expect(await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash(BODY))).toMatchObject(
+			{ ok: true }
+		);
+	});
+});
+
+// The editor maps the page data's anchors only through the edits it made
+// after the text they count into, so the list names that text.
+describe('readSceneMarkers and readStoryMarkers', () => {
+	it('name the text the anchors count into, before and after a save', async () => {
+		const created = await createMarker(db, ownerId, sceneId, 0, 5);
+		if (!created.ok) throw new Error('setup failed');
+		expect(await readSceneMarkers(db, sceneId)).toEqual({
+			markers: [{ id: created.id, anchorStart: 0, anchorEnd: 5, bodyMd: null }],
+			version: textHash(BODY)
+		});
+		const edited = 'Oh. ' + BODY;
+		const saved = await saveSceneBody(db, sceneId, {
+			title: 'Toll',
+			bodyMd: edited,
+			anchors: [{ id: created.id, anchorStart: 4, anchorEnd: 9 }],
+			baseHashes: null,
+			overwrite: false
+		});
+		expect(saved.ok).toBe(true);
+		const read = await readSceneMarkers(db, sceneId);
+		expect(read.version).toBe(textHash(edited));
+		expect(edited.slice(read.markers[0].anchorStart!, read.markers[0].anchorEnd!)).toBe('Alice');
+	});
+
+	it('lists each scene with markers and its text fingerprint for the continuous view', async () => {
+		const created = await createMarker(db, ownerId, sceneId, 6, 10);
+		if (!created.ok) throw new Error('setup failed');
+		await db.insert(scenes).values({ storyId, globalPosition: 2, bodyMd: 'No markers here.' });
+		expect(await readStoryMarkers(db, storyId)).toEqual({
+			[sceneId]: {
+				markers: [{ id: created.id, anchorStart: 6, anchorEnd: 10 }],
+				version: textHash(BODY)
+			}
+		});
+	});
+
+	it('names a scene with no markers too', async () => {
+		expect(await readSceneMarkers(db, sceneId)).toEqual({
+			markers: [],
+			version: textHash(BODY)
 		});
 	});
 });

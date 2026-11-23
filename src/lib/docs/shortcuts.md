@@ -21,8 +21,16 @@ Option on a Mac, Ctrl and Alt everywhere else.
 - **Arrow keys** on the formatting bar move between its tools, and Home and End
   jump to the first and last. Tab moves on to the text.
 - **Ctrl+Alt+M**: mark the selected text as a TODO. A line that begins with
-  `TODO:` becomes one on its own, no shortcut needed.
-- **Ctrl+Z** and **Ctrl+Shift+Z**: undo and redo.
+  `TODO:` becomes one on its own, no shortcut needed. Words that are not saved
+  yet, for example while the scene cannot save, cannot be marked until they are;
+  if the selection also takes in saved words, only those are marked. If the
+  scene was changed in another window and you have edits here that are not
+  saved, choose which version to keep first, then mark the words again. If you
+  have no unsaved edits, the editor shows the newer version instead; select the
+  words and mark them again. A mark made in another window, or one you make and
+  then keep typing, is highlighted here once your latest words have saved.
+- **Ctrl+Z** and **Ctrl+Shift+Z**: undo and redo. Once the editor shows a
+  newer version from another window, undo cannot go back past it.
 - **Ctrl+J**: ask the Assistant to continue the passage at the cursor (when the
   Assistant is set up). Tab accepts the grey suggestion; Esc dismisses it.
 

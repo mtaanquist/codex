@@ -213,6 +213,16 @@ describe('createSceneSaver', () => {
 		expect(sent[2].overwrite).toBeUndefined();
 	});
 
+	it('builds on the stored text after adopting one with Windows line breaks', async () => {
+		// The editor shows it with plain newlines; the server checks the
+		// fingerprint of the text it stores, so that is the base to send.
+		const sent = mockFetch([ok]);
+		const saver = createSceneSaver('s', 'a', () => {});
+		saver.adopt('Intro\r\nThe end.');
+		await saver.save(save('Intro\nThe end.'));
+		expect(sent[0].baseHashes).toEqual([textHash('Intro\r\nThe end.')]);
+	});
+
 	it('ignores a refusal for a save started before the conflict was settled', async () => {
 		let answer!: (r: Response) => void;
 		mockFetch([() => new Promise<Response>((r) => (answer = r))]);
