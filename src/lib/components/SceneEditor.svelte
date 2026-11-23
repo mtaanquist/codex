@@ -262,6 +262,9 @@
 
 	// Why the last Ctrl/Cmd+Alt+M made no marker; cleared by the next edit.
 	let markError = $state<string | null>(null);
+	// Images that finished uploading but could not be added. Kept until the
+	// writer dismisses them, so the next keystroke does not hide them.
+	let lostImages = $state<string[]>([]);
 	// Bumped when the newer text from another window replaces this editor's.
 	let swaps = 0;
 	const CHANGED_ELSEWHERE =
@@ -664,7 +667,9 @@
 							})
 						: [],
 					imageUniverseId
-						? imageUploadExtension(imageUniverseId, (message) => (markError = message))
+						? imageUploadExtension(imageUniverseId, (message) => {
+								lostImages = [...lostImages, message];
+							})
 						: []
 				]
 			})
@@ -684,6 +689,19 @@
 	});
 </script>
 
+{#snippet lostImagesNotice()}
+	{#if lostImages.length > 0}
+		<div class="lost-images" role="alert">
+			{#each lostImages as message, i (i)}
+				<p class="field-hint lost-images-text">{message}</p>
+			{/each}
+			<button class="btn btn-sm btn-secondary" type="button" onclick={() => (lostImages = [])}>
+				Dismiss
+			</button>
+		</div>
+	{/if}
+{/snippet}
+
 {#if compact}
 	<div
 		class="editor compact"
@@ -696,6 +714,7 @@
 			<SceneConflictBanner onLoadNewer={loadNewer} onKeepMine={keepMine} paused={leaving} />
 		{/if}
 		<FormStatus error={markError} live />
+		{@render lostImagesNotice()}
 		<div class="editor-cm" bind:this={editorEl}></div>
 	</div>
 {:else}
@@ -744,6 +763,7 @@
 					onchange={flushTitle}
 				/>
 				<FormStatus error={markError} live />
+				{@render lostImagesNotice()}
 				<div class="editor-cm" bind:this={editorEl}></div>
 			</div>
 		</div>
@@ -764,6 +784,17 @@
 {/if}
 
 <style>
+	.lost-images {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 12px;
+		margin-bottom: 8px;
+	}
+	.lost-images-text {
+		color: var(--danger-ink);
+		margin: 0;
+	}
 	.editor-title-input {
 		width: 100%;
 		border: 0;
