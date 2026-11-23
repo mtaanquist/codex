@@ -324,8 +324,10 @@ export async function enrichEntityFromText(
 		const [part, ...later] = await stillReadable(db, opts.scope, parts.slice(index));
 		if (part.length === 0) continue;
 		// The last part with anything left to read, so a story muted after the
-		// read began does not take the summary request with its part.
-		const last = later.every((rest) => rest.length === 0);
+		// read began does not take the summary request with its part. Asked
+		// once: a story unmuted after an earlier part asked can make a later
+		// part last too.
+		const last = !summaryAsked && later.every((rest) => rest.length === 0);
 		const content = buildEnrichTextMessage(
 			// The summary is asked for once, from the last part, which also has
 			// what the earlier parts found.
@@ -366,11 +368,12 @@ export async function enrichEntityFromText(
 			const proposals = parseEnrichResponse(result.content).filter(
 				(p) => p.field !== 'summary' || (last && !summaryClosed)
 			);
-			const before = found.length;
+			const earlier = new Set(found);
 			found = mergeProposals(found, proposals);
-			// Only what this part added; the summary comes from the last part
-			// alone, so it is last here too, where staging stops.
-			const fresh = found.slice(before);
+			// Only what this part added. Picked out by identity, not position: a
+			// part read after the summary's (see last above) adds finds ahead of
+			// it, since mergeProposals keeps the summary at the end.
+			const fresh = found.filter((p) => !earlier.has(p));
 			if (fresh.length) {
 				suggestions.push(
 					...(await stageEntitySuggestions(db, {

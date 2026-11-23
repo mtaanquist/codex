@@ -368,7 +368,10 @@ export function createHandlers(deps: WorkerDeps) {
 			} else if (result.skipped === 'all') {
 				// States the current state only: nothing records when a story was muted
 				// or trashed, or whether the mentions in a readable story were removed.
-				title = `The Assistant read nothing for ${name}, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then ${DETAILS_AGAIN}.`;
+				// A read scoped to a story reads that story alone.
+				title = read.storyId
+					? `The Assistant read nothing for ${name}, because the story it would read has the Assistant turned off or is in the trash. Turn the Assistant back on for the story, or restore it from the trash, then ${DETAILS_AGAIN}.`
+					: `The Assistant read nothing for ${name}, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then ${DETAILS_AGAIN}.`;
 			} else if (result.scenes === 0) {
 				title = `The Assistant found no scenes that mention ${name}, so there was nothing to read.`;
 			} else if (result.skipped === 'summary') {
