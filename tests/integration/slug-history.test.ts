@@ -157,6 +157,23 @@ describe('reserving old slugs', () => {
 		await publishStory(db, ownerId, storyId);
 	});
 
+	it("records nothing when another account's save names the story", async () => {
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		expect(await saveStoryDetails(db, otherId, story, details('Ember Rising'))).toBeNull();
+		expect(await db.select().from(slugHistory)).toEqual([]);
+		const [after] = await db.select().from(stories).where(eq(stories.id, storyId));
+		expect(after).toMatchObject({ title: 'Ember', slug: 'ember' });
+		const [universe] = await db.select().from(universes).where(eq(universes.id, universeId));
+		expect(
+			await saveUniverseDetails(db, otherId, universe, {
+				name: 'Elsewhere',
+				descriptionMd: null,
+				establishedSetting: false
+			})
+		).toBeNull();
+		expect(await db.select().from(slugHistory)).toEqual([]);
+	});
+
 	it('keeps the slug a rename moves off, for that story', async () => {
 		expect(await renameStory(storyId, 'Ember Rising')).toBe('ember-rising');
 		const rows = await db.select().from(slugHistory);

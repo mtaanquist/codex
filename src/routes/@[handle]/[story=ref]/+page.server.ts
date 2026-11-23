@@ -33,6 +33,9 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 	// Links built here use the story's own address: the slug when it is
 	// listed, the id when it is unlisted.
 	const story = edition.address;
+	// Only a public story may be listed by search engines; an unlisted one is
+	// for whoever has the link.
+	const listed = edition.visibility === 'public';
 
 	// The reader chrome names the author: their own credit on the story if they
 	// gave one, else the name on their account. Never the raw handle.
@@ -44,6 +47,7 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 			handle,
 			story,
 			gate: true as const,
+			listed,
 			title: edition.title,
 			author
 		};
@@ -75,6 +79,7 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 		handle,
 		story,
 		gate: false as const,
+		listed,
 		universe,
 		title: edition.title,
 		author,

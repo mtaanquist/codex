@@ -50,6 +50,13 @@
 					{formatNumber(plan.accounts)} account{pluralSuffix(plan.accounts)}
 				</p>
 			</div>
+			{#if !plan.isDefault}
+				<!-- Its own form, so it never sends the limits below, saved or not. -->
+				<form method="POST" action="?/setDefaultPlan">
+					<input type="hidden" name="planId" value={plan.id} />
+					<button type="submit" class="btn btn-ghost">Make default</button>
+				</form>
+			{/if}
 		</div>
 		<div class="admin-card">
 			<form method="POST" action="?/savePlan">
@@ -103,7 +110,7 @@
 							value={storageValue(plan.limits.storage_bytes)}
 						/>
 						<span class="field-hint">
-							Counts uploaded images, covers, and avatars. Text does not count.
+							Counts uploaded images, covers, avatars, and badges. Text does not count.
 						</span>
 					</div>
 				</div>
@@ -131,11 +138,6 @@
 						error={status?.message ?? null}
 						success={status && 'saved' in status && status.saved ? 'Saved.' : null}
 					/>
-					{#if !plan.isDefault}
-						<button type="submit" formaction="?/setDefaultPlan" class="btn btn-ghost">
-							Make default
-						</button>
-					{/if}
 					<button type="submit" class="btn btn-primary">Save</button>
 				</div>
 			</form>

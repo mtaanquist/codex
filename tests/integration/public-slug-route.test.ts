@@ -203,6 +203,14 @@ describe('a rename back to an old slug', () => {
 	});
 });
 
+describe('search engines', () => {
+	it('may list a public story but not an unlisted one', async () => {
+		expect(await loadStory('ember')).toMatchObject({ data: { listed: true } });
+		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
+		expect(await loadStory(storyId)).toMatchObject({ data: { listed: false } });
+	});
+});
+
 describe('addresses typed in another case', () => {
 	it('reads a story at its slug or id in upper case', async () => {
 		expect(await loadStory('EMBER')).toHaveProperty('data');

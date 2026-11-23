@@ -22,7 +22,7 @@ export async function saveStoryDetails(
 	story: { id: string },
 	details: StoryDetails
 ): Promise<string | null> {
-	return saveWithSlug(db, 'stories', story.id, details.title, async (tx, slug) => {
+	return saveWithSlug(db, 'stories', ownerId, story.id, details.title, async (tx, slug) => {
 		await tx
 			.update(stories)
 			.set({ ...details, slug })

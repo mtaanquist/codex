@@ -13,6 +13,32 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 3 (2026-11-23, `fix/phase-10-review-3` on
+`staging/phase-10`). The sweep's 30-day grace counted from upload, so an old
+image taken out of a field with no history (a description, a bio) could be
+deleted minutes later by a sweep any writer's "delete for good" queued, and an
+undo or a retried save then linked a dead image. The sweep now deletes in two
+phases: the first run that finds an image unused sets
+`assets.unreferenced_since` (migration 0109), a run that finds it in use
+clears it, and only an image marked for 30 days (and uploaded more than 30
+days ago) goes. The sweep queued from the dashboard covers only that account
+(a pg-boss singleton key per account, so it never takes the nightly run's
+place). Its per-chunk recheck of every column used to run under the account
+row locks, holding up that writer's uploads and profile saves for a full
+scan; it now runs first, outside any lock, and the short locked transaction
+only checks the rows are still there and still marked long enough. Replacing
+an avatar, cover or badge passes `replaces` to `createAsset`, whose limit check
+(not the counter) takes the old image's bytes off, so a writer at the limit
+can swap; the counter reads above the limit until the sweep frees the old
+image, and the next check sees that overage, so it is bounded by one image.
+A credit for every marked image was considered and left out: unlinking and
+relinking images would let usage grow past the limit a day at a time. A
+universe purge frees images the way the sweep does (file kept 30 days longer,
+row logged). The story settings take the reading link from `readingPageRef`,
+so a takedown or suspension hides it; an unlisted reading page is noindex; the
+plan form's "Make default" is its own form; and `saveWithSlug` locks the row
+only when it is the caller's, so no history is recorded for another's row.
+
 Phase 10 staging review round 2 (2026-11-23, `fix/phase-10-review-2` on
 `staging/phase-10`). The 308 from an old public slug stays permanent for
 search engines but carries `Cache-Control: no-cache`: a browser caches a

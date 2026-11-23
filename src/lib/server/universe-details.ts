@@ -19,7 +19,7 @@ export async function saveUniverseDetails(
 	universe: { id: string },
 	details: UniverseDetails
 ): Promise<string | null> {
-	return saveWithSlug(db, 'universes', universe.id, details.name, async (tx, slug) => {
+	return saveWithSlug(db, 'universes', ownerId, universe.id, details.name, async (tx, slug) => {
 		await tx
 			.update(universes)
 			.set({ ...details, slug })
