@@ -403,7 +403,9 @@ describe('universeEditionFileKeys', () => {
 			byteSize: 20
 		});
 
-		expect(await universeEditionFileKeys(db, universeId)).toEqual(['epub-key']);
+		expect(await universeEditionFileKeys(db, universeId)).toEqual([
+			{ storageKey: 'epub-key', ownerId }
+		]);
 	});
 });
 

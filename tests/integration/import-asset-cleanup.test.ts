@@ -4,7 +4,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
-import { assets, stories, universes, users } from '../../src/lib/server/db/schema';
+import { assets, scenes, stories, universes, users } from '../../src/lib/server/db/schema';
 import type { AssetConfig, AssetObjectStore } from '../../src/lib/server/assets';
 import type { ImportPlan } from '../../src/lib/import-markdown';
 import type { Database } from '../../src/lib/server/auth';
@@ -49,6 +49,8 @@ vi.mock('../../src/lib/server/assets', async (importOriginal) => {
 		s3AssetStore: () => store
 	};
 });
+
+vi.mock('../../src/lib/server/jobs', () => ({ queueUniverseMentions: async () => {} }));
 
 const { runImport } = await import('../../src/lib/server/import-story');
 
@@ -111,5 +113,42 @@ describe('runImport', () => {
 			.from(users)
 			.where(eq(users.id, ownerId));
 		expect(row.used).toBe(0);
+	});
+
+	// The commit lands but its reply is lost (the connection drops): the
+	// story is there, so its images must stay.
+	it('keeps the images when the story committed though the write reported an error', async () => {
+		let calls = 0;
+		const lossy = new Proxy(db, {
+			get(target, prop, receiver) {
+				if (prop !== 'transaction') return Reflect.get(target, prop, receiver);
+				return async (...args: Parameters<Database['transaction']>) => {
+					const result = await target.transaction(...args);
+					// The image's own upload is the first transaction; the story
+					// write is the second.
+					calls += 1;
+					if (calls === 2) throw new Error('Connection terminated unexpectedly');
+					return result;
+				};
+			}
+		}) as Database;
+		const oldId = '6f1c2a9e-0b7d-4c3e-9a51-2d8e4f6a7b10';
+		const plan: ImportPlan = {
+			story: { title: 'Maps', author: null, brief: null, descriptionMd: '' },
+			chapters: [],
+			unfiled: [{ title: null, status: null, bodyMd: `![a](assets/${oldId}.png)` }],
+			notes: [],
+			assets: [{ id: oldId, path: `assets/${oldId}.png`, bytes: png(100) }],
+			problems: []
+		};
+		const result = await runImport(lossy, { id: universeId, ownerId }, plan);
+
+		const [story] = await db.select().from(stories);
+		expect(result).toMatchObject({ storyId: story.id, slug: story.slug, sceneCount: 1 });
+		const [image] = await db.select().from(assets);
+		expect(image).toBeDefined();
+		const [scene] = await db.select().from(scenes).where(eq(scenes.storyId, story.id));
+		expect(scene.bodyMd).toContain(`/assets/${image.id}`);
+		expect(objects.size).toBe(1);
 	});
 });

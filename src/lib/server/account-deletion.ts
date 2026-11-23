@@ -9,6 +9,7 @@ import {
 	assistantChats,
 	exportArtifacts,
 	notifications,
+	pendingObjectDeletions,
 	publications,
 	reviewers,
 	sessions,
@@ -89,8 +90,9 @@ export async function listAccountsDueForPurge(db: Database): Promise<string[]> {
 }
 
 // Hard-deletes an account and everything it owns, irreversibly. Every owned row
-// goes in one transaction in dependency order; the uploaded image objects are
-// removed from the bucket afterwards (best-effort - an orphaned object is swept
+// goes in one transaction in dependency order; the uploaded image objects,
+// including the queued files of images already deleted, are removed from the
+// bucket afterwards (best-effort - an orphaned object is swept
 // later, never a blocker). Used by the scheduled purge and by admin deletion.
 // The scheduled purge passes requireSchedule so a cancellation racing the
 // worker aborts the purge; admin deletion is immediate and skips that check.
@@ -137,10 +139,20 @@ export async function purgeAccount(
 			.select({ storageKey: userExports.storageKey })
 			.from(userExports)
 			.where(and(eq(userExports.ownerId, userId), isNotNull(userExports.storageKey)));
+		// Files of the account's already deleted images and editions, still
+		// waiting out their delay in the queue: they go now too. Left queued
+		// when there is no store to remove them from.
+		const queuedRows = store
+			? await tx
+					.delete(pendingObjectDeletions)
+					.where(eq(pendingObjectDeletions.ownerId, userId))
+					.returning({ storageKey: pendingObjectDeletions.storageKey })
+			: [];
 		const keys = [
 			...assetRows.map((row) => row.storageKey),
 			...artifactRows.map((row) => row.storageKey),
-			...userExportRows.flatMap((row) => (row.storageKey ? [row.storageKey] : []))
+			...userExportRows.flatMap((row) => (row.storageKey ? [row.storageKey] : [])),
+			...queuedRows.map((row) => row.storageKey)
 		];
 
 		// Each universe purges through the shared cascade (stories first, then

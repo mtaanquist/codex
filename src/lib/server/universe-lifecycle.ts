@@ -188,14 +188,13 @@ export async function listUniversesDueForPurge(db: Database): Promise<string[]> 
 export async function universeEditionFileKeys(
 	db: Database | Tx,
 	universeId: string
-): Promise<string[]> {
-	const rows = await db
-		.select({ storageKey: exportArtifacts.storageKey })
+): Promise<{ storageKey: string; ownerId: string }[]> {
+	return await db
+		.select({ storageKey: exportArtifacts.storageKey, ownerId: publications.ownerId })
 		.from(exportArtifacts)
 		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
 		.innerJoin(stories, eq(publications.storyId, stories.id))
 		.where(eq(stories.universeId, universeId));
-	return rows.map((row) => row.storageKey);
 }
 
 /**

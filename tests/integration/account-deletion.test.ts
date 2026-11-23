@@ -14,6 +14,7 @@ import {
 	entityRelationships,
 	loreEntries,
 	notifications,
+	pendingObjectDeletions,
 	places,
 	publicationAssets,
 	publications,
@@ -27,7 +28,12 @@ import {
 	userExports,
 	users
 } from '../../src/lib/server/db/schema';
-import type { AssetObjectStore } from '../../src/lib/server/assets';
+import { deleteAsset, type AssetObjectStore } from '../../src/lib/server/assets';
+import {
+	sweepUnusedAssets,
+	UNREFERENCED_DAYS,
+	UNUSED_ASSET_GRACE_DAYS
+} from '../../src/lib/server/unused-assets';
 import {
 	adminCancelDeletion,
 	cancelAccountDeletion,
@@ -178,7 +184,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	await pool.query(
-		'truncate table publication_assets, publications, scene_markers, revisions, entity_mentions, entity_relationships, character_story_memberships, place_story_memberships, character_story_notes, place_story_notes, lore_story_notes, scenes, chapters, characters, places, lore_entries, entity_categories, assets, stories, universes, auth_tokens, sessions, notifications, users cascade'
+		'truncate table publication_assets, publications, scene_markers, revisions, entity_mentions, entity_relationships, character_story_memberships, place_story_memberships, character_story_notes, place_story_notes, lore_story_notes, scenes, chapters, characters, places, lore_entries, entity_categories, assets, pending_object_deletions, stories, universes, auth_tokens, sessions, notifications, users cascade'
 	);
 	await ensureBuiltInRelationTypes(pool);
 	removedKeys.length = 0;
@@ -249,6 +255,66 @@ describe('purgeAccount', () => {
 			.where(eq(users.id, rescued));
 		await purgeAccount(db, rescued, stubStore, { requireSchedule: true });
 		expect(await db.select().from(users).where(eq(users.id, rescued))).toHaveLength(0);
+	});
+});
+
+describe('purgeAccount and files already waiting to be removed', () => {
+	// An image row, long unused and uploaded long ago, so the sweep frees it.
+	async function oldImage(ownerId: string, key: string) {
+		const longAgo = new Date(
+			Date.now() - (Math.max(UNREFERENCED_DAYS, UNUSED_ASSET_GRACE_DAYS) + 1) * 86_400_000
+		);
+		const [row] = await db
+			.insert(assets)
+			.values({
+				ownerId,
+				kind: 'inline',
+				filename: 'passport-scan.jpg',
+				contentType: 'image/jpeg',
+				byteSize: 1,
+				storageKey: key,
+				createdAt: longAgo,
+				unreferencedSince: longAgo
+			})
+			.returning({ id: assets.id });
+		return row.id;
+	}
+
+	it('removes the files of the images it had already deleted, at once', async () => {
+		const victim = await makeUser('victim@example.com');
+		const bystander = await makeUser('bystander@example.com');
+		await oldImage(victim, 'freed-victim');
+		await oldImage(bystander, 'freed-bystander');
+		const deleted = await oldImage(victim, 'deleted-victim');
+		await db.update(assets).set({ unreferencedSince: null }).where(eq(assets.id, deleted));
+		expect(await sweepUnusedAssets(db)).toMatchObject({ count: 2 });
+		expect(await deleteAsset(db, victim, deleted)).toBe(true);
+		const queued = await db.select().from(pendingObjectDeletions);
+		expect(
+			new Map(queued.map((row) => [row.storageKey, row.ownerId === victim ? 'victim' : 'other']))
+		).toEqual(
+			new Map([
+				['freed-victim', 'victim'],
+				['deleted-victim', 'victim'],
+				['freed-bystander', 'other']
+			])
+		);
+
+		await purgeAccount(db, victim, stubStore);
+
+		expect(removedKeys.sort()).toEqual(['deleted-victim', 'freed-victim']);
+		const left = await db.select().from(pendingObjectDeletions);
+		expect(left.map((row) => [row.storageKey, row.ownerId])).toEqual([
+			['freed-bystander', bystander]
+		]);
+	});
+
+	it('leaves them queued when there is no store to remove them from', async () => {
+		const victim = await makeUser('victim@example.com');
+		const id = await oldImage(victim, 'deleted-victim');
+		expect(await deleteAsset(db, victim, id)).toBe(true);
+		await purgeAccount(db, victim, null);
+		expect(await db.select().from(pendingObjectDeletions)).toHaveLength(1);
 	});
 });
 

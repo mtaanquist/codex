@@ -26,9 +26,12 @@ import { CANCEL_ON_MIGRATE_APP_NAME } from './db/migrate.ts';
 
 // Deleting is in two phases. A run that finds an image unused marks it
 // (assets.unreferenced_since) and keeps it; a run that finds it in use again
-// clears the mark. Only an image unused for UNREFERENCED_DAYS since its mark
-// is deleted, so one taken out of a field with no history (a description, a
-// bio) can still come back from an open tab's undo or a save that is retrying.
+// clears the mark, and so does any write that stores its id in the meantime
+// (the clear_asset_marks trigger on every table, migration 0112), so one used
+// only between two runs starts over too. Only an image unused for
+// UNREFERENCED_DAYS since its mark is deleted, so one taken out of a field
+// with no history (a description, a bio) can still come back from an open
+// tab's undo or a save that is retrying.
 export const UNREFERENCED_DAYS = 30;
 // An image newer than this is never freed, however long it has been unused:
 // it may sit only in an editor that has not saved yet.
@@ -60,6 +63,27 @@ async function longRead<T>(db: Database, read: (tx: Database) => Promise<T>): Pr
 		},
 		{ accessMode: 'read only' }
 	);
+}
+
+// The tables (as referenceColumns reads them) missing the trigger that
+// clears a mark on save. Without it a write there could put an image back
+// into use unseen, so the sweep deletes nothing while any is missing.
+export async function tablesWithoutMarkTrigger(db: Database): Promise<string[]> {
+	const result = await db.execute(sql`
+		select c.relname as "table"
+		from pg_class c
+		join pg_namespace n on n.oid = c.relnamespace
+		where n.nspname = current_schema()
+			and c.relkind in ('r', 'p')
+			and not c.relispartition
+			and c.relname <> 'assets'
+			and not exists (
+				select 1 from pg_trigger t
+				where t.tgrelid = c.oid and t.tgname = 'clear_asset_marks' and t.tgenabled <> 'D'
+			)
+		order by c.relname
+	`);
+	return (result.rows as { table: string }[]).map((row) => row.table);
 }
 
 const UUID_PATTERN = sql.raw(`'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'`);
@@ -221,7 +245,6 @@ type Freed = {
 	byteSize: number;
 	contentType: string;
 	kind: string;
-	filename: string;
 	universeId: string | null;
 	createdAt: string;
 };
@@ -302,7 +325,7 @@ async function deleteChunk(
 		const result = await tx.execute(sql`
 			delete from assets where id = any(string_to_array(${held.join(',')}, ',')::uuid[])
 			returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
-				byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
+				byte_size::float8 as "byteSize", content_type as "contentType", kind,
 				universe_id::text as "universeId", created_at::text as "createdAt"
 		`);
 		const gone = result.rows as Freed[];
@@ -318,14 +341,11 @@ async function freeAssetFiles(
 	gone: { ownerId: string; byteSize: number; storageKey: string }[]
 ): Promise<void> {
 	await releaseStorage(tx, gone);
-	await scheduleObjectDeletions(
-		tx,
-		gone.map((row) => row.storageKey),
-		FREED_OBJECT_EXTRA_DAYS
-	);
+	await scheduleObjectDeletions(tx, gone, FREED_OBJECT_EXTRA_DAYS);
 }
 
-/** Enough to put a freed image's row back by hand while its file is kept. */
+/** Enough to put a freed image's row back by hand while its file is kept.
+ * The original filename is left out of the log; any name will do. */
 function logFreed(row: Freed): void {
 	logEvent('info', 'assets.unused_deleted', row);
 }
@@ -334,6 +354,10 @@ function logFreed(row: Freed): void {
 export async function sweepUnusedAssets(db: Database): Promise<{ count: number; bytes: number }> {
 	const scan = await scanAssetUse(db);
 	await recordAssetUse(db, scan);
+	const unguarded = await tablesWithoutMarkTrigger(db);
+	if (unguarded.length > 0) {
+		throw new Error(`unused-image sweep: no clear_asset_marks trigger on ${unguarded.join(', ')}`);
+	}
 	const freed = await deleteUnusedAssets(
 		db,
 		scan.unused.filter((row) => row.due)
