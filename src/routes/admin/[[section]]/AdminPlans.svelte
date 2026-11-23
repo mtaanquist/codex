@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData, ActionData } from './$types';
 	import FormStatus from '#lib/components/FormStatus.svelte';
-	import { MAX_IMAGE_BYTES, MEGABYTE } from '#lib/quota';
+	import { MAX_IMAGE_BYTES, MEGABYTE, megabytesValue } from '#lib/quota';
 	import { formatNumber, pluralSuffix } from '#lib/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -13,8 +13,6 @@
 	}
 
 	const limitValue = (n: number | null) => (n === null ? '' : String(n));
-	const storageValue = (bytes: number | null) =>
-		bytes === null ? '' : String(Math.round(bytes / MEGABYTE));
 </script>
 
 <div class="admin-head">
@@ -106,8 +104,9 @@
 							type="number"
 							name="storageMb"
 							min="0"
+							step="0.1"
 							placeholder="No limit"
-							value={storageValue(plan.limits.storage_bytes)}
+							value={megabytesValue(plan.limits.storage_bytes)}
 						/>
 						<span class="field-hint">
 							Counts uploaded images, covers, avatars, and badges. Text does not count.
@@ -122,10 +121,11 @@
 							class="input short"
 							type="number"
 							name="maxImageMb"
-							min="1"
+							min="0.1"
+							step="0.1"
 							max={MAX_IMAGE_BYTES / MEGABYTE}
 							placeholder={String(MAX_IMAGE_BYTES / MEGABYTE)}
-							value={storageValue(plan.limits.max_image_bytes)}
+							value={megabytesValue(plan.limits.max_image_bytes)}
 						/>
 						<span class="field-hint">
 							The most one uploaded image can be. Leave it blank for {MAX_IMAGE_BYTES / MEGABYTE} MB,

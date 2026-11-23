@@ -50,6 +50,7 @@ import {
 	trashUniverse
 } from '../../src/lib/server/universe-lifecycle';
 import { newStoryFromDraft, saveDraft } from '../../src/lib/server/story-drafts';
+import { sweepUnusedAssets } from '../../src/lib/server/unused-assets';
 import { previewImport, runImport } from '../../src/lib/server/import-story';
 import type { ImportPlan } from '../../src/lib/import-markdown';
 import { MAX_IMAGE_BYTES, MEGABYTE, NO_LIMITS, type Limits } from '../../src/lib/quota';
@@ -438,6 +439,11 @@ describe('storage', () => {
 			true
 		);
 		expect(await used()).toBe(1600);
+		// Nor is a second badge swap while the first old badge still counts.
+		expect(
+			await setEntityBadgeImage(db, store, config, ownerId, character.id, image)
+		).toMatchObject({ ok: false, code: 'over_limit' });
+		expect(await used()).toBe(1600);
 		// A new image with nothing to replace still has to fit.
 		expect(
 			await createAsset(db, store, config, ownerId, {
@@ -466,7 +472,14 @@ describe('storage', () => {
 		const first = await upload(ownerId, 400);
 		if (!first.ok) throw new Error('expected an upload');
 		expect((await upload(ownerId, 300)).ok).toBe(false);
-		expect((await upload(ownerId, 300, first.id)).ok).toBe(true);
+		const second = await upload(ownerId, 300, first.id);
+		if (!second.ok) throw new Error('expected a swap');
+		expect(await used()).toBe(700);
+		// The old cover still counts, so swapping again at the limit is refused.
+		expect(await upload(ownerId, 300, second.id)).toMatchObject({
+			ok: false,
+			code: 'over_limit'
+		});
 		expect(await used()).toBe(700);
 		const theirs = await upload(otherId, 400);
 		if (!theirs.ok) throw new Error('expected an upload');
@@ -583,9 +596,13 @@ describe('storage', () => {
 		await trashUniverse(db, ownerId, world.id);
 		// The trash keeps the images until the purge.
 		expect(await used()).toBe(250);
-		// The purge frees images past the unused image grace period.
-		await db.update(assets).set({ createdAt: new Date(Date.now() - 60 * 86_400_000) });
+		// The purge leaves the images for the unused image sweep, which frees
+		// them once they have been unused, and uploaded, long enough ago.
 		await purgeUniverse(db, world.id);
+		expect(await used()).toBe(250);
+		const longAgo = new Date(Date.now() - 60 * 86_400_000);
+		await db.update(assets).set({ createdAt: longAgo, unreferencedSince: longAgo });
+		await sweepUnusedAssets(db);
 		expect(await used()).toBe(0);
 	});
 

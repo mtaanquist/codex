@@ -15,8 +15,8 @@ import type { ActionFailure } from './action-result';
 // whichever of the three tables holds it, owner-scoped, and update it; the
 // image path mirrors the avatar flow (create, swap the reference, leave the
 // old for the unused image sweep). Entities are only ever removed by the
-// universe purge, which sweeps their assets by universeId, so there is no
-// per-entity asset cleanup here.
+// universe purge, which leaves their images to that sweep as well, so there
+// is no per-entity asset cleanup here.
 
 async function updateBadge(
 	db: Database,

@@ -174,7 +174,7 @@ async function clearMarks(db: Database, ids: string[]): Promise<void> {
  * caught. It reads every row of every column: never run it while holding
  * locks others wait on.
  */
-export async function referencedAssetIds(
+async function referencedAssetIds(
 	db: Database,
 	ids: string[],
 	columns?: Column[]
@@ -187,7 +187,7 @@ export async function referencedAssetIds(
 	return new Set((result.rows as { id: string }[]).map((row) => row.id));
 }
 
-export type Freed = {
+type Freed = {
 	id: string;
 	ownerId: string;
 	storageKey: string;
@@ -266,7 +266,7 @@ export async function deleteUnusedAssets(
 
 /** Gives deleted images' bytes back and queues their files to go, kept
  * FREED_OBJECT_EXTRA_DAYS longer than usual. Run in the deleting transaction. */
-export async function freeAssetFiles(
+async function freeAssetFiles(
 	tx: Database,
 	gone: { ownerId: string; byteSize: number; storageKey: string }[]
 ): Promise<void> {
@@ -279,7 +279,7 @@ export async function freeAssetFiles(
 }
 
 /** Enough to put a freed image's row back by hand while its file is kept. */
-export function logFreed(row: Freed): void {
+function logFreed(row: Freed): void {
 	logEvent('info', 'assets.unused_deleted', row);
 }
 

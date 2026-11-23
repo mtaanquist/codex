@@ -24,13 +24,6 @@ import { untrash } from './slugs.ts';
 import { holdCountQuota, lockStorageOwners } from './quotas.ts';
 import { ENTITY_TYPES, entityTable } from './entity-lookups.ts';
 import { deleteStoryWithin, trashedFor, type Tx } from './story-delete.ts';
-import {
-	freeAssetFiles,
-	logFreed,
-	referencedAssetIds,
-	UNUSED_ASSET_GRACE_DAYS,
-	type Freed
-} from './unused-assets.ts';
 import { ownedUniverseRow } from './universe-scope.ts';
 
 export const UNIVERSE_TRASH_DAYS = 30;
@@ -127,17 +120,17 @@ export async function destroyUniverse(
  * first) or, with dueAfterDays, has not been there that long: the scheduled
  * purge read its list before the lock.
  *
- * Its images more than UNUSED_ASSET_GRACE_DAYS old go with it when nothing
- * else uses them. A scene, edition or profile elsewhere can show an image
- * uploaded here; those, and newer ones, are kept, no longer tied to any
- * universe, and the unused image sweep frees each once nothing shows it.
+ * Its images are not deleted here: purgeUniverseWithin leaves them marked as
+ * unused, and the unused image sweep frees each once it is due and nothing
+ * shows it. Reading every column for uses while holding the account row would
+ * stall that account's uploads and saves.
  */
 export async function purgeUniverse(
 	db: Database,
 	universeId: string,
 	options: { dueAfterDays?: number } = {}
 ): Promise<boolean> {
-	const freed = await db.transaction(async (tx) => {
+	return db.transaction(async (tx) => {
 		// The account rows before the universe row: every storage path locks
 		// the account first (see lockStorageOwners), and the purge changes the
 		// images. The universe row is then read under its lock, so a restore
@@ -153,48 +146,12 @@ export async function purgeUniverse(
 			.from(universes)
 			.where(eq(universes.id, universeId))
 			.for('no key update');
-		if (!row?.deletedAt || !row.due) return null;
+		if (!row?.deletedAt || !row.due) return false;
 		const fileKeys = await universeEditionFileKeys(tx, universeId);
-		// Only images past the sweep's grace period go now, for the same reason
-		// the sweep waits: a newer one may sit only in an editor elsewhere that
-		// has not saved yet.
-		const images = (
-			await tx
-				.select({ id: assets.id })
-				.from(assets)
-				.where(
-					and(
-						eq(assets.universeId, universeId),
-						lte(assets.createdAt, sql`now() - make_interval(days => ${UNUSED_ASSET_GRACE_DAYS})`)
-					)
-				)
-		).map((image) => image.id);
 		await purgeUniverseWithin(tx, universeId);
-		// Read after the universe's own rows are gone, so only uses elsewhere
-		// count.
-		const kept = await referencedAssetIds(tx, images);
-		const unused = images.filter((id) => !kept.has(id));
-		// Freed as the unused image sweep frees them: the file kept longer and
-		// the row logged, so one can still be put back by hand.
-		const freed = (
-			unused.length === 0
-				? []
-				: (
-						await tx.execute(sql`
-							delete from assets where id::text = any(string_to_array(${unused.join(',')}, ','))
-							returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
-								byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
-								universe_id::text as "universeId", created_at::text as "createdAt"
-						`)
-					).rows
-		) as Freed[];
-		await freeAssetFiles(tx, freed);
 		await scheduleObjectDeletions(tx, fileKeys);
-		return freed;
+		return true;
 	});
-	if (freed === null) return false;
-	for (const row of freed) logFreed(row);
-	return true;
 }
 
 async function universeImageOwners(db: Database | Tx, universeId: string): Promise<string[]> {
@@ -237,8 +194,8 @@ export async function universeEditionFileKeys(
 /**
  * Hard-deletes a universe and everything in it, child-first, within the
  * caller's transaction. Shared by the trash purge and the account purge. Its
- * images are left in place, no longer tied to the universe: the caller
- * decides which of them go.
+ * images are left in place, no longer tied to the universe and marked as
+ * unused (an earlier mark is kept), for the unused image sweep to free.
  */
 export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<void> {
 	// The owners of the images the detach below changes, locked before any
@@ -295,6 +252,9 @@ export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<v
 		await tx.delete(table).where(eq(table.universeId, universeId));
 	}
 	await tx.delete(entityCategories).where(eq(entityCategories.universeId, universeId));
-	await tx.update(assets).set({ universeId: null }).where(eq(assets.universeId, universeId));
+	await tx
+		.update(assets)
+		.set({ universeId: null, unreferencedSince: sql`coalesce(${assets.unreferencedSince}, now())` })
+		.where(eq(assets.universeId, universeId));
 	await tx.delete(universes).where(eq(universes.id, universeId));
 }

@@ -42,6 +42,8 @@ const { restoreUniverse } = await import('../../src/lib/server/universe-lifecycl
 const { legacyJobCategories } = await import('../../src/worker/handlers');
 const { accountLimits } = await import('../../src/lib/server/quotas');
 const { NO_LIMITS } = await import('../../src/lib/quota');
+const { publicEdition, isPublicAsset } = await import('../../src/lib/server/publish');
+const { sweepUnusedAssets } = await import('../../src/lib/server/unused-assets');
 
 const id = (suffix: string) => `00000000-0000-4000-8000-0000000000${suffix}`;
 const USER = id('a1');
@@ -55,6 +57,7 @@ const TAM = id('f2');
 const NETS = id('d2');
 const STORM = id('d3');
 const LEGACY_JOB = id('aa');
+const CHART = id('ab');
 
 const url = new URL(TEST_DATABASE_URL);
 url.pathname = `${url.pathname}_upgrade`;
@@ -304,8 +307,34 @@ describe('upgrading from the previous release', () => {
 			'select storage_used_bytes::int as used, plan_id from users where id = $1',
 			[USER]
 		);
-		expect(rows).toEqual([{ used: 3345, plan_id: null }]);
+		expect(rows).toEqual([{ used: 3845, plan_id: null }]);
 		expect(await accountLimits(db, USER)).toEqual(NO_LIMITS);
+	});
+
+	it('still reads the edition published before the upgrade, image included', async () => {
+		const edition = await publicEdition(db, 'upgrader', TIDE);
+		expect(edition).toMatchObject({
+			title: 'The Long Tide',
+			content: {
+				chapters: [],
+				unfiled: [{ title: 'Chart', bodyMd: `The chart: ![chart](/assets/${CHART})` }]
+			}
+		});
+		expect(await isPublicAsset(db, CHART)).toBe(true);
+	});
+
+	it('only marks unused images on the first sweep, and deletes none', async () => {
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
+		const { rows } = await pool.query(
+			`select storage_key as key, unreferenced_since is not null as marked
+			 from assets order by storage_key`
+		);
+		expect(rows).toEqual([
+			{ key: 'codex-assets/upgrade-avatar', marked: true },
+			{ key: 'codex-assets/upgrade-chart', marked: false },
+			{ key: 'codex-assets/upgrade-cover', marked: true }
+		]);
+		expect(await isPublicAsset(db, CHART)).toBe(true);
 	});
 
 	it('restores the universe trashed before the upgrade, whole', async () => {

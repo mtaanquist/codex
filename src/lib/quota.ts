@@ -45,6 +45,26 @@ export function parseLimitInput(text: string, max: number): number | null | unde
 	return n <= max ? n : undefined;
 }
 
+/**
+ * A size limit typed in MB, with at most one decimal place, as bytes. Null for
+ * blank (no limit), undefined for anything else or over max MB.
+ */
+export function parseMegabytesInput(text: string, max: number): number | null | undefined {
+	const trimmed = text.trim();
+	if (trimmed === '') return null;
+	if (!/^\d+(\.\d)?$/.test(trimmed)) return undefined;
+	const mb = Number(trimmed);
+	return mb <= max ? Math.round(mb * MEGABYTE) : undefined;
+}
+
+/** A size limit in bytes as the MB field shows it, to one decimal place. A
+ * non-zero size never shows as 0, so saving the form unchanged keeps a limit. */
+export function megabytesValue(bytes: number | null): string {
+	if (bytes === null) return '';
+	const tenths = Math.round((bytes / MEGABYTE) * 10);
+	return String((bytes > 0 ? Math.max(tenths, 1) : 0) / 10);
+}
+
 const NOUNS: Record<'max_universes' | 'max_stories', [string, string]> = {
 	max_universes: ['universe', 'universes'],
 	max_stories: ['story', 'stories']
