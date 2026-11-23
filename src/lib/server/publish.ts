@@ -1,12 +1,13 @@
 import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { assets, publicationAssets, publications, stories, users } from './db/schema.ts';
+import { assets, publicationAssets, publications, stories, universes, users } from './db/schema.ts';
 import { gatherStory, type ExportScene } from './export.ts';
 import { getDraft } from './story-drafts.ts';
 import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import { isUuid } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
 // public reading pages serve only these snapshots, never live drafts.
@@ -140,14 +141,16 @@ export async function publishStory(
 
 // The story's public reading page, for the story menu in the app bar. Null
 // unless the story has a current, non-removed edition under a handle, so the
-// menu leaves the item out rather than offering a link that 404s.
+// menu leaves the item out rather than offering a link that 404s. The link
+// uses the story's slug, which moves on a rename; the id address never does.
 export async function readingPageRef(
 	db: Database,
 	storyId: string
-): Promise<{ handle: string; storyId: string } | null> {
+): Promise<{ handle: string; slug: string } | null> {
 	const [row] = await db
-		.select({ handle: publications.handle, storyId: publications.storyId })
+		.select({ handle: publications.handle, slug: stories.slug })
 		.from(publications)
+		.innerJoin(stories, eq(publications.storyId, stories.id))
 		.where(
 			and(
 				eq(publications.storyId, storyId),
@@ -159,11 +162,13 @@ export async function readingPageRef(
 }
 
 // The author shelf: current, non-removed editions of stories the author
-// has set public. Unlisted stories stay reachable by direct link only.
-export async function publicShelf(db: Database, handle: string) {
+// has set public. Unlisted stories stay reachable by direct link only. With
+// a universe id, only that universe's stories: the public universe page.
+export async function publicShelf(db: Database, handle: string, universeId?: string) {
 	const rows = await db
 		.select({
 			storyId: publications.storyId,
+			slug: stories.slug,
 			title: publications.title,
 			author: publications.author,
 			descriptionMd: publications.descriptionMd,
@@ -177,9 +182,11 @@ export async function publicShelf(db: Database, handle: string) {
 		.where(
 			and(
 				eq(publications.handle, handle),
+				eq(stories.ownerId, publications.ownerId),
+				universeId ? eq(stories.universeId, universeId) : undefined,
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
-				isNull(stories.deletedAt),
+				storyIsLive(),
 				eq(stories.visibility, 'public')
 			)
 		)
@@ -253,11 +260,16 @@ export async function isPublicAvatar(db: Database, assetId: string): Promise<boo
 }
 
 // The reader view: the current edition, provided the story is not
-// private and no takedown applies.
-export async function publicEdition(db: Database, handle: string, storyId: string) {
+// private, no takedown applies, and neither the story nor its universe is
+// in the trash. The ref is the story's id or its slug; slugs are unique
+// among the owner's live stories, and the owner is the handle's.
+export async function publicEdition(db: Database, handle: string, ref: string) {
 	const [edition] = await db
 		.select({
 			id: publications.id,
+			storyId: publications.storyId,
+			slug: stories.slug,
+			universeId: stories.universeId,
 			title: publications.title,
 			author: publications.author,
 			descriptionMd: publications.descriptionMd,
@@ -279,14 +291,40 @@ export async function publicEdition(db: Database, handle: string, storyId: strin
 		.where(
 			and(
 				eq(publications.handle, handle),
-				eq(publications.storyId, storyId),
+				eq(stories.ownerId, publications.ownerId),
+				isUuid(ref) ? eq(publications.storyId, ref) : eq(stories.slug, ref),
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
-				isNull(stories.deletedAt)
+				storyIsLive()
 			)
 		);
 	if (!edition || edition.visibility === 'private') return null;
 	return edition;
+}
+
+// The public universe page: the universe's name and the author's listed
+// stories in it, exactly as the shelf would show them. The ref is the
+// universe's id or its slug. Null for the hidden home of one-off stories,
+// a universe in the trash, and one with nothing listed, so a page never
+// names a universe the author has not shown to readers. The name is the only
+// live field shown; universes have no frozen published copy.
+export async function publicUniverse(db: Database, handle: string, ref: string) {
+	const [universe] = await db
+		.select({ id: universes.id, name: universes.name, slug: universes.slug })
+		.from(universes)
+		.innerJoin(users, eq(universes.ownerId, users.id))
+		.where(
+			and(
+				eq(users.handle, handle),
+				isUuid(ref) ? eq(universes.id, ref) : eq(universes.slug, ref),
+				eq(universes.standalone, false),
+				isNull(universes.deletedAt)
+			)
+		);
+	if (!universe) return null;
+	const shelf = await publicShelf(db, handle, universe.id);
+	if (shelf.length === 0) return null;
+	return { ...universe, shelf };
 }
 
 // True when an asset belongs to a publicly readable edition, which makes
@@ -304,7 +342,7 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 				eq(stories.coverAssetId, assetId),
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
-				isNull(stories.deletedAt),
+				storyIsLive(),
 				ne(stories.visibility, 'private')
 			)
 		)
@@ -327,7 +365,7 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 				eq(publicationAssets.assetId, assetId),
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
-				isNull(stories.deletedAt),
+				storyIsLive(),
 				ne(stories.visibility, 'private')
 			)
 		)

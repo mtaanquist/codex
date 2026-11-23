@@ -141,7 +141,7 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		// The first publish with no pen name set asks what name goes public.
 		displayName: locals.user!.displayName,
 		edition,
-		reading: edition && archive?.handle ? { handle: archive.handle, storyId: story.id } : null,
+		reading: edition && archive?.handle ? { handle: archive.handle, slug: story.slug } : null,
 		artifacts: edition ? await listEditionArtifacts(db, edition.id) : [],
 		exports: await listUserExports(db, locals.user!.id, { scope: 'story', targetId: story.id }),
 		reviewInvitations,

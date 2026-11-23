@@ -78,12 +78,12 @@
 			<p class="field-hint" role="status" style="color:var(--status-final-ink);">
 				Edition published. Readers see it at
 				<a
-					href={resolve('/@[handle]/[story=uuid]', {
+					href={resolve('/@[handle]/[story=ref]', {
 						handle: data.archive.handle,
-						story: data.story.id
+						story: data.story.slug
 					})}
 				>
-					/@{data.archive.handle}/{data.story.id}
+					/@{data.archive.handle}/{data.story.slug}
 				</a>.
 			</p>
 		{/if}

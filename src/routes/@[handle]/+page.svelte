@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { renderMarkdown } from '#lib/markdown';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
+	import ShelfGrid from '#lib/components/ShelfGrid.svelte';
 	import { pageCrumb } from '#lib/chrome';
 	import { authorInitials, authorName } from '#lib/author-name';
-	import { formatLongDate, formatNumber } from '#lib/format';
+	import { formatNumber } from '#lib/format';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -104,46 +104,7 @@
 			{#if data.shelf.length === 0}
 				<p class="reader-byline">Nothing published here yet.</p>
 			{:else}
-				<ul class="shelf-grid">
-					{#each data.shelf as book (book.storyId)}
-						<li>
-							<a
-								class="shelf-item"
-								href={resolve('/@[handle]/[story=uuid]', {
-									handle: data.handle,
-									story: book.storyId
-								})}
-							>
-								<!-- A cover is the story's own title, set on the story's
-								     colour, until an author uploads artwork. Hidden from
-								     readers because the title repeats right below. -->
-								{#if book.coverAssetId}
-									<span class="shelf-cover">
-										<img src="/assets/{book.coverAssetId}" alt="" />
-									</span>
-								{:else}
-									<span
-										class="shelf-cover shelf-cover-tinted"
-										style="--cover-tint: {book.coverColor}"
-										aria-hidden="true"
-									>
-										{book.title}
-									</span>
-								{/if}
-								<span class="shelf-item-title">{book.title}</span>
-								<span class="shelf-item-meta">
-									{formatLongDate(book.publishedAt, page.data.timeZone)}{#if book.isAdult}
-										- adult content{/if}
-								</span>
-								{#if book.descriptionMd}
-									<!-- Author markdown; renderMarkdown escapes raw HTML. -->
-									<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-									<span class="shelf-item-brief">{@html renderMarkdown(book.descriptionMd)}</span>
-								{/if}
-							</a>
-						</li>
-					{/each}
-				</ul>
+				<ShelfGrid handle={data.handle} books={data.shelf} />
 			{/if}
 		</div>
 	</main>

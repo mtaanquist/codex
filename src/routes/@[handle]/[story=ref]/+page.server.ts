@@ -1,17 +1,20 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { publicEdition, type EditionContent } from '#lib/server/publish';
+import { publicEdition, publicUniverse, type EditionContent } from '#lib/server/publish';
 import { listEditionArtifacts } from '#lib/server/export-artifacts';
 import { authorName } from '#lib/author-name';
 import { wordCount } from '#lib/word-count';
 
-// The reader view of one frozen edition. Adult work sits behind a
+// The reader view of one frozen edition, at /@handle/<story slug> or, for
+// links made before slugs, /@handle/<story id>. Adult work sits behind a
 // confirmation link; the page then carries noindex either way.
 export const load: PageServerLoad = async ({ params, url }) => {
 	const handle = params.handle.toLowerCase();
-	const edition = await publicEdition(db, handle, params.story);
+	const edition = await publicEdition(db, handle, params.story.toLowerCase());
 	if (!edition) error(404, 'Not found');
+	// Links built here use the slug, the address the shelf hands out.
+	const story = edition.slug;
 
 	// The reader chrome names the author: their own credit on the story if they
 	// gave one, else the name on their account. Never the raw handle.
@@ -21,7 +24,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	if (edition.isAdult && !confirmed) {
 		return {
 			handle,
-			storyId: params.story,
+			story,
 			gate: true as const,
 			title: edition.title,
 			author
@@ -45,10 +48,16 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			0
 		) + content.unfiled.reduce((sum, scene) => sum + wordCount(scene.bodyMd), 0);
 
+	// The universe's public page, when it has one (some story in it is listed
+	// on the shelf). The id comes from the edition, so this never names a
+	// universe the reader could not already reach.
+	const universe = await publicUniverse(db, handle, edition.universeId);
+
 	return {
 		handle,
-		storyId: params.story,
+		story,
 		gate: false as const,
+		universe: universe && { name: universe.name, slug: universe.slug },
 		title: edition.title,
 		author,
 		words,

@@ -18,6 +18,7 @@ import { slugify } from '../slug.ts';
 import { uploadZip, type ZipArchive } from './zip-stream.ts';
 import { buildEpub } from './epub.ts';
 import type { EditionContent } from './publish.ts';
+import { storyIsLive } from './universe-scope.ts';
 import { findAssetReferences, renderMarkdown, rewriteAssetReferences } from '../markdown.ts';
 import { DEFAULT_PAGE_SETUP, pageCss, pdfRenderOptions, type PageSetup } from '../page-setup.ts';
 import { storyPageSetup } from './page-setup.ts';
@@ -379,7 +380,8 @@ export async function artifactForDownload(db: Database, artifactId: string, user
 			removedAt: publications.removedAt,
 			downloadsPublic: publications.downloadsPublic,
 			visibility: stories.visibility,
-			storyDeletedAt: stories.deletedAt
+			// The story and its universe are both out of the trash.
+			storyLive: sql<boolean>`${storyIsLive()}`
 		})
 		.from(exportArtifacts)
 		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
@@ -390,7 +392,7 @@ export async function artifactForDownload(db: Database, artifactId: string, user
 	const readable =
 		row.isCurrent &&
 		!row.removedAt &&
-		!row.storyDeletedAt &&
+		row.storyLive &&
 		row.visibility !== 'private' &&
 		row.downloadsPublic;
 	if (readable && row.artifact.format !== 'markdown') return row.artifact;

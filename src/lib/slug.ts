@@ -38,3 +38,12 @@ export function isValidSlug(value: string): boolean {
 		value.length <= SLUG_MAX && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value) && !isUuid(value)
 	);
 }
+
+/**
+ * An address under /@handle: a story or universe id, or its slug. Case does
+ * not matter here (handles are matched the same way); lookups lowercase it.
+ */
+export function isPublicRef(value: string): boolean {
+	const lower = value.toLowerCase();
+	return isUuid(lower) || isValidSlug(lower);
+}

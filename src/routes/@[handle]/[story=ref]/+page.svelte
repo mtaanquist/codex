@@ -62,7 +62,7 @@
 				<p class="reader-byline">
 					<a
 						href={withQuery(
-							resolve('/@[handle]/[story=uuid]', { handle: data.handle, story: data.storyId }),
+							resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story }),
 							{ adult: 'ok' }
 						)}
 					>
@@ -73,7 +73,15 @@
 			</div>
 		{:else}
 			<div class="reader-col">
-				<p class="reader-kicker">A story by <a href={shelfHref}>{data.author}</a></p>
+				<p class="reader-kicker">
+					A story by <a href={shelfHref}>{data.author}</a>{#if data.universe}, in
+						<a
+							href={resolve('/@[handle]/universes/[universe=ref]', {
+								handle: data.handle,
+								universe: data.universe.slug
+							})}>{data.universe.name}</a
+						>{/if}
+				</p>
 				<h1 class="reader-title">{data.title}</h1>
 				<p class="reader-byline">
 					{chapters.length}

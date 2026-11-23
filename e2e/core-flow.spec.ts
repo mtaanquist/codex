@@ -609,6 +609,10 @@ async function journey({ page, browser }: { page: Page; browser: Browser }) {
 	if (!process.env.ASSET_S3_BUCKET) await expect(cover).toContainText(storyTitle);
 	await reader.getByRole('link', { name: storyTitle }).first().click();
 	await expect(reader.getByRole('heading', { level: 1, name: storyTitle })).toBeVisible();
+	// The shelf links a story by its slug, not its id.
+	expect(new URL(reader.url()).pathname).toBe(
+		`/@core-flow-tester/${storyTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+	);
 	// main.reader-main is the prose; .appbar.reader above it is the chrome shell.
 	await expect(reader.locator('main.reader-main')).toContainText('The gate of Halden');
 	// One footer, on both pages: the mark, who published it, and three links.
@@ -624,9 +628,21 @@ async function journey({ page, browser }: { page: Page; browser: Browser }) {
 		const served = await reader.request.get(src!);
 		expect(served.status()).toBe(200);
 	}
-	// A mistyped story id under a real handle is a clean 404, not a 500.
-	const notFound = await reader.request.get('/@core-flow-tester/not-a-uuid');
-	expect(notFound.status()).toBe(404);
+	// The story names its universe, whose public page lists the story.
+	await reader.locator('.reader-kicker').getByRole('link', { name: universeName }).click();
+	await expect(reader.getByRole('heading', { level: 1, name: universeName })).toBeVisible();
+	expect(new URL(reader.url()).pathname).toMatch(/^\/@core-flow-tester\/universes\/[a-z0-9-]+$/);
+	await expect(reader.locator('.shelf-item', { hasText: storyTitle })).toBeVisible();
+	// An unknown slug or a malformed address under a real handle is a clean
+	// 404, not a 500.
+	for (const address of [
+		'/@core-flow-tester/no-such-story',
+		'/@core-flow-tester/Not_A_Slug!',
+		'/@core-flow-tester/universes/no-such-universe'
+	]) {
+		const notFound = await reader.request.get(address);
+		expect(notFound.status(), address).toBe(404);
+	}
 	await anonymous.close();
 
 	// Exports: prepare the zip and the EPUB (built in the worker), wait for

@@ -13,6 +13,35 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Public pages at /@handle/slug (2026-11-22, `feat/public-slug-pages` on
+`staging/phase-10`, #854). The roadmap assumed `(owner_id, slug)` made
+`/@handle/<slug>` collision-free, but stories and universes keep separate
+unique indexes, so one account can hold a story and a universe both called
+`ember-reach`. A flat address would need a precedence rule, and a later
+rename on either side could quietly re-point a link someone shared, so the
+story keeps the flat address the uuid links already used and the universe
+takes `/@handle/universes/<slug>`. Two segments never meet one, so no
+reserved words are needed. One `ref` matcher (an id or a valid slug, any
+case) replaces `uuid` on these routes; a malformed address is still a router
+404. `publicEdition` and the new `publicUniverse` take either form and scope
+the lookup by the handle's owner (`stories.owner_id = publications.owner_id`,
+`universes.owner_id` through `users.handle`). The shelf, the story menu and
+the publish confirmation now hand out slug links. No redirect from the id
+address to the slug one: the id is the address that survives a rename.
+
+The universe page shows the name and the shelf's own query narrowed to that
+universe, so takedowns, visibility, adult labels and noindex follow the
+shelf exactly. It is a 404 while nothing in it is listed, so a guessed slug
+never confirms a private universe's name, and the standalone universe never
+gets one. No description: universes have no frozen copy, and public pages
+show only frozen editions. Each story's kicker links its universe page when
+there is one, since nothing else would lead a reader there.
+
+While there: the public reads checked `stories.deleted_at` but not the
+universe's, so a trashed universe's editions, covers, inline images and
+reader downloads stayed public until the purge. They now use `storyIsLive()`
+(`publicEdition`, `publicShelf`, `isPublicAsset`, `artifactForDownload`).
+
 Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
 on `staging/bug-fixes`, staging review round 2). Review anchors count
 characters in the stored body, where \r\n is two: the guest review page

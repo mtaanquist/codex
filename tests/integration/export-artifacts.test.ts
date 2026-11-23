@@ -277,6 +277,23 @@ describe('artifactForDownload', () => {
 		expect(await artifactForDownload(db, epub.id, ownerId)).not.toBeNull();
 	});
 
+	it('stops serving readers while the story or its universe is in the trash', async () => {
+		const { publicationId, epub } = await generated();
+		await setDownloadsPublic(db, ownerId, publicationId, true);
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+
+		await db
+			.update(universes)
+			.set({ deletedAt: new Date() })
+			.where(eq(universes.id, story.universeId));
+		expect(await artifactForDownload(db, epub.id, null)).toBeNull();
+		await db.update(universes).set({ deletedAt: null }).where(eq(universes.id, story.universeId));
+		expect(await artifactForDownload(db, epub.id, null)).not.toBeNull();
+
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		expect(await artifactForDownload(db, epub.id, null)).toBeNull();
+	});
+
 	it('only the owner can toggle reader downloads', async () => {
 		const { publicationId } = await generated();
 		expect(await setDownloadsPublic(db, otherId, publicationId, true)).toBe(false);

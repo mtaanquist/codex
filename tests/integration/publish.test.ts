@@ -21,7 +21,9 @@ import {
 	publicEdition,
 	publicProfile,
 	publicShelf,
+	publicUniverse,
 	publishStory,
+	readingPageRef,
 	takedownPublication,
 	type EditionContent
 } from '../../src/lib/server/publish';
@@ -366,5 +368,219 @@ describe('concurrent publish', () => {
 		await expect(db.insert(publications).values(row)).rejects.toMatchObject({
 			cause: { code: '23505' }
 		});
+	});
+});
+
+// A second author, handle 'rival', with a universe under the same slug as the
+// main author's and, optionally, a published public story under 'book-of-ash'.
+async function addRival(options: { withStory: boolean }) {
+	const [rival] = await db
+		.insert(users)
+		.values({
+			email: 'rival@example.com',
+			displayName: 'Rival',
+			passwordHash: 'x',
+			role: 'user',
+			handle: 'rival',
+			publicArchiveEnabled: true
+		})
+		.returning();
+	const [universe] = await db
+		.insert(universes)
+		.values({ ownerId: rival.id, name: 'Elsewhere', slug: 'ember-reach' })
+		.returning();
+	let rivalStoryId: string | null = null;
+	if (options.withStory) {
+		const [story] = await db
+			.insert(stories)
+			.values({
+				universeId: universe.id,
+				ownerId: rival.id,
+				title: 'Their Ash',
+				slug: 'book-of-ash',
+				visibility: 'public'
+			})
+			.returning();
+		await db.insert(scenes).values({ storyId: story.id, globalPosition: 1, bodyMd: 'Theirs.' });
+		const published = await publishStory(db, rival.id, story.id);
+		if (!published.ok) throw new Error(published.reason);
+		rivalStoryId = story.id;
+	}
+	return { rivalUniverseId: universe.id, rivalStoryId };
+}
+
+describe('slug addresses', () => {
+	beforeEach(async () => {
+		await db.update(stories).set({ slug: 'book-of-ash' }).where(eq(stories.id, storyId));
+		await db
+			.update(universes)
+			.set({ name: 'The Ember Reach', slug: 'ember-reach' })
+			.where(eq(universes.id, universeId));
+	});
+
+	it('resolves a story by its slug, and by its id as before', async () => {
+		await publishStory(db, authorId, storyId);
+		const bySlug = await publicEdition(db, 'inkwright', 'book-of-ash');
+		const byId = await publicEdition(db, 'inkwright', storyId);
+		expect(bySlug).toMatchObject({ storyId, slug: 'book-of-ash', title: 'Book of Ash' });
+		expect(byId?.id).toBe(bySlug?.id);
+		expect(await publicEdition(db, 'inkwright', 'no-such-story')).toBeNull();
+		// The shelf hands out the slug, and so does the owner's menu link.
+		expect((await publicShelf(db, 'inkwright')).map((book) => book.slug)).toEqual(['book-of-ash']);
+		expect(await readingPageRef(db, storyId)).toEqual({ handle: 'inkwright', slug: 'book-of-ash' });
+	});
+
+	it("never serves one author's story under another handle", async () => {
+		await publishStory(db, authorId, storyId);
+		const { rivalStoryId } = await addRival({ withStory: true });
+		expect((await publicEdition(db, 'inkwright', 'book-of-ash'))?.storyId).toBe(storyId);
+		expect((await publicEdition(db, 'rival', 'book-of-ash'))?.storyId).toBe(rivalStoryId);
+		// An id from one author under the other's handle resolves to nothing.
+		expect(await publicEdition(db, 'rival', storyId)).toBeNull();
+		expect(await publicEdition(db, 'inkwright', rivalStoryId!)).toBeNull();
+	});
+
+	it('keeps visibility: unlisted by link, private and unpublished never', async () => {
+		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
+		// Not yet published: a live story with that slug is not a page.
+		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+		await publishStory(db, authorId, storyId);
+		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).not.toBeNull();
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+	});
+
+	it('serves the frozen edition, never the live draft, by slug too', async () => {
+		await publishStory(db, authorId, storyId);
+		await db.update(scenes).set({ bodyMd: 'Live words.' }).where(eq(scenes.id, sceneId));
+		await db.update(stories).set({ title: 'Renamed live' }).where(eq(stories.id, storyId));
+		const edition = await publicEdition(db, 'inkwright', 'book-of-ash');
+		expect(edition?.title).toBe('Book of Ash');
+		expect((edition!.content as EditionContent).chapters[0].scenes[0].bodyMd).toBe(
+			'The gate opened.'
+		);
+	});
+
+	it('serves nothing at a slug a trashed story freed for an unpublished one', async () => {
+		await publishStory(db, authorId, storyId);
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+		expect(await publicEdition(db, 'inkwright', storyId)).toBeNull();
+		await db.insert(stories).values({
+			universeId,
+			ownerId: authorId,
+			title: 'Book of Ash',
+			slug: 'book-of-ash',
+			visibility: 'public'
+		});
+		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+	});
+
+	it('hides everything in a trashed universe: edition, shelf, page, and cover', async () => {
+		const coverId = crypto.randomUUID();
+		await db.update(stories).set({ coverAssetId: coverId }).where(eq(stories.id, storyId));
+		await publishStory(db, authorId, storyId);
+		expect(await isPublicAsset(db, coverId)).toBe(true);
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).not.toBeNull();
+
+		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, universeId));
+		expect(await publicEdition(db, 'inkwright', 'book-of-ash')).toBeNull();
+		expect(await publicEdition(db, 'inkwright', storyId)).toBeNull();
+		expect(await publicShelf(db, 'inkwright')).toEqual([]);
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
+		expect(await isPublicAsset(db, coverId)).toBe(false);
+	});
+});
+
+describe('public universe page', () => {
+	beforeEach(async () => {
+		await db.update(stories).set({ slug: 'book-of-ash' }).where(eq(stories.id, storyId));
+		await db
+			.update(universes)
+			.set({ name: 'The Ember Reach', slug: 'ember-reach' })
+			.where(eq(universes.id, universeId));
+	});
+
+	async function addPublishedStory(
+		inUniverse: string,
+		title: string,
+		slug: string,
+		visibility: 'public' | 'unlisted'
+	) {
+		const [story] = await db
+			.insert(stories)
+			.values({ universeId: inUniverse, ownerId: authorId, title, slug, visibility })
+			.returning();
+		await db.insert(scenes).values({ storyId: story.id, globalPosition: 1, bodyMd: 'Words.' });
+		const published = await publishStory(db, authorId, story.id);
+		if (!published.ok) throw new Error(published.reason);
+		return story.id;
+	}
+
+	it('shows the name and the listed stories only, by slug or id', async () => {
+		await publishStory(db, authorId, storyId);
+		await addPublishedStory(universeId, 'Hidden Path', 'hidden-path', 'unlisted');
+		// A story that was never published stays off the page.
+		await db
+			.insert(stories)
+			.values({ universeId, ownerId: authorId, title: 'Draft', visibility: 'public' });
+
+		const page = await publicUniverse(db, 'inkwright', 'ember-reach');
+		expect(page).toMatchObject({ id: universeId, name: 'The Ember Reach', slug: 'ember-reach' });
+		expect(page!.shelf.map((book) => book.slug)).toEqual(['book-of-ash']);
+		expect((await publicUniverse(db, 'inkwright', universeId))?.name).toBe('The Ember Reach');
+		// Nothing of the universe but its name and address.
+		expect(Object.keys(page!).sort()).toEqual(['id', 'name', 'shelf', 'slug']);
+	});
+
+	it("lists only that universe's stories", async () => {
+		await publishStory(db, authorId, storyId);
+		const [other] = await db
+			.insert(universes)
+			.values({ ownerId: authorId, name: 'Far Shore', slug: 'far-shore' })
+			.returning();
+		await addPublishedStory(other.id, 'Tide', 'tide', 'public');
+
+		const ember = await publicUniverse(db, 'inkwright', 'ember-reach');
+		const far = await publicUniverse(db, 'inkwright', 'far-shore');
+		expect(ember!.shelf.map((book) => book.slug)).toEqual(['book-of-ash']);
+		expect(far!.shelf.map((book) => book.slug)).toEqual(['tide']);
+	});
+
+	it('is not found until something in it is listed', async () => {
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
+		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, storyId));
+		await publishStory(db, authorId, storyId);
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).not.toBeNull();
+
+		const [current] = (await listPublications(db)).filter((row) => row.isCurrent);
+		await takedownPublication(db, current.id);
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
+	});
+
+	it('never shows the hidden home of one-off stories', async () => {
+		await db.update(universes).set({ standalone: true }).where(eq(universes.id, universeId));
+		await publishStory(db, authorId, storyId);
+		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
+		expect(await publicUniverse(db, 'inkwright', universeId)).toBeNull();
+	});
+
+	it('is scoped to the handle', async () => {
+		await publishStory(db, authorId, storyId);
+		const { rivalUniverseId } = await addRival({ withStory: false });
+		// The rival's same-slug universe has nothing listed; inkwright's does.
+		expect(await publicUniverse(db, 'rival', 'ember-reach')).toBeNull();
+		expect(await publicUniverse(db, 'rival', universeId)).toBeNull();
+		expect(await publicUniverse(db, 'inkwright', rivalUniverseId)).toBeNull();
+		expect((await publicUniverse(db, 'inkwright', 'ember-reach'))?.id).toBe(universeId);
+	});
+
+	it('lets a story and a universe share a slug, each at its own address', async () => {
+		await db.update(stories).set({ slug: 'ember-reach' }).where(eq(stories.id, storyId));
+		await publishStory(db, authorId, storyId);
+		expect((await publicEdition(db, 'inkwright', 'ember-reach'))?.storyId).toBe(storyId);
+		expect((await publicUniverse(db, 'inkwright', 'ember-reach'))?.id).toBe(universeId);
 	});
 });
