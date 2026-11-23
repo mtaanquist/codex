@@ -13,6 +13,21 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Undo cleared when newer text loads (2026-11-23, `fix/review-6` on
+`staging/bug-fixes-4`, part of #1448). Loading the other window's text (Load
+newer version, or the automatic load after a refused marker) kept the change
+out of undo, but CodeMirror carried the older undo steps across it, so Ctrl+Z
+replayed the writer's old edits onto the newer words, garbled, and autosave
+stored them. Every older step was taken on text that is no longer there, so
+the history is now cleared: CodeMirror has no command for that, so the history
+extension sits in a compartment and `showNewerText` (`src/lib/editor.ts`)
+takes it out and puts it back. Marker undo records also need `keepsSome` now,
+like `rebuiltMarkers`, so a change kept out of undo that replaced a marker's
+words cannot land it on the new words, and a redo that drops a marker whose
+words it leaves alone records its range so the following undo restores it. A
+refused or failed image upload now says so in the lost-image notice instead of
+just removing its placeholder.
+
 Marker undo records through changes kept out of undo (2026-11-23,
 `fix/marker-review-5` on `staging/bug-fixes-4`, review of #1467). CodeMirror's
 history maps the effects it carries through a change kept out of undo

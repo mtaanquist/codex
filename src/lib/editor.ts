@@ -1,5 +1,11 @@
 import { EditorView, keymap, placeholder } from '@codemirror/view';
-import { Compartment, type Extension } from '@codemirror/state';
+import {
+	Compartment,
+	Transaction,
+	type EditorState,
+	type Extension,
+	type TransactionSpec
+} from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { search, searchKeymap } from '@codemirror/search';
 import { markdown } from '@codemirror/lang-markdown';
@@ -47,7 +53,8 @@ export function proseExtensions(opts: {
 	// flip them at runtime pass compartments to wrap the matching slot.
 	nonPrintingMarks?: MarkVisibility;
 	commandMarkers?: MarkVisibility;
-	compartments?: { nonPrinting?: Compartment; alignment?: Compartment };
+	// history lets showNewerText clear the undo history.
+	compartments?: { nonPrinting?: Compartment; alignment?: Compartment; history?: Compartment };
 	// The scene editors on the story page: the find panel can widen the
 	// search to the chapter or the whole story.
 	widerSearch?: WiderSearch;
@@ -55,7 +62,7 @@ export function proseExtensions(opts: {
 	const commandMarkers = commandMarkerExtensions(opts.commandMarkers ?? 'shown');
 	const nonPrinting = nonPrintingFor(opts.nonPrintingMarks ?? 'hidden');
 	return [
-		history(),
+		opts.compartments?.history ? opts.compartments.history.of(history()) : history(),
 		keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
 		// Enter makes a paragraph (Shift+Enter is a soft break); the prose
 		// editors store markdown, where that is the natural break.
@@ -90,4 +97,35 @@ export function proseExtensions(opts: {
 			if (update.docChanged) opts.onDocChanged();
 		})
 	];
+}
+
+// Shows the newer text of a scene changed elsewhere (another window). Only the
+// part that differs is replaced, so marker highlights outside it stay. The
+// undo history is cleared, since its steps were taken on the older text: undo
+// would replay this window's old edits onto the newer words, and the next
+// save would store the result. history is the compartment proseExtensions
+// was given.
+export function showNewerText(
+	view: { state: EditorState; dispatch: (spec: TransactionSpec) => void },
+	next: string,
+	historyCompartment: Compartment
+) {
+	const doc = view.state.doc.toString();
+	let head = 0;
+	while (head < doc.length && head < next.length && doc[head] === next[head]) head++;
+	let tail = 0;
+	while (
+		tail < doc.length - head &&
+		tail < next.length - head &&
+		doc[doc.length - 1 - tail] === next[next.length - 1 - tail]
+	)
+		tail++;
+	view.dispatch({
+		changes: { from: head, to: doc.length - tail, insert: next.slice(head, next.length - tail) },
+		annotations: Transaction.addToHistory.of(false),
+		// Taking history out of the state drops its steps; putting it back
+		// starts an empty one.
+		effects: historyCompartment.reconfigure([])
+	});
+	view.dispatch({ effects: historyCompartment.reconfigure(history()) });
 }

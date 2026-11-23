@@ -12,6 +12,7 @@ import {
 	settleUploads,
 	startUpload,
 	storedText,
+	uploadFailure,
 	uploadPlaced,
 	uploadTracking,
 	withoutRanges
@@ -348,5 +349,31 @@ describe('a line break put back by undo after a change kept out of undo', () => 
 		);
 		dispatch(state.update(finishUpload(state, first.id, null)!));
 		expect(state.doc.toString()).toBe('First line.\nSecond line here.');
+	});
+});
+
+describe('uploadFailure', () => {
+	it('shows the reason the server gave the writer', () => {
+		expect(uploadFailure('a.png', 400, 'That image is larger than 10 MB.')).toBe(
+			'The image a.png could not be added. That image is larger than 10 MB.'
+		);
+		expect(uploadFailure('a.png', 429, 'Too many uploads in a short time. Try again in 30s.')).toBe(
+			'The image a.png could not be added. Too many uploads in a short time. Try again in 30s.'
+		);
+	});
+
+	it('says what to do when there is no reason for the writer', () => {
+		expect(uploadFailure('a.png', null)).toBe(
+			'The image a.png could not be added. Check your connection and paste the image again.'
+		);
+		expect(uploadFailure('a.png', 503, 'assets are not configured')).toBe(
+			'The image a.png could not be added. Image uploads are not set up on this server.'
+		);
+		expect(uploadFailure('a.png', 400, 'a file is required')).toBe(
+			'The image a.png could not be added. Paste the image again.'
+		);
+		expect(uploadFailure('a.png', 500)).toBe(
+			'The image a.png could not be added. Paste the image again.'
+		);
 	});
 });

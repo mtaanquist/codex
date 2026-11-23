@@ -28,7 +28,8 @@ Option on a Mac, Ctrl and Alt everywhere else.
   saved, choose which version to keep first, then mark the words again. If you
   have no unsaved edits, the editor shows the newer version instead; select the
   words and mark them again.
-- **Ctrl+Z** and **Ctrl+Shift+Z**: undo and redo.
+- **Ctrl+Z** and **Ctrl+Shift+Z**: undo and redo. Once the editor shows a
+  newer version from another window, undo cannot go back past it.
 - **Ctrl+J**: ask the Assistant to continue the passage at the cursor (when the
   Assistant is set up). Tab accepts the grey suggestion; Esc dismisses it.
 
