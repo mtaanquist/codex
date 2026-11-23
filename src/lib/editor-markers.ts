@@ -53,40 +53,53 @@ function markerField(markers: SceneMarker[]) {
 			value = value.map(tr.changes);
 			for (const effect of tr.effects) {
 				if (!effect.is(restoreMarker)) continue;
-				const { id, from, to } = effect.value;
-				// Only a marker this editor still holds, and never twice.
-				if (!held.has(id) || to > tr.newDoc.length || idsIn(value).has(id)) continue;
-				value = value.update({ add: [markerMark(id, from, to)] });
+				let { from, to } = effect.value;
+				const { id } = effect.value;
+				// Only a marker this editor still holds, and never twice: a marker
+				// still showing in part is widened back, not added again.
+				if (!held.has(id) || to > tr.newDoc.length) continue;
+				const current = rangeOf(value, id);
+				if (current) {
+					from = Math.min(from, current.from);
+					to = Math.max(to, current.to);
+				}
+				value = value.update({
+					filter: (_from, _to, mark) => mark.spec.todoId !== id,
+					add: [markerMark(id, from, to)]
+				});
 			}
 			return value;
 		},
 		provide: (field) => EditorView.decorations.from(field)
 	});
-	// An edit that deletes a marker's words drops its highlight, so the next
-	// autosave detaches it. Undoing the edit puts the marker back on the
-	// restored words, and the autosave after that sends its anchor again.
+	// An edit that deletes some or all of a marker's words shrinks or drops its
+	// highlight, and the next autosave stores that. Each such edit keeps the
+	// range the marker had just before it in the undo step, so undo widens the
+	// marker back to it (or puts it back) and the autosave after that sends the
+	// full anchor again. Undo steps joined from several keystrokes carry every
+	// keystroke's range, and the widest one wins.
 	const undoable = invertedEffects.of((tr) => {
 		if (tr.changes.empty) return [];
 		const before = tr.startState.field(field, false);
 		if (!before) return [];
-		const kept = idsIn(before.map(tr.changes));
-		const effects: StateEffect<MarkerRange>[] = [];
-		const cursor = before.iter();
-		for (; cursor.value; cursor.next()) {
-			const id = cursor.value.spec.todoId as string;
-			if (!kept.has(id)) effects.push(restoreMarker.of({ id, from: cursor.from, to: cursor.to }));
-		}
-		return effects;
+		const cut = new Map<string, MarkerRange>();
+		tr.changes.iterChangedRanges((fromA, toA) => {
+			if (fromA === toA) return;
+			before.between(fromA, toA, (from, to, mark) => {
+				const id = mark.spec.todoId as string;
+				if (fromA < to && toA > from) cut.set(id, { id, from, to });
+			});
+		});
+		return [...cut.values()].map((range) => restoreMarker.of(range));
 	});
 	return { field, extension: [field, undoable] };
 }
 
-function idsIn(set: DecorationSet) {
-	const ids = new Set<string>();
+function rangeOf(set: DecorationSet, id: string) {
 	for (const cursor = set.iter(); cursor.value; cursor.next()) {
-		ids.add(cursor.value.spec.todoId as string);
+		if (cursor.value.spec.todoId === id) return { from: cursor.from, to: cursor.to };
 	}
-	return ids;
+	return null;
 }
 
 const todoLine = Decoration.line({ class: 'todo-line' });

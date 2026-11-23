@@ -25,6 +25,15 @@ server re-place a detached marker when "its words reappear": the server keeps
 no copy of a marker's words, and matching text would risk landing on another
 copy of the same phrase. The editor's own history maps the range exactly.
 Not covered: an undo after a reload, which has no history to undo from.
+Review follow-up (`fix/marker-undo-partial`): recording only the edit that
+emptied the marker restored a too-short range, because earlier keystrokes had
+already shrunk the highlight (backspacing "sat" and undoing left the marker on
+"s"), and partial deletes were never restored at all. Every edit that cuts
+into a marker now records the range it had just before that edit, as
+CodeMirror's own highlight example does, and the restore widens the marker to
+the union of its current range and the recorded one, so the order in which a
+joined undo step applies its effects does not matter and a marker is never
+added twice.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write
