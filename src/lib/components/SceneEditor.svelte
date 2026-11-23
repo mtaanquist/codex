@@ -35,7 +35,6 @@
 		markerExtensions,
 		rebuiltMarkers,
 		unsavedChanges,
-		waitingMarkers,
 		type MarkerHandle,
 		type SceneMarker
 	} from '#lib/editor-markers';
@@ -173,10 +172,13 @@
 	const leavingCompartment = new Compartment();
 	// svelte-ignore state_referenced_locally
 	let markerHandle: MarkerHandle = markerExtensions(markers, markSelection);
-	// Edits since the text the server holds, so a marker set rebuilt from the
-	// server's anchors lands on the words on screen.
+	// Edits since the text the server holds, so a new marker is placed only
+	// when the server's anchors count into the text on screen.
 	// svelte-ignore state_referenced_locally
 	const unsaved = unsavedChanges(body);
+	// Bumped when this editor's own save lands with nothing typed since, so
+	// new markers waiting on it are placed (see the marker rebuild below).
+	let saveSettled = $state(0);
 
 	// Bound from one of two mutually exclusive branches (compact or full),
 	// hence the state wrapper.
@@ -209,6 +211,9 @@
 		// late failure here must not show there. 'saved' still refreshes the tree.
 		onStatus: (status) => {
 			if (!tornDown || status === 'saved') onStatus(status);
+		},
+		onSettled: () => {
+			if (!tornDown) saveSettled++;
 		},
 		save: async ({ keepalive }) => {
 			if (!view) return;
@@ -484,31 +489,33 @@
 
 	// Checking a marker off elsewhere (or creating one) changes the set of
 	// ids; rebuild the highlights. Markers the editor already shows keep their
-	// own mapped positions, which are newer than the server's; new ones map
-	// the server's anchors through the edits made after the text they count
-	// into (see rebuiltMarkers), or wait for undo to bring back their words
-	// (see waitingMarkers). Same-set updates keep the editor's positions as
-	// they are.
+	// own mapped positions, which are newer than the server's. New ones are
+	// placed only once the text on screen is the one their anchors count into,
+	// with nothing typed since (see rebuiltMarkers); until then they wait for
+	// this editor's save to land. The server maps them through that save, so
+	// the markers are then read again, once for each pair of texts, and fit as
+	// they are. Same-set updates keep the editor's positions as they are.
+	const idSet = (ids: string[]) => [...ids].sort().join(',');
+	let refreshedFor = '';
 	$effect(() => {
-		const incoming = markers
-			.map((marker) => marker.id)
-			.sort()
-			.join(',');
-		const current = [...markerHandle.ids].sort().join(',');
+		void saveSettled;
+		const incoming = idSet(markers.map((marker) => marker.id));
+		const settled = unsaved.settledFrom(markersVersion);
+		const current = idSet(markerHandle.ids);
 		if (!view || incoming === current) return;
-		const since = unsaved.from(markersVersion);
-		const rebuilt = rebuiltMarkers(
-			markers,
-			markerHandle.anchors(view),
-			markerHandle.ids,
-			since?.changes ?? null
-		);
-		markerHandle = markerExtensions(
-			rebuilt,
-			markSelection,
-			waitingMarkers(markers, rebuilt, markerHandle, since?.follow ?? null)
-		);
-		view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
+		const rebuilt = rebuiltMarkers(markers, markerHandle.anchors(view), markerHandle.ids, settled);
+		const next = idSet(rebuilt.map((marker) => marker.id));
+		if (next !== current) {
+			markerHandle = markerExtensions(rebuilt, markSelection);
+			view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
+		}
+		// Some wait, though this editor's save has landed with nothing typed
+		// since: their anchors count into an older text, so read them again.
+		const pair = `${markersVersion}>${unsaved.version}`;
+		if (next !== incoming && unsaved.settledFrom(unsaved.version) && refreshedFor !== pair) {
+			refreshedFor = pair;
+			void refreshAll();
+		}
 	});
 
 	// The toolbar's view toggles, flipped from any editor in the story; each

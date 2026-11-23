@@ -10,6 +10,31 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
+on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
+short or waiting when unsaved edits partly cancel out in one combined change)
+is closed by no longer mapping new markers through unsaved edits at all. A
+marker new to the editor (made in another window, or one's own read back while
+typing) is placed only when `unsavedChanges().settledFrom(markersVersion)`
+says the text on screen is the stored text its anchors count into: the last
+save landed, nothing was typed since it was sent, and the fingerprints match
+(the only edits left put back an uploading image the save cut). Otherwise it
+is left out of the set. When the editor's own save lands with nothing typed
+since (autosave `onSettled`), a waiting marker re-checks, and the page data is
+read again when its fingerprint is older (once per pair of fingerprints, so a
+text changed elsewhere does not refresh in a loop); the server maps markers the save
+sent no anchors for through the save (`remapMarkerAnchors`), so the anchors
+then fit as they are. A writer who keeps typing gets it at the next save that
+lands while idle; a failed save or a conflict keeps it waiting until a save
+lands (after Load newer version or Keep mine) or a reload. Mapping through
+only the edits after the matching save was considered and left out: those are
+still one combined change and can partly cancel out the same way. Removed:
+`unsavedChanges().from()` and the older texts it kept, `waitingMarkers`, and
+the undo path that put a waiting new marker on words undo brought back. So a
+new marker that arrives while its words are deleted and unsaved is detached by
+the save, and undo after that brings back the words without it; markers
+already shown still come back with undo as before.
+
 Copied upload placeholders and marker notices (2026-11-23,
 `fix/editor-notices-1476-1479` on `staging/bug-fixes-4`, #1476, #1479). A
 copy of an "Uploading" line the writer pasted elsewhere is not tracked, so it

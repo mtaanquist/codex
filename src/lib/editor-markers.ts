@@ -1,7 +1,5 @@
 import {
 	ChangeSet,
-	EditorState,
-	StateEffect,
 	Text,
 	StateField,
 	type Transaction,
@@ -28,20 +26,6 @@ export type SceneMarker = {
 };
 
 type MarkerRange = { id: string; from: number; to: number };
-
-// A marker that reached the editor while its words were deleted and not yet
-// saved (see waitingMarkers), with where its words are followed through the
-// edits (see unsavedChanges().follow).
-export type WaitingMarker = { id: string } & Followed;
-
-type Followed = {
-	locate: (changes: ChangeSet) => { from: number; to: number } | null;
-	release: () => void;
-};
-
-// Puts a marker on a range of the text a transaction produces, for undo or
-// redo that brings back the words of a waiting marker.
-const restoreMarker = StateEffect.define<MarkerRange>();
 
 // What one edit's undo (or one undo's redo) does to markers, carried in the
 // undo history (see undo-steps). A range sets a marker back to exactly the
@@ -72,7 +56,7 @@ function markerMark(id: string, from: number, to: number) {
 	return Decoration.mark({ class: 'todo-marker', todoId: id }).range(from, to);
 }
 
-function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
+function markerField(markers: SceneMarker[]) {
 	const held = new Set(markers.map((marker) => marker.id));
 	// Markers this set has placed in the text, at load or by a restore. Only
 	// these can be brought back by undo, so only these need a drop record;
@@ -113,7 +97,6 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 			const steps = placeMarkers(tr);
 			let next = 0;
 			for (const effect of tr.effects) {
-				if (effect.is(restoreMarker)) restore(effect.value);
 				if (!markerSteps.is(effect)) continue;
 				for (const record of steps[next++]) {
 					if ('drop' in record) {
@@ -163,30 +146,13 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 		// A marker this transaction puts back was gone before it, whether or not
 		// this set has shown it yet: undo can restore a marker that loaded with
 		// no position, and the redo step must take it away again.
-		const restored = [
-			...placed.flatMap((record) => ('drop' in record ? [] : [record])),
-			...tr.effects.flatMap((effect) => (effect.is(restoreMarker) ? [effect.value] : []))
-		].flatMap((range) => (held.has(range.id) ? [range.id] : []));
+		const restored = placed.flatMap((record) =>
+			'drop' in record || !held.has(record.id) ? [] : [record.id]
+		);
 		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
 		return [markerSteps.of(tr, [...gone.map((id) => ({ drop: id })), ...touched.values()])];
 	});
-	// Undo or redo that brings back the words of a waiting marker puts the
-	// marker on them. As a restore on the transaction, the redo step records
-	// taking it away again like any other restore.
-	const placeWaiting = EditorState.transactionExtender.of((tr) => {
-		if (tr.changes.empty || !(tr.isUserEvent('undo') || tr.isUserEvent('redo'))) return null;
-		const effects = waiting.flatMap((marker) => {
-			if (shown.has(marker.id)) return [];
-			const range = marker.locate(tr.changes);
-			return range ? [restoreMarker.of({ id: marker.id, ...range })] : [];
-		});
-		return effects.length ? { effects } : null;
-	});
-	return {
-		field,
-		extension: [field, undoable, placeWaiting],
-		placed: (id: string) => shown.has(id)
-	};
+	return { field, extension: [field, undoable] };
 }
 
 const todoLine = Decoration.line({ class: 'todo-line' });
@@ -219,9 +185,6 @@ export type MarkerHandle = {
 	extension: Extension;
 	anchors(view: EditorView): { id: string; anchorStart: number; anchorEnd: number }[];
 	ids: string[];
-	waiting: WaitingMarker[];
-	// Whether this set has shown the marker.
-	placed(id: string): boolean;
 };
 
 // One scene's marker behaviour: highlights, the text-line detector, and
@@ -229,10 +192,9 @@ export type MarkerHandle = {
 // refreshes the page data.
 export function markerExtensions(
 	markers: SceneMarker[],
-	onMark: (from: number, to: number) => void,
-	waiting: WaitingMarker[] = []
+	onMark: (from: number, to: number) => void
 ): MarkerHandle {
-	const { field, extension, placed } = markerField(markers, waiting);
+	const { field, extension } = markerField(markers);
 
 	const markKeymap = keymap.of([
 		{
@@ -260,96 +222,52 @@ export function markerExtensions(
 			}
 			return anchors;
 		},
-		ids: markers.map((marker) => marker.id),
-		waiting,
-		placed
+		ids: markers.map((marker) => marker.id)
 	};
 }
 
 // The marker set for a rebuild when the page data brings a changed set (one
-// checked off, one made). The server's anchors are against the text it last
-// stored, so edits made since would put them on the wrong words: a marker the
-// editor still highlights keeps its own mapped range, which is newer, and a
-// marker new to the editor has its anchors mapped through the unsaved
-// changes. A marker the editor held but no longer shows (its words are gone)
-// comes back with no anchors, so it stays held and undo can still put it
-// back; mapping its old anchors would not do, since the combined changes can
-// lose the step that removed it and land it on the words that replaced them.
-// unsaved is null when the server's anchors count into a text this editor
-// never had (see unsavedChanges().from); new markers then wait for a reload.
+// checked off, one made). A marker the editor still highlights keeps its own
+// mapped range, which is newer than the server's. A marker the editor held
+// but no longer shows (its words are gone) comes back with no anchors, so it
+// stays held and undo can still put it back; a new one the server holds with
+// no anchors joins with none. Any other new marker is placed on the server's
+// anchors only when settled gives the edits from the text they count into to
+// the editor text exactly (see unsavedChanges().settledFrom); otherwise it is
+// left out of the set and waits until this editor's own save has landed and
+// the markers are read again. Mapping it through unsaved edits could put it
+// on the wrong words or cut it short, since those edits, joined into one
+// change, cannot always say which words are the stored ones.
 export function rebuiltMarkers(
 	incoming: SceneMarker[],
 	current: { id: string; anchorStart: number; anchorEnd: number }[],
 	held: string[],
-	unsaved: ChangeDesc | null
+	settled: ChangeDesc | null
 ): SceneMarker[] {
 	const shown = new Map(current.map((anchor) => [anchor.id, anchor]));
 	const before = new Set(held);
-	return incoming.map((marker) => {
+	return incoming.flatMap((marker): SceneMarker[] => {
 		const own = shown.get(marker.id);
-		if (own) return { id: marker.id, anchorStart: own.anchorStart, anchorEnd: own.anchorEnd };
+		if (own) return [{ id: marker.id, anchorStart: own.anchorStart, anchorEnd: own.anchorEnd }];
+		const detached = { id: marker.id, anchorStart: null, anchorEnd: null };
 		const { anchorStart: start, anchorEnd: end } = marker;
-		if (
-			!unsaved ||
-			before.has(marker.id) ||
-			start === null ||
-			end === null ||
-			end > unsaved.length
-		) {
-			return { id: marker.id, anchorStart: null, anchorEnd: null };
-		}
-		const kept = keptRange(unsaved, start, end);
-		return kept
-			? { id: marker.id, anchorStart: kept.from, anchorEnd: kept.to }
-			: { id: marker.id, anchorStart: null, anchorEnd: null };
+		if (before.has(marker.id) || start === null || end === null) return [detached];
+		if (!settled) return [];
+		if (end > settled.length) return [detached];
+		const kept = keptRange(settled, start, end);
+		return [kept ? { id: marker.id, anchorStart: kept.from, anchorEnd: kept.to } : detached];
 	});
 }
 
-// The markers a rebuild could not place because their words are deleted and
-// not saved yet: the new ones, and those the previous set was still waiting
-// on. Undo that brings their words back puts them there (they would otherwise
-// only come back on a reload). follow is unsavedChanges().from(...).follow,
-// or null when the anchors count into a text this editor never had.
-export function waitingMarkers(
-	incoming: SceneMarker[],
-	rebuilt: SceneMarker[],
-	previous: MarkerHandle,
-	follow: ((start: number, end: number) => Followed) | null
-): WaitingMarker[] {
-	const held = new Set(previous.ids);
-	const before = new Map(
-		previous.waiting
-			.filter((marker) => !previous.placed(marker.id))
-			.map((marker) => [marker.id, marker])
-	);
-	const waiting = incoming.flatMap((marker, index): WaitingMarker[] => {
-		if (rebuilt[index].anchorStart !== null) return [];
-		const kept = before.get(marker.id);
-		if (kept) return [kept];
-		const { anchorStart: start, anchorEnd: end } = marker;
-		if (!follow || held.has(marker.id) || start === null || end === null || start >= end) {
-			return [];
-		}
-		return [{ id: marker.id, ...follow(start, end) }];
-	});
-	for (const marker of previous.waiting) if (!waiting.includes(marker)) marker.release();
-	return waiting;
-}
-
-// The edits made since the text the server last stored, for rebuiltMarkers.
-// Saves run one at a time: sent() marks the text a save is sending, and
-// landed() drops the edits up to it once the server has stored it. A failed
-// save leaves them in, since the server still holds the older text. The
-// texts are kept too, so an edit that puts back exactly what was removed (a
-// deletion and its undo) counts as no change: positions do not move, and the
-// words count as the stored ones. Any other replacement counts as new words,
-// even where it shares letters with the old ones.
-// version is the fingerprint of the text the server holds as this editor
-// knows it, which the caller passes with each save. The page data's markers
-// carry the fingerprint of the text their anchors count into, which can be
-// the text a save is sending (it landed, but the editor has not heard yet)
-// or one a save replaced (read just before it landed), so from() keeps the
-// edits since each of those too.
+// The edits made since the text the server last stored. Saves run one at a
+// time: sent() marks the text a save is sending, and landed() drops the edits
+// up to it once the server has stored it. A failed save leaves them in, since
+// the server still holds the older text. The texts are kept too, so an edit
+// that puts back exactly what was removed (a deletion and its undo) counts as
+// no change: positions do not move, and the words count as the stored ones.
+// Any other replacement counts as new words, even where it shares letters
+// with the old ones. version is the fingerprint of the text the server holds
+// as this editor knows it, which the caller passes with each save.
 export function unsavedChanges(text: string) {
 	// Split into lines as the editor splits its doc.
 	let base: Known = {
@@ -357,31 +275,13 @@ export function unsavedChanges(text: string) {
 		since: unchanged(Text.of(text.split(/\r\n?|\n/)))
 	};
 	let sending: Known | null = null;
-	// Texts the server held before the last landed save, newest first.
-	let older: Known[] = [];
+	// Whether the text changed since the last save was sent.
+	let edited = false;
 	const pins = new Set<{ since: Since }>();
-	// Follows a range of the text from starts at through every edit after it
-	// until released, for a marker waiting on its words. locate maps it, as
-	// rebuiltMarkers maps a new marker, on through the given changes (the next
-	// transaction's), and gives null while none of its words are back.
-	const follower =
-		(from: Since) =>
-		(start: number, end: number): Followed => {
-			const pin = { since: from };
-			pins.add(pin);
-			return {
-				locate(next: ChangeSet): { from: number; to: number } | null {
-					if (next.length !== pin.since.doc.length || end > pin.since.start.length) return null;
-					return keptRange(advance(pin.since, next).changes.desc, start, end);
-				},
-				release() {
-					pins.delete(pin);
-				}
-			};
-		};
 	return {
 		record(changes: ChangeSet) {
-			for (const known of [base, sending, ...older]) {
+			edited = true;
+			for (const known of [base, sending]) {
 				if (known) known.since = advance(known.since, changes);
 			}
 			for (const pin of pins) pin.since = advance(pin.since, changes);
@@ -413,6 +313,7 @@ export function unsavedChanges(text: string) {
 		sent(sentVersion: string, cuts: readonly { from: number; to: number }[] = []) {
 			const shown = base.since.doc;
 			const toStored = ChangeSet.of(mergedRanges(cuts), shown.length);
+			edited = false;
 			sending = {
 				version: sentVersion,
 				since: {
@@ -424,27 +325,23 @@ export function unsavedChanges(text: string) {
 			};
 		},
 		landed() {
-			if (sending) {
-				older = [base, ...older].slice(0, KEPT_VERSIONS);
-				base = sending;
-			}
+			if (sending) base = sending;
 			sending = null;
 		},
-		// The edits since the text with the given fingerprint, newest match
-		// first, and a follower for markers counted into it; null for a text
-		// this editor has not seen the server hold (changed elsewhere).
-		from(fingerprint: string | null | undefined) {
-			const known = [sending, base, ...older].find((entry) => entry?.version === fingerprint);
-			return known ? { changes: known.since.changes.desc, follow: follower(known.since) } : null;
-		},
-		follow(start: number, end: number) {
-			return follower(base.since)(start, end);
+		// The edits from the stored text with the given fingerprint to the
+		// editor text, when they are known exactly: the server holds that text,
+		// the last save landed, and nothing was typed since it was sent. They
+		// then only put back what the save left out (an image still uploading).
+		// Null otherwise, including for a text changed elsewhere.
+		settledFrom(fingerprint: string | null | undefined): ChangeDesc | null {
+			if (sending || edited || fingerprint !== base.version) return null;
+			return base.since.changes.desc;
 		},
 		// The editor now shows exactly what the server holds.
 		reset(resetVersion: string) {
 			base = { version: resetVersion, since: unchanged(base.since.doc) };
 			sending = null;
-			older = [];
+			edited = false;
 		},
 		get changes(): ChangeDesc {
 			return base.since.changes.desc;
@@ -465,10 +362,6 @@ type Since = { start: Text; doc: Text; changes: ChangeSet; graves: readonly Grav
 // and right, which differ only when text was typed there since), and for
 // each character the stored offset it had, or -1 for one typed since.
 type Grave = { left: number; right: number; text: string; origin: number[] };
-
-// How many texts from before the last landed save from() still knows. Page
-// data is read within a save or two of the editor hearing about it.
-const KEPT_VERSIONS = 3;
 
 // How many deletions advance keeps for undo to put back.
 const KEPT_GRAVES = 100;
