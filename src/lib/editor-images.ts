@@ -284,15 +284,39 @@ const breakHistory = invertedEffects.of((tr) => {
 
 export const uploadTracking: Extension = [pendingField, breakHistory];
 
-// onLost hears a message for the writer when an image finished uploading but
-// its placeholder was no longer in the text, so it was not added.
+// Why an upload was refused, for the writer. The server's own reason is shown
+// when it is one written for them (a file too large or of the wrong type, too
+// many uploads); null status means the request never got an answer.
+export function uploadFailure(fileName: string, status: number | null, reason?: string): string {
+	const why =
+		status === null
+			? 'Check your connection and paste the image again.'
+			: status === 503
+				? 'Image uploads are not set up on this server.'
+				: status === 413
+					? 'The image is too large.'
+					: (status === 400 || status === 429) && reason && /^[A-Z].*\.$/.test(reason)
+						? reason
+						: 'Paste the image again.';
+	return `The image ${fileName} could not be added. ${why}`;
+}
+
+// onLost hears a message for the writer when an image was not added: the
+// upload was refused or failed, or it finished but its placeholder was no
+// longer in the text.
 export function imageUploadExtension(
 	universeId: string,
 	onLost?: (message: string) => void
 ): Extension {
 	// Settle a finished upload; a null replacement just removes the
-	// placeholder, the failed-upload case.
-	function clear(view: EditorView, id: number, replacement: string | null, fileName: string) {
+	// placeholder, the failed-upload case, and failure says why.
+	function clear(
+		view: EditorView,
+		id: number,
+		replacement: string | null,
+		fileName: string,
+		failure?: string
+	) {
 		// The upload can resolve after the editor was torn down (a scene switch
 		// mid-upload); dispatching on a destroyed view throws. Its DOM is detached
 		// once destroyed, so skip the update.
@@ -300,7 +324,8 @@ export function imageUploadExtension(
 		const lost = replacement !== null && !uploadPlaced(view.state, id);
 		const spec = finishUpload(view.state, id, replacement);
 		if (spec) view.dispatch(spec);
-		if (lost) {
+		if (failure) onLost?.(failure);
+		else if (lost) {
 			onLost?.(
 				`The image ${fileName} was not added because its "Uploading" line was changed or removed. Paste the image again.`
 			);
@@ -308,21 +333,27 @@ export function imageUploadExtension(
 	}
 
 	async function resolve(view: EditorView, file: File, id: number) {
+		let response: Response;
 		try {
 			const form = new FormData();
 			form.set('file', file);
 			form.set('kind', 'inline');
 			form.set('universeId', universeId);
-			const response = await fetch('/api/assets', { method: 'POST', body: form });
-			if (!response.ok) {
-				clear(view, id, null, file.name);
-				return;
-			}
-			const { path } = (await response.json()) as { path: string };
-			clear(view, id, `![${file.name}](${path})\n`, file.name);
+			response = await fetch('/api/assets', { method: 'POST', body: form });
 		} catch {
-			clear(view, id, null, file.name);
+			clear(view, id, null, file.name, uploadFailure(file.name, null));
+			return;
 		}
+		const body = (await response.json().catch(() => null)) as {
+			path?: unknown;
+			message?: unknown;
+		} | null;
+		if (response.ok && typeof body?.path === 'string') {
+			clear(view, id, `![${file.name}](${body.path})\n`, file.name);
+			return;
+		}
+		const reason = typeof body?.message === 'string' ? body.message : undefined;
+		clear(view, id, null, file.name, uploadFailure(file.name, response.status, reason));
 	}
 
 	// Insert a placeholder per file at consecutive positions, then start the

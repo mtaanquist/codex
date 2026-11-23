@@ -362,6 +362,17 @@ describe('markerExtensions', () => {
 			expect(marked(editor)).toEqual(['mat']);
 		});
 
+		it('does not put a marker on words such a change put in its place', () => {
+			// The edit types right after "the mat", so its undo step records it.
+			const editor = setup([{ id: 'm', anchorStart: 15, anchorEnd: 22 }]);
+			editor.edit(22, 23, ' now', false);
+			editor.change(15, 24, 'NEW', false);
+			expect(editor.anchors()).toEqual([]);
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe('The cat sat on NEW.');
+			expect(editor.anchors()).toEqual([]);
+		});
+
 		it('takes the marker away on redo and puts it back on the next undo', () => {
 			const editor = setup([mat]);
 			editor.edit(15, 22);
@@ -453,6 +464,67 @@ describe('markerExtensions', () => {
 					else randomEdit();
 				}
 				while (undoDepth(editor.state)) check('undo');
+			}
+			expect(failures.slice(0, 3)).toEqual([]);
+		});
+
+		// Such changes replacing the writer's words with "#": undo or redo must
+		// not put a marker on "#" alone unless it was there before.
+		it('never puts a marker back on words such changes put in', () => {
+			const long = 'The cat sat on the mat and the dog ran far away.';
+			const markers = [
+				{ id: 'a', anchorStart: 4, anchorEnd: 11 },
+				{ id: 'b', anchorStart: 19, anchorEnd: 30 },
+				{ id: 'c', anchorStart: 31, anchorEnd: 34 }
+			];
+			const failures: string[] = [];
+			for (let seed = 1; seed <= 1500; seed++) {
+				let n = seed;
+				const random = () => {
+					n = (n * 1103515245 + 12345) & 0x7fffffff;
+					return n / 0x7fffffff;
+				};
+				const editor = setup(markers, long);
+				const onHashes = () =>
+					new Set(
+						editor
+							.anchors()
+							.filter(({ anchorStart, anchorEnd }) =>
+								/^#+$/.test(editor.state.sliceDoc(anchorStart, anchorEnd))
+							)
+							.map((anchor) => anchor.id)
+					);
+				// Markers a change already left on "#" alone, which undo may put back.
+				const wasOnHashes = new Set<string>();
+				const steps: string[] = [];
+				const span = (insert: string) => {
+					const length = editor.state.doc.length;
+					const from = Math.floor(random() * (length + 1));
+					const to = Math.min(length, from + Math.floor(random() * 8));
+					return { from, to, insert, joined: random() < 0.6 };
+				};
+				for (let i = 0; i < 16; i++) {
+					const pick = random();
+					if (pick < 0.45) {
+						const { from, to, insert, joined } = span(random() < 0.5 ? '' : 'xyz');
+						if (from === to && !insert) continue;
+						steps.push(`edit(${from}, ${to}, '${insert}', ${joined})`);
+						editor.edit(from, to, insert, joined);
+					} else if (pick < 0.65) {
+						const { from, to } = span('##');
+						steps.push(`change(${from}, ${to}, '##', false)`);
+						editor.change(from, to, '##', false);
+					} else {
+						const command = pick < 0.85 ? 'undo' : 'redo';
+						steps.push(`${command}()`);
+						editor[command]();
+						if ([...onHashes()].some((id) => !wasOnHashes.has(id))) {
+							failures.push(`seed ${seed}: ${steps.join('; ')}`);
+							break;
+						}
+					}
+					for (const id of onHashes()) wasOnHashes.add(id);
+				}
 			}
 			expect(failures.slice(0, 3)).toEqual([]);
 		});
@@ -689,6 +761,28 @@ describe('rebuiltMarkers', () => {
 		editor.undo();
 		expect(editor.state.doc.toString()).toBe('The cat sun on the mat.');
 		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('keeps a waiting marker through redo and undo once an unrelated undo placed it', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 11, '', false);
+		editor.reload([cat, sat]);
+		// Typed back exactly, its words count as the stored ones again.
+		editor.edit(8, 8, 'sat', false);
+		editor.edit(0, 0, 'Oh. ', false);
+		editor.undo();
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
+		editor.redo();
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe(text);
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
 	});
 
 	it('leaves out a new marker whose words were typed over with words sharing a letter', () => {

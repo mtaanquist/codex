@@ -142,61 +142,111 @@ test('a marker made over text changed in another window loads the newer text', a
 	);
 });
 
-// Undo after the newer text loads must not bring the older text back, or the
-// next autosave would store it over the other window's words.
+// Another window changes the scene. Undo after the newer text loads here
+// must do nothing: replaying this window's older edits onto the other
+// window's words would garble them, and the next autosave would store that.
+async function changeElsewhere(page: Page, before: string, after: string) {
+	const other = await page.context().newPage();
+	await gotoReady(other, page.url());
+	const otherEditor = other.getByRole('textbox', { name: 'Scene text' });
+	await expect(otherEditor).toHaveText(before);
+	const otherLanded = saved(other);
+	await otherEditor.click();
+	await other.keyboard.press('ControlOrMeta+A');
+	await other.keyboard.type(after);
+	await otherLanded;
+	await other.close();
+}
+
 test('undo after the newer text loads keeps the other window words', async ({ page }) => {
 	test.slow();
 	await newStory(page, `Shoal ${Date.now()}`);
 	const editor = page.getByRole('textbox', { name: 'Scene text' });
-	const landed = saved(page);
+	let landed = saved(page);
 	await editor.click();
-	await page.keyboard.type('The shoal lay bare.');
+	await page.keyboard.type('The cat sat on the old mat today.');
 	await landed;
+	// Delete "old ", which is then saved too.
+	landed = saved(page);
+	for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowLeft');
+	for (let i = 0; i < 4; i++) await page.keyboard.press('Backspace');
+	await landed;
+	await expect(editor).toHaveText('The cat sat on the mat today.');
 
-	const other = await page.context().newPage();
-	await gotoReady(other, page.url());
-	const otherEditor = other.getByRole('textbox', { name: 'Scene text' });
-	await expect(otherEditor).toContainText('The shoal lay bare.');
-	const otherLanded = saved(other);
-	await otherEditor.click();
-	await other.keyboard.press('ControlOrMeta+Home');
-	await other.keyboard.type('Ebb. ');
-	await otherLanded;
-	await other.close();
+	await changeElsewhere(page, 'The cat sat on the mat today.', 'The dog sat on the mat yesterday.');
 
 	await editor.click();
 	await page.keyboard.press('ControlOrMeta+End');
 	for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft');
 	await page.keyboard.press('ControlOrMeta+Alt+m');
 	await expect(page.getByText('now shows the newer version')).toBeVisible();
-	await expect(editor).toHaveText('Ebb. The shoal lay bare.');
+	await expect(editor).toHaveText('The dog sat on the mat yesterday.');
 
-	// Undo takes back this window's own typing, not the loaded text.
-	const undoSaved = saved(page);
 	await page.keyboard.press('ControlOrMeta+z');
-	await expect(editor).toContainText('Ebb.');
-	await expect(editor).not.toContainText('bare.');
-	await undoSaved;
-	const redoSaved = saved(page);
-	await page.keyboard.press('ControlOrMeta+Shift+z');
-	await expect(editor).toHaveText('Ebb. The shoal lay bare.');
-	await redoSaved;
+	await page.keyboard.press('ControlOrMeta+z');
+	await expect(editor).toHaveText('The dog sat on the mat yesterday.');
 
-	// Markers work as usual afterwards.
+	// Markers and undo work as usual afterwards.
 	const created = page.waitForResponse(
 		(r) => r.url().includes('/markers') && r.request().method() === 'POST' && r.ok()
 	);
 	await page.keyboard.press('ControlOrMeta+End');
-	for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+ArrowLeft');
+	for (let i = 0; i < 10; i++) await page.keyboard.press('Shift+ArrowLeft');
 	await page.keyboard.press('ControlOrMeta+Alt+m');
 	await created;
-	await expect(page.locator('.todo-marker')).toHaveText(['bare.']);
+	await expect(page.locator('.todo-marker')).toHaveText(['yesterday.']);
+	await page.keyboard.press('ControlOrMeta+End');
+	await page.keyboard.type(' Rain.');
+	await page.keyboard.press('ControlOrMeta+z');
+	await expect(editor).toHaveText('The dog sat on the mat yesterday.');
+	landed = saved(page);
+	await page.keyboard.press('ControlOrMeta+Shift+z');
+	await expect(editor).toHaveText('The dog sat on the mat yesterday. Rain.');
+	await landed;
 
 	await page.reload();
 	await expect(page.getByRole('textbox', { name: 'Scene text' })).toHaveText(
-		'Ebb. The shoal lay bare.'
+		'The dog sat on the mat yesterday. Rain.'
 	);
-	await expect(page.locator('.todo-marker')).toHaveText(['bare.']);
+	await expect(page.locator('.todo-marker')).toHaveText(['yesterday.']);
+});
+
+test('undo after Load newer version keeps the other window words', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Reef ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	const landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The cat sat on the old mat today.');
+	await landed;
+
+	await changeElsewhere(
+		page,
+		'The cat sat on the old mat today.',
+		'The dog sat on the mat yesterday.'
+	);
+
+	// An edit here is refused, since the scene changed in the other window.
+	const refused = page.waitForResponse(
+		(r) => r.url().includes('/api/scenes/') && r.request().method() === 'PUT' && r.status() === 409
+	);
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+End');
+	for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowLeft');
+	for (let i = 0; i < 4; i++) await page.keyboard.press('Backspace');
+	await refused;
+	await page.getByRole('button', { name: 'Load newer version' }).click();
+	await expect(editor).toHaveText('The dog sat on the mat yesterday.');
+
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+z');
+	await page.keyboard.press('ControlOrMeta+z');
+	await expect(editor).toHaveText('The dog sat on the mat yesterday.');
+
+	await page.reload();
+	await expect(page.getByRole('textbox', { name: 'Scene text' })).toHaveText(
+		'The dog sat on the mat yesterday.'
+	);
 });
 
 // Keep mine settles the conflict, so the message about it goes too.

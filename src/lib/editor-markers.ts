@@ -60,7 +60,9 @@ function placeMarkers(tr: Transaction) {
 		if (to > over.length) return null;
 		const start = over.mapPos(from, 1);
 		const end = over.mapPos(to, -1);
-		return start < end ? { id, from: start, to: end } : null;
+		// A change that replaced all of the marker's words would otherwise put
+		// it on the words that replaced them.
+		return start < end && keepsSome(over, from, to) ? { id, from: start, to: end } : null;
 	});
 }
 
@@ -144,17 +146,23 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 				if (fromA <= to && toA >= from) touched.set(id, { id, from, to });
 			});
 		});
+		const placed = placeMarkers(tr).flat();
+		const dropped = new Set(placed.flatMap((record) => ('drop' in record ? [record.drop] : [])));
 		const present = new Set<string>();
 		for (const cursor = before.iter(); cursor.value; cursor.next()) {
-			present.add(cursor.value.spec.todoId as string);
+			const id = cursor.value.spec.todoId as string;
+			present.add(id);
+			// A redo can take away a marker whose words it leaves alone, so its
+			// undo step must put it back too.
+			if (dropped.has(id) && !touched.has(id)) {
+				touched.set(id, { id, from: cursor.from, to: cursor.to });
+			}
 		}
 		// A marker this transaction puts back was gone before it, whether or not
 		// this set has shown it yet: undo can restore a marker that loaded with
 		// no position, and the redo step must take it away again.
 		const restored = [
-			...placeMarkers(tr)
-				.flat()
-				.flatMap((record) => ('drop' in record ? [] : [record])),
+			...placed.flatMap((record) => ('drop' in record ? [] : [record])),
 			...tr.effects.flatMap((effect) => (effect.is(restoreMarker) ? [effect.value] : []))
 		].flatMap((range) => (held.has(range.id) ? [range.id] : []));
 		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
