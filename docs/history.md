@@ -34,6 +34,25 @@ CodeMirror's own highlight example does, and the restore widens the marker to
 the union of its current range and the recorded one, so the order in which a
 joined undo step applies its effects does not matter and a marker is never
 added twice.
+Second follow-up (`fix/marker-undo-widen` on `staging/bug-fixes-3`, #1437):
+the union could widen a marker. Within one joined undo step, what was left of
+the highlight could map back to a position before the restored words (type
+over the start of a marker, then delete from just before it into the typed
+text), and the union took that edge. Redo had the same weakness the other
+way: mapping through a joined step's composed change could stretch a cut
+marker over words typed next to it, or keep a deleted marker alive over its
+replacement text. CodeMirror's mapping through a composed change is not exact
+at the change's edges, so the editor no longer relies on it for touched
+markers. Every edit now records, for each marker it touches (overlaps or
+borders), the exact range before the edit, and for each held marker already
+gone, that it was gone; undo and redo set those markers to the recorded state
+instead of merging. A joined step lists its effects earliest last, so the
+state from before the whole step is applied last and wins. The "gone"
+records are scoped to the marker set that made them, so a set rebuilt from
+fresh server anchors (after marking or checking off) is not emptied by old
+history. A seeded random test (1500 edit, undo and redo sequences on three
+markers) checks that whenever undo or redo returns to text seen before, the
+markers match what they were then.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write

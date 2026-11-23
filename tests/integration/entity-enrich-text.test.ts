@@ -536,6 +536,46 @@ describe('a text too long for one request', () => {
 		expect(result.partial).toBeUndefined();
 	});
 
+	it('asks for the summary once when a story is muted and unmuted during the read (#1438)', async () => {
+		await writeScenes(storyId, [long('ONE'), long('TWO')]);
+		const middle = await makeStory('The Middle Book');
+		await writeScenes(middle, [long('THREE'), long('FOUR')]);
+		const quiet = await makeStory('The Quiet Book');
+		await writeScenes(quiet, [long('FIVE')]);
+		replies = [
+			'{"aliases":["The Grey"],"details":[],"summary":null}',
+			'{"aliases":[],"details":[],"summary":"A harbourmaster."}',
+			'{"aliases":["Old Bram"],"details":[],"summary":"Asked again."}'
+		];
+		// Muted while the first part is read, so the second counts as last;
+		// unmuted while the second is read, so the third is read after all.
+		const result = await enrichEntityFromText(
+			db,
+			{ userId: ownerId, scope: { universeId }, entityId: bram, mode: 'scenes' },
+			{
+				...deps,
+				provider: {
+					...stubProvider,
+					async respond(...args) {
+						if (prompts.length === 0) await saveStoryLlmOverride(db, quiet, { enabled: false });
+						if (prompts.length === 1) await saveStoryLlmOverride(db, quiet, { enabled: null });
+						return stubProvider.respond(...args);
+					}
+				}
+			}
+		);
+		expect(prompts).toHaveLength(3);
+		expect(prompts[1]).not.toContain('do not propose a summary');
+		expect(prompts[2]).toContain('Bram FIVE');
+		expect(prompts[2]).toContain('do not propose a summary');
+		expect(result.suggestions.map((s) => s.value).sort()).toEqual([
+			'A harbourmaster.',
+			'Old Bram',
+			'The Grey'
+		]);
+		expect(result.skipped).toBeUndefined();
+	});
+
 	it('says how to fix it when a later part is cut off at the reply limit', async () => {
 		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
 		cutOffCalls = [2];
