@@ -366,7 +366,9 @@ export function createHandlers(deps: WorkerDeps) {
 			} else if (result.partial) {
 				title = `The Assistant stopped partway through reading for details about ${name}${left}. ${result.partialNote ?? `To read the rest, ${DETAILS_AGAIN}.`}`;
 			} else if (result.skipped === 'all') {
-				title = `The Assistant read nothing for ${name}: every story it was going to read has since been muted for the Assistant or moved to the trash. Turn the Assistant back on for a story, then ${DETAILS_AGAIN}.`;
+				// States the current state only: nothing records when a story was muted
+				// or trashed, or whether the mentions in a readable story were removed.
+				title = `The Assistant read nothing for ${name}, because the stories it would read have the Assistant turned off or are in the trash. Turn the Assistant back on for one of those stories, or restore it from the trash, then ${DETAILS_AGAIN}.`;
 			} else if (result.scenes === 0) {
 				title = `The Assistant found no scenes that mention ${name}, so there was nothing to read.`;
 			} else if (result.skipped === 'summary') {

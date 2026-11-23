@@ -277,7 +277,7 @@ export async function enrichEntityFromText(
 
 	const excerpts = await entityExcerpts(db, { ...opts, kind });
 	if (excerpts.length === 0) {
-		// Muted or trashed after the read was queued, before it started.
+		// Muted or trashed stories hold the only scenes it would read.
 		const withheld = await excerptsWithheld(db, { ...opts, kind });
 		return withheld ? { ...none, skipped: 'all' } : none;
 	}
