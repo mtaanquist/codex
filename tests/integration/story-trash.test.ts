@@ -222,17 +222,29 @@ describe('story trash', () => {
 	it('is due for the purge only once the window elapses, and the purge removes it', async () => {
 		expect(await trashStory(db, ownerId, storyId)).toBe(true);
 		expect(await listStoriesDueForPurge(db)).toEqual([]);
+		// The scheduled purge checks the window again under the lock.
+		expect(await purgeStory(db, storyId, { dueAfterDays: 30 })).toBe(false);
+		expect(await db.select().from(stories).where(eq(stories.id, storyId))).toHaveLength(1);
 		await db
 			.update(stories)
 			.set({ deletedAt: sql`now() - interval '31 days'` })
 			.where(eq(stories.id, storyId));
 		expect(await listStoriesDueForPurge(db)).toEqual([storyId]);
 
-		await purgeStory(db, storyId);
+		expect(await purgeStory(db, storyId, { dueAfterDays: 30 })).toBe(true);
 		expect(await db.select().from(stories).where(eq(stories.id, storyId))).toHaveLength(0);
 		expect(await db.select().from(scenes).where(eq(scenes.id, sceneId))).toHaveLength(0);
 		expect(await listStoriesDueForPurge(db)).toEqual([]);
 		expect(await db.select().from(stories).where(eq(stories.id, keptStoryId))).toHaveLength(1);
+	});
+
+	it('leaves a story restored before the purge got to it', async () => {
+		expect(await trashStory(db, ownerId, storyId)).toBe(true);
+		expect(await restoreStory(db, ownerId, storyId)).toBe(true);
+		expect(await purgeStory(db, storyId)).toBe(false);
+		expect(await destroyStory(db, ownerId, storyId)).toBe(false);
+		expect(await db.select().from(stories).where(eq(stories.id, storyId))).toHaveLength(1);
+		expect(await db.select().from(scenes).where(eq(scenes.id, sceneId))).toHaveLength(1);
 	});
 
 	it('delete forever refuses a live story and removes a trashed one', async () => {

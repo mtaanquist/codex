@@ -15,6 +15,7 @@ import {
 	pendingObjectDeletions,
 	places,
 	reviewComments,
+	publicationAssets,
 	publications,
 	relationTypes,
 	revisions,
@@ -27,9 +28,10 @@ import {
 	destroyUniverse,
 	listTrashedUniverses,
 	listUniversesDueForPurge,
+	purgeUniverse,
 	restoreUniverse,
 	trashUniverse,
-	universeAssetKeys
+	universeEditionFileKeys
 } from '../../src/lib/server/universe-lifecycle';
 import { ownedStory } from '../../src/lib/server/story-access';
 import { ownedUniverse } from '../../src/lib/server/universe-access';
@@ -369,8 +371,8 @@ describe('trash and restore', () => {
 	});
 });
 
-describe('universeAssetKeys', () => {
-	it('includes uploaded images and the editions stored export files', async () => {
+describe('universeEditionFileKeys', () => {
+	it('lists the editions stored export files, not the images', async () => {
 		await db
 			.insert(assets)
 			.values({
@@ -396,9 +398,7 @@ describe('universeAssetKeys', () => {
 			byteSize: 20
 		});
 
-		const keys = await universeAssetKeys(db, universeId);
-		expect(keys).toContain('img-key');
-		expect(keys).toContain('epub-key');
+		expect(await universeEditionFileKeys(db, universeId)).toEqual(['epub-key']);
 	});
 });
 
@@ -443,5 +443,106 @@ describe('destroy', () => {
 				.from(entityRelationships)
 				.where(eq(entityRelationships.universeId, universeId))
 		).toHaveLength(0);
+	});
+});
+
+describe('purging a universe', () => {
+	// An image uploaded in this universe, 5 bytes, counted against its owner.
+	async function imageHere(storageKey = 'shared-key') {
+		const [image] = await db
+			.insert(assets)
+			.values({
+				ownerId,
+				universeId,
+				kind: 'inline',
+				filename: 'map.png',
+				contentType: 'image/png',
+				byteSize: 5,
+				storageKey
+			})
+			.returning();
+		await db.update(users).set({ storageUsedBytes: 5 }).where(eq(users.id, ownerId));
+		return image;
+	}
+
+	// A second universe of the same owner, with a story and one scene.
+	async function otherUniverse(bodyMd: string) {
+		const [other] = await db
+			.insert(universes)
+			.values({ ownerId, name: 'Open Late', slug: 'open-late' })
+			.returning();
+		const [story] = await db
+			.insert(stories)
+			.values({ universeId: other.id, ownerId, title: 'Doors', slug: 'doors' })
+			.returning();
+		await db.insert(scenes).values({ storyId: story.id, globalPosition: 1, bodyMd });
+		return story;
+	}
+
+	const storageUsed = async () =>
+		(await db.select().from(users).where(eq(users.id, ownerId)))[0].storageUsedBytes;
+	const queued = async (key: string) =>
+		(
+			await db
+				.select()
+				.from(pendingObjectDeletions)
+				.where(eq(pendingObjectDeletions.storageKey, key))
+		).length > 0;
+
+	it('frees an image nothing else uses', async () => {
+		await pool.query('truncate table pending_object_deletions');
+		const image = await imageHere();
+		await trashUniverse(db, ownerId, universeId);
+		expect(await purgeUniverse(db, universeId)).toBe(true);
+		expect(await db.select().from(assets).where(eq(assets.id, image.id))).toEqual([]);
+		expect(await storageUsed()).toBe(0);
+		expect(await queued('shared-key')).toBe(true);
+	});
+
+	it('keeps an image a scene in another universe shows', async () => {
+		await pool.query('truncate table pending_object_deletions');
+		const image = await imageHere();
+		await otherUniverse(`A map: ![map](/assets/${image.id})`);
+		await trashUniverse(db, ownerId, universeId);
+		expect(await purgeUniverse(db, universeId)).toBe(true);
+		const [kept] = await db.select().from(assets).where(eq(assets.id, image.id));
+		expect(kept).toMatchObject({ universeId: null, storageKey: 'shared-key' });
+		expect(await storageUsed()).toBe(5);
+		expect(await queued('shared-key')).toBe(false);
+	});
+
+	it('goes through when an edition in another universe holds one of its images', async () => {
+		const image = await imageHere();
+		const story = await otherUniverse('No images in the draft any more.');
+		const [edition] = await db
+			.insert(publications)
+			.values({ storyId: story.id, ownerId, handle: 'h', title: 'Doors', content: {} })
+			.returning();
+		await db.insert(publicationAssets).values({ publicationId: edition.id, assetId: image.id });
+		await trashUniverse(db, ownerId, universeId);
+		expect(await purgeUniverse(db, universeId)).toBe(true);
+		expect(await db.select().from(universes).where(eq(universes.id, universeId))).toEqual([]);
+		expect(await db.select().from(assets).where(eq(assets.id, image.id))).toHaveLength(1);
+	});
+
+	it('leaves a universe restored before the purge got to it', async () => {
+		await trashUniverse(db, ownerId, universeId);
+		expect(await restoreUniverse(db, ownerId, universeId)).toBe(true);
+		expect(await purgeUniverse(db, universeId)).toBe(false);
+		expect((await destroyUniverse(db, ownerId, universeId)).ok).toBe(false);
+		expect(await db.select().from(universes).where(eq(universes.id, universeId))).toHaveLength(1);
+		expect(await db.select().from(stories).where(eq(stories.id, storyId))).toHaveLength(1);
+	});
+
+	it('on schedule, waits until the universe has been in the trash long enough', async () => {
+		await trashUniverse(db, ownerId, universeId);
+		expect(await purgeUniverse(db, universeId, { dueAfterDays: 30 })).toBe(false);
+		expect(await db.select().from(universes).where(eq(universes.id, universeId))).toHaveLength(1);
+		await db
+			.update(universes)
+			.set({ deletedAt: sql`now() - interval '31 days'` })
+			.where(eq(universes.id, universeId));
+		expect(await purgeUniverse(db, universeId, { dueAfterDays: 30 })).toBe(true);
+		expect(await db.select().from(universes).where(eq(universes.id, universeId))).toEqual([]);
 	});
 });

@@ -132,15 +132,13 @@ export async function lockStorageOwners(tx: Database, userIds: string[]): Promis
 /**
  * Adds bytes to the account's storage use, unless that would pass the limit.
  * The account row is locked first and the limit read under the lock, so
- * uploads at once take turns and each sees the plan as it is now. credit is
- * the size of an image the upload replaces. Run it in the same transaction as
- * the asset insert. A null limit on failure means the account is gone.
+ * uploads at once take turns and each sees the plan as it is now. Run it in
+ * the same transaction as the asset insert. A null limit on failure means the account is gone.
  */
 export async function reserveStorage(
 	tx: Database,
 	userId: string,
-	bytes: number,
-	credit = 0
+	bytes: number
 ): Promise<{ ok: true } | { ok: false; limit: number | null }> {
 	const locked = await tx.execute(
 		sql`select storage_used_bytes::float8 as used from users where id = ${userId} for no key update`
@@ -148,7 +146,7 @@ export async function reserveStorage(
 	const row = locked.rows[0] as { used: number } | undefined;
 	if (!row) return { ok: false, limit: null };
 	const limit = (await accountLimits(tx, userId)).storage_bytes;
-	if (limit !== null && row.used - credit + bytes > limit) return { ok: false, limit };
+	if (limit !== null && row.used + bytes > limit) return { ok: false, limit };
 	await tx.execute(
 		sql`update users set storage_used_bytes = storage_used_bytes + ${bytes} where id = ${userId}`
 	);

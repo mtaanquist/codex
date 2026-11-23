@@ -13,6 +13,33 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 2 (2026-11-23, `fix/phase-10-review-2` on
+`staging/phase-10`). The 308 from an old public slug stays permanent for
+search engines but carries `Cache-Control: no-cache`: a browser caches a
+permanent redirect for good otherwise, and a rename back to the old slug then
+loops. A universe purge deleted every image with its `universe_id`, though a
+scene, edition or profile elsewhere can show one (and a `publication_assets`
+row made the purge fail every hour). It now detaches the images
+(`universe_id` null) with the rest of the universe, then deletes only those
+the full reference check (the same one the sweep uses) finds unused; the rest
+wait for the sweep. Replacing or clearing a cover, avatar or badge no longer
+deletes the old image either, and so no longer credits its bytes to the
+upload that replaces it: checking references there would scan the whole
+database on every avatar change, and the eager delete threw after the new
+cover was saved when an edition held the old one. Writers near the limit now
+wait for the sweep instead; the help says so. Purges lock the row and return
+when it is no longer in the trash, and the scheduled purge checks the 30 days
+again under the lock, so a restore that lands first wins. A story purge locks
+the scenes before the story (row-locks.ts order); a universe purge locks the
+account rows before the universe, in no key update so foreign-key checks on
+it are not held up. Adding the account purge to the lock-order test showed
+its FOR UPDATE on the account row against every insert's key share on it; it
+now takes no key update, which still turns a cancellation or an upload away,
+and reads the bucket keys under that lock. The sweep's recheck covers every
+catalog column, limited to the held ids, rather than a hand-kept list that
+had missed chapter summaries, story notes and more. A same-base rename keeps
+its slug, and the shelf 404s for an unknown handle or a suspended author.
+
 Freeing storage on story purge and for unused images (2026-11-23,
 `feat/free-storage` on `staging/phase-10`, #1446). Before this only a
 universe purge gave image bytes back, so a writer at the storage limit could

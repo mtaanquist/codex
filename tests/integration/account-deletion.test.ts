@@ -306,6 +306,43 @@ describe('purgeAccount lock order', () => {
 	});
 });
 
+describe('purgeAccount and an upload it waited for', () => {
+	// The upload's image lands while the purge waits on the account row; its
+	// stored file must be removed with the rest, not left in the bucket.
+	it('removes the stored file of an image uploaded while it waited', async () => {
+		const owner = await makeUser('late-upload@example.com');
+		removedKeys.length = 0;
+		const holder = await pool.connect();
+		const probe = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from users where id = $1 for no key update', [owner]);
+			await holder.query(
+				`insert into assets (owner_id, kind, filename, content_type, byte_size, storage_key)
+				 values ($1, 'inline', 'late.png', 'image/png', 10, $2)`,
+				[owner, `late-${owner}`]
+			);
+			const purge = purgeAccount(db, owner, stubStore);
+			for (let i = 0; i < 200; i++) {
+				const { rows } = await probe.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n > 0) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await holder.query('commit');
+			await purge;
+			expect(removedKeys).toContain(`late-${owner}`);
+			expect(await db.select().from(users).where(eq(users.id, owner))).toHaveLength(0);
+		} finally {
+			await holder.query('rollback').catch(() => {});
+			holder.release();
+			probe.release();
+		}
+	});
+});
+
 describe('scheduleAccountDeletion and cancel', () => {
 	it('deactivates, takes down editions, schedules, and can be cancelled', async () => {
 		const userId = await makeUser('go@example.com');

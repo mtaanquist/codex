@@ -2145,6 +2145,7 @@ describe('the assistant_drafts table', () => {
 			{ queue: jobs.queueAssistantDraft }
 		);
 		expect(result.ok).toBe(true);
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
 		await purgeStory(db, storyId);
 		expect(await db.select().from(assistantDrafts)).toEqual([]);
 	});

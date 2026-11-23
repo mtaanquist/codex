@@ -115,28 +115,22 @@ export async function findUnusedAssets(
 	return result.rows as { id: string; ownerId: string }[];
 }
 
-// The columns a writer types into or points at an image from. Checked again,
-// for the few images about to go, inside the deleting transaction: a link
-// saved after the full read is caught here. Asset uuid columns (covers,
-// avatars, badges, editions) are found by name.
-const RECHECK_TEXT = new Set([
-	'scenes.body_md',
-	'scenes.summary_md',
-	'notes.body_md',
-	'characters.body_md',
-	'places.body_md',
-	'lore_entries.body_md',
-	'stories.description_md',
-	'universes.description_md',
-	'users.bio_md',
-	'story_drafts.content',
-	'assistant_drafts.text_md'
-]);
-
-function recheckColumns(columns: Column[]): Column[] {
-	return columns.filter(({ table, column, uuid }) =>
-		uuid ? column.includes('asset') : RECHECK_TEXT.has(`${table}.${column}`)
+/**
+ * Which of the given image ids some row still references, by the same wide
+ * reading as findUnusedAssets. Meant for a handful of ids inside a deleting
+ * transaction, so a reference saved after an earlier full read is caught.
+ */
+export async function referencedAssetIds(
+	db: Database,
+	ids: string[],
+	columns?: Column[]
+): Promise<Set<string>> {
+	if (ids.length === 0) return new Set();
+	const wanted = sql`select unnest(string_to_array(${ids.join(',')}, ',')) as id`;
+	const result = await db.execute(
+		sql`select distinct id from (${referencesIn(columns ?? (await referenceColumns(db)), wanted)}) refs`
 	);
+	return new Set((result.rows as { id: string }[]).map((row) => row.id));
 }
 
 type Freed = {
@@ -157,8 +151,9 @@ type Freed = {
  * the owners' account rows and then the image rows (the order every storage
  * path takes, see lockStorageOwners), skipping any another session holds so a
  * sign-in or an upload is never kept waiting; those are left for the next run.
- * The writer-facing columns are checked again under the locks, and the stored
- * files are queued to go later (scheduleObjectDeletions), never removed here.
+ * Every column is checked again under the locks, for the held ids only, and
+ * the stored files are queued to go later (scheduleObjectDeletions), never
+ * removed here.
  */
 export async function deleteUnusedAssets(
 	db: Database,
@@ -166,7 +161,7 @@ export async function deleteUnusedAssets(
 	graceDays = UNUSED_ASSET_GRACE_DAYS
 ): Promise<Freed[]> {
 	if (candidates.length === 0) return [];
-	const recheck = recheckColumns(await referenceColumns(db));
+	const columns = await referenceColumns(db);
 	const freed: Freed[] = [];
 	for (let start = 0; start < candidates.length; start += CHUNK) {
 		const chunk = candidates.slice(start, start + CHUNK);
@@ -188,13 +183,7 @@ export async function deleteUnusedAssets(
 			`);
 			const held = (rows.rows as { id: string }[]).map((row) => row.id);
 			if (held.length === 0) return [];
-			const wanted = sql`select unnest(string_to_array(${held.join(',')}, ',')) as id`;
-			const referenced = new Set(
-				(
-					(await tx.execute(sql`select distinct id from (${referencesIn(recheck, wanted)}) refs`))
-						.rows as { id: string }[]
-				).map((row) => row.id)
-			);
+			const referenced = await referencedAssetIds(tx, held, columns);
 			const unused = held.filter((id) => !referenced.has(id));
 			if (unused.length === 0) return [];
 			const result = await tx.execute(sql`

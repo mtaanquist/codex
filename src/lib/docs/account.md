@@ -477,28 +477,30 @@ Universes and stories in the trash do not count toward the limits, so moving
 one to the trash makes room. Restoring it counts again. Text never counts.
 
 Before a picture uploads, Codex shrinks one wider or taller than 2560 pixels
-to that size and saves it as a WebP image, so it takes less space. Smaller
-pictures and GIFs upload as they are. This applies to pictures in your text,
-covers, avatars and badges.
+to that size and saves it as a WebP image, so it takes less space. Pictures at
+or under 2560 pixels, animated pictures such as GIFs, and ones that come out no
+smaller upload as they are. A picture that is still over your per-image limit
+is refused. This applies to pictures in your text, covers, avatars and badges.
 
-Images count until they are deleted. Replacing or removing your avatar or a
-badge deletes the old image. Replacing a story's cover deletes the old cover,
-unless a saved draft of the story still shows it; then it is kept with the
-draft.
+Images count until they are deleted. Replacing or removing your avatar, a
+badge or a story's cover does not delete the old image straight away, so it
+still counts and the new one has to fit beside it. The daily check below frees
+it.
 
-Images in your text and story covers are freed once nothing uses them any
-more. Codex checks once a day and deletes an image when no scene, note, entry,
-saved draft, published edition or saved version in a history still shows it.
-An image is always kept for 30 days after you add it, used or not. Taking an
-image out of a scene usually does not free it, because the scene's history
-still holds the older text with the image in it.
+Images in your text, covers, avatars and badges are freed once nothing uses
+them any more. Codex checks once a day and deletes an image when no scene,
+note, entry, profile, saved draft, published edition or saved version in a
+history still shows it. An image is always kept for 30 days after you add it,
+used or not. Taking an image out of a scene usually does not free it, because
+the scene's history still holds the older text with the image in it.
 
 Deleting a story for good frees, within a few minutes, the images only that
 story used and that are more than 30 days old, including its cover. Newer ones
 are freed once they reach 30 days. An image another story still shows is
-kept. Deleting a universe for good frees every image in it at once. Moving a
-story or universe to the trash is not enough; its images are kept until the
-trash is emptied.
+kept. Deleting a universe for good frees at once the images in it that nothing
+else shows; one that a story in another universe still shows is kept until
+the daily check finds it unused. Moving a story or universe to the trash is
+not enough; its images are kept until the trash is emptied.
 
 ## Getting your work out
 

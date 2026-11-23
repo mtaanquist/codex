@@ -26,7 +26,6 @@ import { remapMarkerAnchors } from './markers.ts';
 import { uniqueSlug } from './slugs.ts';
 import { isSerializationFailure, isUniqueViolation } from './db-errors.ts';
 import { copiedSummaryStamp, summaryIsCurrent } from './summary-currency.ts';
-import { deleteAsset } from './assets.ts';
 import { holdStoryQuota, quotaFailure } from './quotas.ts';
 import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
@@ -442,78 +441,24 @@ export async function updateDraftDetails(
 	return updated.length > 0 ? { ok: true } : NOT_FOUND;
 }
 
-// Deletes a saved draft. When it was the last thing showing an old cover,
-// that image is freed too.
+// Deletes a saved draft. An old cover only it showed is left for the unused
+// image sweep.
 export async function deleteDraft(
 	db: Database,
-	userId: string,
 	storyId: string,
 	draftId: string
 ): Promise<{ ok: true } | ActionFailure> {
-	const result = await db.transaction(async (tx) => {
-		const [story] = await tx
-			.select({ coverAssetId: stories.coverAssetId })
-			.from(stories)
-			.where(eq(stories.id, storyId))
-			.for('update');
-		const [deleted] = await tx
-			.delete(storyDrafts)
-			.where(and(eq(storyDrafts.id, draftId), eq(storyDrafts.storyId, storyId)))
-			.returning({
-				cover: sql<string | null>`${storyDrafts.content} -> 'story' ->> 'coverAssetId'`
-			});
-		if (!deleted) return null;
-		const cover = deleted.cover;
-		const unused =
-			cover !== null &&
-			cover !== story?.coverAssetId &&
-			!(await draftUsesCover(tx, storyId, cover));
-		return { unusedCover: unused ? cover : null };
-	});
-	if (!result) return NOT_FOUND;
-	if (result.unusedCover) await deleteAsset(db, userId, result.unusedCover);
-	return { ok: true };
+	const [deleted] = await db
+		.delete(storyDrafts)
+		.where(and(eq(storyDrafts.id, draftId), eq(storyDrafts.storyId, storyId)))
+		.returning({ id: storyDrafts.id });
+	return deleted ? { ok: true } : NOT_FOUND;
 }
 
-// Sets a new cover image. The old one is returned for the caller to free
-// when no saved draft still shows it; the story row lock keeps a draft being
-// saved at the same moment from picking up the old cover unseen.
-export async function replaceCover(
-	db: Database,
-	storyId: string,
-	assetId: string
-): Promise<string | null> {
-	return await db.transaction(async (tx) => {
-		const [story] = await tx
-			.select({ coverAssetId: stories.coverAssetId })
-			.from(stories)
-			.where(eq(stories.id, storyId))
-			.for('update');
-		const previous = story?.coverAssetId ?? null;
-		await tx.update(stories).set({ coverAssetId: assetId }).where(eq(stories.id, storyId));
-		if (!previous || previous === assetId) return null;
-		return (await draftUsesCover(tx, storyId, previous)) ? null : previous;
-	});
-}
-
-// Whether any saved draft still shows this image as its cover, so replacing
-// the cover keeps the old file for the draft.
-export async function draftUsesCover(
-	db: Tx | Database,
-	storyId: string,
-	assetId: string
-): Promise<boolean> {
-	const [row] = await db
-		.select({ id: storyDrafts.id })
-		.from(storyDrafts)
-		.where(
-			and(
-				eq(storyDrafts.storyId, storyId),
-				sql`${storyDrafts.content} -> 'story' ->> 'coverAssetId' = ${assetId}`
-			)
-		)
-		.limit(1);
-	return Boolean(row);
+// Sets a new cover image. The old one is left for the unused image sweep,
+// which frees it once no saved draft, edition or page shows it.
+export async function replaceCover(db: Database, storyId: string, assetId: string): Promise<void> {
+	await db.update(stories).set({ coverAssetId: assetId }).where(eq(stories.id, storyId));
 }
 
 // Whether the Assistant wrote a saved summary goes with the summary, so the

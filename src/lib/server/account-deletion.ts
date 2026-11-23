@@ -100,24 +100,6 @@ export async function purgeAccount(
 	store: AssetObjectStore | null,
 	options: { requireSchedule?: boolean } = {}
 ): Promise<void> {
-	// Capture the bucket keys before the rows go, including the stored export
-	// files of the account's editions (their rows cascade with publications).
-	const assetRows = await db
-		.select({ storageKey: assets.storageKey })
-		.from(assets)
-		.where(eq(assets.ownerId, userId));
-	const artifactRows = await db
-		.select({ storageKey: exportArtifacts.storageKey })
-		.from(exportArtifacts)
-		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
-		.where(eq(publications.ownerId, userId));
-	// User-requested export archives; their rows cascade with the user, so the
-	// bucket keys must be captured now or the objects leak forever.
-	const userExportRows = await db
-		.select({ storageKey: userExports.storageKey })
-		.from(userExports)
-		.where(and(eq(userExports.ownerId, userId), isNotNull(userExports.storageKey)));
-
 	const purged = await db.transaction(async (tx) => {
 		// Re-assert the schedule under a row lock: a cancellation that landed
 		// after listAccountsDueForPurge read the due list must abort the purge.
@@ -127,14 +109,39 @@ export async function purgeAccount(
 		// is immediate and not scheduled, so it skips this check.
 		// The lock comes first either way: every storage path locks the account
 		// row before asset rows (see lockStorageOwners), and the purge deletes
-		// both.
+		// both. No key update, like those paths: it still turns a cancellation
+		// or an upload away, but lets a foreign-key check on the account through
+		// until the row itself is deleted at the end.
 		const [account] = await tx
 			.select({ scheduledAt: users.deletionScheduledAt })
 			.from(users)
 			.where(eq(users.id, userId))
-			.for('update');
-		if (!account) return false;
-		if (options.requireSchedule && !account.scheduledAt) return false;
+			.for('no key update');
+		if (!account) return null;
+		if (options.requireSchedule && !account.scheduledAt) return null;
+
+		// The bucket keys, read under the lock so an image uploaded while the
+		// purge waited is in them, including the stored export files of the
+		// account's editions (their rows cascade with publications) and its
+		// export archives (their rows cascade with the user).
+		const assetRows = await tx
+			.select({ storageKey: assets.storageKey })
+			.from(assets)
+			.where(eq(assets.ownerId, userId));
+		const artifactRows = await tx
+			.select({ storageKey: exportArtifacts.storageKey })
+			.from(exportArtifacts)
+			.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
+			.where(eq(publications.ownerId, userId));
+		const userExportRows = await tx
+			.select({ storageKey: userExports.storageKey })
+			.from(userExports)
+			.where(and(eq(userExports.ownerId, userId), isNotNull(userExports.storageKey)));
+		const keys = [
+			...assetRows.map((row) => row.storageKey),
+			...artifactRows.map((row) => row.storageKey),
+			...userExportRows.flatMap((row) => (row.storageKey ? [row.storageKey] : []))
+		];
 
 		// Each universe purges through the shared cascade (stories first, then
 		// entities, history, categories, relation types, and assets).
@@ -168,20 +175,15 @@ export async function purgeAccount(
 		await tx.delete(notifications).where(eq(notifications.userId, userId));
 		await tx.delete(sessions).where(eq(sessions.userId, userId));
 		await tx.delete(users).where(eq(users.id, userId));
-		return true;
+		return keys;
 	});
 
 	// Only sweep the bucket if the account was actually purged (not cancelled
-	// out from under us between reading the keys and the locked re-check).
-	// Removed at once rather than deferred: this is the owner's erasure. A
-	// failure is logged so the operator can remove the object by hand.
+	// by the locked re-check). Removed at once rather than deferred: this is
+	// the owner's erasure. A failure is logged so the operator can remove the
+	// object by hand.
 	if (purged && store) {
-		const keys = [
-			...assetRows.map((row) => row.storageKey),
-			...artifactRows.map((row) => row.storageKey),
-			...userExportRows.flatMap((row) => (row.storageKey ? [row.storageKey] : []))
-		];
-		for (const key of keys) {
+		for (const key of purged) {
 			await store.remove(key).catch((error) => {
 				logEvent('error', 'purge.object_failed', { key, ...errorFields(error) });
 			});

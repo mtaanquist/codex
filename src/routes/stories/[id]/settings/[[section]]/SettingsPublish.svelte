@@ -2,7 +2,6 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { formatDateTime } from '#lib/format';
-	import { readingAddress } from '#lib/slug';
 	import { tick } from 'svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
@@ -69,23 +68,30 @@
 				Adult content
 			</label>
 		</div>
+		{#if data.reading}
+			<p class="field-hint">
+				Readers find this story at
+				<a href={resolve('/@[handle]/[story=ref]', data.reading)}>
+					/@{data.reading.handle}/{data.reading.story}
+				</a>.
+			</p>
+		{/if}
 		<div class="settings-actions">
 			<button class="btn btn-primary" type="submit">Save visibility</button>
 		</div>
 	</form>
 	<form method="POST" action="?/publish" bind:this={publishForm} onsubmit={onPublishSubmit}>
 		<input type="hidden" name="penName" value={chosenPenName} />
-		{#if form?.action === 'publish' && 'published' in form && form.published && data.archive.handle}
+		{#if form?.action === 'publish' && 'published' in form && form.published}
 			<p class="field-hint" role="status" style="color:var(--status-final-ink);">
-				Edition published. Readers see it at
-				<a
-					href={resolve('/@[handle]/[story=ref]', {
-						handle: data.archive.handle,
-						story: readingAddress(data.story)
-					})}
-				>
-					/@{data.archive.handle}/{readingAddress(data.story)}
-				</a>.
+				{#if data.reading}
+					Edition published. Readers see it at
+					<a href={resolve('/@[handle]/[story=ref]', data.reading)}>
+						/@{data.reading.handle}/{data.reading.story}
+					</a>.
+				{:else}
+					Edition published. Set the visibility to unlisted or public so readers can open it.
+				{/if}
 			</p>
 		{/if}
 		{#if data.drafts.length > 0}

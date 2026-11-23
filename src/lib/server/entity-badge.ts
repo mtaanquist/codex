@@ -6,7 +6,7 @@ import {
 	type EntityTable,
 	type EntityType
 } from './entity-lookups';
-import { createAsset, deleteAsset, type AssetConfig, type AssetObjectStore } from './assets';
+import { createAsset, type AssetConfig, type AssetObjectStore } from './assets';
 import { isCategoryColor } from '#lib/entity-color';
 import type { ActionFailure } from './action-result';
 
@@ -56,7 +56,8 @@ export async function setEntityBadgeColor(
 	return { ok: true };
 }
 
-// Uploads a badge image, points the entity at it, and deletes the old one.
+// Uploads a badge image and points the entity at it. The old one is left for
+// the unused image sweep, which frees it once nothing else shows it.
 export async function setEntityBadgeImage(
 	db: Database,
 	store: AssetObjectStore,
@@ -72,16 +73,14 @@ export async function setEntityBadgeImage(
 		kind: 'badge',
 		filename: input.filename,
 		contentType: input.contentType,
-		bytes: input.bytes,
-		replaces: ref.badgeAssetId
+		bytes: input.bytes
 	});
 	if (!created.ok) return created;
 	await updateBadge(db, ref.type, entityId, { badgeAssetId: created.id });
-	if (ref.badgeAssetId) await deleteAsset(db, userId, ref.badgeAssetId);
 	return { ok: true, id: created.id };
 }
 
-// Clears the entity's badge image and deletes the stored object.
+// Clears the entity's badge image, leaving it for the unused image sweep.
 export async function clearEntityBadgeImage(
 	db: Database,
 	userId: string,
@@ -89,9 +88,6 @@ export async function clearEntityBadgeImage(
 ): Promise<BadgeResult> {
 	const ref = await resolveOwnedEntity(db, userId, entityId, badgeColumns);
 	if (!ref) return ENTRY_NOT_FOUND;
-	if (ref.badgeAssetId) {
-		await updateBadge(db, ref.type, entityId, { badgeAssetId: null });
-		await deleteAsset(db, userId, ref.badgeAssetId);
-	}
+	if (ref.badgeAssetId) await updateBadge(db, ref.type, entityId, { badgeAssetId: null });
 	return { ok: true };
 }

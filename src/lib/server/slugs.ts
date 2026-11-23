@@ -183,8 +183,7 @@ export async function saveWithSlug(
 				return row.slug;
 			}
 			await lockSlugs(tx, row.ownerId);
-			const keep =
-				slugBase(row.name, fallback) === slugBase(name, fallback) ? row.slug : undefined;
+			const keep = slugBase(row.name, fallback) === slugBase(name, fallback) ? row.slug : undefined;
 			const slug = await uniqueSlug(tx, table, row.ownerId, name, fallback, id, keep);
 			await write(tx, slug);
 			if (slug !== row.slug) {

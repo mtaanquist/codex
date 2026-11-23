@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql, type AnyColumn, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { scheduleObjectDeletions } from './assets.ts';
 import {
@@ -152,35 +152,74 @@ export async function deleteStoryWithin(tx: Tx, storyId: string): Promise<void> 
 	await tx.delete(stories).where(eq(stories.id, storyId));
 }
 
-// Deletes a story the user owns, in one transaction. Without this a story with
-// any content cannot be deleted at all (the FKs are ON DELETE NO ACTION).
+// Deletes a story the user owns, live or trashed, in one transaction. Without
+// this a story with any content cannot be deleted at all (the FKs are ON
+// DELETE NO ACTION).
 export async function deleteStory(db: Database, storyId: string, userId: string): Promise<boolean> {
 	const [story] = await db
 		.select({ id: stories.id })
 		.from(stories)
 		.where(and(eq(stories.id, storyId), eq(stories.ownerId, userId)));
 	if (!story) return false;
-	await purgeStory(db, story.id);
+	await db.transaction((tx) => purgeStoryWithin(tx, story.id));
 	return true;
 }
 
-// Hard-deletes a story with no owner check, for the trash purge. The stored
-// export files of the story's editions, whose rows cascade away with the
-// publications, are queued for the deferred object sweep. The images the story
-// alone used are not touched here: the caller asks for a run of the unused
-// image sweep (sweepUnusedAssets), which frees them in the background.
-export async function purgeStory(db: Database, storyId: string): Promise<void> {
-	await db.transaction(async (tx) => {
-		// Capture the edition export keys before the rows cascade away.
-		const artifactRows = await tx
-			.select({ storageKey: exportArtifacts.storageKey })
-			.from(exportArtifacts)
-			.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
-			.where(eq(publications.storyId, storyId));
-		await deleteStoryWithin(tx, storyId);
-		await scheduleObjectDeletions(
-			tx,
-			artifactRows.map((row) => row.storageKey)
-		);
+// Hard-deletes a story in the trash, with no owner check, for the trash purge
+// and for deleting it for good from the dashboard. Nothing happens, and false
+// comes back, when the story is no longer in the trash (a restore got there
+// first) or, with dueAfterDays, has not been there that long: the scheduled
+// purge read its list before the lock. The stored export files of the story's
+// editions, whose rows cascade away with the publications, are queued for the
+// deferred object sweep. The images the story alone used are not touched
+// here: the caller asks for a run of the unused image sweep
+// (sweepUnusedAssets), which frees them in the background.
+export async function purgeStory(
+	db: Database,
+	storyId: string,
+	options: { dueAfterDays?: number } = {}
+): Promise<boolean> {
+	return db.transaction(async (tx) => {
+		// The scenes before the story row, the order row-locks.ts sets; the
+		// story row is then read under its lock, so a restore either finished
+		// before this (deleted_at is null, nothing is purged) or waits for it.
+		await tx
+			.select({ id: scenes.id })
+			.from(scenes)
+			.where(eq(scenes.storyId, storyId))
+			.orderBy(asc(scenes.id))
+			.for('update');
+		const [row] = await tx
+			.select({
+				deletedAt: stories.deletedAt,
+				due: trashedFor(stories.deletedAt, options.dueAfterDays)
+			})
+			.from(stories)
+			.where(eq(stories.id, storyId))
+			.for('update');
+		if (!row?.deletedAt || !row.due) return false;
+		await purgeStoryWithin(tx, storyId);
+		return true;
 	});
+}
+
+// Whether a row's deleted_at is at least `days` ago; always true without days.
+export function trashedFor(deletedAt: AnyColumn, days?: number): SQL<boolean> {
+	return days === undefined
+		? sql<boolean>`true`
+		: sql<boolean>`coalesce(${deletedAt} <= now() - make_interval(days => ${days}), false)`;
+}
+
+async function purgeStoryWithin(tx: Tx, storyId: string): Promise<void> {
+	// Capture the edition export keys before the rows cascade away.
+	const artifactRows = await tx
+		.select({ storageKey: exportArtifacts.storageKey })
+		.from(exportArtifacts)
+		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
+		.where(eq(publications.storyId, storyId));
+	await deleteStoryWithin(tx, storyId);
+	await scheduleObjectDeletions(
+		tx,
+		artifactRows.map((row) => row.storageKey)
+	);
 }

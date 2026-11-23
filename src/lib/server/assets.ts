@@ -201,8 +201,6 @@ export type AssetInput = {
 	filename: string;
 	contentType: string;
 	bytes: Buffer;
-	// The asset this upload replaces, deleted by the caller once it lands.
-	replaces?: string | null;
 };
 
 export async function createAsset(
@@ -254,16 +252,6 @@ export async function createAsset(
 		if (!universe) return { ok: false, code: 'not_found', reason: 'That universe does not exist.' };
 	}
 
-	// An image about to replace another (a cover, avatar or badge) is allowed
-	// the space the old one frees once it is deleted.
-	let credit = 0;
-	if (input.replaces) {
-		const [old] = await db
-			.select({ byteSize: assets.byteSize })
-			.from(assets)
-			.where(and(eq(assets.id, input.replaces), eq(assets.ownerId, userId)));
-		credit = old?.byteSize ?? 0;
-	}
 	// Checked once here so a file that cannot fit is never sent to the bucket,
 	// and again, binding, with the insert below.
 	const limit = limits.storage_bytes;
@@ -272,7 +260,7 @@ export async function createAsset(
 			.select({ used: users.storageUsedBytes })
 			.from(users)
 			.where(eq(users.id, userId));
-		if ((owner?.used ?? 0) - credit + input.bytes.length > limit) {
+		if ((owner?.used ?? 0) + input.bytes.length > limit) {
 			return overStorageLimit(limit);
 		}
 	}
@@ -283,7 +271,7 @@ export async function createAsset(
 	let reserved: Awaited<ReturnType<typeof reserveStorage>>;
 	try {
 		reserved = await db.transaction(async (tx) => {
-			const result = await reserveStorage(tx, userId, input.bytes.length, credit);
+			const result = await reserveStorage(tx, userId, input.bytes.length);
 			if (!result.ok) return result;
 			await tx.insert(assets).values({
 				id,
@@ -456,8 +444,9 @@ export async function sweepDeletedObjects(
 	return { removed, kept, failed };
 }
 
-// Uploads a new account avatar and points the user at it, then removes the
-// previous avatar so old images do not pile up.
+// Uploads a new account avatar and points the user at it. The previous one is
+// left for the unused image sweep, which frees it once nothing else shows it
+// (a scene or an edition may link it too).
 export async function setUserAvatar(
 	db: Database,
 	store: AssetObjectStore,
@@ -465,35 +454,15 @@ export async function setUserAvatar(
 	userId: string,
 	input: { filename: string; contentType: string; bytes: Buffer }
 ): Promise<{ ok: true; id: string } | ActionFailure> {
-	const [current] = await db
-		.select({ avatarAssetId: users.avatarAssetId })
-		.from(users)
-		.where(eq(users.id, userId));
 	const result = await createAsset(db, store, config, userId, {
 		universeId: null,
 		kind: 'avatar',
 		filename: input.filename,
 		contentType: input.contentType,
-		bytes: input.bytes,
-		replaces: current?.avatarAssetId
+		bytes: input.bytes
 	});
 	if (!result.ok) return result;
-	// Lock the row, read its current avatar, then point it at the new one, all in
-	// one transaction. The FOR UPDATE lock serialises concurrent uploads, so each
-	// sees the value its predecessor actually left and deletes exactly that,
-	// rather than racing on a stale read and orphaning the loser's asset.
-	const previous = await db.transaction(async (tx) => {
-		const [user] = await tx
-			.select({ avatarAssetId: users.avatarAssetId })
-			.from(users)
-			.where(eq(users.id, userId))
-			.for('update');
-		await tx.update(users).set({ avatarAssetId: result.id }).where(eq(users.id, userId));
-		return user?.avatarAssetId ?? null;
-	});
-	if (previous && previous !== result.id) {
-		await deleteAsset(db, userId, previous).catch(() => {});
-	}
+	await db.update(users).set({ avatarAssetId: result.id }).where(eq(users.id, userId));
 	return { ok: true, id: result.id };
 }
 
@@ -606,20 +575,8 @@ export async function migrateAssetObjects(
 	return { copied, failed };
 }
 
-// Clears the account avatar and removes its stored image. Falls back to
-// initials wherever the avatar is shown.
+// Clears the account avatar. Falls back to initials wherever the avatar is
+// shown; the image is left for the unused image sweep, like a replaced one.
 export async function clearUserAvatar(db: Database, userId: string): Promise<void> {
-	// Same locked read-then-write as setUserAvatar, so a clear racing an upload
-	// cannot leave the just-uploaded image orphaned.
-	const previous = await db.transaction(async (tx) => {
-		const [user] = await tx
-			.select({ avatarAssetId: users.avatarAssetId })
-			.from(users)
-			.where(eq(users.id, userId))
-			.for('update');
-		const current = user?.avatarAssetId ?? null;
-		if (current) await tx.update(users).set({ avatarAssetId: null }).where(eq(users.id, userId));
-		return current;
-	});
-	if (previous) await deleteAsset(db, userId, previous).catch(() => {});
+	await db.update(users).set({ avatarAssetId: null }).where(eq(users.id, userId));
 }

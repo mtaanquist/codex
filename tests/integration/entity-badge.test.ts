@@ -9,6 +9,9 @@ import {
 	assets,
 	characters,
 	pendingObjectDeletions,
+	publicationAssets,
+	publications,
+	stories,
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
@@ -119,46 +122,65 @@ describe('setEntityBadgeColor', () => {
 });
 
 describe('badge image', () => {
-	it('uploads an image, replaces it, and removes it - cleaning up the old asset', async () => {
+	// The unused image sweep frees an old badge once nothing shows it, so a
+	// replace or a clear never deletes one itself.
+	it('uploads an image, replaces it, and removes it, leaving old images for the sweep', async () => {
 		const { store, objects } = memoryStore();
 		const first = await setEntityBadgeImage(db, store, config, ownerId, characterId, {
 			filename: 'a.png',
 			contentType: 'image/png',
 			bytes: PNG
 		});
-		expect(first.ok).toBe(true);
+		if (!first.ok) throw new Error(first.reason);
 		let [row] = await db.select().from(characters).where(eq(characters.id, characterId));
-		expect(row.badgeAssetId).toBe(first.ok && first.id);
-		expect(objects.size).toBe(1);
+		expect(row.badgeAssetId).toBe(first.id);
 
-		// A second upload swaps the reference and deletes the first asset row,
-		// queueing its object for the deferred sweep.
+		const second = await setEntityBadgeImage(db, store, config, ownerId, characterId, {
+			filename: 'b.png',
+			contentType: 'image/png',
+			bytes: PNG
+		});
+		if (!second.ok) throw new Error(second.reason);
+		[row] = await db.select().from(characters).where(eq(characters.id, characterId));
+		expect(row.badgeAssetId).toBe(second.id);
+
+		expect((await clearEntityBadgeImage(db, ownerId, characterId)).ok).toBe(true);
+		[row] = await db.select().from(characters).where(eq(characters.id, characterId));
+		expect(row.badgeAssetId).toBeNull();
+		const queued = (await db.select().from(pendingObjectDeletions)).map((q) => q.storageKey);
+		for (const key of objects.keys()) expect(queued).not.toContain(key);
+		const remaining = await db
+			.select()
+			.from(assets)
+			.where(and(eq(assets.ownerId, ownerId)));
+		expect(remaining.map((asset) => asset.id).sort()).toEqual([first.id, second.id].sort());
+		expect(objects.size).toBe(2);
+	});
+
+	it('replaces a badge an edition holds without failing', async () => {
+		const { store } = memoryStore();
+		const first = await setEntityBadgeImage(db, store, config, ownerId, characterId, {
+			filename: 'a.png',
+			contentType: 'image/png',
+			bytes: PNG
+		});
+		if (!first.ok) throw new Error(first.reason);
+		const [story] = await db
+			.insert(stories)
+			.values({ universeId, ownerId, title: 'Aria', slug: 'aria' })
+			.returning();
+		const [edition] = await db
+			.insert(publications)
+			.values({ storyId: story.id, ownerId, handle: 'h', title: 'Aria', content: {} })
+			.returning();
+		await db.insert(publicationAssets).values({ publicationId: edition.id, assetId: first.id });
 		const second = await setEntityBadgeImage(db, store, config, ownerId, characterId, {
 			filename: 'b.png',
 			contentType: 'image/png',
 			bytes: PNG
 		});
 		expect(second.ok).toBe(true);
-		[row] = await db.select().from(characters).where(eq(characters.id, characterId));
-		expect(row.badgeAssetId).toBe(second.ok && second.id);
-		if (first.ok) {
-			const [oldAsset] = await db.select().from(assets).where(eq(assets.id, first.id));
-			expect(oldAsset).toBeUndefined();
-		}
-
-		// Removing clears the reference and deletes the row; both objects now
-		// wait in the deletion queue.
 		expect((await clearEntityBadgeImage(db, ownerId, characterId)).ok).toBe(true);
-		[row] = await db.select().from(characters).where(eq(characters.id, characterId));
-		expect(row.badgeAssetId).toBeNull();
-		const queued = await db.select().from(pendingObjectDeletions);
-		for (const key of objects.keys()) {
-			expect(queued.map((q) => q.storageKey)).toContain(key);
-		}
-		const remaining = await db
-			.select()
-			.from(assets)
-			.where(and(eq(assets.ownerId, ownerId)));
-		expect(remaining).toHaveLength(0);
+		expect(await db.select().from(assets).where(eq(assets.id, first.id))).toHaveLength(1);
 	});
 });
