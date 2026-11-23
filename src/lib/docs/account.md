@@ -480,7 +480,9 @@ Before a picture uploads, Codex shrinks one wider or taller than 2560 pixels
 to that size and saves it as a WebP image, so it takes less space. Pictures at
 or under 2560 pixels, animated pictures such as GIFs, and ones that come out no
 smaller upload as they are. A picture that is still over your per-image limit
-is refused. This applies to pictures in your text, covers, avatars and badges.
+is refused. This applies to pictures you upload: pictures in your text, covers,
+avatars and badges. Pictures inside a story file you import are not shrunk, so
+one over your per-image limit is skipped and the rest of the story imports.
 
 Images count until they are deleted. Replacing your avatar, a badge or a
 story's cover does not delete the old image straight away: it keeps counting
@@ -491,8 +493,9 @@ swap when you are at your storage limit, so your usage can read above the
 limit until the old image is deleted. The swap has to be a direct replace:
 choose the new picture in place of the old one. Removing the old picture first
 and then uploading a new one counts as a new upload, which has to fit under
-the limit. Until the old image is deleted, you can make one such swap but not
-upload anything new.
+the limit. Until the old image is deleted, it still counts, so a later upload
+or swap goes through only if it fits under the limit with the old image
+counted.
 
 Images in your text, covers, avatars and badges are freed once nothing uses
 them any more. Codex checks once a day. The first time it finds that no scene,

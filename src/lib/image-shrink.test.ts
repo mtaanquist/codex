@@ -3,6 +3,7 @@ import {
 	isStillImage,
 	MAX_IMAGE_EDGE,
 	shrinkImage,
+	shrinkImagesOnSubmit,
 	targetSize,
 	webpName,
 	type ImageCodec
@@ -169,5 +170,39 @@ describe('shrinkImage', () => {
 		const original = new File([gif], 'loop.gif', { type: 'image/gif' });
 		expect(await shrinkImage(original, { decode })).toBe(original);
 		expect(decode).not.toHaveBeenCalled();
+	});
+});
+
+describe('shrinkImagesOnSubmit', () => {
+	// Just enough of a form for the action: no file inputs, so the pass has
+	// nothing to swap and goes straight to submitting again.
+	function fakeForm(requestSubmit: (submitter?: HTMLElement | null) => void) {
+		let listener: ((event: SubmitEvent) => Promise<void>) | undefined;
+		const form = {
+			addEventListener: (_: string, fn: typeof listener) => (listener = fn),
+			removeEventListener: () => {},
+			querySelectorAll: () => [],
+			requestSubmit: vi.fn(requestSubmit)
+		};
+		shrinkImagesOnSubmit(form as unknown as HTMLFormElement);
+		const submit = (submitter: unknown) =>
+			listener!({ preventDefault: () => {}, submitter } as unknown as SubmitEvent);
+		return { form, submit };
+	}
+
+	it('submits again with the button that was pressed', async () => {
+		const { form, submit } = fakeForm(() => {});
+		const button = {};
+		await submit(button);
+		expect(form.requestSubmit).toHaveBeenCalledExactlyOnceWith(button);
+	});
+
+	it('still submits when that button has left the form', async () => {
+		const { form, submit } = fakeForm((submitter) => {
+			if (submitter) throw new DOMException('gone', 'NotFoundError');
+		});
+		await submit({});
+		expect(form.requestSubmit).toHaveBeenCalledTimes(2);
+		expect(form.requestSubmit).toHaveBeenLastCalledWith();
 	});
 });

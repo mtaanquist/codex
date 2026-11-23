@@ -192,7 +192,12 @@ export function shrinkImagesOnSubmit(form: HTMLFormElement) {
 		// covers exactly the one submit it starts.
 		ready = true;
 		try {
-			form.requestSubmit(submitter);
+			try {
+				form.requestSubmit(submitter);
+			} catch {
+				// The submit button left the form while the files were swapped.
+				form.requestSubmit();
+			}
 		} finally {
 			ready = false;
 		}

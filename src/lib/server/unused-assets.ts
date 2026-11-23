@@ -2,7 +2,8 @@ import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { scheduleObjectDeletions } from './assets.ts';
 import { releaseStorage } from './quotas.ts';
-import { logEvent } from './log.ts';
+import { errorFields, logEvent } from './log.ts';
+import { isForeignKeyViolation } from './db-errors.ts';
 import { SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS } from './queues.ts';
 import { CANCEL_ON_MIGRATE_APP_NAME } from './db/migrate.ts';
 
@@ -246,40 +247,63 @@ export async function deleteUnusedAssets(
 	const freed: Freed[] = [];
 	for (let start = 0; start < stillUnused.length; start += CHUNK) {
 		const unused = stillUnused.slice(start, start + CHUNK);
-		const ids = unused.map((row) => row.id).join(',');
-		const owners = [...new Set(unused.map((row) => row.ownerId))].sort().join(',');
-		const deleted = await db.transaction(async (tx) => {
-			const locked = await tx.execute(sql`
-				select id from users where id = any(string_to_array(${owners}, ',')::uuid[])
-				order by id for no key update skip locked
-			`);
-			if (locked.rows.length === 0) return [];
-			const lockedOwners = (locked.rows as { id: string }[]).map((row) => row.id).join(',');
-			// Still there, still marked for long enough: a run that saw the
-			// image in use since cleared its mark.
-			const rows = await tx.execute(sql`
-				select id::text as id from assets
-				where id = any(string_to_array(${ids}, ',')::uuid[])
-					and owner_id = any(string_to_array(${lockedOwners}, ',')::uuid[])
-					and ${dueSql}
-				order by id for update skip locked
-			`);
-			const held = (rows.rows as { id: string }[]).map((row) => row.id);
-			if (held.length === 0) return [];
-			const result = await tx.execute(sql`
-				delete from assets where id = any(string_to_array(${held.join(',')}, ',')::uuid[])
-				returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
-					byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
-					universe_id::text as "universeId", created_at::text as "createdAt"
-			`);
-			const gone = result.rows as Freed[];
-			await freeAssetFiles(tx, gone);
-			return gone;
-		});
+		let deleted: Freed[];
+		try {
+			deleted = await deleteChunk(db, unused);
+		} catch (error) {
+			// A row pointing at one of these by foreign key (a publish, a badge)
+			// saved after the read above. The chunk rolled back; its marks are
+			// cleared so the images start over rather than go early once that row
+			// is gone, and the other chunks carry on.
+			if (!isForeignKeyViolation(error)) throw error;
+			const ids = unused.map((row) => row.id);
+			logEvent('warn', 'assets.unused_delete_skipped', { ids, ...errorFields(error) });
+			await clearMarks(db, ids);
+			continue;
+		}
+		// Logged as each chunk commits, so a later chunk that fails cannot
+		// leave a deletion unrecorded.
+		for (const row of deleted) logFreed(row);
 		freed.push(...deleted);
 	}
-	for (const row of freed) logFreed(row);
 	return freed;
+}
+
+/** One chunk of deleteUnusedAssets, in its own transaction. */
+async function deleteChunk(
+	db: Database,
+	unused: { id: string; ownerId: string }[]
+): Promise<Freed[]> {
+	const ids = unused.map((row) => row.id).join(',');
+	const owners = [...new Set(unused.map((row) => row.ownerId))].sort().join(',');
+	return await db.transaction(async (tx) => {
+		const locked = await tx.execute(sql`
+			select id from users where id = any(string_to_array(${owners}, ',')::uuid[])
+			order by id for no key update skip locked
+		`);
+		if (locked.rows.length === 0) return [];
+		const lockedOwners = (locked.rows as { id: string }[]).map((row) => row.id).join(',');
+		// Still there, still marked for long enough: a run that saw the
+		// image in use since cleared its mark.
+		const rows = await tx.execute(sql`
+			select id::text as id from assets
+			where id = any(string_to_array(${ids}, ',')::uuid[])
+				and owner_id = any(string_to_array(${lockedOwners}, ',')::uuid[])
+				and ${dueSql}
+			order by id for update skip locked
+		`);
+		const held = (rows.rows as { id: string }[]).map((row) => row.id);
+		if (held.length === 0) return [];
+		const result = await tx.execute(sql`
+			delete from assets where id = any(string_to_array(${held.join(',')}, ',')::uuid[])
+			returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
+				byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
+				universe_id::text as "universeId", created_at::text as "createdAt"
+		`);
+		const gone = result.rows as Freed[];
+		await freeAssetFiles(tx, gone);
+		return gone;
+	});
 }
 
 /** Gives deleted images' bytes back and queues their files to go, kept
