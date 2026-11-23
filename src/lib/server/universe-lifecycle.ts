@@ -21,7 +21,7 @@ import {
 } from './db/schema.ts';
 import { scheduleObjectDeletions } from './assets.ts';
 import { untrash } from './slugs.ts';
-import { holdCountQuota, releaseStorage } from './quotas.ts';
+import { holdCountQuota, lockStorageOwners, releaseStorage } from './quotas.ts';
 import { ENTITY_TYPES, entityTable } from './entity-lookups.ts';
 import { deleteStoryWithin, type Tx } from './story-delete.ts';
 import { ownedUniverseRow } from './universe-scope.ts';
@@ -52,6 +52,11 @@ export async function restoreUniverse(
 	universeId: string
 ): Promise<boolean> {
 	return db.transaction(async (tx) => {
+		// A second restore of the same universe waits here, then finds it live
+		// and does nothing, rather than counting it against the limit.
+		await tx.execute(
+			sql`select id from universes where id = ${universeId} and owner_id = ${userId} for update`
+		);
 		const universe = await ownedUniverseRow(tx, userId, universeId, { deleted: true });
 		if (!universe) return false;
 		// Its live stories come back with it, so they count as well.
@@ -156,6 +161,17 @@ export async function universeAssetKeys(db: Database | Tx, universeId: string): 
  * caller's transaction. Shared by the trash purge and the account purge.
  */
 export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<void> {
+	// The owners whose storage use the asset delete below changes, locked
+	// before any other row (see lockStorageOwners).
+	const owners = await tx
+		.selectDistinct({ ownerId: assets.ownerId })
+		.from(assets)
+		.where(eq(assets.universeId, universeId));
+	await lockStorageOwners(
+		tx,
+		owners.map((row) => row.ownerId)
+	);
+
 	// Stories first: each clears its scenes, chapters, markers, revisions,
 	// memberships, notes, publications, reviews, and mentions.
 	const storyRows = await tx

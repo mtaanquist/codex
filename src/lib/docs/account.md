@@ -473,8 +473,12 @@ or story, restore it from the trash, or store the image. To go past a limit,
 ask the admin of your site to raise it.
 
 Universes and stories in the trash do not count toward the limits, so moving
-one to the trash makes room. Restoring it counts again. Images count until they
-are deleted, including the images in a universe in the trash. Text never counts.
+one to the trash makes room. Restoring it counts again. Text never counts.
+
+Images count until they are deleted. Replacing or removing a cover, avatar or
+badge deletes the old image. The images in a universe, including its stories'
+covers and pictures, are deleted when the universe is deleted for good, not when
+it goes to the trash. Deleting a single story does not delete its images.
 
 ## Getting your work out
 

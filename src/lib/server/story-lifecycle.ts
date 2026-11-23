@@ -55,6 +55,11 @@ export async function restoreStory(
 	storyId: string
 ): Promise<boolean> {
 	return db.transaction(async (tx) => {
+		// A second restore of the same story waits here, then finds it live and
+		// does nothing, rather than counting it against the limit.
+		await tx.execute(
+			sql`select id from stories where id = ${storyId} and owner_id = ${userId} for update`
+		);
 		const story = await ownedStoryRow(tx, userId, storyId, { deleted: true });
 		if (!story) return false;
 		await holdCountQuota(tx, userId, { stories: 1 }, 'restore');

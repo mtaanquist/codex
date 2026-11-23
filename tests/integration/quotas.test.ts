@@ -281,6 +281,34 @@ describe('universe and story limits', () => {
 		await expect(restoreUniverse(db, ownerId, old.id)).rejects.toThrow(/2 stories/);
 	});
 
+	it('does not bring a trashed standalone universe back past the limit', async () => {
+		await limitOwner({ max_stories: 3 });
+		const solo = await standaloneUniverse(db, ownerId);
+		await createStoryInUniverse(db, ownerId, solo.id, 'A');
+		await createStoryInUniverse(db, ownerId, solo.id, 'B');
+		await trashUniverse(db, ownerId, solo.id);
+		const world = await universe();
+		await createStoryInUniverse(db, ownerId, world.id, 'C');
+		await expect(standaloneUniverse(db, ownerId)).rejects.toBeInstanceOf(QuotaExceededError);
+		const [still] = await db
+			.select({ deletedAt: universes.deletedAt })
+			.from(universes)
+			.where(eq(universes.id, solo.id));
+		expect(still.deletedAt).not.toBeNull();
+	});
+
+	it('treats a second restore of the same story as done, not over the limit', async () => {
+		await limitOwner({ max_stories: 1 });
+		const world = await universe();
+		const story = await createStoryInUniverse(db, ownerId, world.id, 'Only');
+		await trashStory(db, ownerId, story.id);
+		const results = await Promise.all([
+			restoreStory(db, ownerId, story.id),
+			restoreStory(db, ownerId, story.id)
+		]);
+		expect(results.sort()).toEqual([false, true]);
+	});
+
 	it('makes a create wait for one still in flight, then counts it', async () => {
 		await limitOwner({ max_stories: 1 });
 		const world = await universe();
@@ -373,6 +401,48 @@ describe('storage', () => {
 		expect(await used()).toBe(300);
 		expect(objects.size).toBe(1);
 		expect(await db.select().from(assets)).toHaveLength(1);
+	});
+
+	it('lets an image replace another of the same size at the limit', async () => {
+		await limitOwner({ storage_bytes: 500 });
+		const { store } = memoryStore();
+		const input = {
+			universeId: null,
+			kind: 'avatar' as const,
+			filename: 'a.png',
+			contentType: 'image/png',
+			bytes: png(400)
+		};
+		const first = await createAsset(db, store, config, ownerId, input);
+		if (!first.ok) throw new Error(first.reason);
+		expect((await createAsset(db, store, config, ownerId, input)).ok).toBe(false);
+		const swap = await createAsset(db, store, config, ownerId, { ...input, replaces: first.id });
+		expect(swap.ok).toBe(true);
+		await deleteAsset(db, ownerId, first.id);
+		expect(await used()).toBe(400);
+	});
+
+	it('checks an upload against the plan as it is when the file lands', async () => {
+		const { store } = memoryStore();
+		const id = await planWith({ storage_bytes: 100 });
+		await setUserPlan(db, ownerId, id);
+		const lands = await createAsset(db, store, config, ownerId, {
+			universeId: null,
+			kind: 'inline',
+			filename: 'a.png',
+			contentType: 'image/png',
+			bytes: png(50)
+		});
+		expect(lands.ok).toBe(true);
+		await savePlan(db, id, { name: 'Tight', limits: { ...NO_LIMITS, storage_bytes: 60 } });
+		const refused = await createAsset(db, store, config, ownerId, {
+			universeId: null,
+			kind: 'inline',
+			filename: 'b.png',
+			contentType: 'image/png',
+			bytes: png(20)
+		});
+		expect(refused).toMatchObject({ ok: false, code: 'over_limit' });
 	});
 
 	it('takes a purged universe off its owner', async () => {

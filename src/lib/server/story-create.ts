@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, count, eq, isNull } from 'drizzle-orm';
 import type { Database } from './auth';
 import { isUniqueViolation } from './db-errors.ts';
 import { entityCategories, stories, universes } from './db/schema';
@@ -102,9 +102,18 @@ export async function standaloneUniverse(db: Database, ownerId: string) {
 }
 
 // Brings a trashed standalone universe back so a new story has a live home.
+// Its live stories come back with it, so there must be room for them and the
+// new story; otherwise this throws QuotaExceededError and nothing is revived.
 async function reviveIfTrashed(db: Database, universe: typeof universes.$inferSelect) {
 	if (!universe.deletedAt) return universe;
-	await untrash(db, 'universes', universe.id);
+	await db.transaction(async (tx) => {
+		const [inside] = await tx
+			.select({ n: count() })
+			.from(stories)
+			.where(and(eq(stories.universeId, universe.id), isNull(stories.deletedAt)));
+		if (inside.n > 0) await holdCountQuota(tx, universe.ownerId, { stories: inside.n + 1 });
+		await untrash(tx, 'universes', universe.id);
+	});
 	// Re-read: the restore may have given it a fresh slug.
 	const [live] = await db.select().from(universes).where(eq(universes.id, universe.id));
 	return live ?? { ...universe, deletedAt: null };

@@ -37,10 +37,17 @@ storage_used_bytes + n <= limit` in the same transaction as the asset
 insert, after the object is stored; a refused upload removes its object. A
 pre-check before the bucket write keeps an obviously oversized file from
 being sent at all. Deletes and universe purges subtract in the same
-transaction. Trashing keeps the images counted until the purge. Replacing a
-cover, avatar or badge uploads the new file before the old one goes, so near
-the limit a replacement can be refused even though the net change is small;
-left as is. The admin recount locks each account row before summing, so an
+transaction. Trashing keeps the images counted until the purge. Review
+round: the reserve now locks the account row and reads the limit under the
+lock (so a plan change mid-upload is honoured), and every storage path takes
+the account row before asset rows (`lockStorageOwners`), since a delete
+racing the account purge could otherwise deadlock. A replacement cover,
+avatar or badge is credited with the size of the image it replaces. A failed
+import deletes the images it stored. Reviving a trashed standalone universe
+for a new story checks room for its stories, and a second restore of the
+same row finds it live instead of counting it. Deleting one story for good
+still leaves its images (they belong to the universe); that is documented in
+the help and left for a follow-up. The admin recount locks each account row before summing, so an
 upload in flight is counted once. Admin got a Plans section (rename, limits,
 make default, new plan) and an Accounts block under Usage & storage with the
 plan picker per account, under the asset storage block, which was left

@@ -102,23 +102,40 @@ export function quotaFailure(err: unknown): string | undefined {
 // ============ Storage ============
 
 /**
+ * Locks account rows, lowest id first. Every path that changes storage use
+ * locks the account before it touches asset rows (an upload, a delete, a
+ * universe purge, the account purge), so two of them never deadlock.
+ */
+export async function lockStorageOwners(tx: Database, userIds: string[]): Promise<void> {
+	for (const id of [...new Set(userIds)].sort()) {
+		await tx.execute(sql`select id from users where id = ${id} for no key update`);
+	}
+}
+
+/**
  * Adds bytes to the account's storage use, unless that would pass the limit.
- * One conditional update, so the row lock it takes decides between uploads
- * running at once. Run it in the same transaction as the asset insert.
+ * The account row is locked first and the limit read under the lock, so
+ * uploads at once take turns and each sees the plan as it is now. credit is
+ * the size of an image the upload replaces. Run it in the same transaction as
+ * the asset insert. A null limit on failure means the account is gone.
  */
 export async function reserveStorage(
 	tx: Database,
 	userId: string,
 	bytes: number,
-	limit: number | null
-): Promise<boolean> {
-	const result = await tx.execute(sql`
-		update users set storage_used_bytes = storage_used_bytes + ${bytes}
-		where id = ${userId}
-			and (${limit}::bigint is null or storage_used_bytes + ${bytes} <= ${limit}::bigint)
-		returning id
-	`);
-	return result.rows.length > 0;
+	credit = 0
+): Promise<{ ok: true } | { ok: false; limit: number | null }> {
+	const locked = await tx.execute(
+		sql`select storage_used_bytes::float8 as used from users where id = ${userId} for no key update`
+	);
+	const row = locked.rows[0] as { used: number } | undefined;
+	if (!row) return { ok: false, limit: null };
+	const limit = (await accountLimits(tx, userId)).storage_bytes;
+	if (limit !== null && row.used - credit + bytes > limit) return { ok: false, limit };
+	await tx.execute(
+		sql`update users set storage_used_bytes = storage_used_bytes + ${bytes} where id = ${userId}`
+	);
+	return { ok: true };
 }
 
 /** Takes deleted assets' bytes off their owners' storage use. */
@@ -151,7 +168,7 @@ export async function recountStorageUsed(db: Database, userId?: string): Promise
 			);
 	for (const id of ids) {
 		await db.transaction(async (tx) => {
-			await tx.execute(sql`select id from users where id = ${id} for no key update`);
+			await lockStorageOwners(tx, [id]);
 			await tx.execute(sql`
 				update users set storage_used_bytes =
 					coalesce((select sum(byte_size) from assets where owner_id = ${id}), 0)

@@ -22,7 +22,7 @@ import {
 	type StoredS3
 } from './settings.ts';
 import type { ActionFailure } from './action-result.ts';
-import { accountLimits, releaseStorage, reserveStorage } from './quotas.ts';
+import { accountLimits, lockStorageOwners, releaseStorage, reserveStorage } from './quotas.ts';
 import { quotaMessage } from '../quota.ts';
 
 // Uploaded images live in an S3-compatible bucket, separate from the backups
@@ -202,6 +202,8 @@ export type AssetInput = {
 	filename: string;
 	contentType: string;
 	bytes: Buffer;
+	// The asset this upload replaces, deleted by the caller once it lands.
+	replaces?: string | null;
 };
 
 export async function createAsset(
@@ -241,29 +243,37 @@ export async function createAsset(
 		if (!universe) return { ok: false, code: 'not_found', reason: 'That universe does not exist.' };
 	}
 
+	// An image about to replace another (a cover, avatar or badge) is allowed
+	// the space the old one frees once it is deleted.
+	let credit = 0;
+	if (input.replaces) {
+		const [old] = await db
+			.select({ byteSize: assets.byteSize })
+			.from(assets)
+			.where(and(eq(assets.id, input.replaces), eq(assets.ownerId, userId)));
+		credit = old?.byteSize ?? 0;
+	}
 	// Checked once here so a file that cannot fit is never sent to the bucket,
 	// and again, binding, with the insert below.
 	const limit = (await accountLimits(db, userId)).storage_bytes;
-	const overLimit: ActionFailure = {
-		ok: false,
-		code: 'over_limit',
-		reason: quotaMessage('storage_bytes', limit ?? 0)
-	};
 	if (limit !== null) {
 		const [owner] = await db
 			.select({ used: users.storageUsedBytes })
 			.from(users)
 			.where(eq(users.id, userId));
-		if ((owner?.used ?? 0) + input.bytes.length > limit) return overLimit;
+		if ((owner?.used ?? 0) - credit + input.bytes.length > limit) {
+			return overStorageLimit(limit);
+		}
 	}
 
 	const id = randomUUID();
 	const storageKey = `${config.prefix}/${id}`;
 	await store.put(storageKey, input.bytes, contentType);
-	let stored: boolean;
+	let reserved: Awaited<ReturnType<typeof reserveStorage>>;
 	try {
-		stored = await db.transaction(async (tx) => {
-			if (!(await reserveStorage(tx, userId, input.bytes.length, limit))) return false;
+		reserved = await db.transaction(async (tx) => {
+			const result = await reserveStorage(tx, userId, input.bytes.length, credit);
+			if (!result.ok) return result;
 			await tx.insert(assets).values({
 				id,
 				ownerId: userId,
@@ -274,18 +284,24 @@ export async function createAsset(
 				byteSize: input.bytes.length,
 				storageKey
 			});
-			return true;
+			return result;
 		});
 	} catch (error) {
 		// No orphaned objects: if the row cannot land, the object goes too.
 		await store.remove(storageKey).catch(() => {});
 		throw error;
 	}
-	if (!stored) {
+	if (!reserved.ok) {
 		await store.remove(storageKey).catch(() => {});
-		return overLimit;
+		return reserved.limit === null
+			? { ok: false, code: 'not_found', reason: 'This account no longer exists.' }
+			: overStorageLimit(reserved.limit);
 	}
 	return { ok: true, id };
+}
+
+function overStorageLimit(limit: number): ActionFailure {
+	return { ok: false, code: 'over_limit', reason: quotaMessage('storage_bytes', limit) };
 }
 
 // The asset row plus its content stream, ownership checked. Null when the
@@ -308,6 +324,9 @@ export async function openAsset(
 // Deletes the row now; the object follows after the grace period.
 export async function deleteAsset(db: Database, userId: string, assetId: string): Promise<boolean> {
 	return db.transaction(async (tx) => {
+		// The account row before the asset row, the order every storage path
+		// takes them in (see lockStorageOwners).
+		await lockStorageOwners(tx, [userId]);
 		const deleted = await tx
 			.delete(assets)
 			.where(and(eq(assets.id, assetId), eq(assets.ownerId, userId)))
@@ -427,12 +446,17 @@ export async function setUserAvatar(
 	userId: string,
 	input: { filename: string; contentType: string; bytes: Buffer }
 ): Promise<{ ok: true; id: string } | ActionFailure> {
+	const [current] = await db
+		.select({ avatarAssetId: users.avatarAssetId })
+		.from(users)
+		.where(eq(users.id, userId));
 	const result = await createAsset(db, store, config, userId, {
 		universeId: null,
 		kind: 'avatar',
 		filename: input.filename,
 		contentType: input.contentType,
-		bytes: input.bytes
+		bytes: input.bytes,
+		replaces: current?.avatarAssetId
 	});
 	if (!result.ok) return result;
 	// Lock the row, read its current avatar, then point it at the new one, all in

@@ -128,12 +128,9 @@ export async function savePlan(
 /** Makes the plan the one accounts without a plan of their own are on. */
 export async function setDefaultPlan(db: Database, planId: string): Promise<boolean> {
 	return db.transaction(async (tx) => {
-		const [target] = await tx
-			.select({ id: plans.id })
-			.from(plans)
-			.where(eq(plans.id, planId))
-			.for('update');
-		if (!target) return false;
+		// Every plan row, so two changes of default at once take turns.
+		const all = await tx.select({ id: plans.id }).from(plans).orderBy(asc(plans.id)).for('update');
+		if (!all.some((row) => row.id === planId)) return false;
 		// Clear first: the partial unique index allows one default at a time.
 		await tx.update(plans).set({ isDefault: false }).where(eq(plans.isDefault, true));
 		await tx.update(plans).set({ isDefault: true }).where(eq(plans.id, planId));
