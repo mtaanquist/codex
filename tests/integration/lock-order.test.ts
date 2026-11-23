@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -36,18 +36,23 @@ import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { setSceneStatus } from '../../src/lib/server/scene-status';
 import { rebuildSceneMentions } from '../../src/lib/server/mentions';
 import { saveStoryDetails } from '../../src/lib/server/story-details';
-import { restoreStory, trashStory } from '../../src/lib/server/story-lifecycle';
+import { restoreStory, STORY_TRASH_DAYS, trashStory } from '../../src/lib/server/story-lifecycle';
 import { saveUniverseDetails } from '../../src/lib/server/universe-details';
 import { purgeStory } from '../../src/lib/server/story-delete';
 import { sweepUnusedAssets } from '../../src/lib/server/unused-assets';
 import { publishStory } from '../../src/lib/server/publish';
 import { setEntityBadgeImage } from '../../src/lib/server/entity-badge';
 import {
+	clearUserAvatar,
 	createAsset,
+	deleteAsset,
 	ObjectNotFoundError,
+	setUserAvatar,
 	type AssetConfig,
 	type AssetObjectStore
 } from '../../src/lib/server/assets';
+import { recountStorageUsed } from '../../src/lib/server/quotas';
+import { UNIVERSE_TRASH_DAYS } from '../../src/lib/server/universe-lifecycle';
 import { purgeAccount } from '../../src/lib/server/account-deletion';
 import { runImport } from '../../src/lib/server/import-story';
 import { saveEntity } from '../../src/lib/server/entity-save';
@@ -105,6 +110,31 @@ import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 // - Deleting a story from its page, which is the purge with an owner check.
 
 process.env.APP_SECRET = process.env.APP_SECRET || 'lock-order-test-secret';
+
+// An import stores its bundled images through the configured storage; here
+// that is an in-memory store, like the one the uploads below use.
+vi.mock('../../src/lib/server/assets', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../src/lib/server/assets')>();
+	return {
+		...actual,
+		effectiveAssetConfig: async () => ({
+			endpoint: undefined,
+			region: 'auto',
+			bucket: 'test',
+			prefix: 'codex-assets',
+			accessKeyId: 'id',
+			secretAccessKey: 'secret'
+		}),
+		s3AssetStore: () => ({
+			async put() {},
+			async upload() {},
+			async get(key: string) {
+				throw new actual.ObjectNotFoundError(key);
+			},
+			async remove() {}
+		})
+	};
+});
 
 // Each scenario gets fresh ids under its own prefix, which is quicker than
 // truncating between scenarios. Within one, id order differs from position
@@ -290,7 +320,7 @@ async function seed() {
 		title: 'Toll',
 		categoryId: S.category
 	});
-	// An image nothing uses, old enough for the unused-image sweep.
+	// An image nothing uses, unused long enough for the unused-image sweep.
 	await db.insert(assets).values({
 		id: S.image,
 		ownerId: S.user,
@@ -300,7 +330,8 @@ async function seed() {
 		contentType: 'image/png',
 		byteSize: 10,
 		storageKey: `codex-assets/${S.image}`,
-		createdAt: new Date(Date.now() - 60 * 86_400_000)
+		createdAt: new Date(Date.now() - 60 * 86_400_000),
+		unreferencedSince: new Date(Date.now() - 60 * 86_400_000)
 	});
 	for (const sceneId of [S.A, S.B, S.C, S.D]) await rebuildSceneMentions(db, sceneId);
 }
@@ -512,7 +543,45 @@ const OPS: Op[] = [
 		},
 		run: async (db) => ok(await purgeStory(db, S.story))
 	},
+	{
+		name: 'purge story on schedule',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+			await db
+				.update(stories)
+				.set({ deletedAt: new Date(Date.now() - (STORY_TRASH_DAYS + 1) * 86_400_000) })
+				.where(eq(stories.id, S.story));
+		},
+		run: async (db) => ok(await purgeStory(db, S.story, { dueAfterDays: STORY_TRASH_DAYS }))
+	},
 	{ name: 'sweep unused images', run: async (db) => await sweepUnusedAssets(db) },
+	{
+		name: "sweep one account's unused images",
+		run: async (db) => await sweepUnusedAssets(db, { ownerId: S.user })
+	},
+	{ name: 'delete an image', run: async (db) => ok(await deleteAsset(db, S.user, S.image)) },
+	{
+		name: 'replace the avatar',
+		prepare: async () => {
+			await db.update(users).set({ avatarAssetId: S.image }).where(eq(users.id, S.user));
+		},
+		run: async (db) =>
+			ok(
+				await setUserAvatar(db, memoryStore, assetConfig, S.user, {
+					filename: 'avatar.png',
+					contentType: 'image/png',
+					bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+				})
+			)
+	},
+	{
+		name: 'clear the avatar',
+		prepare: async () => {
+			await db.update(users).set({ avatarAssetId: S.image }).where(eq(users.id, S.user));
+		},
+		run: async (db) => await clearUserAvatar(db, S.user)
+	},
+	{ name: 'recount storage', run: async (db) => await recountStorageUsed(db, S.user) },
 	{
 		name: 'set the story cover',
 		run: async (db) => await replaceCover(db, S.story, S.image)
@@ -638,6 +707,18 @@ const OPS: Op[] = [
 		run: async (db) => ok(await purgeUniverse(db, S.universe))
 	},
 	{
+		name: 'purge universe on schedule',
+		prepare: async () => {
+			await trashUniverse(db, S.user, S.universe);
+			await db
+				.update(universes)
+				.set({ deletedAt: new Date(Date.now() - (UNIVERSE_TRASH_DAYS + 1) * 86_400_000) })
+				.where(eq(universes.id, S.universe));
+		},
+		run: async (db) =>
+			ok(await purgeUniverse(db, S.universe, { dueAfterDays: UNIVERSE_TRASH_DAYS }))
+	},
+	{
 		name: 'delete the account',
 		run: async (db) => await purgeAccount(db, S.user, null)
 	},
@@ -657,6 +738,28 @@ const OPS: Op[] = [
 					unfiled: [{ title: null, status: null, bodyMd: 'Aldric came by boat.' }],
 					notes: [],
 					assets: [],
+					problems: []
+				}
+			)
+	},
+	{
+		name: 'import a story with images',
+		run: async (db) =>
+			await runImport(
+				db,
+				{ id: S.universe, ownerId: S.user },
+				{
+					story: { title: 'Pictured', author: null, brief: null, descriptionMd: '' },
+					chapters: [],
+					unfiled: [{ title: null, status: null, bodyMd: 'A map: ![map](assets/map.png)' }],
+					notes: [],
+					assets: [
+						{
+							id: 'map',
+							path: 'map.png',
+							bytes: new Uint8Array(Buffer.from('89504e470d0a1a0a', 'hex'))
+						}
+					],
 					problems: []
 				}
 			)
@@ -1022,7 +1125,13 @@ describe('lock order', () => {
 		// its work for this purpose; one of each is enough. A purge only runs on
 		// a trashed story or universe, which every racer refuses, and an account
 		// is deleted only once it is signed out everywhere, so no purge is raced.
-		const unraced = new Set(['purge story', 'purge universe', 'delete the account']);
+		const unraced = new Set([
+			'purge story',
+			'purge story on schedule',
+			'purge universe',
+			'purge universe on schedule',
+			'delete the account'
+		]);
 		const seen = new Set<string>();
 		const points = stops.filter((stop) => {
 			const at = `${stop.op}: ${[...stop.held.keys()].sort().join()}`;

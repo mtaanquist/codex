@@ -21,10 +21,16 @@ import {
 } from './db/schema.ts';
 import { scheduleObjectDeletions } from './assets.ts';
 import { untrash } from './slugs.ts';
-import { holdCountQuota, lockStorageOwners, releaseStorage } from './quotas.ts';
+import { holdCountQuota, lockStorageOwners } from './quotas.ts';
 import { ENTITY_TYPES, entityTable } from './entity-lookups.ts';
 import { deleteStoryWithin, trashedFor, type Tx } from './story-delete.ts';
-import { referencedAssetIds, UNUSED_ASSET_GRACE_DAYS } from './unused-assets.ts';
+import {
+	freeAssetFiles,
+	logFreed,
+	referencedAssetIds,
+	UNUSED_ASSET_GRACE_DAYS,
+	type Freed
+} from './unused-assets.ts';
 import { ownedUniverseRow } from './universe-scope.ts';
 
 export const UNIVERSE_TRASH_DAYS = 30;
@@ -131,7 +137,7 @@ export async function purgeUniverse(
 	universeId: string,
 	options: { dueAfterDays?: number } = {}
 ): Promise<boolean> {
-	return db.transaction(async (tx) => {
+	const freed = await db.transaction(async (tx) => {
 		// The account rows before the universe row: every storage path locks
 		// the account first (see lockStorageOwners), and the purge changes the
 		// images. The universe row is then read under its lock, so a restore
@@ -147,7 +153,7 @@ export async function purgeUniverse(
 			.from(universes)
 			.where(eq(universes.id, universeId))
 			.for('no key update');
-		if (!row?.deletedAt || !row.due) return false;
+		if (!row?.deletedAt || !row.due) return null;
 		const fileKeys = await universeEditionFileKeys(tx, universeId);
 		// Only images past the sweep's grace period go now, for the same reason
 		// the sweep waits: a newer one may sit only in an editor elsewhere that
@@ -168,18 +174,27 @@ export async function purgeUniverse(
 		// count.
 		const kept = await referencedAssetIds(tx, images);
 		const unused = images.filter((id) => !kept.has(id));
-		const freed =
+		// Freed as the unused image sweep frees them: the file kept longer and
+		// the row logged, so one can still be put back by hand.
+		const freed = (
 			unused.length === 0
 				? []
-				: await tx.delete(assets).where(inArray(assets.id, unused)).returning({
-						ownerId: assets.ownerId,
-						byteSize: assets.byteSize,
-						storageKey: assets.storageKey
-					});
-		await releaseStorage(tx, freed);
-		await scheduleObjectDeletions(tx, [...fileKeys, ...freed.map((image) => image.storageKey)]);
-		return true;
+				: (
+						await tx.execute(sql`
+							delete from assets where id::text = any(string_to_array(${unused.join(',')}, ','))
+							returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
+								byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
+								universe_id::text as "universeId", created_at::text as "createdAt"
+						`)
+					).rows
+		) as Freed[];
+		await freeAssetFiles(tx, freed);
+		await scheduleObjectDeletions(tx, fileKeys);
+		return freed;
 	});
+	if (freed === null) return false;
+	for (const row of freed) logFreed(row);
+	return true;
 }
 
 async function universeImageOwners(db: Database | Tx, universeId: string): Promise<string[]> {

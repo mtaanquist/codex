@@ -575,13 +575,14 @@ export async function queueAssetMigration(): Promise<boolean> {
 	}
 }
 
-// Asks the worker for a run of the unused-image sweep, after a story is
-// deleted for good, so the images it alone used are freed in minutes rather
-// than at night. The queue keeps at most one run waiting.
-export async function queueUnusedAssetSweep(): Promise<void> {
+// Asks the worker for a run of the unused-image sweep over one account's
+// images, after it deleted a story for good, so the images that story alone
+// used start their wait now rather than at night. The queue keeps at most one
+// run per account waiting, and the nightly run apart from those.
+export async function queueUnusedAssetSweep(ownerId: string): Promise<void> {
 	try {
 		const boss = await getBoss();
-		await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, {});
+		await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, { ownerId }, { singletonKey: `owner:${ownerId}` });
 	} catch (error) {
 		logEvent('error', 'job.queue_failed', {
 			queue: SWEEP_UNUSED_ASSETS_QUEUE,

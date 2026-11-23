@@ -26,8 +26,9 @@ export const SWEEP_DELETED_OBJECTS_QUEUE = 'sweep-deleted-objects';
 // Deletes uploaded images nothing references any more and gives their bytes
 // back (see sweepUnusedAssets in unused-assets.ts).
 export const SWEEP_UNUSED_ASSETS_QUEUE = 'sweep-unused-assets';
-// One run queued and one running at most, so the nightly run and the runs a
-// story purge asks for never pile up; a run reads the whole database once, so
+// One run queued and one running at most per singletonKey (none for the
+// nightly run, the account for the run a story purge asks for), so they never
+// pile up; a run reads the whole database once, so
 // it is given hours rather than the default quarter hour.
 export const SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS = {
 	policy: 'stately',
