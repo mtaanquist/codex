@@ -1199,7 +1199,8 @@ export function createHandlers(deps: WorkerDeps) {
 					logEvent('error', 'purge.story_failed', { storyId, ...errorFields(error) });
 				}
 			}
-			// The images only those stories used are freed by the sweep.
+			// The sweep marks the images only those stories used, and frees them
+			// once they have stayed unused long enough.
 			if (storiesPurged > 0) await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, {});
 		},
 
@@ -1219,13 +1220,21 @@ export function createHandlers(deps: WorkerDeps) {
 			}
 		},
 
-		// Uploaded images nothing references any more, past the grace period.
-		// Their rows go and their bytes come back now; the objects are queued
-		// for the sweep above.
-		async sweepUnusedAssets() {
-			const result = await sweepUnusedAssets(db);
-			if (result.count > 0) {
-				logEvent('info', 'assets.unused_sweep', { deleted: result.count, bytes: result.bytes });
+		// Uploaded images nothing references any more: marked on the first run
+		// that finds them unused, deleted once unused for long enough. Their
+		// rows go and their bytes come back now; the objects are queued for the
+		// sweep above. A job with an ownerId looks only at that account.
+		async sweepUnusedAssets(jobs: Job<{ ownerId?: string }>[]) {
+			for (const job of jobs) {
+				const ownerId = typeof job.data?.ownerId === 'string' ? job.data.ownerId : undefined;
+				const result = await sweepUnusedAssets(db, { ownerId });
+				if (result.count > 0) {
+					logEvent('info', 'assets.unused_sweep', {
+						ownerId,
+						deleted: result.count,
+						bytes: result.bytes
+					});
+				}
 			}
 		},
 

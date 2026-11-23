@@ -406,20 +406,25 @@ describe('storage', () => {
 		expect(await db.select().from(assets)).toHaveLength(1);
 	});
 
-	// A replaced avatar or badge stays until the unused image sweep frees it,
-	// so it still counts, and the new one has to fit beside it.
-	it('counts a replaced avatar or badge until the sweep frees it', async () => {
+	// A replaced avatar, badge or cover stays until the unused image sweep
+	// frees it, so it still counts in the usage. The swap itself counts it as
+	// freed, so a writer at the limit can still swap, once.
+	it('lets a writer at the limit replace an avatar or badge', async () => {
 		await limitOwner({ storage_bytes: 500 });
 		const { store } = memoryStore();
 		const image = { filename: 'a.png', contentType: 'image/png', bytes: png(400) };
 		expect((await setUserAvatar(db, store, config, ownerId, image)).ok).toBe(true);
+		expect((await setUserAvatar(db, store, config, ownerId, image)).ok).toBe(true);
+		// Above the limit until the sweep frees the old one.
+		expect(await used()).toBe(800);
+		// The old avatar is already counted as freed, so a second swap is not.
 		expect(await setUserAvatar(db, store, config, ownerId, image)).toMatchObject({
 			ok: false,
 			code: 'over_limit'
 		});
-		expect(await used()).toBe(400);
+		expect(await used()).toBe(800);
 
-		await limitOwner({ storage_bytes: 900 });
+		await limitOwner({ storage_bytes: 1200 });
 		const world = await universe();
 		const [character] = await db
 			.insert(characters)
@@ -428,12 +433,45 @@ describe('storage', () => {
 		expect((await setEntityBadgeImage(db, store, config, ownerId, character.id, image)).ok).toBe(
 			true
 		);
-		expect(await used()).toBe(800);
+		expect(await used()).toBe(1200);
+		expect((await setEntityBadgeImage(db, store, config, ownerId, character.id, image)).ok).toBe(
+			true
+		);
+		expect(await used()).toBe(1600);
+		// A new image with nothing to replace still has to fit.
 		expect(
-			await setEntityBadgeImage(db, store, config, ownerId, character.id, image)
+			await createAsset(db, store, config, ownerId, {
+				universeId: null,
+				kind: 'inline',
+				filename: 'b.png',
+				contentType: 'image/png',
+				bytes: png(10)
+			})
 		).toMatchObject({ ok: false, code: 'over_limit' });
-		expect(await used()).toBe(800);
-		expect(await db.select().from(assets)).toHaveLength(2);
+		expect(await db.select().from(assets)).toHaveLength(4);
+	});
+
+	it('counts a replaced cover as freed, but only one the writer owns', async () => {
+		await limitOwner({ storage_bytes: 500 });
+		const { store } = memoryStore();
+		const upload = (userId: string, bytes: number, replaces?: string) =>
+			createAsset(db, store, config, userId, {
+				universeId: null,
+				kind: 'cover',
+				filename: 'c.png',
+				contentType: 'image/png',
+				bytes: png(bytes),
+				replaces
+			});
+		const first = await upload(ownerId, 400);
+		if (!first.ok) throw new Error('expected an upload');
+		expect((await upload(ownerId, 300)).ok).toBe(false);
+		expect((await upload(ownerId, 300, first.id)).ok).toBe(true);
+		expect(await used()).toBe(700);
+		const theirs = await upload(otherId, 400);
+		if (!theirs.ok) throw new Error('expected an upload');
+		await limitOwner({ storage_bytes: 800 });
+		expect((await upload(ownerId, 300, theirs.id)).ok).toBe(false);
 	});
 
 	it('checks an upload against the plan as it is when the file lands', async () => {

@@ -67,6 +67,9 @@
 				<input type="checkbox" name="isAdult" checked={data.story.isAdult} />
 				Adult content
 			</label>
+			{#if data.edition}
+				<p class="field-hint">Readers see a change here after you publish again.</p>
+			{/if}
 		</div>
 		{#if data.reading}
 			<p class="field-hint">
@@ -89,8 +92,11 @@
 					<a href={resolve('/@[handle]/[story=ref]', data.reading)}>
 						/@{data.reading.handle}/{data.reading.story}
 					</a>.
-				{:else}
+				{:else if data.story.visibility === 'private'}
 					Edition published. Set the visibility to unlisted or public so readers can open it.
+				{:else}
+					Edition published, but readers cannot open it at the moment. Ask the admin of your site
+					why.
 				{/if}
 			</p>
 		{/if}

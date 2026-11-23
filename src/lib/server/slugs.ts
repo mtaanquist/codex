@@ -138,19 +138,20 @@ async function forgetOwnSlug(tx: Tx, table: Table, ownerId: string, id: string, 
 		);
 }
 
-// The row, locked for the rest of the transaction.
-async function lockedRow(tx: Tx, table: Table, id: string) {
+// The row, locked for the rest of the transaction; with ownerId, only when it
+// is that account's.
+async function lockedRow(tx: Tx, table: Table, id: string, ownerId?: string) {
 	const [row] =
 		table === 'universes'
 			? await tx
 					.select({ ownerId: universes.ownerId, name: universes.name, slug: universes.slug })
 					.from(universes)
-					.where(eq(universes.id, id))
+					.where(and(eq(universes.id, id), ownerId ? eq(universes.ownerId, ownerId) : undefined))
 					.for('update')
 			: await tx
 					.select({ ownerId: stories.ownerId, name: stories.title, slug: stories.slug })
 					.from(stories)
-					.where(eq(stories.id, id))
+					.where(and(eq(stories.id, id), ownerId ? eq(stories.ownerId, ownerId) : undefined))
 					.for('update');
 	return row ?? null;
 }
@@ -164,11 +165,12 @@ async function lockedRow(tx: Tx, table: Table, id: string) {
  * history, and the slug it leaves is reserved for it (see reserveOnRename), so
  * an old public link redirects and no other work of the account can take it.
  * Retries once if a concurrent create takes the pick. Returns the slug, or
- * null when the row no longer exists.
+ * null when the row no longer exists or is not the owner's.
  */
 export async function saveWithSlug(
 	db: Database,
 	table: Table,
+	ownerId: string,
 	id: string,
 	name: string,
 	write: (tx: Tx, slug: string) => Promise<void>
@@ -176,7 +178,7 @@ export async function saveWithSlug(
 	const fallback = table === 'universes' ? 'universe' : 'story';
 	const attempt = () =>
 		db.transaction(async (tx) => {
-			const row = await lockedRow(tx, table, id);
+			const row = await lockedRow(tx, table, id, ownerId);
 			if (!row) return null;
 			if (row.name === name) {
 				await write(tx, row.slug);

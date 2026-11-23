@@ -20,6 +20,10 @@ Each story has a visibility:
 - **Unlisted** is reachable by direct link but is not listed on your public page or on a universe page.
 - **Public** is listed on your page at your handle.
 
+## Adult content
+
+Tick "Adult content" in the Publish section of a story's settings if the story is for adults. Readers who open its reading page first see a notice and choose to go on, and search engines are asked to leave the page out. The label is saved with each edition, so after you tick or untick it on a story that is already published, publish again for readers to see the change.
+
 ## Edition downloads
 
 When you publish, Codex also prepares download files of the edition: a markdown archive, an EPUB, and a PDF. Find them in the story's settings under "Edition downloads". They capture the edition exactly as published, so they do not change when you keep writing. The PDF shows only images you uploaded to Codex; an image linked from another website is left out.
@@ -42,9 +46,9 @@ To force a page break inside a chapter, put \page alone on its own line in your 
 
 Your handle page is your shelf: your name, your handle, and every story you have set to public, each with its title, when it was published, and its description. When your profile is set to public it also shows a short bio, any links you add, and whether you are open for commissions. You control all of that on your account page, under Profile.
 
-A story you publish gets its own reading page under your handle, at your handle followed by the story's address: for example /@yourhandle/the-long-road. The address is the one in your story's own link in Codex, so renaming the story changes it. Once a story has been published, links to its old address keep working and take readers to the new one, and none of your other stories can take the old address. Deleting a story is different: a story you create later can take the address of one you deleted. Older links that use the story's id instead keep working too. An unlisted story's link always uses its id, a long string of letters and numbers, so nobody can find it by guessing its title. Once the story is published and not private, the Publish section of its settings shows the link readers use, ready to copy. The page opens with the title, who wrote it, how long it is, and the story's description, then the contents and the prose itself.
+A story you publish gets its own reading page under your handle, at your handle followed by the story's address: for example /@yourhandle/the-long-road. The address is the one in your story's own link in Codex, so renaming the story changes it. Once a story has been published, links to its old address keep working and take readers to the new one, and none of your other stories can take the old address. Deleting a story is different: a story you create later can take the address of one you deleted. Older links that use the story's id instead keep working too. An unlisted story's link always uses its id, a long string of letters and numbers, so nobody can find it by guessing its title. Once the story is published, not private and open to readers, the Publish section of its settings shows the link readers use, ready to copy. The page opens with the title, who wrote it, how long it is, and the story's description, then the contents and the prose itself.
 
-When at least one story in a universe is set to public, the universe gets a page too, at /@yourhandle/universes/ followed by the universe's address. It shows the universe's name and the stories in it that are listed on your shelf. The reading page of every published story in the universe, unlisted ones included, links to it just above the title. It shows nothing else from the universe. A one-off story that is not in a universe has no universe page. Renaming a universe works the same way: links to its old address take readers to the new one.
+When at least one story in a universe is published and set to public, the universe gets a page too, at /@yourhandle/universes/ followed by the universe's address. It shows the universe's name and the stories in it that are listed on your shelf. The reading page of every published story in the universe, unlisted ones included, links to it just above the title. It shows nothing else from the universe. A one-off story that is not in a universe has no universe page. Renaming a universe works the same way: links to its old address take readers to the new one. Deleting a universe also works like deleting a story: a universe you create later can take its address.
 
 ## What a reader sees
 

@@ -1040,7 +1040,10 @@ export const assets = pgTable('assets', {
 	storageKey: text('storage_key').notNull(),
 	width: integer('width'),
 	height: integer('height'),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+	// When the unused-image sweep first found nothing using this image, or
+	// null while something does. See unused-assets.ts.
+	unreferencedSince: timestamp('unreferenced_since', { withTimezone: true })
 });
 
 // Bucket objects whose rows are gone, waiting out the backup retention window

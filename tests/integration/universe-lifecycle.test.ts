@@ -57,6 +57,7 @@ import {
 } from '../../src/lib/server/review';
 import { createMarker, deleteMarker, setMarkerResolved } from '../../src/lib/server/markers';
 import { createAsset, type AssetObjectStore } from '../../src/lib/server/assets';
+import { FREED_OBJECT_EXTRA_DAYS } from '../../src/lib/server/unused-assets';
 import { createChapter, createScene, trashScene } from '../../src/lib/server/scene-lifecycle';
 import { duplicateScene, mergeScenes } from '../../src/lib/server/scene-split-merge';
 import { clearMentionPin, setMentionPin } from '../../src/lib/server/mention-pins';
@@ -500,6 +501,13 @@ describe('purging a universe', () => {
 		expect(await db.select().from(assets).where(eq(assets.id, image.id))).toEqual([]);
 		expect(await storageUsed()).toBe(0);
 		expect(await queued('shared-key')).toBe(true);
+		// Kept as long as a file the unused image sweep frees.
+		const [row] = await db
+			.select()
+			.from(pendingObjectDeletions)
+			.where(eq(pendingObjectDeletions.storageKey, 'shared-key'));
+		const ahead = (row.deletedAt.getTime() - Date.now()) / 86_400_000;
+		expect(ahead).toBeGreaterThan(FREED_OBJECT_EXTRA_DAYS - 1);
 	});
 
 	it('leaves an image newer than the grace period for the sweep', async () => {

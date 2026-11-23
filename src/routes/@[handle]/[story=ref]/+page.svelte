@@ -44,7 +44,7 @@
 <svelte:head>
 	<title>{data.title} - by {data.author}</title>
 	<link rel="canonical" href={canonical} />
-	{#if data.gate || data.isAdult}
+	{#if data.gate || data.isAdult || !data.listed}
 		<meta name="robots" content="noindex" />
 	{/if}
 </svelte:head>
