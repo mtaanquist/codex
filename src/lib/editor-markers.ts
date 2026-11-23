@@ -4,6 +4,7 @@ import {
 	StateEffect,
 	Text,
 	StateField,
+	type Transaction,
 	Prec,
 	type ChangeDesc,
 	type Extension
@@ -37,23 +38,95 @@ type Followed = {
 	release: () => void;
 };
 
-// Sets a marker back to the range it had before an undone edit, putting it
-// back if the edit had deleted its words. Carried in the undo history, so it
-// maps through later changes like the text does.
-const restoreMarker = StateEffect.define<MarkerRange>({
-	map: (value, mapping) => {
-		const from = mapping.mapPos(value.from, 1);
-		const to = mapping.mapPos(value.to, -1);
-		return from < to ? { id: value.id, from, to } : undefined;
+// Puts a marker on a range of the text a transaction produces, for undo or
+// redo that brings back the words of a waiting marker.
+const restoreMarker = StateEffect.define<MarkerRange>();
+
+// What one edit's undo (or one undo's redo) does to markers, carried in the
+// undo history. ranges sets markers back to exactly the ranges they had just
+// before the edit, counted in the text from before it (the text undo brings
+// back). drops takes away markers that were gone before the edit: without it,
+// a marker that undo put back could map onto the replacement text on redo and
+// survive. Drops apply across a marker set rebuilt in between, since a
+// rebuild keeps the positions the editor shows and never places a held marker
+// it was not showing.
+//
+// History maps what it carries through each change kept out of undo (an image
+// placeholder taken out, newer text loaded), but hands that change over
+// counted in the text after the edit, not before it. So the step keeps those
+// changes in mapped and its ranges are mapped when undo applies it (see
+// placeSteps). When history joins a keystroke onto the undo step before it,
+// it maps the keystroke's step once through the earlier undo change, which is
+// counted in the right text; that comes first in mapped.
+type MarkerStep = {
+	drops: string[];
+	ranges: MarkerRange[];
+	// The edit's undo, as history keeps it before any mapping.
+	undo: ChangeDesc;
+	mapped: readonly ChangeDesc[];
+};
+
+const markerStep = StateEffect.define<MarkerStep>({
+	map: (step, mapping) => {
+		if (mapping.empty) return step;
+		// A step with nothing to put back is kept only for placeSteps to map
+		// the steps of earlier keystrokes it joined. One that joined none is
+		// dropped, so history can still drop an undo step a change kept out of
+		// undo has emptied.
+		if (!step.mapped.length && !isJoin(mapping) && !step.drops.length && !step.ranges.length)
+			return undefined;
+		return { ...step, mapped: [...step.mapped, mapping] };
 	}
 });
 
-// Takes a marker away again on undo or redo when it was gone before the
-// change being reverted. Without it, a marker that undo put back can map
-// onto the replacement text on redo and survive. It applies across a marker
-// set rebuilt in between, since a rebuild keeps the positions the editor
-// shows and never places a held marker it was not showing.
-const dropMarker = StateEffect.define<string>();
+// History joins a keystroke on with the earlier undo change itself, a
+// ChangeSet; a change kept out of undo comes as a plain description.
+function isJoin(mapping: ChangeDesc) {
+	return mapping instanceof ChangeSet;
+}
+
+// The drops and ranges of an undo or redo's steps (newest first, as history
+// lists them), with the ranges in the text it produces. A change kept out of
+// undo is counted in the text before the undo, so each step maps it over the
+// undo change as it was then, as history maps its own changes. A step only
+// knows its own part of that change: once a later keystroke has joined it,
+// the change is taken from that keystroke's step, which saw the same
+// mappings (the same objects) after it joined.
+function placeSteps(steps: MarkerStep[]) {
+	const known = new Map<ChangeDesc, ChangeDesc>();
+	return steps.map((step) => {
+		let undo: ChangeDesc | null = step.undo;
+		let ranges: MarkerRange[] = step.ranges;
+		step.mapped.forEach((mapping, index) => {
+			let over = known.get(mapping);
+			if (index === 0 && isJoin(mapping)) {
+				over = mapping;
+				undo = undo!.composeDesc(mapping);
+			} else if (over) {
+				undo = null;
+			} else if (undo && undo.length === mapping.length) {
+				over = mapping.mapDesc(undo, true);
+				undo = undo.mapDesc(mapping);
+				known.set(mapping, over);
+			} else {
+				undo = null;
+				ranges = [];
+				return;
+			}
+			ranges = ranges.flatMap(({ id, from, to }) => {
+				if (to > over.length) return [];
+				const start = over.mapPos(from, 1);
+				const end = over.mapPos(to, -1);
+				return start < end ? [{ id, from: start, to: end }] : [];
+			});
+		});
+		return { drops: step.drops, ranges };
+	});
+}
+
+function stepsOf(tr: Transaction) {
+	return tr.effects.flatMap((effect) => (effect.is(markerStep) ? [effect.value] : []));
+}
 
 function markerMark(id: string, from: number, to: number) {
 	return Decoration.mark({ class: 'todo-marker', todoId: id }).range(from, to);
@@ -85,23 +158,28 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 		},
 		update(value, tr) {
 			value = value.map(tr.changes);
-			for (const effect of tr.effects) {
-				if (effect.is(dropMarker)) {
-					const id = effect.value;
-					value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
-					continue;
-				}
-				if (!effect.is(restoreMarker)) continue;
-				const { id, from, to } = effect.value;
-				// Only a marker this editor still holds, and never twice: what is
-				// left of it is replaced, not merged, since that remnant can map
-				// onto words the marker never covered.
-				if (!held.has(id) || to > tr.newDoc.length) continue;
+			const length = tr.newDoc.length;
+			// Only a marker this editor still holds, and never twice: what is
+			// left of it is replaced, not merged, since that remnant can map onto
+			// words the marker never covered.
+			const restore = ({ id, from, to }: MarkerRange) => {
+				if (!held.has(id) || to > length) return;
 				shown.add(id);
 				value = value.update({
 					filter: (_from, _to, mark) => mark.spec.todoId !== id,
 					add: [markerMark(id, from, to)]
 				});
+			};
+			const steps = placeSteps(stepsOf(tr));
+			let next = 0;
+			for (const effect of tr.effects) {
+				if (effect.is(restoreMarker)) restore(effect.value);
+				if (!effect.is(markerStep)) continue;
+				const { drops, ranges } = steps[next++];
+				for (const id of drops) {
+					value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
+				}
+				ranges.forEach(restore);
 			}
 			return value;
 		},
@@ -136,13 +214,18 @@ function markerField(markers: SceneMarker[], waiting: WaitingMarker[]) {
 		// A marker this transaction puts back was gone before it, whether or not
 		// this set has shown it yet: undo can restore a marker that loaded with
 		// no position, and the redo step must take it away again.
-		const restored = tr.effects.flatMap((effect) =>
-			effect.is(restoreMarker) && held.has(effect.value.id) ? [effect.value.id] : []
-		);
+		const restored = [
+			...placeSteps(stepsOf(tr)).flatMap((step) => step.ranges),
+			...tr.effects.flatMap((effect) => (effect.is(restoreMarker) ? [effect.value] : []))
+		].flatMap((range) => (held.has(range.id) ? [range.id] : []));
 		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
 		return [
-			...gone.map((id) => dropMarker.of(id)),
-			...[...touched.values()].map((range) => restoreMarker.of(range))
+			markerStep.of({
+				drops: gone,
+				ranges: [...touched.values()],
+				undo: tr.changes.invertedDesc,
+				mapped: []
+			})
 		];
 	});
 	// Undo or redo that brings back the words of a waiting marker puts the
@@ -305,8 +388,10 @@ export function waitingMarkers(
 // Saves run one at a time: sent() marks the text a save is sending, and
 // landed() drops the edits up to it once the server has stored it. A failed
 // save leaves them in, since the server still holds the older text. The
-// texts are kept too, so edits that cancel out (a deletion and its undo) do
-// not move positions: composed, they read as a replacement of the span.
+// texts are kept too, so an edit that puts back exactly what was removed (a
+// deletion and its undo) counts as no change: positions do not move, and the
+// words count as the stored ones. Any other replacement counts as new words,
+// even where it shares letters with the old ones.
 // version is the fingerprint of the text the server holds as this editor
 // knows it, which the caller passes with each save.
 export function unsavedChanges(text: string) {
@@ -318,9 +403,9 @@ export function unsavedChanges(text: string) {
 	const pins = new Set<{ start: Text; since: ChangeSet }>();
 	return {
 		record(changes: ChangeSet) {
-			total = total.compose(changes);
-			if (sending) sending.since = sending.since.compose(changes);
-			for (const pin of pins) pin.since = pin.since.compose(changes);
+			total = settled(total.compose(changes), base);
+			if (sending) sending.since = settled(sending.since.compose(changes), sending.text);
+			for (const pin of pins) pin.since = settled(pin.since.compose(changes), pin.start);
 		},
 		// Follows a range on screen through the edits after it until released.
 		// at() gives the range in the text the server holds at that moment (the
@@ -332,8 +417,8 @@ export function unsavedChanges(text: string) {
 			pins.add(pin);
 			return {
 				at(): { from: number; to: number } | null {
-					const back = net(total, base).invertedDesc;
-					const after = net(pin.since, pin.start);
+					const back = total.invertedDesc;
+					const after = pin.since.desc;
 					const start = back.mapPos(after.mapPos(from, 1), 1);
 					const end = back.mapPos(after.mapPos(to, -1), -1);
 					return start < end ? { from: start, to: end } : null;
@@ -374,7 +459,7 @@ export function unsavedChanges(text: string) {
 			return {
 				locate(next: ChangeSet): { from: number; to: number } | null {
 					if (next.length !== pin.since.newLength || end > pin.start.length) return null;
-					const mapping = net(pin.since.compose(next), pin.start);
+					const mapping = settled(pin.since.compose(next), pin.start).desc;
 					if (!keepsSome(mapping, start, end)) return null;
 					const at = mapping.mapPos(start, 1);
 					const to = mapping.mapPos(end, -1);
@@ -393,7 +478,7 @@ export function unsavedChanges(text: string) {
 			sending = null;
 		},
 		get changes(): ChangeDesc {
-			return net(total, base);
+			return total.desc;
 		},
 		get version(): string {
 			return version;
@@ -423,27 +508,16 @@ function mergedRanges(ranges: readonly { from: number; to: number }[]) {
 	return merged;
 }
 
-// changes as applied to before, with the text each replacement puts back
-// unchanged at its start and end left out of it.
-function net(changes: ChangeSet, before: Text): ChangeDesc {
-	const specs: { from: number; to: number; insert: string }[] = [];
+// changes as applied to before, without the replacements that put back
+// exactly what they removed (a deletion and its undo). Run after each edit, so
+// that text put back is taken as unchanged even when later edits are composed
+// onto the same span (a word deleted, undone, then typed over in part).
+function settled(changes: ChangeSet, before: Text): ChangeSet {
+	const specs: { from: number; to: number; insert: Text }[] = [];
+	let same = false;
 	changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-		const removed = before.sliceString(fromA, toA);
-		const added = inserted.toString();
-		let head = 0;
-		while (head < removed.length && head < added.length && removed[head] === added[head]) head++;
-		let tail = 0;
-		while (
-			tail < removed.length - head &&
-			tail < added.length - head &&
-			removed[removed.length - 1 - tail] === added[added.length - 1 - tail]
-		)
-			tail++;
-		specs.push({
-			from: fromA + head,
-			to: toA - tail,
-			insert: added.slice(head, added.length - tail)
-		});
+		if (fromA < toA && inserted.eq(before.slice(fromA, toA))) same = true;
+		else specs.push({ from: fromA, to: toA, insert: inserted });
 	});
-	return ChangeSet.of(specs, before.length).desc;
+	return same ? ChangeSet.of(specs, changes.length) : changes;
 }

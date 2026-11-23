@@ -145,7 +145,11 @@ describe('markerExtensions', () => {
 			}
 		});
 		expect(undone!.state.doc.toString()).toBe(doc);
-		expect(undone!.effects).toEqual([]);
+		const records = undone!.effects.flatMap((effect) => {
+			const step = effect.value as { drops: string[]; ranges: unknown[] };
+			return [...step.drops, ...step.ranges];
+		});
+		expect(records).toEqual([]);
 	});
 
 	describe('after deleting the marked words one character at a time', () => {
@@ -301,6 +305,157 @@ describe('markerExtensions', () => {
 			editor.undo();
 			editor.redo();
 			expect(editor.anchors()).toEqual([{ id: 'm1', anchorStart: 4, anchorEnd: 8 }]);
+		});
+	});
+
+	// Text the app puts in or takes out without an undo step, such as an image
+	// placeholder: undo must still put markers back on their words around it.
+	describe('after a change kept out of undo', () => {
+		const mat = { id: 'mat', anchorStart: 19, anchorEnd: 22 };
+		const marked = (editor: ReturnType<typeof setup>) =>
+			editor.anchors().map((anchor) => editor.state.sliceDoc(anchor.anchorStart, anchor.anchorEnd));
+
+		it('puts a marker back when the change shortened the text before its words', () => {
+			const editor = setup([mat]);
+			editor.edit(15, 22);
+			editor.change(0, 4, '', false);
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe('cat sat on the mat.');
+			expect(editor.anchors()).toEqual([{ id: 'mat', anchorStart: 15, anchorEnd: 18 }]);
+		});
+
+		it('puts a marker back when the change came just after its deleted words', () => {
+			const editor = setup([mat], doc + ' Rain fell.');
+			editor.edit(15, 22);
+			editor.change(16, 21, '', false);
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe(doc + ' fell.');
+			expect(marked(editor)).toEqual(['mat']);
+		});
+
+		it('puts a marker back when the change came where its words were', () => {
+			const editor = setup([mat]);
+			editor.edit(19, 22);
+			editor.change(19, 19, '##', false);
+			editor.undo();
+			expect(editor.state.doc.toString().replace(/#/g, '')).toBe(doc);
+			expect(marked(editor)).toEqual(['mat']);
+		});
+
+		it('puts a marker back when later keystrokes joined the undo step', () => {
+			const editor = setup([mat]);
+			editor.edit(19, 22);
+			editor.edit(19, 19, 'xy');
+			editor.change(0, 4, '', false);
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe('cat sat on the mat.');
+			expect(marked(editor)).toEqual(['mat']);
+		});
+
+		it('puts a marker back after such changes before and after a joined keystroke', () => {
+			const editor = setup([mat]);
+			editor.edit(19, 22);
+			editor.change(0, 4, '', false);
+			editor.edit(15, 15, 'xy');
+			editor.change(0, 0, 'A ', false);
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe('A cat sat on the mat.');
+			expect(marked(editor)).toEqual(['mat']);
+		});
+
+		it('takes the marker away on redo and puts it back on the next undo', () => {
+			const editor = setup([mat]);
+			editor.edit(15, 22);
+			editor.undo();
+			editor.change(0, 4, '', false);
+			editor.redo();
+			expect(editor.state.doc.toString()).toBe('cat sat on .');
+			expect(editor.anchors()).toEqual([]);
+			editor.change(0, 0, 'A ', false);
+			editor.undo();
+			expect(editor.state.doc.toString()).toBe('A cat sat on the mat.');
+			expect(marked(editor)).toEqual(['mat']);
+		});
+
+		// Random edits, undos, redos, and runs of "#" put in or taken out
+		// without an undo step. With every "#" left out, the text and markers
+		// after an undo or redo must match a state the editor held before.
+		it('puts markers back exactly through random undo, redo and such changes', () => {
+			const long = 'The cat sat on the mat and the dog ran far away.';
+			const markers = [
+				{ id: 'a', anchorStart: 4, anchorEnd: 11 },
+				{ id: 'b', anchorStart: 19, anchorEnd: 30 },
+				{ id: 'c', anchorStart: 31, anchorEnd: 34 }
+			];
+			const failures: string[] = [];
+			for (let seed = 1; seed <= 1500; seed++) {
+				let n = seed;
+				const random = () => {
+					n = (n * 1103515245 + 12345) & 0x7fffffff;
+					return n / 0x7fffffff;
+				};
+				const editor = setup(markers, long);
+				const plain = () => editor.state.doc.toString().replace(/#/g, '');
+				const snapshot = () => {
+					const text = editor.state.doc.toString();
+					const count = (at: number) => text.slice(0, at).replace(/#/g, '').length;
+					const anchors = editor
+						.anchors()
+						.map((anchor) => [anchor.id, count(anchor.anchorStart), count(anchor.anchorEnd)])
+						.filter(([, from, to]) => from < to);
+					return plain() + JSON.stringify(anchors);
+				};
+				const seen = new Map<string, Set<string>>();
+				const remember = () => {
+					if (!seen.has(plain())) seen.set(plain(), new Set());
+					seen.get(plain())!.add(snapshot());
+				};
+				const steps: string[] = [];
+				const randomEdit = () => {
+					const length = editor.state.doc.length;
+					const from = Math.floor(random() * (length + 1));
+					const to = Math.min(length, from + Math.floor(random() * 8));
+					const insert = random() < 0.5 ? '' : 'xyz'.slice(0, 1 + Math.floor(random() * 3));
+					const joined = random() < 0.6;
+					if (from === to && !insert) return;
+					steps.push(`edit(${from}, ${to}, '${insert}', ${joined})`);
+					editor.edit(from, to, insert, joined);
+					remember();
+				};
+				const outsideUndo = () => {
+					const text = editor.state.doc.toString();
+					const runs = [...text.matchAll(/#+/g)];
+					if (runs.length && random() < 0.5) {
+						const run = runs[Math.floor(random() * runs.length)];
+						const to = run.index + run[0].length;
+						steps.push(`change(${run.index}, ${to}, '', false)`);
+						editor.change(run.index, to, '', false);
+					} else {
+						const at = Math.floor(random() * (text.length + 1));
+						const insert = '##'.slice(0, 1 + Math.floor(random() * 2));
+						steps.push(`change(${at}, ${at}, '${insert}', false)`);
+						editor.change(at, at, insert, false);
+					}
+				};
+				const check = (command: 'undo' | 'redo') => {
+					steps.push(`${command}()`);
+					editor[command]();
+					const known = seen.get(plain());
+					if (known && !known.has(snapshot())) failures.push(`seed ${seed}: ${steps.join('; ')}`);
+				};
+				remember();
+				const edits = 1 + Math.floor(random() * 8);
+				for (let i = 0; i < edits; i++) randomEdit();
+				for (let i = 0; i < 8; i++) {
+					const pick = random();
+					if (pick < 0.3) check('undo');
+					else if (pick < 0.5) check('redo');
+					else if (pick < 0.75) outsideUndo();
+					else randomEdit();
+				}
+				while (undoDepth(editor.state)) check('undo');
+			}
+			expect(failures.slice(0, 3)).toEqual([]);
 		});
 	});
 
@@ -524,6 +679,48 @@ describe('rebuiltMarkers', () => {
 		editor.undo();
 		expect(editor.state.doc.toString()).toBe('The cat ran on the mat.');
 		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('does not put a waiting marker on new words that share a letter with its words', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 11, '', false);
+		editor.reload([cat, sat]);
+		editor.edit(8, 8, 'sun', false);
+		editor.edit(0, 0, 'Oh. ', false);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe('The cat sun on the mat.');
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('leaves out a new marker whose words were typed over with words sharing a letter', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 11, '', false);
+		editor.edit(8, 8, 'sun', false);
+		editor.reload([cat, sat]);
+		expect(editor.state.doc.toString()).toBe('The cat sun on the mat.');
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('leaves out a new marker whose words were typed over with words sharing a space', () => {
+		const editor = setupRebuild([]);
+		editor.edit(4, 11, '', false);
+		editor.edit(4, 4, 'dog ran', false);
+		editor.reload([{ id: 'p', anchorStart: 4, anchorEnd: 11 }]);
+		expect(editor.state.doc.toString()).toBe('The dog ran on the mat.');
+		expect(editor.marked()).toEqual([]);
+	});
+
+	it('places a new marker on its words when typing came just after words deleted and undone', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 11, '', false);
+		editor.undo();
+		editor.edit(11, 11, '!', false);
+		editor.reload([cat, sat]);
+		expect(editor.state.doc.toString()).toBe('The cat sat! on the mat.');
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
 	});
 
 	it('still puts a new marker back on undo after another reload', () => {

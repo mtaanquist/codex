@@ -23,8 +23,11 @@ Option on a Mac, Ctrl and Alt everywhere else.
 - **Ctrl+Alt+M**: mark the selected text as a TODO. A line that begins with
   `TODO:` becomes one on its own, no shortcut needed. Words that are not saved
   yet, for example while the scene cannot save, cannot be marked until they are;
-  if the selection also takes in saved words, only those are marked. When the
-  scene was changed in another window, choose which version to keep first.
+  if the selection also takes in saved words, only those are marked. If the
+  scene was changed in another window and you have edits here that are not
+  saved, choose which version to keep first, then mark the words again. If you
+  have no unsaved edits, the editor shows the newer version instead; select the
+  words and mark them again.
 - **Ctrl+Z** and **Ctrl+Shift+Z**: undo and redo.
 - **Ctrl+J**: ask the Assistant to continue the passage at the cursor (when the
   Assistant is set up). Tab accepts the grey suggestion; Esc dismisses it.
