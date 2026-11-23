@@ -230,6 +230,36 @@ describe('reading the scenes around an entity', () => {
 		expect(prompts[0]).not.toContain('Bram on the road');
 	});
 
+	it('says every story was muted or trashed when that left nothing to read (#1430)', async () => {
+		const muted = await makeStory('The Quiet Book');
+		const trashed = await makeStory('The Lost Book');
+		await writeScenes(muted, ['Bram in the MUTED-BOOK.']);
+		await writeScenes(trashed, ['Bram in the TRASHED-BOOK.']);
+		await writeScenes(storyId, ['The tide turned.']);
+		await saveStoryLlmOverride(db, muted, { enabled: false });
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, trashed));
+
+		const result = await read('scenes', { universeId });
+		expect(prompts).toHaveLength(0);
+		expect(result).toEqual({ suggestions: [], scenes: 0, requests: 0, skipped: 'all' });
+		// The story scope reads only its own story, which has no mention.
+		expect(await read('scenes')).toEqual({ suggestions: [], scenes: 0, requests: 0 });
+		expect(await read('scenes', { storyId: muted })).toMatchObject({ skipped: 'all' });
+		expect(prompts).toHaveLength(0);
+	});
+
+	it('does not count a trashed scene in a muted story as left out (#1430)', async () => {
+		const muted = await makeStory('The Quiet Book');
+		const [id] = await writeScenes(muted, ['Bram in the MUTED-BOOK.']);
+		await saveStoryLlmOverride(db, muted, { enabled: false });
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, id));
+		expect(await read('scenes', { universeId })).toEqual({
+			suggestions: [],
+			scenes: 0,
+			requests: 0
+		});
+	});
+
 	it('leaves out a trashed scene, as a mention and as a neighbour', async () => {
 		const ids = await writeScenes(storyId, [
 			'TRASHED-NEIGHBOUR scene.',
@@ -341,14 +371,14 @@ describe('reading the whole book', () => {
 	it('reads nothing of a story the Assistant is muted on, or one in the trash', async () => {
 		await writeScenes(storyId, ['FIRST the old man watched.', 'Bram counted the boats.']);
 		await saveStoryLlmOverride(db, storyId, { enabled: false });
-		expect((await read('book')).scenes).toBe(0);
-		expect((await read('scenes')).scenes).toBe(0);
+		expect(await read('book')).toMatchObject({ scenes: 0, skipped: 'all' });
+		expect(await read('scenes')).toMatchObject({ scenes: 0, skipped: 'all' });
 		await saveStoryLlmOverride(db, storyId, { enabled: null });
 		expect((await read('book')).scenes).toBe(2);
 
 		prompts = [];
 		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
-		expect((await read('book')).scenes).toBe(0);
+		expect(await read('book')).toMatchObject({ scenes: 0, skipped: 'all' });
 		expect(prompts).toHaveLength(0);
 	});
 

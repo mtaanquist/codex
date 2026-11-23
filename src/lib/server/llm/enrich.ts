@@ -17,6 +17,7 @@ import {
 	ENRICH_TEXT_REPLY_TOKENS,
 	enrichTextBudget,
 	entityExcerpts,
+	excerptsWithheld,
 	estimateEnrich,
 	formatExcerpts,
 	splitExcerptParts,
@@ -193,8 +194,8 @@ export type EnrichTextResult = {
 	spentUsd?: number;
 	// Set when the entity is not the user's, or not in the scope's universe.
 	missing?: boolean;
-	// Set when stories muted or trashed during the read left nothing to read
-	// ('all'), or took the part the summary is asked from ('summary').
+	// Set when stories muted or trashed since the read was queued left nothing
+	// to read ('all'), or took the part the summary is asked from ('summary').
 	skipped?: 'all' | 'summary';
 };
 
@@ -275,7 +276,11 @@ export async function enrichEntityFromText(
 	const kind = entity.type === 'lore_entry' ? ('lore' as const) : entity.type;
 
 	const excerpts = await entityExcerpts(db, { ...opts, kind });
-	if (excerpts.length === 0) return none;
+	if (excerpts.length === 0) {
+		// Muted or trashed after the read was queued, before it started.
+		const withheld = await excerptsWithheld(db, { ...opts, kind });
+		return withheld ? { ...none, skipped: 'all' } : none;
+	}
 	const budget = await enrichTextBudget(db, opts.userId, opts.scope);
 	const parts = splitExcerptParts(excerpts, budget.partTokens);
 	// Keyed by the job, so a retry carries on from what it already spent.

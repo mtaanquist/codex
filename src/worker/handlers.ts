@@ -365,10 +365,10 @@ export function createHandlers(deps: WorkerDeps) {
 				title = `The Assistant stopped reading for details about ${name} ${capStopPhrase(result.spentUsd ?? 0)}${left}. Raise the cap in settings, then ${DETAILS_AGAIN}.`;
 			} else if (result.partial) {
 				title = `The Assistant stopped partway through reading for details about ${name}${left}. ${result.partialNote ?? `To read the rest, ${DETAILS_AGAIN}.`}`;
-			} else if (result.scenes === 0) {
-				title = `The Assistant found no scenes that mention ${name}, so there was nothing to read.`;
 			} else if (result.skipped === 'all') {
 				title = `The Assistant read nothing for ${name}: every story it was going to read has since been muted for the Assistant or moved to the trash. Turn the Assistant back on for a story, then ${DETAILS_AGAIN}.`;
+			} else if (result.scenes === 0) {
+				title = `The Assistant found no scenes that mention ${name}, so there was nothing to read.`;
 			} else if (result.skipped === 'summary') {
 				const found =
 					staged > 0
