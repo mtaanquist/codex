@@ -351,11 +351,19 @@ export async function deleteAsset(db: Database, userId: string, assetId: string)
 
 type Inserter = Pick<Database, 'insert'>;
 
-export async function scheduleObjectDeletions(db: Inserter, keys: string[]): Promise<void> {
+// extraDays holds the object back that much longer than the usual wait, by
+// queueing it as if deleted in the future (the unused-image sweep does this,
+// so an image it freed can still be restored by hand for a while).
+export async function scheduleObjectDeletions(
+	db: Inserter,
+	keys: string[],
+	extraDays = 0
+): Promise<void> {
 	if (keys.length === 0) return;
+	const deletedAt = extraDays > 0 ? sql`now() + make_interval(days => ${extraDays})` : undefined;
 	await db
 		.insert(pendingObjectDeletions)
-		.values(keys.map((storageKey) => ({ storageKey })))
+		.values(keys.map((storageKey) => ({ storageKey, ...(deletedAt ? { deletedAt } : {}) })))
 		.onConflictDoNothing();
 }
 

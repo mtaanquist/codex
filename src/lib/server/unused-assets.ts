@@ -1,201 +1,229 @@
-import { and, asc, eq, gt, inArray, lte, sql, type SQL } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { assets } from './db/schema.ts';
 import { scheduleObjectDeletions } from './assets.ts';
-import { lockStorageOwners, releaseStorage } from './quotas.ts';
+import { releaseStorage } from './quotas.ts';
+import { logEvent } from './log.ts';
 
-// Freeing the storage of images nothing uses any more: the images a purged
-// story leaves behind (purgeStory) and the daily sweep of every image no row
-// points at (sweepUnusedAssets). Deleting an image a writer still uses is the
-// one mistake this must never make, so "used" is read as widely as possible:
-// an image is in use while its id appears anywhere in the database outside
-// its own assets row. That is every uuid column (covers, avatars, badges,
-// publication_assets) and the text of every text, json and array column
-// (scene and draft bodies, saved drafts, staged drafts, frozen editions,
-// history, notes, review suggestions, chat transcripts, settings). Columns are
-// read from the catalog on each run rather than listed here, so a table added
-// later is covered without anyone remembering to add it.
+// Frees the storage of uploaded images nothing uses any more: the worker's
+// sweepUnusedAssets, nightly and after a story is deleted for good. Deleting
+// an image a writer still uses is the one mistake this must never make, so
+// "used" is read as widely as possible: an image is in use while its id
+// appears anywhere in the database outside its own assets row. That is every
+// uuid column (covers, avatars, badges, publication_assets) and the text of
+// every text, json and array column (scene and draft bodies, saved drafts,
+// staged drafts, frozen editions, history, notes, review suggestions, chat
+// transcripts, settings). Columns are read from the catalog on each run
+// rather than listed here, so a table added later is covered without anyone
+// remembering to add it. Rows in the trash still exist, so their images stay.
 //
-// Rows in the trash still exist, so an image a trashed story or scene uses is
-// kept until that is purged. A deleted row's object is only queued
-// (scheduleObjectDeletions) and removed after the backup retention window.
+// An id typed into any row keeps the image, whoever wrote it: another
+// writer's prose naming it keeps it counted against its owner. That is
+// accepted (see docs/design/schema.md); narrowing the check would risk
+// deleting an image someone still shows.
 
-// An image newer than this is never freed: it may have just been pasted into
-// the editor and not saved yet.
-export const UNUSED_ASSET_GRACE_HOURS = 24;
+// An image newer than this is never freed. It may sit only in an editor that
+// has not saved yet, a save still retrying, or the undo history of an open
+// tab; autosaves a couple of minutes apart share one history entry, so an
+// image added and taken out again in one sitting may be in no saved row.
+export const UNUSED_ASSET_GRACE_DAYS = 30;
+// How much longer than usual a freed image's stored file is kept, so it can
+// still be restored by hand from the logged row (assets.unused_deleted).
+export const FREED_OBJECT_EXTRA_DAYS = 30;
 
-// Ids checked per query, and asset rows locked per transaction.
-const BATCH = 500;
+// Images deleted per transaction, so each holds its locks briefly.
+const CHUNK = 100;
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const UUID_PATTERN = sql.raw(`'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'`);
 
 type Column = { table: string; column: string; uuid: boolean };
 
-// Every column that could hold an asset id. Numbers, booleans, dates and
-// bytes cannot, so they are skipped; anything else is read as text.
-async function referenceColumns(db: Database): Promise<Column[]> {
+// Every column that could hold an asset id, from pg_catalog rather than
+// information_schema (which leaves out columns the role has no privilege
+// on). Numbers, booleans, dates, network and bit types, bytes and search
+// vectors cannot hold one; anything else is read as text.
+export async function referenceColumns(db: Database): Promise<Column[]> {
 	const result = await db.execute(sql`
-		select c.table_name as "table", c.column_name as "column", c.data_type = 'uuid' as uuid
-		from information_schema.columns c
-		join information_schema.tables t
-			on t.table_schema = c.table_schema and t.table_name = c.table_name
-		where c.table_schema = current_schema()
-			and t.table_type = 'BASE TABLE'
-			and c.table_name <> 'assets'
-			and c.data_type in (
-				'uuid', 'text', 'character varying', 'character', 'json', 'jsonb', 'ARRAY',
-				'USER-DEFINED'
-			)
-		order by c.table_name, c.column_name
+		select c.relname as "table", a.attname as "column", t.typname = 'uuid' as uuid
+		from pg_class c
+		join pg_namespace n on n.oid = c.relnamespace
+		join pg_attribute a on a.attrelid = c.oid
+		join pg_type t on t.oid = a.atttypid
+		where n.nspname = current_schema()
+			and c.relkind in ('r', 'p')
+			and not c.relispartition
+			and c.relname <> 'assets'
+			and a.attnum > 0
+			and not a.attisdropped
+			and t.typcategory not in ('N', 'B', 'D', 'T', 'G', 'I', 'V')
+			and t.typname not in ('bytea', 'tsvector', 'tsquery')
+		order by c.relname, a.attname
 	`);
-	return result.rows as Column[];
+	const columns = result.rows as Column[];
+	// A catalog read that comes back without the tables prose lives in would
+	// make every image look unused; refuse to go on.
+	for (const [table, column] of [
+		['scenes', 'body_md'],
+		['revisions', 'body_md'],
+		['stories', 'cover_asset_id']
+	]) {
+		if (!columns.some((c) => c.table === table && c.column === column)) {
+			throw new Error(`unused-asset check cannot see ${table}.${column}`);
+		}
+	}
+	return columns;
 }
 
-/**
- * The ids among these that any row references (see the note at the top).
- * One statement, so every table is read from the same snapshot: a reference
- * moving from one table to another while this runs is seen in one of them.
- */
-export async function findReferencedAssets(db: Database, ids: string[]): Promise<Set<string>> {
-	const wanted = [...new Set(ids.map((id) => id.toLowerCase()))];
-	if (wanted.length === 0) return new Set();
-	if (!wanted.every((id) => UUID_RE.test(id))) throw new Error('asset ids must be uuids');
-	const pattern = sql.raw(`'${UUID_PATTERN}'`);
-	const parts: SQL[] = (await referenceColumns(db)).map(({ table, column, uuid }) => {
+// The ids (as lowercase text) among `wanted` that the given columns hold.
+// wanted is a query yielding one text column named id.
+function referencesIn(columns: Column[], wanted: SQL): SQL {
+	const parts = columns.map(({ table, column, uuid }) => {
 		const t = sql.identifier(table);
 		const c = sql.identifier(column);
 		return uuid
 			? sql`select ${t}.${c}::text as id from ${t}
-				where ${t}.${c} in (select id::uuid from wanted)`
+				where ${t}.${c} in (select w.id::uuid from (${wanted}) w)`
 			: sql`select lower(m[1]) as id from ${t}
-				cross join lateral regexp_matches(${t}.${c}::text, ${pattern}, 'gi') as m
-				where lower(m[1]) in (select id from wanted)`;
+				cross join lateral regexp_matches(${t}.${c}::text, ${UUID_PATTERN}, 'gi') as m
+				where lower(m[1]) in (select w.id from (${wanted}) w)`;
 	});
-	if (parts.length === 0) return new Set();
-	const result = await db.execute(sql`
-		with wanted as (select unnest(string_to_array(${wanted.join(',')}, ',')) as id)
-		select distinct id from (${sql.join(parts, sql` union all `)}) refs
-	`);
-	return new Set((result.rows as { id: string }[]).map((row) => row.id));
+	return sql.join(parts, sql` union all `);
 }
 
-const pastGrace = (graceHours: number) =>
-	lte(assets.createdAt, sql`now() - make_interval(hours => ${graceHours})`);
+const pastGrace = (graceDays: number) =>
+	sql`created_at <= now() - make_interval(days => ${graceDays})`;
 
 /**
- * Deletes those of the given assets that nothing references, within the
- * caller's transaction, and gives their bytes back. The owners' account rows
- * are locked first and then the asset rows, the order every storage path
- * takes (see lockStorageOwners), and the references are checked again under
- * those locks: a check made before the transaction could be stale. A badge or
- * edition set meanwhile waits on the asset row lock (its foreign key) and is
- * seen by the check once it commits.
+ * The images past the grace period that no row references, in one statement:
+ * every column is read once, from one snapshot, so a reference moving between
+ * tables while it runs (a staged draft accepted into a scene) is seen in one
+ * of them.
  */
-export async function deleteUnreferencedAssets(
-	tx: Database,
-	candidates: { id: string; ownerId: string }[],
-	graceHours = UNUSED_ASSET_GRACE_HOURS
-): Promise<{ count: number; bytes: number }> {
-	let count = 0;
-	let bytes = 0;
-	for (let start = 0; start < candidates.length; start += BATCH) {
-		const chunk = candidates.slice(start, start + BATCH);
-		await lockStorageOwners(
-			tx,
-			chunk.map((row) => row.ownerId)
-		);
-		const locked = await tx
-			.select({ id: assets.id })
-			.from(assets)
-			.where(
-				and(
-					inArray(
-						assets.id,
-						chunk.map((row) => row.id)
-					),
-					pastGrace(graceHours)
-				)
-			)
-			.orderBy(asc(assets.id))
-			.for('update');
-		if (locked.length === 0) continue;
-		const referenced = await findReferencedAssets(
-			tx,
-			locked.map((row) => row.id)
-		);
-		const unused = locked.map((row) => row.id).filter((id) => !referenced.has(id));
-		if (unused.length === 0) continue;
-		const deleted = await tx.delete(assets).where(inArray(assets.id, unused)).returning({
-			storageKey: assets.storageKey,
-			ownerId: assets.ownerId,
-			byteSize: assets.byteSize
-		});
-		await releaseStorage(tx, deleted);
-		await scheduleObjectDeletions(
-			tx,
-			deleted.map((row) => row.storageKey)
-		);
-		count += deleted.length;
-		bytes += deleted.reduce((sum, row) => sum + row.byteSize, 0);
-	}
-	return { count, bytes };
-}
-
-/**
- * The assets a story purge should try to free, read before the story's rows
- * go: the owner's images in the story's universe (covers and inline images
- * are uploaded there) that are past the grace period. Any that something else
- * still uses survive deleteUnreferencedAssets.
- */
-export async function storyAssetCandidates(
-	tx: Database,
-	story: { ownerId: string; universeId: string },
-	graceHours = UNUSED_ASSET_GRACE_HOURS
+export async function findUnusedAssets(
+	db: Database,
+	graceDays = UNUSED_ASSET_GRACE_DAYS
 ): Promise<{ id: string; ownerId: string }[]> {
-	return tx
-		.select({ id: assets.id, ownerId: assets.ownerId })
-		.from(assets)
-		.where(
-			and(
-				eq(assets.ownerId, story.ownerId),
-				eq(assets.universeId, story.universeId),
-				pastGrace(graceHours)
-			)
-		)
-		.orderBy(asc(assets.id));
+	const columns = await referenceColumns(db);
+	const result = await db.execute(sql`
+		with old as (
+			select id::text as id, owner_id::text as owner_id from assets where ${pastGrace(graceDays)}
+		),
+		refs as (${referencesIn(columns, sql`select id from old`)})
+		select old.id, old.owner_id as "ownerId" from old
+		where not exists (select 1 from refs where refs.id = old.id)
+		order by old.owner_id, old.id
+	`);
+	return result.rows as { id: string; ownerId: string }[];
 }
 
+// The columns a writer types into or points at an image from. Checked again,
+// for the few images about to go, inside the deleting transaction: a link
+// saved after the full read is caught here. Asset uuid columns (covers,
+// avatars, badges, editions) are found by name.
+const RECHECK_TEXT = new Set([
+	'scenes.body_md',
+	'scenes.summary_md',
+	'notes.body_md',
+	'characters.body_md',
+	'places.body_md',
+	'lore_entries.body_md',
+	'stories.description_md',
+	'universes.description_md',
+	'users.bio_md',
+	'story_drafts.content',
+	'assistant_drafts.text_md'
+]);
+
+function recheckColumns(columns: Column[]): Column[] {
+	return columns.filter(({ table, column, uuid }) =>
+		uuid ? column.includes('asset') : RECHECK_TEXT.has(`${table}.${column}`)
+	);
+}
+
+type Freed = {
+	id: string;
+	ownerId: string;
+	storageKey: string;
+	byteSize: number;
+	contentType: string;
+	kind: string;
+	filename: string;
+	universeId: string | null;
+	createdAt: string;
+};
+
 /**
- * Deletes every asset past the grace period that nothing references, a batch
- * at a time. Each batch is checked without locks first, so most batches end
- * there; only the unused ones are locked and checked again before deleting.
+ * Deletes the given images (from findUnusedAssets) that still look unused,
+ * a chunk per transaction, and gives their bytes back. Each transaction locks
+ * the owners' account rows and then the image rows (the order every storage
+ * path takes, see lockStorageOwners), skipping any another session holds so a
+ * sign-in or an upload is never kept waiting; those are left for the next run.
+ * The writer-facing columns are checked again under the locks, and the stored
+ * files are queued to go later (scheduleObjectDeletions), never removed here.
  */
+export async function deleteUnusedAssets(
+	db: Database,
+	candidates: { id: string; ownerId: string }[],
+	graceDays = UNUSED_ASSET_GRACE_DAYS
+): Promise<Freed[]> {
+	if (candidates.length === 0) return [];
+	const recheck = recheckColumns(await referenceColumns(db));
+	const freed: Freed[] = [];
+	for (let start = 0; start < candidates.length; start += CHUNK) {
+		const chunk = candidates.slice(start, start + CHUNK);
+		const ids = chunk.map((row) => row.id).join(',');
+		const owners = [...new Set(chunk.map((row) => row.ownerId))].sort().join(',');
+		const deleted = await db.transaction(async (tx) => {
+			const locked = await tx.execute(sql`
+				select id from users where id::text = any(string_to_array(${owners}, ','))
+				order by id for no key update skip locked
+			`);
+			if (locked.rows.length === 0) return [];
+			const lockedOwners = (locked.rows as { id: string }[]).map((row) => row.id).join(',');
+			const rows = await tx.execute(sql`
+				select id::text as id from assets
+				where id::text = any(string_to_array(${ids}, ','))
+					and owner_id::text = any(string_to_array(${lockedOwners}, ','))
+					and ${pastGrace(graceDays)}
+				order by id for update skip locked
+			`);
+			const held = (rows.rows as { id: string }[]).map((row) => row.id);
+			if (held.length === 0) return [];
+			const wanted = sql`select unnest(string_to_array(${held.join(',')}, ',')) as id`;
+			const referenced = new Set(
+				(
+					(await tx.execute(sql`select distinct id from (${referencesIn(recheck, wanted)}) refs`))
+						.rows as { id: string }[]
+				).map((row) => row.id)
+			);
+			const unused = held.filter((id) => !referenced.has(id));
+			if (unused.length === 0) return [];
+			const result = await tx.execute(sql`
+				delete from assets where id::text = any(string_to_array(${unused.join(',')}, ','))
+				returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
+					byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
+					universe_id::text as "universeId", created_at::text as "createdAt"
+			`);
+			const gone = result.rows as Freed[];
+			await releaseStorage(tx, gone);
+			await scheduleObjectDeletions(
+				tx,
+				gone.map((row) => row.storageKey),
+				FREED_OBJECT_EXTRA_DAYS
+			);
+			return gone;
+		});
+		freed.push(...deleted);
+	}
+	return freed;
+}
+
+/** One run of the sweep: one full read, then the deletes. */
 export async function sweepUnusedAssets(
 	db: Database,
-	graceHours = UNUSED_ASSET_GRACE_HOURS
+	graceDays = UNUSED_ASSET_GRACE_DAYS
 ): Promise<{ count: number; bytes: number }> {
-	let count = 0;
-	let bytes = 0;
-	let after = '00000000-0000-0000-0000-000000000000';
-	for (;;) {
-		const batch = await db
-			.select({ id: assets.id, ownerId: assets.ownerId })
-			.from(assets)
-			.where(and(gt(assets.id, after), pastGrace(graceHours)))
-			.orderBy(asc(assets.id))
-			.limit(BATCH);
-		if (batch.length === 0) break;
-		after = batch[batch.length - 1].id;
-		const referenced = await findReferencedAssets(
-			db,
-			batch.map((row) => row.id)
-		);
-		const unused = batch.filter((row) => !referenced.has(row.id));
-		if (unused.length === 0) continue;
-		const freed = await db.transaction((tx) => deleteUnreferencedAssets(tx, unused, graceHours));
-		count += freed.count;
-		bytes += freed.bytes;
-	}
-	return { count, bytes };
+	const freed = await deleteUnusedAssets(db, await findUnusedAssets(db, graceDays), graceDays);
+	// Enough to put a row back by hand while its file is still kept.
+	for (const row of freed) logEvent('info', 'assets.unused_deleted', row);
+	return { count: freed.length, bytes: freed.reduce((sum, row) => sum + row.byteSize, 0) };
 }

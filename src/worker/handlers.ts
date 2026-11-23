@@ -5,7 +5,8 @@ import {
 	ASSISTANT_ENRICH_QUEUE,
 	DIGEST_DELAY_SECONDS,
 	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	NOTIFICATION_DIGEST_QUEUE
+	NOTIFICATION_DIGEST_QUEUE,
+	SWEEP_UNUSED_ASSETS_QUEUE
 } from '../lib/server/queues.ts';
 import * as schema from '../lib/server/db/schema.ts';
 import type { Database } from '../lib/server/auth.ts';
@@ -1182,14 +1183,18 @@ export function createHandlers(deps: WorkerDeps) {
 					logEvent('error', 'purge.universe_failed', { universeId, ...errorFields(error) });
 				}
 			}
+			let storiesPurged = 0;
 			for (const storyId of await listStoriesDueForPurge(db)) {
 				try {
 					await purgeStory(db, storyId);
+					storiesPurged += 1;
 					logEvent('info', 'purge.story', { storyId });
 				} catch (error) {
 					logEvent('error', 'purge.story_failed', { storyId, ...errorFields(error) });
 				}
 			}
+			// The images only those stories used are freed by the sweep.
+			if (storiesPurged > 0) await boss.send(SWEEP_UNUSED_ASSETS_QUEUE, {});
 		},
 
 		// Bucket objects of deleted rows, once no kept backup can still point at

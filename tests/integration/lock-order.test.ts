@@ -5,6 +5,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import {
+	assets,
 	assistantDrafts,
 	chapters,
 	characters,
@@ -38,6 +39,14 @@ import { saveStoryDetails } from '../../src/lib/server/story-details';
 import { restoreStory, trashStory } from '../../src/lib/server/story-lifecycle';
 import { saveUniverseDetails } from '../../src/lib/server/universe-details';
 import { purgeStory } from '../../src/lib/server/story-delete';
+import { sweepUnusedAssets } from '../../src/lib/server/unused-assets';
+import { publishStory } from '../../src/lib/server/publish';
+import { setEntityBadgeImage } from '../../src/lib/server/entity-badge';
+import {
+	ObjectNotFoundError,
+	type AssetConfig,
+	type AssetObjectStore
+} from '../../src/lib/server/assets';
 import { saveEntity } from '../../src/lib/server/entity-save';
 import { saveAccountLlmConfig, saveStoryLlmOverride } from '../../src/lib/server/llm/config';
 import {
@@ -53,7 +62,12 @@ import {
 } from '../../src/lib/server/story-replace';
 import { recordRevision, restoreRevision } from '../../src/lib/server/revisions';
 import { createSuggestion, decideSuggestion } from '../../src/lib/server/review';
-import { newStoryFromDraft, restoreDraftScene, saveDraft } from '../../src/lib/server/story-drafts';
+import {
+	newStoryFromDraft,
+	replaceCover,
+	restoreDraftScene,
+	saveDraft
+} from '../../src/lib/server/story-drafts';
 import {
 	purgeUniverse,
 	restoreUniverse,
@@ -103,7 +117,8 @@ const KEYS = {
 	aldric: 31,
 	quay: 32,
 	toll: 33,
-	category: 34
+	category: 34,
+	image: 41
 };
 type Key = keyof typeof KEYS;
 const S = {} as Record<Key, string>;
@@ -123,7 +138,8 @@ const NAMES: Record<Key, string> = {
 	aldric: 'character Aldric',
 	quay: 'place Quay',
 	toll: 'lore entry Toll',
-	category: 'lore category'
+	category: 'lore category',
+	image: 'image'
 };
 
 // What a holder takes: a row, or an advisory lock by the text its key hashes.
@@ -143,7 +159,8 @@ const ROWS: { table: string; key: Key }[] = [
 	{ table: 'scenes', key: 'T' },
 	{ table: 'characters', key: 'aldric' },
 	{ table: 'places', key: 'quay' },
-	{ table: 'lore_entries', key: 'toll' }
+	{ table: 'lore_entries', key: 'toll' },
+	{ table: 'assets', key: 'image' }
 ];
 
 // The advisory locks the write paths take (row-locks.ts, revisions.ts,
@@ -216,7 +233,9 @@ async function seed() {
 		displayName: 'L',
 		passwordHash: 'x',
 		role: 'user',
-		planId: limitedPlanId
+		planId: limitedPlanId,
+		handle: `locks${scenario}`,
+		publicArchiveEnabled: true
 	});
 	await db.insert(universes).values({ id: S.universe, ownerId: S.user, name: 'Lockland' });
 	await db
@@ -264,8 +283,38 @@ async function seed() {
 		title: 'Toll',
 		categoryId: S.category
 	});
+	// An image nothing uses, old enough for the unused-image sweep.
+	await db.insert(assets).values({
+		id: S.image,
+		ownerId: S.user,
+		universeId: S.universe,
+		kind: 'inline',
+		filename: 'map.png',
+		contentType: 'image/png',
+		byteSize: 10,
+		storageKey: `codex-assets/${S.image}`,
+		createdAt: new Date(Date.now() - 60 * 86_400_000)
+	});
 	for (const sceneId of [S.A, S.B, S.C, S.D]) await rebuildSceneMentions(db, sceneId);
 }
+
+// Uploads land here; the bucket has no part in the locks.
+const memoryStore: AssetObjectStore = {
+	async put() {},
+	async upload() {},
+	async get(key) {
+		throw new ObjectNotFoundError(key);
+	},
+	async remove() {}
+};
+const assetConfig: AssetConfig = {
+	endpoint: undefined,
+	region: 'auto',
+	bucket: 'test',
+	prefix: 'codex-assets',
+	accessKeyId: 'id',
+	secretAccessKey: 'secret'
+};
 
 // prepare runs after the seed and before anything is held: what the operation
 // needs to exist first (a saved draft, a suggestion to accept).
@@ -450,6 +499,35 @@ const OPS: Op[] = [
 		run: async (db) => ok(await restoreStory(db, S.user, S.story))
 	},
 	{ name: 'purge story', run: async (db) => await purgeStory(db, S.story) },
+	{ name: 'sweep unused images', run: async (db) => await sweepUnusedAssets(db) },
+	{
+		name: 'set the story cover',
+		run: async (db) => await replaceCover(db, S.story, S.image)
+	},
+	{
+		name: 'publish the story',
+		prepare: async () => {
+			await db
+				.update(scenes)
+				.set({ bodyMd: `Aldric walks in. ![map](/assets/${S.image})` })
+				.where(eq(scenes.id, S.A));
+		},
+		run: async (db) => ok(await publishStory(db, S.user, S.story))
+	},
+	{
+		name: 'replace a badge image',
+		prepare: async () => {
+			await db.update(characters).set({ badgeAssetId: S.image }).where(eq(characters.id, S.aldric));
+		},
+		run: async (db) =>
+			ok(
+				await setEntityBadgeImage(db, memoryStore, assetConfig, S.user, S.aldric, {
+					filename: 'badge.png',
+					contentType: 'image/png',
+					bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+				})
+			)
+	},
 	{
 		name: 'delete trashed scene for good',
 		run: async (db) => ok(await destroyScene(db, S.user, S.T))

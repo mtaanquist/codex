@@ -19,34 +19,47 @@ universe purge gave image bytes back, so a writer at the storage limit could
 not get under it. Deleting an image a writer still uses is the failure that
 matters, so "in use" is read as widely as possible: an image is kept while
 its id appears anywhere in the database outside its own `assets` row, in any
-uuid column or in the text of any text, json, array or user-defined column
-(`findReferencedAssets`). The columns come from `information_schema` on each
-run, so a table added later is covered without being listed; an explicit
-list of reference sources was weighed and dropped, since one forgotten
-column would mean lost images. That covers scenes (trashed too), history,
-saved drafts, staged drafts, frozen editions and their `publication_assets`,
-notes, entity bodies and badges, covers, avatars, review suggestions and
-chat transcripts. All columns are read in one statement, so one snapshot:
-a reference moving between tables (a staged draft accepted into a scene)
-cannot be missed by reading one table before and the other after.
-`sweepUnusedAssets` (worker queue `sweep-unused-assets`, 03:00 UTC) checks
-images older than 24 hours in batches of 500 without locks, then for the
-unused ones locks the owners' account rows, then the asset rows, checks
-again and deletes, giving the bytes back and queueing the objects in the
-same transaction. The object store is never called on this path; the
-existing deferred sweep removes objects later, so a store failure cannot
-leave a counted row or credit bytes for a row that stays. The second check
-under the locks closes the gap between the first check and the delete; the
-remaining window is a writer adding a link to an image no row has held for
-a day within the instant of that statement, and a badge or edition set at
-that moment waits on the asset row lock through its foreign key. `purgeStory`
-now locks the owner's account row first (as `purgeUniverseWithin` does),
-deletes the story, then runs the same locked check over the owner's images
-in the story's universe that are past the grace period, so a cover or
-image another story, saved draft or edition still shows is kept. Images
-newer than a day are left for the sweep, and so are images uploaded under
-another universe. Because history is never pruned, taking an image out of a
-scene frees nothing while the scene exists; the help says so.
+uuid column or in the text of any other column that could hold it. The
+columns come from `pg_catalog` on each run (information_schema hides columns
+the role has no privilege on), and the run refuses to go on if scenes,
+revisions or story covers are missing from the list; an explicit list of
+reference sources was weighed and dropped, since one forgotten column would
+mean lost images. `sweepUnusedAssets` (worker queue `sweep-unused-assets`,
+03:00 UTC, policy `stately` with a six hour expiry so runs never pile up)
+reads every such column once, in one statement and so one snapshot (a
+reference moving between tables, a staged draft accepted into a scene, is
+seen in one of them), and anti-joins the images older than the grace period.
+For those it then takes, a hundred at a time, the owners' account rows and
+the image rows with SKIP LOCKED, so a sign-in, a settings save or an upload
+is never kept waiting (a skipped one waits for the next run), checks again
+the columns writers type into or point at images from (scene, note and entry
+bodies, descriptions, saved and staged drafts, and every uuid column named
+for an asset), and deletes, giving the bytes back and queueing the objects
+in the same transaction. The object store is never called on this path.
+
+Review round 1 (independent review): the first version scanned the whole
+database twice per 500 images, the second time holding up to 500 account
+rows, and ran inside the story purge request. The grace period was 24 hours,
+but an image can live only in an unsaved editor, a save still retrying or the
+undo history of an open tab for longer than that, and autosaves a couple of
+minutes apart share one history entry, so an image added and removed in one
+sitting may be in no saved row. The grace is now 30 days. A freed image's
+object is queued 30 days later than usual and the deleted row is logged
+(`assets.unused_deleted`), so it can be put back by hand. Reviving a row
+automatically (from the image route or a save) was weighed and left out: the
+queue keeps only the key, so the owner, type and size would need a new
+column, and a revived image would be charged to an account that may since
+have filled its limit. The race window is not an instant: a link saved
+after the full read into a column the recheck does not cover (a revision
+written on its own, a chat transcript) is not seen. The recheck covers the
+places a writer adds a link, and with a 30 day grace the image has been in
+no row for a month. Badges and editions hold the asset row through a foreign
+key, so a sweep skips an image one is being pointed at. `purgeStory` no
+longer touches images; destroying a story from the trash queues a sweep, and
+the hourly trash purge queues one after purging stories. The sweep a purge
+queues frees every unused image past the grace, the story's and any other. Because history is never pruned, taking an
+image out of a scene usually frees nothing while the scene exists; the help
+says so.
 
 Large images shrink in the browser (2026-11-23, `feat/image-downscale` on
 `staging/phase-10`, #1450). Images used to be stored exactly as uploaded. Now

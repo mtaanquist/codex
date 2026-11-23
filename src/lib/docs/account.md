@@ -487,16 +487,17 @@ draft.
 
 Images in your text and story covers are freed once nothing uses them any
 more. Codex checks once a day and deletes an image when no scene, note, entry,
-saved draft, published edition or earlier version in a history still shows it.
-Images added in the last day are always kept. Because a scene's history keeps
-its earlier versions, taking an image out of a scene does not free it while
-the scene is still there.
+saved draft, published edition or saved version in a history still shows it.
+An image is always kept for 30 days after you add it, used or not. Taking an
+image out of a scene usually does not free it, because the scene's history
+still holds the older text with the image in it.
 
-Deleting a story for good frees its cover and the images only that story used
-right away. An image another story still shows is kept, and one added in the
-last day is freed by the daily check instead. Deleting a universe
-for good frees every image in it. Moving a story or universe to the trash is
-not enough; its images are kept until the trash is emptied.
+Deleting a story for good frees, within a few minutes, the images only that
+story used and that are more than 30 days old, including its cover. Newer ones
+are freed once they reach 30 days. An image another story still shows is
+kept. Deleting a universe for good frees every image in it at once. Moving a
+story or universe to the trash is not enough; its images are kept until the
+trash is emptied.
 
 ## Getting your work out
 

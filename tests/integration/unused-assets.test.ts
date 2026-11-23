@@ -7,11 +7,14 @@ import { randomUUID } from 'node:crypto';
 import * as schema from '../../src/lib/server/db/schema';
 import { assets, pendingObjectDeletions, users } from '../../src/lib/server/db/schema';
 import {
-	findReferencedAssets,
+	deleteUnusedAssets,
+	FREED_OBJECT_EXTRA_DAYS,
+	findUnusedAssets,
 	sweepUnusedAssets,
-	UNUSED_ASSET_GRACE_HOURS
+	UNUSED_ASSET_GRACE_DAYS
 } from '../../src/lib/server/unused-assets';
 import { purgeStory } from '../../src/lib/server/story-delete';
+import { trashStory } from '../../src/lib/server/story-lifecycle';
 import { createStoryInUniverse, createUniverse } from '../../src/lib/server/story-create';
 import { saveDraft } from '../../src/lib/server/story-drafts';
 import type { Database } from '../../src/lib/server/auth';
@@ -46,32 +49,29 @@ afterAll(async () => {
 
 // An uploaded image row, counted against its owner's storage the way
 // createAsset counts it. Old by default, so it is past the grace period.
-async function image(
-	opts: { bytes?: number; hoursOld?: number; universe?: string | null; owner?: string } = {}
-) {
+async function image(opts: { bytes?: number; daysOld?: number; universe?: string | null } = {}) {
 	const id = randomUUID();
-	const owner = opts.owner ?? ownerId;
 	const bytes = opts.bytes ?? 100;
 	await db.insert(assets).values({
 		id,
-		ownerId: owner,
+		ownerId,
 		universeId: opts.universe === undefined ? universeId : opts.universe,
 		kind: 'inline',
 		filename: 'a.png',
 		contentType: 'image/png',
 		byteSize: bytes,
 		storageKey: `codex-assets/${id}`,
-		createdAt: new Date(Date.now() - (opts.hoursOld ?? 48) * 3_600_000)
+		createdAt: new Date(Date.now() - (opts.daysOld ?? UNUSED_ASSET_GRACE_DAYS + 10) * 86_400_000)
 	});
 	await pool.query('update users set storage_used_bytes = storage_used_bytes + $1 where id = $2', [
 		bytes,
-		owner
+		ownerId
 	]);
 	return id;
 }
 
-async function story(title = 'Tale') {
-	const created = await createStoryInUniverse(db, ownerId, universeId, title);
+async function story(title = 'Tale', inUniverse = universeId) {
+	const created = await createStoryInUniverse(db, ownerId, inUniverse, title);
 	return created.id as string;
 }
 
@@ -80,6 +80,15 @@ async function scene(storyId: string, body: string, opts: { trashed?: boolean } 
 		`insert into scenes (story_id, global_position, body_md, deleted_at)
 		 values ($1, (select count(*) from scenes where story_id = $1), $2, $3) returning id`,
 		[storyId, body, opts.trashed ? new Date() : null]
+	);
+	return rows[0].id as string;
+}
+
+async function edition(storyId: string, content: unknown) {
+	const { rows } = await pool.query(
+		`insert into publications (story_id, owner_id, handle, title, content, is_current)
+		 values ($1, $2, 'free', 'Tale', $3, false) returning id`,
+		[storyId, ownerId, JSON.stringify(content)]
 	);
 	return rows[0].id as string;
 }
@@ -99,32 +108,37 @@ async function used() {
 	return row.used;
 }
 
-async function queuedKeys() {
-	const rows = await db.select().from(pendingObjectDeletions);
-	return new Set(rows.map((row) => row.storageKey));
+async function unusedIds() {
+	return new Set((await findUnusedAssets(db)).map((row) => row.id));
 }
 
-describe('findReferencedAssets', () => {
-	it('finds an id wherever a row holds it, in any column or casing', async () => {
+describe('findUnusedAssets', () => {
+	it('keeps an image wherever a row holds its id, in any column or casing', async () => {
 		const storyId = await story();
+		const trashedStory = await story('Trashed');
 		const sceneId = await scene(storyId, 'No images here.');
 		const ids = {
 			sceneBody: await image(),
 			trashedScene: await image(),
-			revision: await image(),
+			trashedStory: await image(),
+			revisionOnly: await image(),
 			note: await image(),
 			cover: await image(),
 			avatar: await image({ universe: null }),
 			badge: await image(),
-			jsonb: await image(),
+			savedDraft: await image(),
+			editionContent: await image(),
+			editionAsset: await image(),
 			upper: await image(),
 			unused: await image()
 		};
 		await scene(storyId, link(ids.sceneBody));
 		await scene(storyId, link(ids.trashedScene), { trashed: true });
+		await scene(trashedStory, link(ids.trashedStory));
+		expect(await trashStory(db, ownerId, trashedStory)).toBe(true);
 		await pool.query(
 			`insert into revisions (entity_type, entity_id, body_md) values ('scene', $1, $2)`,
-			[sceneId, link(ids.revision)]
+			[sceneId, link(ids.revisionOnly)]
 		);
 		await pool.query(`insert into notes (owner_id, story_id, body_md) values ($1, $2, $3)`, [
 			ownerId,
@@ -139,27 +153,30 @@ describe('findReferencedAssets', () => {
 		);
 		await pool.query(
 			`insert into story_drafts (story_id, owner_id, label, content) values ($1, $2, 'Kept', $3)`,
-			[storyId, ownerId, JSON.stringify({ coverAssetId: ids.jsonb })]
+			[storyId, ownerId, JSON.stringify({ scenes: [{ bodyMd: link(ids.savedDraft) }] })]
 		);
+		await edition(storyId, { unfiled: [{ bodyMd: link(ids.editionContent) }] });
+		const pub = await edition(storyId, { unfiled: [] });
+		await pool.query('insert into publication_assets (publication_id, asset_id) values ($1, $2)', [
+			pub,
+			ids.editionAsset
+		]);
 		await pool.query('update scenes set summary_md = $1 where id = $2', [
 			`see /assets/${ids.upper.toUpperCase()}`,
 			sceneId
 		]);
 
-		const found = await findReferencedAssets(db, Object.values(ids));
-		const { unused, ...inUse } = ids;
-		expect(found).toEqual(new Set(Object.values(inUse)));
-		expect(found.has(unused)).toBe(false);
+		expect(await unusedIds()).toEqual(new Set([ids.unused]));
 	});
 
-	it('does not count an asset as referencing itself', async () => {
-		const id = await image();
-		expect(await findReferencedAssets(db, [id])).toEqual(new Set());
+	it('leaves out images newer than the grace period', async () => {
+		await image({ daysOld: UNUSED_ASSET_GRACE_DAYS - 1 });
+		expect(await unusedIds()).toEqual(new Set());
 	});
 });
 
 describe('sweepUnusedAssets', () => {
-	it('deletes old unreferenced images, gives the bytes back, and queues the objects', async () => {
+	it('deletes old unreferenced images, gives the bytes back, and keeps the file a while', async () => {
 		const storyId = await story();
 		const orphan = await image({ bytes: 300 });
 		const kept = await image({ bytes: 50 });
@@ -169,49 +186,60 @@ describe('sweepUnusedAssets', () => {
 		expect(await sweepUnusedAssets(db)).toEqual({ count: 1, bytes: 300 });
 		expect(await remaining([orphan, kept])).toEqual(new Set([kept]));
 		expect(await used()).toBe(50);
-		expect(await queuedKeys()).toEqual(new Set([`codex-assets/${orphan}`]));
+		const queued = await db.select().from(pendingObjectDeletions);
+		expect(queued.map((row) => row.storageKey)).toEqual([`codex-assets/${orphan}`]);
+		// Queued as if deleted later, so it outlasts the usual wait by that much.
+		const ahead = (queued[0].deletedAt.getTime() - Date.now()) / 86_400_000;
+		expect(ahead).toBeGreaterThan(FREED_OBJECT_EXTRA_DAYS - 1);
 	});
 
-	it('keeps an image newer than the grace period, even unreferenced', async () => {
-		const fresh = await image({ hoursOld: UNUSED_ASSET_GRACE_HOURS - 1 });
-		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
-		expect(await remaining([fresh])).toEqual(new Set([fresh]));
-	});
-
-	it('works through more images than one batch', async () => {
-		for (let i = 0; i < 520; i += 1) await image({ bytes: 1 });
+	it('works through more images than one transaction takes', async () => {
+		for (let i = 0; i < 130; i += 1) await image({ bytes: 1 });
 		const storyId = await story();
 		const kept = await image({ bytes: 7 });
 		await scene(storyId, link(kept));
-		expect(await sweepUnusedAssets(db)).toEqual({ count: 520, bytes: 520 });
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 130, bytes: 130 });
 		expect(await used()).toBe(7);
 	});
 
-	it('keeps an image that gains a reference while the sweep waits to delete it', async () => {
+	it('keeps an image a writer links after the full read, before the delete', async () => {
 		const storyId = await story();
 		const target = await image({ bytes: 40 });
-		// Hold the account row, so the sweep passes its first check (the image
-		// is unused then) and stops at the lock before deleting.
+		const candidates = await findUnusedAssets(db);
+		expect(candidates.map((row) => row.id)).toEqual([target]);
+		await scene(storyId, link(target));
+		expect(await deleteUnusedAssets(db, candidates)).toEqual([]);
+		expect(await remaining([target])).toEqual(new Set([target]));
+		expect(await used()).toBe(40);
+	});
+
+	it('keeps an image set as a cover after the full read', async () => {
+		const storyId = await story();
+		const target = await image();
+		const candidates = await findUnusedAssets(db);
+		await pool.query('update stories set cover_asset_id = $1 where id = $2', [target, storyId]);
+		expect(await deleteUnusedAssets(db, candidates)).toEqual([]);
+		expect(await remaining([target])).toEqual(new Set([target]));
+	});
+
+	it('skips an account another session holds and frees its images next time', async () => {
+		const target = await image({ bytes: 40 });
 		const holder = await pool.connect();
 		try {
 			await holder.query('begin');
-			await holder.query('select id from users where id = $1 for update', [ownerId]);
-			const sweep = sweepUnusedAssets(db);
-			await waitForLockWait(holder);
-			// The writer saves a scene with the image while the sweep waits.
-			await scene(storyId, link(target));
+			await holder.query('select id from users where id = $1 for no key update', [ownerId]);
+			expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
 			await holder.query('commit');
-			expect(await sweep).toEqual({ count: 0, bytes: 0 });
 		} finally {
 			holder.release();
 		}
 		expect(await remaining([target])).toEqual(new Set([target]));
-		expect(await used()).toBe(40);
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 1, bytes: 40 });
 	});
 });
 
-describe('purgeStory frees storage', () => {
-	it('frees the images only the purged story used and keeps the rest', async () => {
+describe('after a story is deleted for good', () => {
+	it('the sweep frees the images only that story used and keeps the rest', async () => {
 		const doomed = await story('Doomed');
 		const other = await story('Other');
 		const ids = {
@@ -221,16 +249,12 @@ describe('purgeStory frees storage', () => {
 			shared: await image({ bytes: 1000 }),
 			inOtherDraft: await image({ bytes: 2000 }),
 			avatar: await image({ bytes: 4000, universe: null }),
-			fresh: await image({ bytes: 8000, hoursOld: 1 })
+			fresh: await image({ bytes: 8000, daysOld: 1 })
 		};
 		await pool.query('update stories set cover_asset_id = $1 where id = $2', [ids.cover, doomed]);
 		await scene(doomed, `${link(ids.inline)} ${link(ids.shared)} ${link(ids.fresh)}`);
 		await scene(doomed, link(ids.inOtherDraft));
-		await pool.query(
-			`insert into publications (story_id, owner_id, handle, title, content)
-			 values ($1, $2, 'free', 'Doomed', $3)`,
-			[doomed, ownerId, JSON.stringify({ scenes: [{ bodyMd: link(ids.inEdition) }] })]
-		);
+		await edition(doomed, { unfiled: [{ bodyMd: link(ids.inEdition) }] });
 		await pool.query('update users set avatar_asset_id = $1 where id = $2', [ids.avatar, ownerId]);
 		await scene(other, link(ids.shared));
 		// A saved draft of the other story still shows this image, though the
@@ -242,40 +266,23 @@ describe('purgeStory frees storage', () => {
 		const before = await used();
 
 		await purgeStory(db, doomed);
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 3, bytes: 60 });
 
 		expect(await remaining(Object.values(ids))).toEqual(
 			new Set([ids.shared, ids.inOtherDraft, ids.avatar, ids.fresh])
 		);
 		expect(await used()).toBe(before - 60);
-		const queued = await queuedKeys();
-		for (const id of [ids.cover, ids.inline, ids.inEdition]) {
-			expect(queued.has(`codex-assets/${id}`)).toBe(true);
-		}
 	});
 
 	it('keeps an image another universe uses, though it was uploaded here', async () => {
 		const doomed = await story('Doomed');
 		const elsewhere = (await createUniverse(db, ownerId, 'Elsewhere')).id;
-		const far = await createStoryInUniverse(db, ownerId, elsewhere, 'Far');
+		const far = await story('Far', elsewhere);
 		const id = await image();
 		await scene(doomed, link(id));
-		await scene(far.id, link(id));
+		await scene(far, link(id));
 		await purgeStory(db, doomed);
+		await sweepUnusedAssets(db);
 		expect(await remaining([id])).toEqual(new Set([id]));
 	});
 });
-
-// Waits until some other session is blocked on a lock the holder has.
-async function waitForLockWait(holder: pg.PoolClient) {
-	const { rows } = await holder.query('select pg_backend_pid() as pid');
-	const pid = rows[0].pid;
-	for (let i = 0; i < 200; i += 1) {
-		const waiting = await pool.query(
-			`select 1 from pg_stat_activity where $1 = any(pg_blocking_pids(pid))`,
-			[pid]
-		);
-		if (waiting.rowCount) return;
-		await new Promise((resolve) => setTimeout(resolve, 25));
-	}
-	throw new Error('the sweep never waited on the lock');
-}
