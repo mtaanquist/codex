@@ -65,6 +65,13 @@ export function megabytesValue(bytes: number | null): string {
 	return String((bytes > 0 ? Math.max(tenths, 1) : 0) / 10);
 }
 
+/** A plan's per-image limit as its MB field shows it. A stored limit above
+ * MAX_IMAGE_BYTES (set outside the form) shows as MAX_IMAGE_BYTES, the size
+ * that applies, so the form can still be saved unchanged. */
+export function imageMegabytesValue(bytes: number | null): string {
+	return megabytesValue(bytes === null ? null : Math.min(bytes, MAX_IMAGE_BYTES));
+}
+
 /**
  * parseMegabytesInput for a form that also posts the stored size in bytes.
  * The MB field rounds to 0.1 MB, so when it still shows exactly what
@@ -111,7 +118,8 @@ export function quotaMessage(key: QuotaKey, limit: number, action: QuotaAction =
 		return `This image would take you past your account's limit of ${phrase} of uploaded images. To upload more, ${ask}`;
 	}
 	if (action === 'restore') {
-		return `Restoring this would take you past your account's limit of ${phrase}. To restore it, ${ask}`;
+		const one = NOUNS[key][0];
+		return `Restoring this would take you past your account's limit of ${phrase}. To make room, move another ${one} to the trash, or ${ask} Until then it stays in the trash and is still deleted for good when its days run out.`;
 	}
 	if (action === 'revive') {
 		return `Your standalone stories are in the trash, and a new standalone story brings them back. Together they would take you past your account's limit of ${phrase}. To add it, ${ask}`;

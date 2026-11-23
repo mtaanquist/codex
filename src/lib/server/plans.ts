@@ -2,8 +2,9 @@
 // choosing the default, assigning a plan to an account, and the per-account
 // usage the Usage & storage section shows. Enforcement is in quotas.ts.
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
-import { liveCountsSql } from './quotas.ts';
+import { and, asc, count, desc, eq, gt, ilike, inArray, or, sql } from 'drizzle-orm';
+import { recountStorageUsed } from './quotas.ts';
+import { likePattern } from './sql-like.ts';
 import type { Database } from './auth.ts';
 import { entitlements, plans, users } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
@@ -167,20 +168,105 @@ export type AccountUsage = {
 	storageBytes: number;
 };
 
-/** Every account's use of what its plan limits, counted the way quotas.ts
- * counts it (live rows only). */
-export async function listAccountUsage(db: Database): Promise<AccountUsage[]> {
-	const counts = liveCountsSql(sql`${users.id}`);
-	return db
+export const USAGE_PAGE_SIZE = 50;
+
+export type AccountUsagePage = {
+	accounts: AccountUsage[];
+	// Accounts matching the search, on every page.
+	total: number;
+	// Zero-based.
+	page: number;
+	hasMore: boolean;
+};
+
+/**
+ * One page of accounts' use of what their plans limit, biggest image use
+ * first. query narrows it to accounts whose email or display name contains
+ * the text. The counts follow the same rules as liveCountsSql in quotas.ts
+ * (live rows only), computed for the whole page in one grouped query.
+ */
+export async function listAccountUsage(
+	db: Database,
+	{ query = '', page = 0 }: { query?: string; page?: number } = {}
+): Promise<AccountUsagePage> {
+	const safePage = Math.max(0, Math.floor(Number.isFinite(page) ? page : 0));
+	const text = query.trim();
+	const pattern = likePattern(text);
+	const match = text
+		? or(ilike(users.email, pattern), ilike(users.displayName, pattern))
+		: undefined;
+	const [{ total }] = await db.select({ total: count() }).from(users).where(match);
+	// One row past the page says whether a next page exists.
+	const rows = await db
 		.select({
 			id: users.id,
 			email: users.email,
 			displayName: users.displayName,
 			planId: users.planId,
-			universes: counts.universes,
-			stories: counts.stories,
 			storageBytes: users.storageUsedBytes
 		})
 		.from(users)
-		.orderBy(desc(users.storageUsedBytes), desc(users.createdAt));
+		.where(match)
+		.orderBy(desc(users.storageUsedBytes), desc(users.createdAt), asc(users.id))
+		.limit(USAGE_PAGE_SIZE + 1)
+		.offset(safePage * USAGE_PAGE_SIZE);
+	const pageRows = rows.slice(0, USAGE_PAGE_SIZE);
+	const counts = new Map<string, { universes: number; stories: number }>();
+	if (pageRows.length > 0) {
+		const ids = sql.join(
+			pageRows.map((row) => sql`${row.id}::uuid`),
+			sql`, `
+		);
+		const result = await db.execute(sql`
+			select owner_id, sum(u)::int as universes, sum(s)::int as stories from (
+				select qu.owner_id, 1 as u, 0 as s from universes qu
+				where qu.owner_id in (${ids}) and qu.deleted_at is null and not qu.standalone
+				union all
+				select qs.owner_id, 0, 1 from stories qs
+				join universes qu on qu.id = qs.universe_id
+				where qs.owner_id in (${ids}) and qs.deleted_at is null and qu.deleted_at is null
+			) live
+			group by owner_id
+		`);
+		for (const row of result.rows as { owner_id: string; universes: number; stories: number }[]) {
+			counts.set(row.owner_id, { universes: row.universes, stories: row.stories });
+		}
+	}
+	return {
+		accounts: pageRows.map((row) => ({
+			...row,
+			universes: counts.get(row.id)?.universes ?? 0,
+			stories: counts.get(row.id)?.stories ?? 0
+		})),
+		total,
+		page: safePage,
+		hasMore: rows.length > USAGE_PAGE_SIZE
+	};
+}
+
+export const RECOUNT_BATCH = 200;
+
+/**
+ * Recounts the image storage of up to `limit` accounts, in id order after
+ * `after` (from the start when null), each in its own short transaction (see
+ * recountStorageUsed). next is the id to continue after, or null when every
+ * account has been done.
+ */
+export async function recountStorageBatch(
+	db: Database,
+	after: string | null,
+	limit = RECOUNT_BATCH
+): Promise<{ recounted: number; next: string | null }> {
+	const rows = await db
+		.select({ id: users.id })
+		.from(users)
+		.where(after ? gt(users.id, after) : undefined)
+		.orderBy(asc(users.id))
+		.limit(limit + 1);
+	const batch = rows.slice(0, limit);
+	for (const row of batch) await recountStorageUsed(db, row.id);
+	return {
+		recounted: batch.length,
+		next: rows.length > limit ? batch[batch.length - 1].id : null
+	};
 }

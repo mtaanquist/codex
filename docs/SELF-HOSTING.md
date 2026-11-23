@@ -329,25 +329,24 @@ image out of the text, and deleting a story or universe for good delete no
 image at once. A worker job at 03:00 UTC each night deletes the images that
 nothing has used for 30 days and that were uploaded more than 30 days ago.
 Each deletion is logged as `assets.unused_deleted` with the image row, except
-its original filename.
-The worker removes a stored file only once it is older than the oldest kept
-backup: one day longer than `BACKUP_KEEP_DAYS` or `BACKUP_KEEP_RECENT_HOURS`,
-whichever reaches further back, or one day when backups are off. Files freed
-by the nightly job wait 30 days more on top of that, so an image deleted by
-mistake can be put back by inserting its logged row again with any filename;
-run **Admin > Usage
-& storage > Recount images** afterwards so the account's storage total counts
-it. Restoring any kept dump therefore still finds every image it points at. If you switch backups off later, the dumps already in the bucket
-stay there but the wait drops to one day, so images deleted after that are
-missing if you restore one of those older dumps.
+its original filename. The worker removes a stored file only once it is older
+than the oldest kept backup: one day longer than `BACKUP_KEEP_DAYS` or
+`BACKUP_KEEP_RECENT_HOURS`, whichever reaches further back, or one day when
+backups are off. Restoring any kept dump therefore still finds every image it
+points at. Files freed by the nightly job wait 30 days more on top of that, so
+an image deleted by mistake can be put back by inserting its logged row again
+with any filename; run **Admin > Usage & storage > Recount images** afterwards
+so the account's storage total counts it. If you switch backups off later, the
+dumps already in the bucket stay there but the wait drops to one day, so
+images deleted after that are missing if you restore one of those older dumps.
 If the asset bucket itself is lost, though, the images are gone: turn on
 versioning or replication for that bucket at your storage provider, or copy it
 somewhere else on a schedule. The bundled RustFS bucket lives in a Docker
 volume on the same host, so back that volume up too. Deleting an account
 removes its images straight away, without the wait, including the files of
-images and editions it had already deleted that are still waiting; their
-log lines keep the image ids and the account id, so keep log retention short
-if that matters to you.
+images and editions it had already deleted that are still waiting; their log
+lines keep the image ids and the account id, so keep log retention short if
+that matters to you.
 
 Images count toward the storage limit of the account's plan until they are
 deleted. Plans and their limits (universes, stories, image storage, and the

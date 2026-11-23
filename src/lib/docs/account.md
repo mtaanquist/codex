@@ -474,13 +474,18 @@ from the trash, or store the image. To go past a limit,
 ask the admin of your site to raise it.
 
 Universes and stories in the trash do not count toward the limits, so moving
-one to the trash makes room. Restoring it counts again. Text never counts.
+one to the trash makes room. Restoring it counts again. If restoring one would
+take you past a limit, it stays in the trash and is still deleted for good when
+its days run out, so move another one to the trash first or ask the admin to
+raise the limit. Text never counts.
 
 Before a picture uploads, Codex shrinks one wider or taller than 2560 pixels
-to that size and saves it as a WebP image, so it takes less space. Pictures at
-or under 2560 pixels, animated pictures such as GIFs, and ones that come out no
-smaller upload as they are. A picture that is still over your per-image limit
-is refused. This applies to pictures you upload: pictures in your text, covers,
+to that size, so it takes less space. A picture over your per-image limit is
+saved again at lower quality, and then at a smaller size, until it fits. A
+PNG, such as a screenshot, stays a PNG unless a WebP copy would be much
+smaller; other pictures are saved as WebP. Pictures that already fit, animated
+pictures such as GIFs, and ones that come out no smaller upload as they are.
+A picture that still does not fit is refused. This applies to pictures you upload: pictures in your text, covers,
 avatars and badges. Pictures inside a story file you import are not shrunk, so
 one over your per-image limit is skipped and the rest of the story imports.
 
