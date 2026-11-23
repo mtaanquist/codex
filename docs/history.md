@@ -13,6 +13,25 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Image uploads through undo and moved lines (2026-11-23,
+`fix/image-upload-review-4` on `staging/bug-fixes-4`, review of #1463). The
+#1463 fix stopped a finished upload from replacing text it did not insert by
+dropping the upload once its placeholder changed, but everyday edits change it
+(Enter at the end of its line, undo then redo of the paste, a moved line), so
+the placeholder was saved and the image lost. The tracked placeholder is now
+only the image text, without its line break, and each placeholder's text is
+unique in its editor. An edit that breaks the tracking is followed by a
+search for that exact text, accepted only when it appears exactly once, so an
+upload still never touches anything but its own placeholder. A finished upload
+keeps its result, so a placeholder that an undo brings back still turns into
+the image. Undoing a landed image brings the placeholder back. The editor
+then removes it outside undo history, so Ctrl+Z removes the image. This
+works because the landing replaced the line break as well, so redo still
+re-inserts the whole image line. Removing the placeholder inside the undo
+transaction (a transaction filter) was rejected: the history's remaining
+steps assume the document the undo alone produces, so the next undo would
+delete the wrong text.
+
 Undo brings back a marker whose words were deleted (2026-11-23,
 `fix/marker-undo-reattach` on `staging/bug-fixes-2`, #1429). Since #1415 a
 Write save detaches a marker whose words the writer deleted, and undo did not
