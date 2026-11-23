@@ -483,10 +483,16 @@ smaller upload as they are. A picture that is still over your per-image limit
 is refused. This applies to pictures in your text, covers, avatars and badges.
 
 Images count until they are deleted. Replacing your avatar, a badge or a
-story's cover does not delete the old image straight away, so it still counts
-for a while. You can still make the swap when you are at your storage limit,
-so your usage can briefly read above the limit afterwards. Until the old image
-is freed, you can make one such swap but not upload anything new.
+story's cover does not delete the old image straight away: it keeps counting
+until nothing uses it and the daily check below deletes it. A saved draft or a
+published edition that still shows the old image keeps it in use, so it keeps
+counting for as long as that draft or edition does. You can still make the
+swap when you are at your storage limit, so your usage can read above the
+limit until the old image is deleted. The swap has to be a direct replace:
+choose the new picture in place of the old one. Removing the old picture first
+and then uploading a new one counts as a new upload, which has to fit under
+the limit. Until the old image is deleted, you can make one such swap but not
+upload anything new.
 
 Images in your text, covers, avatars and badges are freed once nothing uses
 them any more. Codex checks once a day. The first time it finds that no scene,
@@ -500,10 +506,10 @@ holds the older text with the image in it.
 
 Deleting a story for good starts those 30 days, within a few minutes, for the
 images only that story used, including its cover. An image another story still
-shows is kept. Deleting a universe for good frees at once the images in it that
-are more than 30 days old and that nothing else shows. Newer ones, and any that
-a story in another universe still shows, are kept until the daily check finds
-them unused for 30 days. Moving a story or universe to the trash is not
+shows is kept. Deleting a universe for good starts those 30 days at once for
+every image in it. The daily check then deletes each one that is still unused
+30 days later and was added more than 30 days ago. An image a story in another
+universe still shows is kept. Moving a story or universe to the trash is not
 enough; its images are kept until the trash is emptied.
 
 ## Getting your work out

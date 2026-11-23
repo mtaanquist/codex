@@ -125,10 +125,10 @@
 			</h2>
 			<p class="admin-block-sub">
 				What each account uses against its plan. Universes and stories in the trash do not count.
-				Images count until they are deleted: by the daily check for images nothing uses, once they
-				are 30 days old (it also runs when a story is deleted for good), when their universe is
-				deleted for good and nothing else shows them, or with the account. A replaced avatar, badge
-				or cover waits for the daily check. Set limits under Plans.
+				Images count until they are deleted. A daily check deletes an image once nothing has used it
+				for 30 days in a row and it was uploaded more than 30 days ago. That includes a replaced
+				avatar, badge or cover, and the images of a story or universe deleted for good. Deleting an
+				account deletes its images at once. Set limits under Plans.
 			</p>
 		</div>
 	</div>

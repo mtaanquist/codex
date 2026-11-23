@@ -57,7 +57,11 @@ import {
 } from '../../src/lib/server/review';
 import { createMarker, deleteMarker, setMarkerResolved } from '../../src/lib/server/markers';
 import { createAsset, type AssetObjectStore } from '../../src/lib/server/assets';
-import { FREED_OBJECT_EXTRA_DAYS } from '../../src/lib/server/unused-assets';
+import {
+	FREED_OBJECT_EXTRA_DAYS,
+	sweepUnusedAssets,
+	UNREFERENCED_DAYS
+} from '../../src/lib/server/unused-assets';
 import { createChapter, createScene, trashScene } from '../../src/lib/server/scene-lifecycle';
 import { duplicateScene, mergeScenes } from '../../src/lib/server/scene-split-merge';
 import { clearMentionPin, setMentionPin } from '../../src/lib/server/mention-pins';
@@ -419,12 +423,13 @@ describe('destroy', () => {
 		});
 		expect((await destroyUniverse(db, strangerId, universeId)).ok).toBe(false);
 		expect((await destroyUniverse(db, ownerId, universeId)).ok).toBe(true);
-		// The image object is queued for the deferred sweep, not removed now.
-		const queued = await db
+		// The image is left, marked, for the unused image sweep.
+		const [image] = await db
 			.select()
-			.from(pendingObjectDeletions)
-			.where(eq(pendingObjectDeletions.storageKey, 'destroyed-img-key'));
-		expect(queued).toHaveLength(1);
+			.from(assets)
+			.where(eq(assets.storageKey, 'destroyed-img-key'));
+		expect(image).toMatchObject({ universeId: null });
+		expect(image.unreferencedSince).not.toBeNull();
 
 		expect(await db.select().from(universes).where(eq(universes.id, universeId))).toHaveLength(0);
 		expect(await db.select().from(stories).where(eq(stories.id, storyId))).toHaveLength(0);
@@ -493,14 +498,34 @@ describe('purging a universe', () => {
 				.where(eq(pendingObjectDeletions.storageKey, key))
 		).length > 0;
 
-	it('frees an image nothing else uses', async () => {
+	const imageRow = async (id: string) =>
+		(await db.select().from(assets).where(eq(assets.id, id)))[0];
+	// Moves an image's unused mark back far enough for the sweep to free it.
+	const markLongAgo = (id: string) =>
+		db
+			.update(assets)
+			.set({ unreferencedSince: new Date(Date.now() - (UNREFERENCED_DAYS + 1) * 86_400_000) })
+			.where(eq(assets.id, id));
+
+	it('keeps its images, marked, for the sweep to free once they are due', async () => {
 		await pool.query('truncate table pending_object_deletions');
 		const image = await imageHere();
 		await trashUniverse(db, ownerId, universeId);
 		expect(await purgeUniverse(db, universeId)).toBe(true);
-		expect(await db.select().from(assets).where(eq(assets.id, image.id))).toEqual([]);
+		const kept = await imageRow(image.id);
+		expect(kept).toMatchObject({ universeId: null });
+		expect(kept.unreferencedSince).not.toBeNull();
+		expect(await storageUsed()).toBe(5);
+		expect(await queued('shared-key')).toBe(false);
+
+		// Not due yet: unused for less than the waiting period.
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
+		expect(await imageRow(image.id)).toBeDefined();
+
+		await markLongAgo(image.id);
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 1, bytes: 5 });
+		expect(await imageRow(image.id)).toBeUndefined();
 		expect(await storageUsed()).toBe(0);
-		expect(await queued('shared-key')).toBe(true);
 		// Kept as long as a file the unused image sweep frees.
 		const [row] = await db
 			.select()
@@ -510,12 +535,22 @@ describe('purging a universe', () => {
 		expect(ahead).toBeGreaterThan(FREED_OBJECT_EXTRA_DAYS - 1);
 	});
 
-	it('leaves an image newer than the grace period for the sweep', async () => {
+	it('keeps an earlier unused mark', async () => {
+		const image = await imageHere();
+		const earlier = new Date(Date.now() - 10 * 86_400_000);
+		await db.update(assets).set({ unreferencedSince: earlier }).where(eq(assets.id, image.id));
+		await trashUniverse(db, ownerId, universeId);
+		expect(await purgeUniverse(db, universeId)).toBe(true);
+		expect((await imageRow(image.id)).unreferencedSince?.getTime()).toBe(earlier.getTime());
+	});
+
+	it('does not free an image newer than the grace period', async () => {
 		const image = await imageHere('new-key', 1);
 		await trashUniverse(db, ownerId, universeId);
 		expect(await purgeUniverse(db, universeId)).toBe(true);
-		const [kept] = await db.select().from(assets).where(eq(assets.id, image.id));
-		expect(kept).toMatchObject({ universeId: null });
+		await markLongAgo(image.id);
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
+		expect(await imageRow(image.id)).toMatchObject({ universeId: null });
 		expect(await storageUsed()).toBe(5);
 	});
 
@@ -525,10 +560,42 @@ describe('purging a universe', () => {
 		await otherUniverse(`A map: ![map](/assets/${image.id})`);
 		await trashUniverse(db, ownerId, universeId);
 		expect(await purgeUniverse(db, universeId)).toBe(true);
-		const [kept] = await db.select().from(assets).where(eq(assets.id, image.id));
+		await markLongAgo(image.id);
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
+		const kept = await imageRow(image.id);
 		expect(kept).toMatchObject({ universeId: null, storageKey: 'shared-key' });
+		// The sweep saw it in use and cleared the mark.
+		expect(kept.unreferencedSince).toBeNull();
 		expect(await storageUsed()).toBe(5);
 		expect(await queued('shared-key')).toBe(false);
+	});
+
+	it('does not hold the account while it reads every column', async () => {
+		await imageHere();
+		await trashUniverse(db, ownerId, universeId);
+		const holder = await pool.connect();
+		try {
+			// A table the purge has no business with but a read of every column
+			// would wait for: while the purge runs, the account row must stay
+			// free to lock.
+			await holder.query('begin');
+			await holder.query('lock table app_settings in access exclusive mode');
+			const running = purgeUniverse(db, universeId);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			const probe = await pool.connect();
+			try {
+				await probe.query('begin');
+				await probe.query('set local lock_timeout = 1000');
+				await probe.query('select id from users where id = $1 for no key update', [ownerId]);
+				await probe.query('rollback');
+			} finally {
+				probe.release();
+			}
+			await holder.query('commit');
+			expect(await running).toBe(true);
+		} finally {
+			holder.release();
+		}
 	});
 
 	it('goes through when an edition in another universe holds one of its images', async () => {
