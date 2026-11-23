@@ -285,3 +285,124 @@ test('keeping this version clears the marker message', async ({ page }) => {
 	await page.getByRole('button', { name: 'Keep mine' }).click();
 	await expect(message).toHaveCount(0);
 });
+
+// Two quick marks over text changed in another window: the second loads the
+// newer text, and the first, answered after that, must not then ask the
+// writer to choose a version when there is nothing to choose.
+test('a mark answered after the newer text loads keeps the right message', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Delta ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	const landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The tide came in.');
+	await landed;
+	await changeElsewhere(page, 'The tide came in.', 'The tide went out.');
+
+	let posts = 0;
+	await page.route('**/api/scenes/*/markers', async (route) => {
+		if (route.request().method() !== 'POST') return route.continue();
+		if (++posts === 1) await new Promise((resolve) => setTimeout(resolve, 1500));
+		await route.continue();
+	});
+	let answered = 0;
+	page.on('requestfinished', (request) => {
+		if (request.url().includes('/markers') && request.method() === 'POST') answered++;
+	});
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+End');
+	for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowLeft');
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await expect.poll(() => posts).toBe(1);
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await expect(editor).toHaveText('The tide went out.');
+	// Both answers are in; give the page a moment to act on the late one.
+	await expect.poll(() => answered).toBe(2);
+	await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 200)));
+	await expect(page.getByText('now shows the newer version')).toBeVisible();
+	await expect(page.getByText('Choose which version to keep')).toHaveCount(0);
+});
+
+async function pasteImage(page: Page, name: string) {
+	await page.getByRole('textbox', { name: 'Scene text' }).evaluate((el, fileName) => {
+		const data = new DataTransfer();
+		data.items.add(new File(['png'], fileName, { type: 'image/png' }));
+		el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+	}, name);
+}
+
+// While an image uploads the newer text cannot be loaded for the writer, so
+// marking keeps failing until the upload is done; the message says to wait.
+test('marking during an upload over changed text says to wait for the image', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Sound ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	let landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The bell rang.');
+	await landed;
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assets', async (route) => {
+		await held;
+		await route.fulfill({ json: { path: '/assets/bell.png' } });
+	});
+	landed = saved(page);
+	await page.keyboard.press('ControlOrMeta+End');
+	await page.keyboard.press('Enter');
+	await pasteImage(page, 'bell.png');
+	await expect(editor).toContainText('Uploading bell.png');
+	await landed;
+	await changeElsewhere(page, 'The bell rang.', 'The bell was silent.');
+
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+Home');
+	for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowRight');
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await expect(page.getByText('Wait for the image to finish uploading')).toBeVisible();
+	await expect(page.locator('.todo-marker')).toHaveCount(0);
+	release();
+});
+
+// Loading the newer text clears undo history, so a notice about an image that
+// was not added stops suggesting Undo.
+test('the lost-image notice stops suggesting Undo once newer text loads', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Bay ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	let landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The gull flew.');
+	await landed;
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assets', async (route) => {
+		await held;
+		await route.fulfill({ json: { path: '/assets/gull.png' } });
+	});
+	await page.keyboard.press('ControlOrMeta+End');
+	await page.keyboard.press('Enter');
+	await pasteImage(page, 'gull.png');
+	await expect(editor).toContainText('Uploading gull.png');
+	// Remove the "Uploading" line, then let the upload finish.
+	landed = saved(page);
+	await page.keyboard.press('ControlOrMeta+Home');
+	await page.keyboard.press('End');
+	await page.keyboard.press('ControlOrMeta+Shift+End');
+	await page.keyboard.press('Backspace');
+	await expect(editor).toHaveText('The gull flew.');
+	await landed;
+	release();
+	const notice = page.getByText('The image gull.png was not added');
+	await expect(notice).toContainText('Undo to bring it back');
+
+	await changeElsewhere(page, 'The gull flew.', 'The gull landed.');
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+End');
+	for (let i = 0; i < 7; i++) await page.keyboard.press('Shift+ArrowLeft');
+	await page.keyboard.press('ControlOrMeta+Alt+m');
+	await expect(page.getByText('now shows the newer version')).toBeVisible();
+	await expect(notice).toHaveText(
+		'The image gull.png was not added because its "Uploading" line was changed or removed. Add the image again.'
+	);
+});

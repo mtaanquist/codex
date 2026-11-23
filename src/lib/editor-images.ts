@@ -167,14 +167,45 @@ function extent(doc: Text, p: Pending): Range {
 	return { from: p.from, to: withBreak ? p.to + 1 : p.to };
 }
 
+// Lines, other than the tracked placeholder, that are exactly an upload's
+// placeholder text: copies the writer pasted. Each placeholder's text was
+// unique in the document when it was made, so a whole line of it is never
+// the writer's own words. A copy goes with the line break after it.
+function copyRanges(doc: string, p: Pending): Range[] {
+	const ranges: Range[] = [];
+	for (let at = doc.indexOf(p.text); at >= 0; at = doc.indexOf(p.text, at + 1)) {
+		const end = at + p.text.length;
+		const wholeLine =
+			(at === 0 || doc[at - 1] === '\n') && (end === doc.length || doc[end] === '\n');
+		if (!wholeLine || (p.placed && at === p.from)) continue;
+		ranges.push({ from: at, to: end < doc.length ? end + 1 : end });
+	}
+	return ranges;
+}
+
 // The text to store: an image still uploading is not the writer's text yet,
 // so its placeholder stays out (or a save on the way out would keep it for
-// good once the upload lands on a closed editor).
+// good once the upload lands on a closed editor), and so do copies of it.
 export function storedText(state: EditorState) {
-	return withoutRanges(
-		state.doc.toString(),
-		placedUploads(state).map((p) => extent(state.doc, p))
-	);
+	const doc = state.doc.toString();
+	const uploading = (state.field(pendingField, false) ?? []).filter((p) => p.result === undefined);
+	return withoutRanges(doc, [
+		...placedUploads(state).map((p) => extent(state.doc, p)),
+		...uploading.flatMap((p) => copyRanges(doc, p))
+	]);
+}
+
+// The transaction that removes the copies of an upload's placeholder once it
+// has finished, or null when there are none. Kept out of undo history, so
+// undo does not bring them back as text that would then be saved.
+export function clearCopies(state: EditorState, id: number): TransactionSpec | null {
+	const p = state.field(pendingField, false)?.find((entry) => entry.id === id);
+	const ranges = p ? copyRanges(state.doc.toString(), p) : [];
+	if (ranges.length === 0) return null;
+	return {
+		changes: ranges,
+		annotations: [landsWhilePaused.of(true), Transaction.addToHistory.of(false)]
+	};
 }
 
 // Whether an image is still uploading into this editor; its placeholder is
@@ -301,6 +332,22 @@ export function uploadFailure(fileName: string, status: number | null, reason?: 
 	return `The image ${fileName} could not be added. ${why}`;
 }
 
+const UNDO_ADVICE = 'Undo to bring it back, or add the image again.';
+
+// What the writer is told when an image finished uploading but its
+// placeholder was no longer in the text.
+export function lostImageMessage(fileName: string): string {
+	return `The image ${fileName} was not added because its "Uploading" line was changed or removed. ${UNDO_ADVICE}`;
+}
+
+// The same message once undo history was cleared (newer text loaded), when
+// undo can no longer bring the line back. Other messages are unchanged.
+export function withoutUndoAdvice(message: string): string {
+	return message.endsWith(UNDO_ADVICE)
+		? `${message.slice(0, -UNDO_ADVICE.length)}Add the image again.`
+		: message;
+}
+
 // onLost hears a message for the writer when an image was not added: the
 // upload was refused or failed, or it finished but its placeholder was no
 // longer in the text. onFound hears that same message again when an undo
@@ -328,9 +375,11 @@ export function imageUploadExtension(
 		const lost = replacement !== null && !uploadPlaced(view.state, id);
 		const spec = finishUpload(view.state, id, replacement);
 		if (spec) view.dispatch(spec);
+		const copies = clearCopies(view.state, id);
+		if (copies) view.dispatch(copies);
 		if (failure) onLost?.(failure);
 		else if (lost) {
-			const message = `The image ${fileName} was not added because its "Uploading" line was changed or removed. Undo to bring it back, or add the image again.`;
+			const message = lostImageMessage(fileName);
 			lostMessages.set(id, message);
 			onLost?.(message);
 		}
