@@ -4,11 +4,12 @@ import {
 	StateEffect,
 	StateField,
 	Transaction,
+	type ChangeSet,
 	type Extension,
 	type Text,
 	type TransactionSpec
 } from '@codemirror/state';
-import { isolateHistory } from '@codemirror/commands';
+import { invertedEffects, isolateHistory } from '@codemirror/commands';
 import { landsWhilePaused } from './editor-paused';
 
 // Paste or drop an image into the prose: it uploads and lands as a
@@ -33,6 +34,10 @@ type Pending = {
 	to: number;
 	// Whether the placeholder is in the text now, at from..to.
 	placed: boolean;
+	// Where the line break inserted after the placeholder is, or null once an
+	// edit deleted it. Only that break goes with the placeholder: when the
+	// writer joined it away, the break that now follows is the writer's.
+	lineBreak: number | null;
 	// undefined while uploading. Afterwards, what the placeholder turns into
 	// if it is (or comes back) in the text: the image, or null to remove it
 	// (a failed upload, or one that already landed and was undone).
@@ -41,6 +46,27 @@ type Pending = {
 
 const addPending = StateEffect.define<Pending>();
 const settlePending = StateEffect.define<{ id: number; result: string | null }>();
+// Carried by an undo or redo that puts an upload's deleted line break back.
+const restoreBreak = StateEffect.define<{ id: number; pos: number }>({
+	map: (value, mapping) => ({ ...value, pos: mapping.mapPos(value.pos, 1) })
+});
+
+// Where the line break at `pos` is after `changes`, or null if they deleted it.
+function mapBreak(changes: ChangeSet, newDoc: Text, pos: number | null): number | null {
+	if (pos === null) return null;
+	const from = changes.mapPos(pos, 1);
+	const to = changes.mapPos(pos + 1, -1);
+	return to - from === 1 && newDoc.sliceString(from, to) === '\n' ? from : null;
+}
+
+// Whether the transaction inserted the line break at `pos` itself.
+function insertsBreak(tr: Transaction, pos: number): boolean {
+	let inserted = false;
+	tr.changes.iterChangedRanges((_fromA, _toA, fromB, toB) => {
+		if (fromB <= pos && pos < toB) inserted = true;
+	});
+	return inserted && tr.newDoc.sliceString(pos, pos + 1) === '\n';
+}
 
 // Where an edit brought `text` back, if it did and the text is now in the
 // document exactly once. Only the changed stretches are looked at first, so
@@ -69,7 +95,8 @@ const pendingField = StateField.define<Pending[]>({
 			// Text typed against either edge stays outside the placeholder. An
 			// edit that touches the placeholder itself unplaces it until its
 			// exact text comes back.
-			next = next.map((p) => {
+			next = next.map((entry) => {
+				const p = { ...entry, lineBreak: mapBreak(tr.changes, tr.newDoc, entry.lineBreak) };
 				if (p.placed) {
 					const from = tr.changes.mapPos(p.from, 1);
 					const to = tr.changes.mapPos(p.to, -1);
@@ -88,6 +115,14 @@ const pendingField = StateField.define<Pending[]>({
 			else if (effect.is(settlePending)) {
 				const { id, result } = effect.value;
 				next = next.map((p) => (p.id === id ? { ...p, result } : p));
+			} else if (effect.is(restoreBreak)) {
+				// Only when this transaction put a line break back there: a
+				// joined undo step can carry the effect while removing the
+				// placeholder and its break together.
+				const { id, pos } = effect.value;
+				if (insertsBreak(tr, pos)) {
+					next = next.map((p) => (p.id === id ? { ...p, lineBreak: pos } : p));
+				}
 			}
 		}
 		return next;
@@ -119,10 +154,14 @@ function placedUploads(state: EditorState): Pending[] {
 	return (state.field(pendingField, false) ?? []).filter((p) => p.placed);
 }
 
-// A placeholder and the line break after it, when there is one: the stretch
-// it was inserted as, and what the image or its removal replaces.
+// A placeholder and the line break after it, while the break inserted with
+// it is still in the text: the stretch it was inserted as, and what the image
+// or its removal replaces. When the writer typed a new line right after the
+// placeholder, its own break sits further on; cutting the one next to it
+// leaves the same lines.
 function extent(doc: Text, p: Pending): Range {
-	return { from: p.from, to: doc.sliceString(p.to, p.to + 1) === '\n' ? p.to + 1 : p.to };
+	const withBreak = p.lineBreak !== null && doc.sliceString(p.to, p.to + 1) === '\n';
+	return { from: p.from, to: withBreak ? p.to + 1 : p.to };
 }
 
 // The text to store: an image still uploading is not the writer's text yet,
@@ -159,7 +198,14 @@ export function startUpload(at: number, fileName: string, state?: EditorState) {
 	for (let n = 2; taken(text); n++) text = `![Uploading ${fileName} (${n})...]()`;
 	const spec: TransactionSpec = {
 		changes: { from: at, insert: `${text}\n` },
-		effects: addPending.of({ id, text, from: at, to: at + text.length, placed: true }),
+		effects: addPending.of({
+			id,
+			text,
+			from: at,
+			to: at + text.length,
+			placed: true,
+			lineBreak: at + text.length
+		}),
 		scrollIntoView: true
 	};
 	return { id, spec, length: text.length + 1 };
@@ -213,7 +259,18 @@ export function settleUploads(state: EditorState): TransactionSpec | null {
 	return p ? replaceSpec(state, p, p.result ?? null, false) : null;
 }
 
-export const uploadTracking: Extension = pendingField;
+// An undo or redo can put a deleted line break back, but mapping cannot
+// follow it there, so the history carries where it goes.
+const breakHistory = invertedEffects.of((tr) => {
+	if (!tr.docChanged) return [];
+	return (tr.startState.field(pendingField, false) ?? []).flatMap((p) =>
+		p.lineBreak !== null && mapBreak(tr.changes, tr.newDoc, p.lineBreak) === null
+			? [restoreBreak.of({ id: p.id, pos: p.lineBreak })]
+			: []
+	);
+});
+
+export const uploadTracking: Extension = [pendingField, breakHistory];
 
 // onLost hears a message for the writer when an image finished uploading but
 // its placeholder was no longer in the text, so it was not added.
