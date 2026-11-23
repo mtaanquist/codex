@@ -27,10 +27,14 @@ with a message naming the size. The check is in `createAsset`, before the
 object is stored, and reuses the limits read for the storage pre-check, so
 an upload still reads the plan once outside the transaction. It does not
 need to be re-checked under the account lock the way storage is: nothing
-two uploads do at once changes the answer. The admin enters whole MB from 0
-to 10 (blank is the ceiling); a higher value is refused with a message
-saying so rather than quietly clamped, so the admin never saves something
-other than what they typed. The avatar hint on the account page now names
+two uploads do at once changes the answer. The admin enters whole MB from 1
+to 10 (blank is the ceiling; 0 would refuse every image, and the message
+telling the writer to choose a smaller image could not be followed); a
+higher value is refused with a message saying so rather than quietly
+clamped, so the admin never saves something other than what they typed.
+Review round 1 added the import preview line naming each bundled image the
+limit will skip, and read the limit on the account page only for the
+profile section. The avatar hint on the account page now names
 the account's own limit. Stacked on #1450 (`feat/image-downscale`), since
 both touch the same help article and history.
 

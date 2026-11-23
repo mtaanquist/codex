@@ -22,8 +22,9 @@
 	<h1 class="admin-title">Plans</h1>
 	<p class="admin-lede">
 		A plan sets how many universes and stories an account can have, how much space its uploaded
-		images can take, and how large one image can be. Leave a limit blank for no limit. Accounts are
-		on the default plan unless you pick another for them under Usage &amp; storage.
+		images can take, and how large one image can be. Leave a limit blank for no limit (a blank
+		largest image means {MAX_IMAGE_BYTES / MEGABYTE} MB). Accounts are on the default plan unless you
+		pick another for them under Usage &amp; storage.
 	</p>
 </div>
 
@@ -114,7 +115,7 @@
 							class="input short"
 							type="number"
 							name="maxImageMb"
-							min="0"
+							min="1"
 							max={MAX_IMAGE_BYTES / MEGABYTE}
 							placeholder={String(MAX_IMAGE_BYTES / MEGABYTE)}
 							value={storageValue(plan.limits.max_image_bytes)}

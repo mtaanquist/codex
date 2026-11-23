@@ -362,7 +362,9 @@ export const actions: Actions = {
 		const universes = parseLimitInput(formText(data, 'maxUniverses'), MAX_COUNT_LIMIT);
 		const stories = parseLimitInput(formText(data, 'maxStories'), MAX_COUNT_LIMIT);
 		const storageMb = parseLimitInput(formText(data, 'storageMb'), MAX_STORAGE_MB);
-		const imageMb = parseLimitInput(formText(data, 'maxImageMb'), MAX_IMAGE_BYTES / MEGABYTE);
+		// 0 would refuse every image, so the smallest size is 1 MB.
+		const parsedImageMb = parseLimitInput(formText(data, 'maxImageMb'), MAX_IMAGE_BYTES / MEGABYTE);
+		const imageMb = parsedImageMb === 0 ? undefined : parsedImageMb;
 		if (universes === undefined || stories === undefined) {
 			return fail(400, {
 				scope: 'plans',
@@ -381,7 +383,7 @@ export const actions: Actions = {
 			return fail(400, {
 				scope: 'plans',
 				planId,
-				message: `The largest image is a whole number of MB from 0 to ${MAX_IMAGE_BYTES / MEGABYTE}, or blank for ${MAX_IMAGE_BYTES / MEGABYTE} MB, the most any plan allows.`
+				message: `The largest image is a whole number of MB from 1 to ${MAX_IMAGE_BYTES / MEGABYTE}, or blank for ${MAX_IMAGE_BYTES / MEGABYTE} MB, the most any plan allows.`
 			});
 		}
 		if (!isUuid(planId)) {

@@ -92,8 +92,13 @@ describe('savePlan: largest image', () => {
 		await savePlan({ maxImageMb: '4' });
 		const result = await savePlan({ maxImageMb: '11' });
 		expect(result).toMatchObject({ status: 400, data: { scope: 'plans', planId } });
-		expect((result as { data: { message: string } }).data.message).toContain('from 0 to 10');
+		expect((result as { data: { message: string } }).data.message).toContain('from 1 to 10');
 		expect((await limits()).max_image_bytes).toBe(4 * MEGABYTE);
+	});
+
+	it('refuses 0, which would refuse every image', async () => {
+		expect(await savePlan({ maxImageMb: '0' })).toMatchObject({ status: 400 });
+		expect((await limits()).max_image_bytes).toBeNull();
 	});
 
 	it('leaves the other limits as they were saved', async () => {

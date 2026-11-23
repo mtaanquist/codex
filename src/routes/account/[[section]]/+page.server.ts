@@ -88,7 +88,7 @@ import { reauthLimit } from '#lib/server/reauth';
 import QRCode from 'qrcode';
 import { formText } from '#lib/server/validation';
 import { accountLimits } from '#lib/server/quotas';
-import { imageLimit } from '#lib/quota';
+import { imageLimit, MAX_IMAGE_BYTES } from '#lib/quota';
 import {
 	createPersonalToken,
 	listGrants,
@@ -192,7 +192,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		displayName: user.displayName,
 		email: user.email,
 		assetsConfigured: (await effectiveAssetConfig(db)) !== null,
-		maxImageBytes: imageLimit(await accountLimits(db, user.id)),
+		// Only the profile's avatar hint shows it.
+		maxImageBytes:
+			params.section === undefined ? imageLimit(await accountLimits(db, user.id)) : MAX_IMAGE_BYTES,
 		isAdmin: user.role === 'admin',
 		origin: publicOrigin(url),
 		profile,

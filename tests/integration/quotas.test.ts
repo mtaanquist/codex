@@ -50,7 +50,7 @@ import {
 	trashUniverse
 } from '../../src/lib/server/universe-lifecycle';
 import { newStoryFromDraft, saveDraft } from '../../src/lib/server/story-drafts';
-import { runImport } from '../../src/lib/server/import-story';
+import { previewImport, runImport } from '../../src/lib/server/import-story';
 import type { ImportPlan } from '../../src/lib/import-markdown';
 import { MAX_IMAGE_BYTES, MEGABYTE, NO_LIMITS, type Limits } from '../../src/lib/quota';
 import type { Database } from '../../src/lib/server/auth';
@@ -499,6 +499,20 @@ describe('storage', () => {
 			bytes: png(2 * MEGABYTE + 1)
 		});
 		expect(other.ok).toBe(true);
+	});
+
+	it('names the images an import will skip for the per-image limit', async () => {
+		await limitOwner({ max_image_bytes: MEGABYTE });
+		const world = await universe();
+		const plan = importPlan('Pictures');
+		plan.assets = [
+			{ id: 'a', path: 'assets/small.png', bytes: png(MEGABYTE) },
+			{ id: 'b', path: 'assets/big.png', bytes: png(MEGABYTE + 1) }
+		];
+		const preview = await previewImport(db, world, plan);
+		expect(preview.problems).toEqual([
+			'The image assets/big.png is larger than 1 MB and will not be imported.'
+		]);
 	});
 
 	it('keeps the 10 MB ceiling when a plan sets a higher per-image limit', async () => {
