@@ -290,24 +290,28 @@ export const uploadTracking: Extension = [pendingField, breakHistory];
 export function uploadFailure(fileName: string, status: number | null, reason?: string): string {
 	const why =
 		status === null
-			? 'Check your connection and paste the image again.'
+			? 'Check your connection and add the image again.'
 			: status === 503
 				? 'Image uploads are not set up on this server.'
 				: status === 413
 					? 'The image is too large.'
 					: (status === 400 || status === 429) && reason && /^[A-Z].*\.$/.test(reason)
 						? reason
-						: 'Paste the image again.';
+						: 'Add the image again.';
 	return `The image ${fileName} could not be added. ${why}`;
 }
 
 // onLost hears a message for the writer when an image was not added: the
 // upload was refused or failed, or it finished but its placeholder was no
-// longer in the text.
+// longer in the text. onFound hears that same message again when an undo
+// brings the placeholder back and the image lands after all.
 export function imageUploadExtension(
 	universeId: string,
-	onLost?: (message: string) => void
+	onLost?: (message: string) => void,
+	onFound?: (message: string) => void
 ): Extension {
+	// The messages for finished uploads whose placeholder was gone, by upload.
+	const lostMessages = new Map<number, string>();
 	// Settle a finished upload; a null replacement just removes the
 	// placeholder, the failed-upload case, and failure says why.
 	function clear(
@@ -326,9 +330,9 @@ export function imageUploadExtension(
 		if (spec) view.dispatch(spec);
 		if (failure) onLost?.(failure);
 		else if (lost) {
-			onLost?.(
-				`The image ${fileName} was not added because its "Uploading" line was changed or removed. Paste the image again.`
-			);
+			const message = `The image ${fileName} was not added because its "Uploading" line was changed or removed. Undo to bring it back, or add the image again.`;
+			lostMessages.set(id, message);
+			onLost?.(message);
 		}
 	}
 
@@ -381,8 +385,15 @@ export function imageUploadExtension(
 			if (!update.docChanged || !settleUploads(update.state)) return;
 			queueMicrotask(() => {
 				if (!update.view.dom.isConnected) return;
+				const settling = placedUploads(update.view.state).find((p) => p.result !== undefined);
 				const spec = settleUploads(update.view.state);
-				if (spec) update.view.dispatch(spec);
+				if (!spec) return;
+				update.view.dispatch(spec);
+				const message = settling && lostMessages.get(settling.id);
+				if (message && settling.result) {
+					lostMessages.delete(settling.id);
+					onFound?.(message);
+				}
 			});
 		}),
 		EditorView.domEventHandlers({

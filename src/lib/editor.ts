@@ -107,9 +107,12 @@ export function proseExtensions(opts: {
 // was given.
 export function showNewerText(
 	view: { state: EditorState; dispatch: (spec: TransactionSpec) => void },
-	next: string,
+	stored: string,
 	historyCompartment: Compartment
 ) {
+	// The stored text may hold \r\n line breaks, which the editor reads as one
+	// newline; compared raw, a lone \r would be left in and add a line.
+	const next = view.state.toText(stored).toString();
 	const doc = view.state.doc.toString();
 	let head = 0;
 	while (head < doc.length && head < next.length && doc[head] === next[head]) head++;

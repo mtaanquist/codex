@@ -364,16 +364,16 @@ describe('uploadFailure', () => {
 
 	it('says what to do when there is no reason for the writer', () => {
 		expect(uploadFailure('a.png', null)).toBe(
-			'The image a.png could not be added. Check your connection and paste the image again.'
+			'The image a.png could not be added. Check your connection and add the image again.'
 		);
 		expect(uploadFailure('a.png', 503, 'assets are not configured')).toBe(
 			'The image a.png could not be added. Image uploads are not set up on this server.'
 		);
 		expect(uploadFailure('a.png', 400, 'a file is required')).toBe(
-			'The image a.png could not be added. Paste the image again.'
+			'The image a.png could not be added. Add the image again.'
 		);
 		expect(uploadFailure('a.png', 500)).toBe(
-			'The image a.png could not be added. Paste the image again.'
+			'The image a.png could not be added. Add the image again.'
 		);
 	});
 });

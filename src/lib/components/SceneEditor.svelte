@@ -232,6 +232,8 @@
 
 	// Undo history is cleared (see showNewerText), so nothing from before can
 	// be undone onto the other window's words.
+	// The bases take the text as stored, \r\n and all, since the server
+	// checks its fingerprint; the editor shows it with plain newlines.
 	function showServerText(view: EditorView, newer: SceneConflict) {
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
@@ -657,9 +659,16 @@
 							})
 						: [],
 					imageUniverseId
-						? imageUploadExtension(imageUniverseId, (message) => {
-								lostImages = [...lostImages, message];
-							})
+						? imageUploadExtension(
+								imageUniverseId,
+								(message) => {
+									lostImages = [...lostImages, message];
+								},
+								(message) => {
+									const at = lostImages.indexOf(message);
+									if (at !== -1) lostImages = lostImages.filter((_, i) => i !== at);
+								}
+							)
 						: []
 				]
 			})
