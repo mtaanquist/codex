@@ -1,8 +1,18 @@
-import { StateEffect, StateField, Prec, type Extension } from '@codemirror/state';
+import {
+	ChangeSet,
+	Text,
+	StateField,
+	type Transaction,
+	Prec,
+	type ChangeDesc,
+	type Extension
+} from '@codemirror/state';
 import { invertedEffects } from '@codemirror/commands';
 import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet } from '@codemirror/view';
 import type { ViewUpdate } from '@codemirror/view';
 import { findTodoLines } from './todo-markers';
+import { textHash } from './text-hash';
+import { defineUndoSteps } from './undo-steps';
 
 // TODO markers in the editor: plain "TODO:" lines get a line highlight
 // straight from the text, and selection markers (rows in scene_markers)
@@ -17,22 +27,30 @@ export type SceneMarker = {
 
 type MarkerRange = { id: string; from: number; to: number };
 
-// Sets a marker back to the range it had before an undone edit, putting it
-// back if the edit had deleted its words. Carried in the undo history, so it
-// maps through later changes like the text does.
-const restoreMarker = StateEffect.define<MarkerRange>({
-	map: (value, mapping) => {
-		const from = mapping.mapPos(value.from, 1);
-		const to = mapping.mapPos(value.to, -1);
-		return from < to ? { id: value.id, from, to } : undefined;
-	}
-});
+// What one edit's undo (or one undo's redo) does to markers, carried in the
+// undo history (see undo-steps). A range sets a marker back to exactly the
+// range it had just before the edit. A drop takes away a marker that was gone
+// before the edit: without it, a marker that undo put back could map onto the
+// replacement text on redo and survive. Drops apply across a marker set
+// rebuilt in between, since a rebuild keeps the positions the editor shows and
+// never places a held marker it was not showing.
+type MarkerRecord = MarkerRange | { drop: string };
+const markerSteps = defineUndoSteps<MarkerRecord>();
 
-// Takes a marker away again on undo or redo when it was gone before the
-// change being reverted. Without it, a marker that undo put back can map
-// onto the replacement text on redo and survive. Scoped to the marker set
-// that recorded it, so a set rebuilt from fresh server anchors keeps its own.
-const dropMarker = StateEffect.define<{ id: string; owner: object }>();
+function placeMarkers(tr: Transaction) {
+	return markerSteps.place(tr, (record, over) => {
+		if ('drop' in record) return record;
+		const { id, from, to } = record;
+		if (to > over.length) return null;
+		const start = over.mapPos(from, 1);
+		const end = over.mapPos(to, -1);
+		// A change kept out of undo took all of the range's words, so the
+		// marker is gone in the text undo or redo brings back. What is left of
+		// it on screen is taken away too: mapped through the step, it can land
+		// on the words that replaced them, or on words it never covered.
+		return start < end && keepsSome(over, from, to) ? { id, from: start, to: end } : { drop: id };
+	});
+}
 
 function markerMark(id: string, from: number, to: number) {
 	return Decoration.mark({ class: 'todo-marker', todoId: id }).range(from, to);
@@ -40,6 +58,11 @@ function markerMark(id: string, from: number, to: number) {
 
 function markerField(markers: SceneMarker[]) {
 	const held = new Set(markers.map((marker) => marker.id));
+	// Markers this set has placed in the text, at load or by a restore. Only
+	// these can be brought back by undo, so only these need a drop record;
+	// one that loaded with no position would otherwise add a record per
+	// keystroke for nothing.
+	const shown = new Set<string>();
 	const field = StateField.define<DecorationSet>({
 		create(state) {
 			const length = state.doc.length;
@@ -54,27 +77,33 @@ function markerField(markers: SceneMarker[]) {
 				.map((marker) =>
 					markerMark(marker.id, marker.anchorStart!, Math.min(marker.anchorEnd!, length))
 				);
+			for (const range of ranges) shown.add(range.value.spec.todoId as string);
 			return Decoration.set(ranges, true);
 		},
 		update(value, tr) {
 			value = value.map(tr.changes);
-			for (const effect of tr.effects) {
-				if (effect.is(dropMarker)) {
-					const { id, owner } = effect.value;
-					if (owner !== held) continue;
-					value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
-					continue;
-				}
-				if (!effect.is(restoreMarker)) continue;
-				const { id, from, to } = effect.value;
-				// Only a marker this editor still holds, and never twice: what is
-				// left of it is replaced, not merged, since that remnant can map
-				// onto words the marker never covered.
-				if (!held.has(id) || to > tr.newDoc.length) continue;
+			const length = tr.newDoc.length;
+			// Only a marker this editor still holds, and never twice: what is
+			// left of it is replaced, not merged, since that remnant can map onto
+			// words the marker never covered.
+			const restore = ({ id, from, to }: MarkerRange) => {
+				if (!held.has(id) || to > length) return;
+				shown.add(id);
 				value = value.update({
 					filter: (_from, _to, mark) => mark.spec.todoId !== id,
 					add: [markerMark(id, from, to)]
 				});
+			};
+			const steps = placeMarkers(tr);
+			let next = 0;
+			for (const effect of tr.effects) {
+				if (!markerSteps.is(effect)) continue;
+				for (const record of steps[next++]) {
+					if ('drop' in record) {
+						const id = record.drop;
+						value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
+					} else restore(record);
+				}
 			}
 			return value;
 		},
@@ -87,9 +116,10 @@ function markerField(markers: SceneMarker[]) {
 	// the autosave after that sends the full anchor again. Mapping the marker
 	// back through the undone change would not do: an edge inside or at the
 	// edge of the change can land on the wrong side of text put back or taken
-	// out. Markers already gone before the edit are recorded as gone. Undo
-	// steps joined from several keystrokes carry every keystroke's record,
-	// earliest last, so the state from before the whole step wins.
+	// out. Markers it has shown that are gone before the edit are recorded
+	// as gone. Undo steps joined from several keystrokes carry every
+	// keystroke's record, earliest last, so the state from before the whole
+	// step wins.
 	const undoable = invertedEffects.of((tr) => {
 		if (tr.changes.empty) return [];
 		const before = tr.startState.field(field, false);
@@ -101,15 +131,26 @@ function markerField(markers: SceneMarker[]) {
 				if (fromA <= to && toA >= from) touched.set(id, { id, from, to });
 			});
 		});
+		const placed = placeMarkers(tr).flat();
+		const dropped = new Set(placed.flatMap((record) => ('drop' in record ? [record.drop] : [])));
 		const present = new Set<string>();
 		for (const cursor = before.iter(); cursor.value; cursor.next()) {
-			present.add(cursor.value.spec.todoId as string);
+			const id = cursor.value.spec.todoId as string;
+			present.add(id);
+			// A redo can take away a marker whose words it leaves alone, so its
+			// undo step must put it back too.
+			if (dropped.has(id) && !touched.has(id)) {
+				touched.set(id, { id, from: cursor.from, to: cursor.to });
+			}
 		}
-		const gone = [...held].filter((id) => !present.has(id));
-		return [
-			...gone.map((id) => dropMarker.of({ id, owner: held })),
-			...[...touched.values()].map((range) => restoreMarker.of(range))
-		];
+		// A marker this transaction puts back was gone before it, whether or not
+		// this set has shown it yet: undo can restore a marker that loaded with
+		// no position, and the redo step must take it away again.
+		const restored = placed.flatMap((record) =>
+			'drop' in record || !held.has(record.id) ? [] : [record.id]
+		);
+		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
+		return [markerSteps.of(tr, [...gone.map((id) => ({ drop: id })), ...touched.values()])];
 	});
 	return { field, extension: [field, undoable] };
 }
@@ -183,4 +224,288 @@ export function markerExtensions(
 		},
 		ids: markers.map((marker) => marker.id)
 	};
+}
+
+// The marker set for a rebuild when the page data brings a changed set (one
+// checked off, one made). A marker the editor still highlights keeps its own
+// mapped range, which is newer than the server's. A marker the editor held
+// but no longer shows (its words are gone) comes back with no anchors, so it
+// stays held and undo can still put it back; a new one the server holds with
+// no anchors joins with none. Any other new marker is placed on the server's
+// anchors only when settled gives the edits from the text they count into to
+// the editor text exactly (see unsavedChanges().settledFrom); otherwise it is
+// left out of the set and waits until this editor's own save has landed and
+// the markers are read again. Mapping it through unsaved edits could put it
+// on the wrong words or cut it short, since those edits, joined into one
+// change, cannot always say which words are the stored ones.
+export function rebuiltMarkers(
+	incoming: SceneMarker[],
+	current: { id: string; anchorStart: number; anchorEnd: number }[],
+	held: string[],
+	settled: ChangeDesc | null
+): SceneMarker[] {
+	const shown = new Map(current.map((anchor) => [anchor.id, anchor]));
+	const before = new Set(held);
+	return incoming.flatMap((marker): SceneMarker[] => {
+		const own = shown.get(marker.id);
+		if (own) return [{ id: marker.id, anchorStart: own.anchorStart, anchorEnd: own.anchorEnd }];
+		const detached = { id: marker.id, anchorStart: null, anchorEnd: null };
+		const { anchorStart: start, anchorEnd: end } = marker;
+		if (before.has(marker.id) || start === null || end === null) return [detached];
+		if (!settled) return [];
+		if (end > settled.length) return [detached];
+		const kept = keptRange(settled, start, end);
+		return [kept ? { id: marker.id, anchorStart: kept.from, anchorEnd: kept.to } : detached];
+	});
+}
+
+// The edits made since the text the server last stored. Saves run one at a
+// time: sent() marks the text a save is sending, and landed() drops the edits
+// up to it once the server has stored it. A failed save leaves them in, since
+// the server still holds the older text. The texts are kept too, so an edit
+// that puts back exactly what was removed (a deletion and its undo) counts as
+// no change: positions do not move, and the words count as the stored ones.
+// Any other replacement counts as new words, even where it shares letters
+// with the old ones. version is the fingerprint of the text the server holds
+// as this editor knows it, which the caller passes with each save.
+export function unsavedChanges(text: string) {
+	// Split into lines as the editor splits its doc.
+	let base: Known = {
+		version: textHash(text),
+		since: unchanged(Text.of(text.split(/\r\n?|\n/)))
+	};
+	let sending: Known | null = null;
+	// Whether the text changed since the last save was sent.
+	let edited = false;
+	const pins = new Set<{ since: Since }>();
+	return {
+		record(changes: ChangeSet) {
+			edited = true;
+			for (const known of [base, sending]) {
+				if (known) known.since = advance(known.since, changes);
+			}
+			for (const pin of pins) pin.since = advance(pin.since, changes);
+		},
+		// Follows a range on screen through the edits after it until released.
+		// at() gives the range in the text the server holds at that moment (the
+		// one version names), or null when none of its words are stored yet (a
+		// save failed or has not run). A range that runs into words not stored
+		// yet is cut to the stored part.
+		pin(from: number, to: number) {
+			const pin = { since: unchanged(base.since.doc) };
+			pins.add(pin);
+			return {
+				at(): { from: number; to: number } | null {
+					const back = base.since.changes.invertedDesc;
+					const after = pin.since.changes.desc;
+					const start = back.mapPos(after.mapPos(from, 1), 1);
+					const end = back.mapPos(after.mapPos(to, -1), -1);
+					return start < end ? { from: start, to: end } : null;
+				},
+				release() {
+					pins.delete(pin);
+				}
+			};
+		},
+		// cuts are the ranges of the editor text the save leaves out (an image
+		// still uploading), so the base after landing is the text the server
+		// stores, and the edits since put them back in.
+		sent(sentVersion: string, cuts: readonly { from: number; to: number }[] = []) {
+			const shown = base.since.doc;
+			const toStored = ChangeSet.of(mergedRanges(cuts), shown.length);
+			edited = false;
+			sending = {
+				version: sentVersion,
+				since: {
+					start: toStored.apply(shown),
+					doc: shown,
+					changes: toStored.invert(shown),
+					graves: []
+				}
+			};
+		},
+		landed() {
+			if (sending) base = sending;
+			sending = null;
+		},
+		// The edits from the stored text with the given fingerprint to the
+		// editor text, when they are known exactly: the server holds that text,
+		// the last save landed, and nothing was typed since it was sent. They
+		// then only put back what the save left out (an image still uploading).
+		// Null otherwise, including for a text changed elsewhere.
+		settledFrom(fingerprint: string | null | undefined): ChangeDesc | null {
+			if (sending || edited || fingerprint !== base.version) return null;
+			return base.since.changes.desc;
+		},
+		// The editor now shows exactly what the server holds.
+		reset(resetVersion: string) {
+			base = { version: resetVersion, since: unchanged(base.since.doc) };
+			sending = null;
+			edited = false;
+		},
+		get changes(): ChangeDesc {
+			return base.since.changes.desc;
+		},
+		get version(): string {
+			return base.version;
+		}
+	};
+}
+
+type Known = { version: string; since: Since };
+
+// The edits from start to the editor text doc, as one change, with the
+// stored words that edits deleted (see advance).
+type Since = { start: Text; doc: Text; changes: ChangeSet; graves: readonly Grave[] };
+
+// Text an edit deleted that held stored words: where it was (between left
+// and right, which differ only when text was typed there since), and for
+// each character the stored offset it had, or -1 for one typed since.
+type Grave = { left: number; right: number; text: string; origin: number[] };
+
+// How many deletions advance keeps for undo to put back.
+const KEPT_GRAVES = 100;
+
+function unchanged(text: Text): Since {
+	return { start: text, doc: text, changes: ChangeSet.empty(text.length), graves: [] };
+}
+
+// since followed through one more edit. Text put back exactly where it was
+// deleted (by undo, mostly) counts as the words it was, character by
+// character: a stored word comes back as stored and a typed one as typed. The
+// combined change alone cannot tell them apart once the deletion took both
+// (see settled), and would count all of it as new.
+function advance(since: Since, edit: ChangeSet): Since {
+	const { start, doc, changes } = since;
+	let graves = since.graves;
+	const made: Grave[] = [];
+	const back: { at: number; origin: number[] }[] = [];
+	edit.iterChanges((fromA, toA, fromB, _toB, inserted) => {
+		if (inserted.length) {
+			const text = inserted.toString();
+			const index = graves.findLastIndex(
+				(grave) => grave.left <= fromA && fromA <= grave.right && grave.text === text
+			);
+			if (index >= 0) {
+				back.push({ at: fromB, origin: graves[index].origin });
+				graves = graves.filter((_grave, i) => i !== index);
+			}
+		}
+		if (fromA < toA) {
+			const origin = originOf(changes, fromA, toA);
+			if (origin.some((offset) => offset >= 0)) {
+				made.push({ left: fromB, right: fromB, text: doc.sliceString(fromA, toA), origin });
+			}
+		}
+	});
+	const newDoc = edit.apply(doc);
+	let next = settled(changes.compose(edit), start);
+	// settled already counts a plain deletion and its undo as unchanged.
+	const missed = back.filter(({ at, origin }) =>
+		originOf(next, at, at + origin.length).some((offset, i) => offset !== origin[i])
+	);
+	if (missed.length) {
+		const origin = originOf(next, 0, newDoc.length);
+		for (const { at, origin: put } of missed) origin.splice(at, put.length, ...put);
+		next = fromOrigin(origin, start, newDoc) ?? next;
+	}
+	const mapped = graves.map((grave) => ({
+		...grave,
+		left: edit.mapPos(grave.left, -1),
+		right: edit.mapPos(grave.right, 1)
+	}));
+	return {
+		start,
+		doc: newDoc,
+		changes: next,
+		graves: [...mapped, ...made].slice(-KEPT_GRAVES)
+	};
+}
+
+// For each character in [from, to) of the text changes produce, its offset
+// in the text they apply to, or -1 where changes inserted it.
+function originOf(changes: ChangeSet, from: number, to: number): number[] {
+	const origin = new Array<number>(to - from).fill(-1);
+	changes.iterGaps((posA, posB, length) => {
+		for (let i = Math.max(from, posB); i < Math.min(to, posB + length); i++) {
+			origin[i - from] = posA + i - posB;
+		}
+	});
+	return origin;
+}
+
+// The change from start to doc that keeps the characters origin gives an
+// offset in start, and counts the rest as inserted; null when the offsets do
+// not run in order or do not hold the same characters, which would mean a
+// mistake in the bookkeeping, so the caller keeps what it had.
+function fromOrigin(origin: number[], start: Text, doc: Text): ChangeSet | null {
+	const before = start.toString();
+	const after = doc.toString();
+	const specs: { from: number; to: number; insert: string }[] = [];
+	let next = 0;
+	let typed = '';
+	for (let i = 0; i <= after.length; i++) {
+		const offset = i < after.length ? origin[i] : before.length;
+		if (offset < 0) {
+			typed += after[i];
+			continue;
+		}
+		if (offset < next || (i < after.length && before[offset] !== after[i])) return null;
+		if (offset > next || typed) specs.push({ from: next, to: offset, insert: typed });
+		next = offset + 1;
+		typed = '';
+	}
+	return ChangeSet.of(specs, before.length);
+}
+
+// Where [start, end) is after the changes: from its first character that
+// comes through them untouched to its last, so it neither starts nor ends on
+// new words typed where its own were; null when none comes through.
+function keptRange(changes: ChangeDesc, start: number, end: number) {
+	let from = -1;
+	let to = -1;
+	changes.iterGaps((posA, posB, length) => {
+		const first = Math.max(start, posA);
+		const last = Math.min(end, posA + length);
+		if (first >= last) return;
+		if (from < 0) from = posB + first - posA;
+		to = posB + last - posA;
+	});
+	return from < 0 ? null : { from, to };
+}
+
+// Whether any character in [start, end) comes through the changes untouched.
+// Mapping alone can give a range that holds only new words typed where the
+// old ones were.
+function keepsSome(changes: ChangeDesc, start: number, end: number) {
+	let pos = start;
+	changes.iterChangedRanges((fromA, toA) => {
+		if (fromA <= pos && toA > pos) pos = toA;
+	});
+	return pos < end;
+}
+
+// Sorted, with overlapping or touching ranges joined, as ChangeSet.of needs.
+function mergedRanges(ranges: readonly { from: number; to: number }[]) {
+	const merged: { from: number; to: number }[] = [];
+	for (const range of [...ranges].sort((a, b) => a.from - b.from)) {
+		const last = merged.at(-1);
+		if (last && range.from <= last.to) last.to = Math.max(last.to, range.to);
+		else merged.push({ ...range });
+	}
+	return merged;
+}
+
+// changes as applied to before, without the replacements that put back
+// exactly what they removed (a deletion and its undo). Run after each edit, so
+// that text put back is taken as unchanged even when later edits are composed
+// onto the same span (a word deleted, undone, then typed over in part).
+function settled(changes: ChangeSet, before: Text): ChangeSet {
+	const specs: { from: number; to: number; insert: Text }[] = [];
+	let same = false;
+	changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		if (fromA < toA && inserted.eq(before.slice(fromA, toA))) same = true;
+		else specs.push({ from: fromA, to: toA, insert: inserted });
+	});
+	return same ? ChangeSet.of(specs, changes.length) : changes;
 }

@@ -375,6 +375,9 @@ test('typing after an accept refresh lands is kept', async ({ page }) => {
 	await refreshed;
 	await expect(page.locator('.rv-diff-ins')).toHaveCount(0);
 	await page.unroute('**/__data.json*');
+	// A writer pauses before typing on; by then kit's focus reset has had its
+	// later turn at clearing the selection.
+	await page.waitForTimeout(200);
 
 	// No click back into the editor: the keys go wherever focus now is.
 	await page.keyboard.type(' AFTER');

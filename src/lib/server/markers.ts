@@ -5,36 +5,60 @@ import { ownedScene } from './scene-access.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findTodoLines } from '#lib/todo-markers';
 import { toLf } from '#lib/line-endings';
+import { textHash } from '#lib/text-hash';
 import { BACKGROUND_DIFF_BUDGET, createAnchorMapper, SAVE_DIFF_BUDGET } from '../review-anchor.ts';
 import type { ActionFailure } from './action-result.ts';
 
 // A selection turned into a checkable marker. Anchors are clamped to the
-// scene body so a stale client cannot write ranges past the end.
+// scene body so a stale client cannot write ranges past the end. With
+// baseHash (the fingerprint of the text the editor counted the anchors into)
+// the marker is refused when the scene holds another text by now, and the
+// refusal carries that text; the scene row is locked while checking, so a
+// save cannot land in between.
 export async function createMarker(
 	db: Database,
 	userId: string,
 	sceneId: string,
 	anchorStart: number,
 	anchorEnd: number,
-	bodyMd?: string
-): Promise<{ ok: true; id: string } | ActionFailure> {
-	const scene = await ownedScene(db, userId, sceneId);
-	if (!scene) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
-	const length = scene.bodyMd.length;
-	const start = Math.max(0, Math.min(anchorStart, length));
-	const end = Math.max(start, Math.min(anchorEnd, length));
-	if (end === start) return { ok: false, code: 'invalid', reason: 'Select some text to mark.' };
-	const [marker] = await db
-		.insert(sceneMarkers)
-		.values({
-			sceneId,
-			ownerId: userId,
-			anchorStart: start,
-			anchorEnd: end,
-			bodyMd: bodyMd?.trim() || null
-		})
-		.returning({ id: sceneMarkers.id });
-	return { ok: true, id: marker.id };
+	bodyMd?: string,
+	baseHash?: string
+): Promise<
+	{ ok: true; id: string } | (ActionFailure & { scene?: { bodyMd: string; title: string | null } })
+> {
+	return await db.transaction(async (tx) => {
+		const scene = await ownedScene(tx, userId, sceneId);
+		if (!scene) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
+		const [locked] = await tx
+			.select({ bodyMd: scenes.bodyMd, title: scenes.title })
+			.from(scenes)
+			.where(eq(scenes.id, sceneId))
+			.for('share');
+		if (!locked) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
+		if (baseHash !== undefined && textHash(locked.bodyMd) !== baseHash) {
+			return {
+				ok: false,
+				code: 'conflict',
+				reason: 'The scene text changed. Select the words and mark them again.',
+				scene: { bodyMd: locked.bodyMd, title: locked.title }
+			};
+		}
+		const length = locked.bodyMd.length;
+		const start = Math.max(0, Math.min(anchorStart, length));
+		const end = Math.max(start, Math.min(anchorEnd, length));
+		if (end === start) return { ok: false, code: 'invalid', reason: 'Select some text to mark.' };
+		const [marker] = await tx
+			.insert(sceneMarkers)
+			.values({
+				sceneId,
+				ownerId: userId,
+				anchorStart: start,
+				anchorEnd: end,
+				bodyMd: bodyMd?.trim() || null
+			})
+			.returning({ id: sceneMarkers.id });
+		return { ok: true, id: marker.id };
+	});
 }
 
 // Markers own their scene by id; this keeps a marker in a trashed universe
@@ -311,6 +335,46 @@ export async function listSceneMarkers(db: Database, sceneId: string) {
 		.from(sceneMarkers)
 		.where(and(eq(sceneMarkers.sceneId, sceneId), isNull(sceneMarkers.resolvedAt)))
 		.orderBy(asc(sceneMarkers.anchorStart));
+}
+
+// The open scene's markers with the fingerprint of the text their anchors
+// count into, read in one snapshot so a save landing between the two reads
+// cannot pair anchors with another text. The editor maps them through only
+// the edits it made after that text (see unsavedChanges in editor-markers).
+export async function readSceneMarkers(db: Database, sceneId: string) {
+	return await db.transaction(
+		async (tx) => {
+			const markers = await listSceneMarkers(tx, sceneId);
+			const [scene] = await tx
+				.select({ bodyMd: scenes.bodyMd })
+				.from(scenes)
+				.where(eq(scenes.id, sceneId));
+			return { markers, version: scene ? textHash(scene.bodyMd) : null };
+		},
+		{ isolationLevel: 'repeatable read', accessMode: 'read only' }
+	);
+}
+
+// The same for the continuous view: each scene with markers, its markers and
+// the fingerprint of its text.
+export async function readStoryMarkers(db: Database, storyId: string) {
+	return await db.transaction(
+		async (tx) => {
+			const byScene = await listStoryMarkersByScene(tx, storyId);
+			const ids = Object.keys(byScene);
+			const bodies = ids.length
+				? await tx
+						.select({ id: scenes.id, bodyMd: scenes.bodyMd })
+						.from(scenes)
+						.where(inArray(scenes.id, ids))
+				: [];
+			const versions = new Map(bodies.map((scene) => [scene.id, textHash(scene.bodyMd)]));
+			return Object.fromEntries(
+				ids.map((id) => [id, { markers: byScene[id], version: versions.get(id) ?? null }])
+			);
+		},
+		{ isolationLevel: 'repeatable read', accessMode: 'read only' }
+	);
 }
 
 export type StoryTodo = {

@@ -413,6 +413,82 @@ test('leaving while an image uploads asks first, and staying keeps it', async ({
 	await saved;
 });
 
+test('an image that could not be added stays reported while the writer types', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Lost ${Date.now()}`);
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assets', async (route) => {
+		await held;
+		await route.fulfill({ json: { path: '/assets/lost.png' } });
+	});
+	await editor(page).click();
+	await editor(page).evaluate((el) => {
+		const data = new DataTransfer();
+		data.items.add(new File(['png'], 'lost.png', { type: 'image/png' }));
+		el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+	});
+	await expect(page.locator('.cm-content')).toContainText('Uploading');
+	await page.keyboard.press('ControlOrMeta+A');
+	await page.keyboard.type('Replaced.');
+	release();
+	const notice = page.getByRole('alert').filter({ hasText: 'lost.png was not added' });
+	await expect(notice).toBeVisible();
+	await page.keyboard.type(' More.');
+	await expect(page.locator('.cm-content')).toContainText('Replaced. More.');
+	await expect(notice).toBeVisible();
+	await notice.getByRole('button', { name: 'Dismiss' }).click();
+	await expect(notice).toHaveCount(0);
+});
+
+test('an image brought back by undo lands and its notice goes', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Undone ${Date.now()}`);
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/assets', async (route) => {
+		await held;
+		await route.fulfill({ json: { path: '/assets/undone.png' } });
+	});
+	await editor(page).click();
+	await editor(page).evaluate((el) => {
+		const data = new DataTransfer();
+		data.items.add(new File(['png'], 'undone.png', { type: 'image/png' }));
+		el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+	});
+	await expect(page.locator('.cm-content')).toContainText('Uploading');
+	await page.keyboard.press('ControlOrMeta+A');
+	await page.keyboard.press('Delete');
+	release();
+	const notice = page.getByRole('alert').filter({ hasText: 'undone.png was not added' });
+	await expect(notice).toBeVisible();
+	await page.keyboard.press('ControlOrMeta+Z');
+	await expect(page.locator('.cm-content')).toContainText('![undone.png](/assets/undone.png)');
+	await expect(notice).toHaveCount(0);
+});
+
+test('an image the server refuses is reported with its reason', async ({ page }) => {
+	test.slow();
+	await newStory(page, `Refused ${Date.now()}`);
+	await page.route('**/api/assets', (route) =>
+		route.fulfill({ status: 400, json: { message: 'That image is larger than 10 MB.' } })
+	);
+	await editor(page).click();
+	await page.keyboard.type('Picture: ');
+	await editor(page).evaluate((el) => {
+		const data = new DataTransfer();
+		data.items.add(new File(['png'], 'big.png', { type: 'image/png' }));
+		el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+	});
+	await expect(
+		page
+			.getByRole('alert')
+			.filter({ hasText: 'big.png could not be added. That image is larger than 10 MB.' })
+	).toBeVisible();
+	await expect(page.locator('.cm-content')).toContainText('Picture:');
+	await expect(page.locator('.cm-content')).not.toContainText('Uploading');
+});
+
 test('a scene clicked while a split runs opens once the split is done', async ({ page }) => {
 	test.slow();
 	const { secondUrl } = await twoScenes(page, `Queue ${Date.now()}`);

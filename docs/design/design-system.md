@@ -778,9 +778,8 @@ inline ad-hoc SVG in components.
 - Tooltips: native `title` attributes plus `aria-label` for icon-only
   controls. There is no custom tooltip primitive; do not build one ad hoc.
 - Banners: `.revision-banner` for the past-revision state is the reference
-  pattern for a centre-column banner. `SceneConflictBanner.svelte` and
-  `ImageUploadNotice.svelte` (an image paste or drop the server refused)
-  are built on it.
+  pattern for a centre-column banner. `SceneConflictBanner.svelte` is
+  built on it.
 
 ### Assistant text
 
