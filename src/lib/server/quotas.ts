@@ -77,13 +77,15 @@ export async function countLive(
  * holds until the transaction ends, so two creates at once cannot both pass on
  * the same count. Take it after any row lock the transaction needs (see
  * holdStoryQuota). Outside a transaction it is a plain check, for refusing
- * early before slow work.
+ * early before slow work. With inserted, the transaction has already inserted
+ * the rows it adds, so the count includes them.
  */
 export async function holdCountQuota(
 	tx: Database,
 	userId: string,
 	adding: { universes?: number; stories?: number },
-	action: QuotaAction = 'create'
+	action: QuotaAction = 'create',
+	inserted = false
 ): Promise<void> {
 	const addUniverses = adding.universes ?? 0;
 	const addStories = adding.stories ?? 0;
@@ -94,10 +96,11 @@ export async function holdCountQuota(
 	if (universeLimit === null && storyLimit === null) return;
 	await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`quota:${userId}`}))`);
 	const live = await countLive(tx, userId);
-	if (universeLimit !== null && live.universes + addUniverses > universeLimit) {
+	const pending = inserted ? 0 : 1;
+	if (universeLimit !== null && live.universes + pending * addUniverses > universeLimit) {
 		throw new QuotaExceededError(quotaMessage('max_universes', universeLimit, action));
 	}
-	if (storyLimit !== null && live.stories + addStories > storyLimit) {
+	if (storyLimit !== null && live.stories + pending * addStories > storyLimit) {
 		throw new QuotaExceededError(quotaMessage('max_stories', storyLimit, action));
 	}
 }
@@ -107,15 +110,17 @@ export async function holdCountQuota(
  * then the quota lock, then the slug lock (restoreUniverse locks the universe
  * row before the quota). The story insert's foreign-key check would take the
  * universe row after the quota lock, so this takes it first, in key share mode
- * so that creates do not wait on each other.
+ * so that creates do not wait on each other. With inserted, the story row is
+ * already in (see holdCountQuota).
  */
 export async function holdStoryQuota(
 	tx: Database,
 	userId: string,
-	universeId: string
+	universeId: string,
+	options: { inserted?: boolean } = {}
 ): Promise<void> {
 	await tx.execute(sql`select id from universes where id = ${universeId} for key share`);
-	await holdCountQuota(tx, userId, { stories: 1 });
+	await holdCountQuota(tx, userId, { stories: 1 }, 'create', options.inserted);
 }
 
 /** The message of a QuotaExceededError, or undefined for anything else. */

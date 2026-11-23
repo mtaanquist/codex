@@ -31,6 +31,11 @@ export function readJournal(migrationsFolder: string): JournalEntry[] {
 // reads before applying anything; they are read-only and retried next night.
 export const CANCEL_ON_MIGRATE_APP_NAME = 'codex-unused-asset-sweep';
 
+// The advisory lock each of those reads holds shared for its transaction
+// (see longRead in unused-assets.ts). The migrator takes it exclusively before
+// applying anything, so no read starts while the migrations run.
+export const SWEEP_LOCK_SQL = `hashtext('codex:unused-asset-sweep')`;
+
 // Whether the journal holds a migration newer than the last one applied,
 // by the same `when` comparison drizzle makes.
 async function hasPendingMigrations(client: pg.Client, entries: JournalEntry[]): Promise<boolean> {
@@ -89,6 +94,28 @@ export async function cancelLongReads(client: pg.ClientBase): Promise<number> {
 	return cancelled;
 }
 
+/**
+ * Cancels the long reads and takes the sweep lock for this session, so none
+ * starts again until the session ends; returns how many were cancelled. A
+ * cancel that lands between a read's statements is lost, and that read then
+ * still holds the lock, so it cancels again until the lock comes free. After
+ * about five seconds (a read this role may not cancel) it waits for the lock.
+ */
+export async function holdOffLongReads(client: pg.ClientBase): Promise<number> {
+	// Once whatever the lock says, so a named read that holds no lock goes too.
+	let cancelled = await cancelLongReads(client);
+	for (let attempt = 0; attempt < 100; attempt++) {
+		const { rows } = await client.query<{ locked: boolean }>(
+			`select pg_try_advisory_lock(${SWEEP_LOCK_SQL}) as locked`
+		);
+		if (rows[0].locked) return cancelled;
+		cancelled += await cancelLongReads(client);
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	await client.query(`select pg_advisory_lock(${SWEEP_LOCK_SQL})`);
+	return cancelled;
+}
+
 // Applies pending migrations while holding a session advisory lock, so the app
 // and worker (or several replicas) starting together apply each migration once:
 // drizzle reads the last applied row outside its transaction and takes no lock.
@@ -105,7 +132,7 @@ export async function runMigrations(connectionString: string, migrationsFolder =
 	try {
 		await client.query(`select pg_advisory_lock(hashtext('codex:migrations'))`);
 		if (await hasPendingMigrations(client, entries)) {
-			const cancelled = await cancelLongReads(client);
+			const cancelled = await holdOffLongReads(client);
 			if (cancelled > 0) {
 				console.log(`Cancelled ${cancelled} long-running read(s) so the migrations can run.`);
 			}

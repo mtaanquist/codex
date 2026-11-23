@@ -230,8 +230,15 @@ export async function runImport(
 		// The slug is picked up front; the story row itself is inserted inside the
 		// transaction below, so a failure partway through the import rolls the empty
 		// story away rather than leaving a visible shell. A concurrent create can
-		// take the picked slug before the insert; the import then tries once more
-		// with a fresh pick, starting its counts and problems over.
+		// take the picked slug before the import sets it; the import then tries
+		// once more with a fresh pick, starting its counts and problems over.
+		//
+		// The account's quota lock is taken only at the end, once everything else
+		// is written, so creates, restores and imports in other tabs wait for the
+		// commit rather than for the whole import. The row goes in first under a
+		// placeholder slug (the column default) and takes the picked one after the
+		// quota lock, the order a create takes them in, since a create holding the
+		// quota lock may be waiting on the same slug.
 		const problemsBefore = problems.length;
 		const write = (slug: string) =>
 			db.transaction(async (tx) => {
@@ -242,8 +249,7 @@ export async function runImport(
 				notesSkipped = 0;
 				freeformNotesCreated = 0;
 				waitingDraftsCreated = 0;
-				await holdStoryQuota(tx, universe.ownerId, universe.id);
-				const [created] = await tx
+				const [story] = await tx
 					.insert(stories)
 					.values({
 						id: storyId,
@@ -253,11 +259,9 @@ export async function runImport(
 						author: plan.story.author,
 						brief: plan.story.brief,
 						descriptionMd: rewrite(plan.story.descriptionMd) || null,
-						isAdult: plan.story.isAdult ?? false,
-						slug
+						isAdult: plan.story.isAdult ?? false
 					})
-					.returning({ id: stories.id, slug: stories.slug });
-				const story = created;
+					.returning({ id: stories.id });
 				let globalPosition = 0;
 				const insertScene = async (
 					scene: ImportPlan['unfiled'][number],
@@ -395,13 +399,16 @@ export async function runImport(
 					});
 					waitingDraftsCreated += 1;
 				}
-				return story;
+				await holdStoryQuota(tx, universe.ownerId, universe.id, { inserted: true });
+				await tx.update(stories).set({ slug }).where(eq(stories.id, story.id));
+				return { id: story.id, slug };
 			});
 		const pick = () => uniqueSlug(db, 'stories', universe.ownerId, plan.story.title, 'story');
 		try {
 			story = await write(await pick());
 		} catch (err) {
-			if (!isUniqueViolation(err)) throw err;
+			// Only the slug is worth a second try; any other clash would recur.
+			if (!isUniqueViolation(err, 'stories_owner_slug_idx')) throw err;
 			story = await write(await pick());
 		}
 	} catch (err) {

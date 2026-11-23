@@ -313,7 +313,8 @@ export const slugHistory = pgTable(
 	(table) => [
 		uniqueIndex('slug_history_owner_kind_slug_idx').on(table.ownerId, table.kind, table.slug),
 		index('slug_history_story_idx').on(table.storyId),
-		index('slug_history_universe_idx').on(table.universeId)
+		index('slug_history_universe_idx').on(table.universeId),
+		check('slug_history_kind_check', sql`${table.kind} in ('story', 'universe')`)
 	]
 );
 

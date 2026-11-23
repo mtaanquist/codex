@@ -55,6 +55,18 @@ export async function restoreStory(
 	storyId: string
 ): Promise<boolean> {
 	return db.transaction(async (tx) => {
+		// The universe row, shared, so a trash or restore of the universe
+		// (which update it) takes turns with this, and the count below never
+		// sees the universe live while it is going to the trash. The account row
+		// comes first, shared too: the account and universe purges lock it
+		// before anything else, then take this universe and story in orders of
+		// their own, so whichever comes second waits at the start.
+		await tx.execute(sql`select id from users where id = ${userId} for share`);
+		await tx.execute(sql`
+			select u.id from universes u join stories s on s.universe_id = u.id
+			where s.id = ${storyId} and s.owner_id = ${userId}
+			for share of u
+		`);
 		// A second restore of the same story waits here, then finds it live and
 		// does nothing, rather than counting it against the limit.
 		await tx.execute(

@@ -5,7 +5,7 @@ import { releaseStorage } from './quotas.ts';
 import { errorFields, logEvent } from './log.ts';
 import { isForeignKeyViolation } from './db-errors.ts';
 import { SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS } from './queues.ts';
-import { CANCEL_ON_MIGRATE_APP_NAME } from './db/migrate.ts';
+import { CANCEL_ON_MIGRATE_APP_NAME, SWEEP_LOCK_SQL } from './db/migrate.ts';
 
 // Frees the storage of uploaded images nothing uses any more: the worker's
 // sweepUnusedAssets, nightly. Deleting an image a writer still uses is the
@@ -44,21 +44,40 @@ export const FREED_OBJECT_EXTRA_DAYS = 30;
 const CHUNK = 100;
 
 // The reads below scan every row of every column, which on a large database
-// outlasts the worker pool's per-statement limit. They run in their own
-// read-only transaction with the limit raised, each to well under the job's
-// expiry so both fit in one run and an expired job never overlaps a read
-// still going. A plain read takes no lock a write waits on, but it does hold
-// up a migration's ALTER TABLE, so it names itself for the migrator to cancel
-// (see CANCEL_ON_MIGRATE_APP_NAME); the run then fails and the next one retries.
+// outlasts the worker pool's per-statement limit. Each table is read in its
+// own read-only transaction, so no one snapshot is held for the whole scan
+// (which would hold back vacuum), with the limit raised to well under the
+// job's expiry so an expired job never overlaps a read still going. Reading
+// the tables one after another rather than all from one snapshot can miss a
+// reference that moves between two tables while the scan runs; the write that
+// moved it cleared its mark (the clear_asset_marks trigger), so such an image
+// is at worst marked by this run and cleared by the next, never deleted.
+//
+// A plain read takes no lock a write waits on, but it does hold up a
+// migration's ALTER TABLE, so each names itself for the migrator to cancel
+// (see CANCEL_ON_MIGRATE_APP_NAME) and holds the sweep lock shared: while the
+// migrator holds it, no read starts, and the run fails; the next night's run
+// starts over.
 const LONG_READ_TIMEOUT_MS = Math.floor(
 	(SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS.expireInSeconds * 1000) / 2.5
 );
+
+export class SweepPausedError extends Error {
+	constructor() {
+		super('unused-image sweep: a migration is running');
+		this.name = 'SweepPausedError';
+	}
+}
 
 async function longRead<T>(db: Database, read: (tx: Database) => Promise<T>): Promise<T> {
 	return await db.transaction(
 		async (tx) => {
 			await tx.execute(sql.raw(`set local statement_timeout = ${LONG_READ_TIMEOUT_MS}`));
 			await tx.execute(sql.raw(`set local application_name = '${CANCEL_ON_MIGRATE_APP_NAME}'`));
+			const locked = await tx.execute(
+				sql`select pg_try_advisory_xact_lock_shared(${sql.raw(SWEEP_LOCK_SQL)}) as ok`
+			);
+			if (!(locked.rows[0] as { ok: boolean }).ok) throw new SweepPausedError();
 			return await read(tx);
 		},
 		{ accessMode: 'read only' }
@@ -149,36 +168,53 @@ const dueSql = sql`coalesce(unreferenced_since <= ${daysAgo(UNREFERENCED_DAYS)}
 
 export type UnusedAsset = { id: string; ownerId: string; marked: boolean; due: boolean };
 
+/** The distinct ids among `wanted` (a query yielding one text column named
+ * id) that the given columns hold. wanted is run once, in a CTE every
+ * column's part reads: run per part, a bound list would be sent once per
+ * column. */
+export function referencedIdsQuery(columns: Column[], wanted: SQL): SQL {
+	return sql`
+		with wanted as materialized (${wanted})
+		select distinct id from (${referencesIn(columns, sql`select id from wanted`)}) refs`;
+}
+
 /**
- * The full read, in one statement: every column is read once, from one
- * snapshot, so a reference moving between tables while it runs (a staged
- * draft accepted into a scene) is seen in one of them. Returns the images
- * nothing uses, and the marked ones in use again.
+ * The ids among `wanted` that any column holds, read a table at a time (see
+ * LONG_READ_TIMEOUT_MS). wanted is run again by each table's statement, so it
+ * should be a query on assets rather than a bound list.
+ */
+async function referencedIds(db: Database, wanted: SQL): Promise<Set<string>> {
+	const byTable = new Map<string, Column[]>();
+	for (const column of await referenceColumns(db)) {
+		byTable.set(column.table, [...(byTable.get(column.table) ?? []), column]);
+	}
+	const found = new Set<string>();
+	for (const columns of byTable.values()) {
+		const result = await longRead(db, (tx) => tx.execute(referencedIdsQuery(columns, wanted)));
+		for (const row of result.rows as { id: string }[]) found.add(row.id);
+	}
+	return found;
+}
+
+/**
+ * The full read: every column is read once. Returns the images nothing uses,
+ * and the marked ones in use again.
  */
 export async function scanAssetUse(
 	db: Database
 ): Promise<{ unused: UnusedAsset[]; backInUse: string[] }> {
-	const result = await longRead(db, async (tx) =>
-		tx.execute(sql`
-		with scope as materialized (
-			select id::text as id, owner_id::text as owner_id,
+	const scope = (
+		await db.execute(sql`
+			select id::text as id, owner_id::text as "ownerId",
 				unreferenced_since is not null as marked, ${dueSql} as due
 			from assets
-		),
-		refs as materialized (select distinct id from (${referencesIn(await referenceColumns(tx), sql`select id from scope`)}) r)
-		select scope.id, scope.owner_id as "ownerId", scope.marked, scope.due,
-			refs.id is not null as referenced
-		from scope left join refs on refs.id = scope.id
-		where refs.id is null or scope.marked
-		order by scope.owner_id, scope.id
-	`)
-	);
-	const rows = result.rows as (UnusedAsset & { referenced: boolean })[];
+			order by owner_id, id
+		`)
+	).rows as UnusedAsset[];
+	const referenced = await referencedIds(db, sql`select id::text as id from assets`);
 	return {
-		unused: rows
-			.filter((row) => !row.referenced)
-			.map(({ id, ownerId, marked, due }) => ({ id, ownerId, marked, due })),
-		backInUse: rows.filter((row) => row.referenced).map((row) => row.id)
+		unused: scope.filter((row) => !referenced.has(row.id)),
+		backInUse: scope.filter((row) => row.marked && referenced.has(row.id)).map((row) => row.id)
 	};
 }
 
@@ -216,26 +252,18 @@ async function clearMarks(db: Database, ids: string[]): Promise<void> {
 	}
 }
 
-// The ids are bound once, in the wanted CTE every column's part reads: bound
-// per part, a large backlog would send the whole list hundreds of times.
-export function referencedAssetIdsQuery(columns: Column[], ids: string[]): SQL {
-	return sql`
-		with wanted as materialized (select unnest(string_to_array(${ids.join(',')}, ',')) as id)
-		select distinct id from (${referencesIn(columns, sql`select id from wanted`)}) refs`;
-}
-
 /**
  * Which of the given image ids some row still references, by the same wide
  * reading as scanAssetUse, so a reference saved after an earlier full read is
- * caught. It reads every row of every column, so it runs once per sweep (not
- * per chunk) and never while holding locks others wait on.
+ * caught. Only the images due now are looked for (an image no longer due is
+ * not deleted anyway), so no id list is sent with every table's statement. It
+ * reads every row of every column, so it runs once per sweep (not per chunk)
+ * and never while holding locks others wait on.
  */
 async function referencedAssetIds(db: Database, ids: string[]): Promise<Set<string>> {
 	if (ids.length === 0) return new Set();
-	const result = await longRead(db, async (tx) =>
-		tx.execute(referencedAssetIdsQuery(await referenceColumns(tx), ids))
-	);
-	return new Set((result.rows as { id: string }[]).map((row) => row.id));
+	const found = await referencedIds(db, sql`select id::text as id from assets where ${dueSql}`);
+	return new Set(ids.filter((id) => found.has(id)));
 }
 
 type Freed = {
@@ -263,7 +291,8 @@ type Freed = {
  */
 export async function deleteUnusedAssets(
 	db: Database,
-	candidates: { id: string; ownerId: string }[]
+	candidates: { id: string; ownerId: string }[],
+	progress: SweepProgress = { count: 0, bytes: 0 }
 ): Promise<Freed[]> {
 	if (candidates.length === 0) return [];
 	const referenced = await referencedAssetIds(
@@ -273,26 +302,37 @@ export async function deleteUnusedAssets(
 	await clearMarks(db, [...referenced]);
 	const stillUnused = candidates.filter((row) => !referenced.has(row.id));
 	const freed: Freed[] = [];
+	// Logged and counted as each chunk commits, so a later chunk that fails
+	// cannot leave a deletion unrecorded.
+	const committed = (deleted: Freed[]) => {
+		for (const row of deleted) {
+			logFreed(row);
+			progress.count += 1;
+			progress.bytes += row.byteSize;
+		}
+		freed.push(...deleted);
+	};
 	for (let start = 0; start < stillUnused.length; start += CHUNK) {
 		const unused = stillUnused.slice(start, start + CHUNK);
-		let deleted: Freed[];
 		try {
-			deleted = await deleteChunk(db, unused);
+			committed(await deleteChunk(db, unused));
 		} catch (error) {
 			// A row pointing at one of these by foreign key (a publish, a badge)
-			// saved after the read above. The chunk rolled back; its marks are
-			// cleared so the images start over rather than go early once that row
-			// is gone, and the other chunks carry on.
+			// saved after the read above. The chunk rolled back; its images are
+			// tried again one at a time, so only the one still pointed at is kept.
 			if (!isForeignKeyViolation(error)) throw error;
-			const ids = unused.map((row) => row.id);
-			logEvent('warn', 'assets.unused_delete_skipped', { ids, ...errorFields(error) });
-			await clearMarks(db, ids);
-			continue;
+			for (const row of unused) {
+				try {
+					committed(await deleteChunk(db, [row]));
+				} catch (single) {
+					// Its mark is cleared so it starts over rather than going early
+					// once that row is gone.
+					if (!isForeignKeyViolation(single)) throw single;
+					logEvent('warn', 'assets.unused_delete_skipped', { id: row.id, ...errorFields(single) });
+					await clearMarks(db, [row.id]);
+				}
+			}
 		}
-		// Logged as each chunk commits, so a later chunk that fails cannot
-		// leave a deletion unrecorded.
-		for (const row of deleted) logFreed(row);
-		freed.push(...deleted);
 	}
 	return freed;
 }
@@ -350,8 +390,15 @@ function logFreed(row: Freed): void {
 	logEvent('info', 'assets.unused_deleted', row);
 }
 
+/** What a run has freed so far, kept up to date as each chunk commits, so a
+ * run that fails can still say what it freed. */
+export type SweepProgress = { count: number; bytes: number };
+
 /** One run of the sweep: one full read, the marks, then the deletes. */
-export async function sweepUnusedAssets(db: Database): Promise<{ count: number; bytes: number }> {
+export async function sweepUnusedAssets(
+	db: Database,
+	progress: SweepProgress = { count: 0, bytes: 0 }
+): Promise<SweepProgress> {
 	const scan = await scanAssetUse(db);
 	await recordAssetUse(db, scan);
 	const unguarded = await tablesWithoutMarkTrigger(db);
@@ -360,7 +407,8 @@ export async function sweepUnusedAssets(db: Database): Promise<{ count: number; 
 	}
 	const freed = await deleteUnusedAssets(
 		db,
-		scan.unused.filter((row) => row.due)
+		scan.unused.filter((row) => row.due),
+		progress
 	);
 	return { count: freed.length, bytes: freed.reduce((sum, row) => sum + row.byteSize, 0) };
 }
