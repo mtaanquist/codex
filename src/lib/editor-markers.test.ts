@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { Compartment, EditorState, Transaction } from '@codemirror/state';
+import { ChangeSet, Compartment, EditorState, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { history, isolateHistory, redo, undo, undoDepth } from '@codemirror/commands';
-import { markerExtensions, type SceneMarker } from './editor-markers';
+import {
+	markerExtensions,
+	rebuiltMarkers,
+	unsavedChanges,
+	type SceneMarker
+} from './editor-markers';
 
 const doc = 'The cat sat on the mat.';
 // "sat"
@@ -334,5 +339,139 @@ describe('markerExtensions', () => {
 				failures.push(`seed ${seed}: ${steps.join('; ')}`);
 		}
 		expect(failures.slice(0, 3)).toEqual([]);
+	});
+});
+
+// The page hands the editor a new marker set (one checked off, one made)
+// while edits since the last autosave are still unsaved: the server's anchors
+// are against the saved text, not the text on screen.
+describe('rebuiltMarkers', () => {
+	const text = 'The cat sat on the mat.';
+	const cat: SceneMarker = { id: 'cat', anchorStart: 4, anchorEnd: 7 };
+	const sat: SceneMarker = { id: 'sat', anchorStart: 8, anchorEnd: 11 };
+	const mat: SceneMarker = { id: 'mat', anchorStart: 19, anchorEnd: 22 };
+
+	function setupRebuild(markers: SceneMarker[]) {
+		const compartment = new Compartment();
+		let handle = markerExtensions(markers, () => {});
+		let state = EditorState.create({
+			doc: text,
+			extensions: [history({ newGroupDelay: 1e9 }), compartment.of(handle.extension)]
+		});
+		let unsaved = ChangeSet.empty(text.length).desc;
+		const marked = () =>
+			handle
+				.anchors({ state } as EditorView)
+				.map((anchor) => [anchor.id, state.sliceDoc(anchor.anchorStart, anchor.anchorEnd)]);
+		return {
+			get state() {
+				return state;
+			},
+			edit(from: number, to: number, insert = '') {
+				const tr = state.update({ changes: { from, to, insert }, userEvent: 'input' });
+				unsaved = unsaved.composeDesc(tr.changes.desc);
+				state = tr.state;
+			},
+			// What the SceneEditor does when the page data brings a changed set.
+			reload(incoming: SceneMarker[]) {
+				const current = handle.anchors({ state } as EditorView);
+				handle = markerExtensions(rebuiltMarkers(incoming, current, unsaved), () => {});
+				state = state.update({ effects: compartment.reconfigure(handle.extension) }).state;
+			},
+			undo() {
+				undo({
+					state,
+					dispatch: (tr: Transaction) => {
+						state = tr.state;
+					}
+				});
+			},
+			marked
+		};
+	}
+
+	it('keeps the other markers on their words when one is checked off before the save', () => {
+		const editor = setupRebuild([cat, mat]);
+		editor.edit(0, 0, 'Oh. ');
+		editor.reload([mat]);
+		expect(editor.marked()).toEqual([['mat', 'mat']]);
+	});
+
+	it('keeps a marker where the editor moved it, not where the server last stored it', () => {
+		const editor = setupRebuild([cat, mat]);
+		// Typing inside the marked words grows the marker.
+		editor.edit(21, 21, 'tt');
+		editor.reload([mat]);
+		expect(editor.marked()).toEqual([['mat', 'mattt']]);
+	});
+
+	it('places a marker new to the editor through the unsaved edits', () => {
+		const editor = setupRebuild([cat, mat]);
+		editor.edit(0, 0, 'Oh. ');
+		editor.reload([cat, sat, mat]);
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat'],
+			['mat', 'mat']
+		]);
+	});
+
+	it('leaves out a new marker whose words were deleted since the save', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 12);
+		editor.reload([cat, sat]);
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('keeps a marker gone when its words were deleted, and undo still puts it back', () => {
+		const editor = setupRebuild([cat, mat]);
+		editor.edit(18, 22);
+		editor.reload([mat]);
+		expect(editor.marked()).toEqual([]);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe(text);
+		expect(editor.marked()).toEqual([['mat', 'mat']]);
+	});
+
+	it('maps a kept marker back when the unsaved edit is undone', () => {
+		const editor = setupRebuild([cat, mat]);
+		editor.edit(0, 0, 'Oh. ');
+		editor.reload([mat]);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe(text);
+		expect(editor.marked()).toEqual([['mat', 'mat']]);
+	});
+});
+
+describe('unsavedChanges', () => {
+	const insert = (length: number, at: number, text: string) =>
+		ChangeSet.of({ from: at, insert: text }, length).desc;
+
+	it('maps saved positions through every edit while nothing has landed', () => {
+		const unsaved = unsavedChanges(10);
+		unsaved.record(insert(10, 0, 'ab'));
+		unsaved.sent();
+		unsaved.record(insert(12, 0, 'cd'));
+		expect(unsaved.changes.mapPos(5)).toBe(9);
+	});
+
+	it('keeps only the edits made after the text a landed save sent', () => {
+		const unsaved = unsavedChanges(10);
+		unsaved.record(insert(10, 0, 'ab'));
+		unsaved.sent();
+		unsaved.record(insert(12, 0, 'cd'));
+		unsaved.landed();
+		expect(unsaved.changes.mapPos(5)).toBe(7);
+	});
+
+	it('keeps every edit when a save fails, until a later one lands', () => {
+		const unsaved = unsavedChanges(10);
+		unsaved.record(insert(10, 0, 'ab'));
+		unsaved.sent();
+		unsaved.record(insert(12, 0, 'cd'));
+		unsaved.sent();
+		expect(unsaved.changes.mapPos(5)).toBe(9);
+		unsaved.landed();
+		expect(unsaved.changes.mapPos(5)).toBe(5);
 	});
 });

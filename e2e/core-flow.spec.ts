@@ -511,6 +511,32 @@ async function journey({ page, browser }: { page: Page; browser: Browser }) {
 	await expect(page.locator('.todo-marker')).toHaveCount(0);
 	await expect(page.locator('.todo-row')).toHaveCount(1);
 
+	// Checking one marker off before the autosave has stored the latest typing
+	// leaves the other marker on its own words.
+	const markWords = async (keys: string[]) => {
+		const created = page.waitForResponse(
+			(r) => r.url().includes('/markers') && r.request().method() === 'POST' && r.ok()
+		);
+		for (const key of keys) await page.keyboard.press(key);
+		await page.keyboard.press('ControlOrMeta+Alt+m');
+		await created;
+	};
+	await page.locator('.cm-content').click();
+	await page.keyboard.press('ControlOrMeta+End');
+	await markWords(['End', ...Array(5).fill('Shift+ArrowLeft')]);
+	await markWords(['Home', ...Array(5).fill('Shift+ArrowRight')]);
+	await expect(page.locator('.todo-marker')).toHaveCount(2);
+	await page.keyboard.press('Home');
+	await page.keyboard.type('Now ');
+	const earlyResolve = page.waitForResponse(
+		(r) => r.url().includes('/api/markers/') && r.request().method() === 'PUT' && r.ok()
+	);
+	await page.locator('.todo-check').first().click();
+	await earlyResolve;
+	await expect(page.locator('.todo-marker')).toHaveCount(1);
+	await expect(page.locator('.todo-marker')).toHaveText('scene');
+	await expect(page.locator('.cm-content')).toContainText('Now TODO: tighten the toll scene');
+
 	// Assets: a story cover uploads to the bucket and serves back, and a
 	// dropped image lands in the prose as markdown. Needs a bucket (CI
 	// provides RustFS); without one the segment is skipped, loudly.

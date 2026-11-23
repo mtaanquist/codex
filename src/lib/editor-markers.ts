@@ -1,4 +1,11 @@
-import { StateEffect, StateField, Prec, type Extension } from '@codemirror/state';
+import {
+	ChangeSet,
+	StateEffect,
+	StateField,
+	Prec,
+	type ChangeDesc,
+	type Extension
+} from '@codemirror/state';
 import { invertedEffects } from '@codemirror/commands';
 import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet } from '@codemirror/view';
 import type { ViewUpdate } from '@codemirror/view';
@@ -182,5 +189,63 @@ export function markerExtensions(
 			return anchors;
 		},
 		ids: markers.map((marker) => marker.id)
+	};
+}
+
+// The marker set for a rebuild when the page data brings a changed set (one
+// checked off, one made). The server's anchors are against the text it last
+// stored, so edits made since would put them on the wrong words: a marker the
+// editor still highlights keeps its own mapped range, which is newer, and any
+// other marker's anchors are mapped through the unsaved changes. A marker
+// whose words are gone comes back with no anchors, so it stays held and undo
+// can still put it back.
+export function rebuiltMarkers(
+	incoming: SceneMarker[],
+	current: { id: string; anchorStart: number; anchorEnd: number }[],
+	unsaved: ChangeDesc
+): SceneMarker[] {
+	const shown = new Map(current.map((anchor) => [anchor.id, anchor]));
+	return incoming.map((marker) => {
+		const own = shown.get(marker.id);
+		if (own) return { id: marker.id, anchorStart: own.anchorStart, anchorEnd: own.anchorEnd };
+		const { anchorStart: start, anchorEnd: end } = marker;
+		if (start === null || end === null || end > unsaved.length) {
+			return { id: marker.id, anchorStart: null, anchorEnd: null };
+		}
+		const from = unsaved.mapPos(start, 1);
+		const to = unsaved.mapPos(end, -1);
+		return from < to
+			? { id: marker.id, anchorStart: from, anchorEnd: to }
+			: { id: marker.id, anchorStart: null, anchorEnd: null };
+	});
+}
+
+// The edits made since the text the server last stored, for rebuiltMarkers.
+// Saves run one at a time: sent() marks the text a save is sending, and
+// landed() drops the edits up to it once the server has stored it. A failed
+// save leaves them in, since the server still holds the older text.
+export function unsavedChanges(length: number) {
+	let total = ChangeSet.empty(length).desc;
+	let sinceSent: ChangeDesc | null = null;
+	return {
+		record(changes: ChangeDesc) {
+			total = total.composeDesc(changes);
+			if (sinceSent) sinceSent = sinceSent.composeDesc(changes);
+		},
+		sent() {
+			sinceSent = ChangeSet.empty(total.newLength).desc;
+		},
+		landed() {
+			if (sinceSent) total = sinceSent;
+			sinceSent = null;
+		},
+		// The editor now shows exactly what the server holds.
+		reset() {
+			total = ChangeSet.empty(total.newLength).desc;
+			sinceSent = null;
+		},
+		get changes(): ChangeDesc {
+			return total;
+		}
 	};
 }
