@@ -13,6 +13,41 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Freeing storage on story purge and for unused images (2026-11-23,
+`feat/free-storage` on `staging/phase-10`, #1446). Before this only a
+universe purge gave image bytes back, so a writer at the storage limit could
+not get under it. Deleting an image a writer still uses is the failure that
+matters, so "in use" is read as widely as possible: an image is kept while
+its id appears anywhere in the database outside its own `assets` row, in any
+uuid column or in the text of any text, json, array or user-defined column
+(`findReferencedAssets`). The columns come from `information_schema` on each
+run, so a table added later is covered without being listed; an explicit
+list of reference sources was weighed and dropped, since one forgotten
+column would mean lost images. That covers scenes (trashed too), history,
+saved drafts, staged drafts, frozen editions and their `publication_assets`,
+notes, entity bodies and badges, covers, avatars, review suggestions and
+chat transcripts. All columns are read in one statement, so one snapshot:
+a reference moving between tables (a staged draft accepted into a scene)
+cannot be missed by reading one table before and the other after.
+`sweepUnusedAssets` (worker queue `sweep-unused-assets`, 03:00 UTC) checks
+images older than 24 hours in batches of 500 without locks, then for the
+unused ones locks the owners' account rows, then the asset rows, checks
+again and deletes, giving the bytes back and queueing the objects in the
+same transaction. The object store is never called on this path; the
+existing deferred sweep removes objects later, so a store failure cannot
+leave a counted row or credit bytes for a row that stays. The second check
+under the locks closes the gap between the first check and the delete; the
+remaining window is a writer adding a link to an image no row has held for
+a day within the instant of that statement, and a badge or edition set at
+that moment waits on the asset row lock through its foreign key. `purgeStory`
+now locks the owner's account row first (as `purgeUniverseWithin` does),
+deletes the story, then runs the same locked check over the owner's images
+in the story's universe that are past the grace period, so a cover or
+image another story, saved draft or edition still shows is kept. Images
+newer than a day are left for the sweep, and so are images uploaded under
+another universe. Because history is never pruned, taking an image out of a
+scene frees nothing while the scene exists; the help says so.
+
 Public pages at /@handle/slug (2026-11-22, `feat/public-slug-pages` on
 `staging/phase-10`, #854). The roadmap assumed `(owner_id, slug)` made
 `/@handle/<slug>` collision-free, but stories and universes keep separate

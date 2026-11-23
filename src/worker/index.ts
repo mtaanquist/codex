@@ -13,6 +13,7 @@ import {
 	PURGE_SESSIONS_QUEUE,
 	PURGE_UNIVERSES_QUEUE,
 	SWEEP_DELETED_OBJECTS_QUEUE,
+	SWEEP_UNUSED_ASSETS_QUEUE,
 	RECONCILE_MENTIONS_QUEUE,
 	REMAP_MARKERS_QUEUE,
 	REVIEWER_DIGEST_QUEUE,
@@ -71,6 +72,7 @@ await boss.createQueue(EMAIL_DEAD_LETTER_QUEUE);
 await boss.createQueue(PURGE_ACCOUNTS_QUEUE);
 await boss.createQueue(PURGE_UNIVERSES_QUEUE);
 await boss.createQueue(SWEEP_DELETED_OBJECTS_QUEUE);
+await boss.createQueue(SWEEP_UNUSED_ASSETS_QUEUE);
 await boss.createQueue(PURGE_REVIEW_RUNS_QUEUE);
 await boss.createQueue(PURGE_SESSIONS_QUEUE);
 await boss.createQueue(NOTIFICATION_DIGEST_QUEUE);
@@ -125,6 +127,7 @@ await boss.work(REVIEWER_DIGEST_QUEUE, handlers.reviewerDigest);
 await boss.work(PURGE_ACCOUNTS_QUEUE, handlers.purgeAccounts);
 await boss.work(PURGE_UNIVERSES_QUEUE, handlers.purgeUniverses);
 await boss.work(SWEEP_DELETED_OBJECTS_QUEUE, handlers.sweepDeletedObjects);
+await boss.work(SWEEP_UNUSED_ASSETS_QUEUE, handlers.sweepUnusedAssets);
 await boss.work(PURGE_REVIEW_RUNS_QUEUE, handlers.purgeReviewRuns);
 await boss.work(PURGE_SESSIONS_QUEUE, handlers.purgeSessions);
 

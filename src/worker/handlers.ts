@@ -30,6 +30,7 @@ import { listAccountsDueForPurge, purgeAccount } from '../lib/server/account-del
 import { listUniversesDueForPurge, purgeUniverse } from '../lib/server/universe-lifecycle.ts';
 import { listStoriesDueForPurge } from '../lib/server/story-lifecycle.ts';
 import { purgeStory } from '../lib/server/story-delete.ts';
+import { sweepUnusedAssets } from '../lib/server/unused-assets.ts';
 import {
 	assetMigrationSource,
 	clearAssetMigrationSource,
@@ -1204,6 +1205,16 @@ export function createHandlers(deps: WorkerDeps) {
 					kept: result.kept,
 					failed: result.failed
 				});
+			}
+		},
+
+		// Uploaded images nothing references any more, past the grace period.
+		// Their rows go and their bytes come back now; the objects are queued
+		// for the sweep above.
+		async sweepUnusedAssets() {
+			const result = await sweepUnusedAssets(db);
+			if (result.count > 0) {
+				logEvent('info', 'assets.unused_sweep', { deleted: result.count, bytes: result.bytes });
 			}
 		},
 

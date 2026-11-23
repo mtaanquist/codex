@@ -23,6 +23,9 @@ export const PURGE_UNIVERSES_QUEUE = 'purge-universes';
 // Removes bucket objects whose rows were deleted longer ago than the backup
 // retention window (see sweepDeletedObjects in assets.ts).
 export const SWEEP_DELETED_OBJECTS_QUEUE = 'sweep-deleted-objects';
+// Deletes uploaded images nothing references any more and gives their bytes
+// back (see sweepUnusedAssets in unused-assets.ts).
+export const SWEEP_UNUSED_ASSETS_QUEUE = 'sweep-unused-assets';
 export const MIGRATE_ASSETS_QUEUE = 'migrate-assets';
 // The Assistant queues are exclusive: one queued or running job per
 // singletonKey (a review scope, a story's summary pass, a universe's enrichment,

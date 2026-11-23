@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { scheduleObjectDeletions } from './assets.ts';
+import { lockStorageOwners } from './quotas.ts';
+import { deleteUnreferencedAssets, storyAssetCandidates } from './unused-assets.ts';
 import {
 	assistantChatMessages,
 	assistantChatSummaries,
@@ -166,9 +168,20 @@ export async function deleteStory(db: Database, storyId: string, userId: string)
 
 // Hard-deletes a story with no owner check, for the trash purge. The stored
 // export files of the story's editions, whose rows cascade away with the
-// publications, are queued for the deferred object sweep.
+// publications, are queued for the deferred object sweep. The images the story
+// alone used (its covers and inline images that no other row references) go
+// in the same transaction, and their bytes come off the owner's storage use.
 export async function purgeStory(db: Database, storyId: string): Promise<void> {
 	await db.transaction(async (tx) => {
+		const [story] = await tx
+			.select({ ownerId: stories.ownerId, universeId: stories.universeId })
+			.from(stories)
+			.where(eq(stories.id, storyId));
+		if (!story) return;
+		// The account row before any other row, as purgeUniverseWithin takes it
+		// (see lockStorageOwners).
+		await lockStorageOwners(tx, [story.ownerId]);
+		const candidates = await storyAssetCandidates(tx, story);
 		// Capture the edition export keys before the rows cascade away.
 		const artifactRows = await tx
 			.select({ storageKey: exportArtifacts.storageKey })
@@ -180,5 +193,6 @@ export async function purgeStory(db: Database, storyId: string): Promise<void> {
 			tx,
 			artifactRows.map((row) => row.storageKey)
 		);
+		await deleteUnreferencedAssets(tx, candidates);
 	});
 }

@@ -125,8 +125,9 @@
 			</h2>
 			<p class="admin-block-sub">
 				What each account uses against its plan. Universes and stories in the trash do not count.
-				Images count until they are deleted: a universe's images when the universe is deleted for
-				good, but not those of a single story deleted for good. Set limits under Plans.
+				Images count until they are deleted: when the universe or story holding them is deleted for
+				good, or by the daily check for images nothing uses, once they are a day old. Set limits
+				under Plans.
 			</p>
 		</div>
 	</div>

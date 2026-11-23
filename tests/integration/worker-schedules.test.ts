@@ -7,7 +7,8 @@ import {
 	PURGE_UNIVERSES_QUEUE,
 	RECONCILE_MENTIONS_QUEUE,
 	REMAP_MARKERS_QUEUE,
-	SWEEP_DELETED_OBJECTS_QUEUE
+	SWEEP_DELETED_OBJECTS_QUEUE,
+	SWEEP_UNUSED_ASSETS_QUEUE
 } from '../../src/lib/server/queues';
 import { registerSchedules, WORKER_SCHEDULES } from '../../src/worker/schedules';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
@@ -18,6 +19,7 @@ import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 const EXPECTED: Record<string, string> = {
 	[PURGE_ACCOUNTS_QUEUE]: '30 * * * *',
 	[PURGE_UNIVERSES_QUEUE]: '45 * * * *',
+	[SWEEP_UNUSED_ASSETS_QUEUE]: '0 3 * * *',
 	[SWEEP_DELETED_OBJECTS_QUEUE]: '0 4 * * *',
 	[PURGE_REVIEW_RUNS_QUEUE]: '15 4 * * *',
 	[PURGE_SESSIONS_QUEUE]: '50 4 * * *',

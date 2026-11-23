@@ -480,10 +480,18 @@ badge deletes the old image. Replacing a story's cover deletes the old cover,
 unless a saved draft of the story still shows it; then it is kept with the
 draft.
 
-Removing an image from your text does not free its space, and neither does
-deleting a single story for good. The only way to free the space taken by the
-images in a universe, including its stories' covers and pictures, is to delete
-the whole universe for good. Moving it to the trash is not enough.
+Images in your text and story covers are freed once nothing uses them any
+more. Codex checks once a day and deletes an image when no scene, note, entry,
+saved draft, published edition or earlier version in a history still shows it.
+Images added in the last day are always kept. Because a scene's history keeps
+its earlier versions, taking an image out of a scene does not free it while
+the scene is still there.
+
+Deleting a story for good frees its cover and the images only that story used
+right away. An image another story still shows is kept, and one added in the
+last day is freed by the daily check instead. Deleting a universe
+for good frees every image in it. Moving a story or universe to the trash is
+not enough; its images are kept until the trash is emptied.
 
 ## Getting your work out
 
