@@ -6,6 +6,7 @@ import {
 	markerExtensions,
 	rebuiltMarkers,
 	unsavedChanges,
+	waitingMarkers,
 	type SceneMarker
 } from './editor-markers';
 import { textHash } from './text-hash';
@@ -434,9 +435,11 @@ describe('rebuiltMarkers', () => {
 			// What the SceneEditor does when the page data brings a changed set.
 			reload(incoming: SceneMarker[] = server) {
 				server = incoming;
+				const rebuilt = rebuiltMarkers(incoming, anchors(), handle.ids, unsaved.changes);
 				handle = markerExtensions(
-					rebuiltMarkers(incoming, anchors(), handle.ids, unsaved.changes),
-					() => {}
+					rebuilt,
+					() => {},
+					waitingMarkers(incoming, rebuilt, handle, unsaved.follow)
 				);
 				state = state.update({ effects: compartment.reconfigure(handle.extension) }).state;
 			},
@@ -481,6 +484,54 @@ describe('rebuiltMarkers', () => {
 		editor.edit(8, 12);
 		editor.reload([cat, sat]);
 		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
+	it('puts a new marker on its words when undo brings back words deleted before it arrived', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 12);
+		editor.reload([cat, sat]);
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe(text);
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
+		editor.redo();
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+		editor.undo();
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
+	});
+
+	it('still puts a new marker back on undo after another reload', () => {
+		const editor = setupRebuild([cat, mat]);
+		editor.edit(8, 12);
+		editor.reload([cat, sat, mat]);
+		editor.checkOff('cat');
+		editor.undo();
+		expect(editor.marked()).toEqual([
+			['sat', 'sat'],
+			['mat', 'mat']
+		]);
+	});
+
+	it('puts a new marker back by undo after a save without its words, and saves it', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 12);
+		editor.reload([cat, sat]);
+		editor.save();
+		expect(editor.server.find((marker) => marker.id === 'sat')?.anchorStart).toBeNull();
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe(text);
+		expect(editor.marked()).toEqual([
+			['cat', 'cat'],
+			['sat', 'sat']
+		]);
+		editor.save();
+		expect(editor.server).toContainEqual({ id: 'sat', anchorStart: 8, anchorEnd: 11 });
 	});
 
 	it('keeps a marker gone when its words were deleted, and undo still puts it back', () => {
@@ -737,6 +788,43 @@ describe('unsavedChanges', () => {
 		expect(unsaved.version).toBe('second');
 		unsaved.reset('newer');
 		expect(unsaved.version).toBe('newer');
+	});
+
+	describe('while an image is uploading', () => {
+		// The placeholder is in the editor text, but a save leaves it out.
+		const text = 'The gate scene.';
+		const placeholder = '![Uploading x.png...]()\n';
+		const cut = [{ from: 0, to: placeholder.length }];
+
+		it('counts from the text the save stored, without the placeholder', () => {
+			const unsaved = unsavedChanges(text);
+			unsaved.record(insert(text.length, 0, placeholder));
+			unsaved.sent(textHash(text), cut);
+			unsaved.landed();
+			const gate = placeholder.length + 4;
+			expect(unsaved.pin(gate, gate + 4).at()).toEqual({ from: 4, to: 8 });
+			expect(unsaved.changes.mapPos(4)).toBe(gate);
+			expect(unsaved.version).toBe(textHash(text));
+		});
+
+		it('follows edits and the upload landing while the save was on its way', () => {
+			const unsaved = unsavedChanges(text);
+			unsaved.record(insert(text.length, 0, placeholder));
+			const gate = placeholder.length + 4;
+			const pinned = unsaved.pin(gate, gate + 4);
+			unsaved.sent(textHash(text), cut);
+			// The upload lands: the placeholder becomes the image line.
+			const image = '![x.png](/a/1)\n';
+			unsaved.record(
+				ChangeSet.of(
+					{ from: 0, to: placeholder.length, insert: image },
+					text.length + placeholder.length
+				)
+			);
+			unsaved.landed();
+			expect(pinned.at()).toEqual({ from: 4, to: 8 });
+			expect(unsaved.changes.mapPos(4)).toBe(image.length + 4);
+		});
 	});
 
 	describe('pin', () => {

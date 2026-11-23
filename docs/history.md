@@ -90,6 +90,25 @@ now carries the fingerprint of the text its anchors count into and the
 server refuses it (scene row locked while checking) when a later save landed
 first; the editor tries once more. The page-load half (anchors read beside a
 save that has landed but not answered) stays open for the reason above.
+Fifth follow-up (`fix/marker-rebuild-review-3` on `staging/bug-fixes-4`,
+third review of #1448). While an image uploads, its placeholder line is in
+the editor text but not in what the save stores, and the unsaved-edits
+record took the editor text as the stored one, so after the save positions
+were off by the placeholder's length; a save now passes the ranges it leaves
+out, and the edits since the save put them back in. A marker refused twice
+by the server while this editor had nothing to save (the scene changed by
+the review centre, find and replace, or another window) said "try again",
+which could never work; the retry now saves the text on screen first, so a
+change elsewhere comes up as the usual conflict notice. A marker that
+reached the editor while its words were deleted and not saved had no undo
+record, so undo brought the words back but not the highlight; it now waits,
+followed through later edits and saves, and undo or redo that brings any of
+its words back places it. Not fixed: a new marker placed through unsaved
+edits that only partly cancel inside one combined change can still land on
+fewer of its words than are there (net() trims only a replacement's
+unchanged ends). A character diff per replacement clears it in the fuzz, but
+in prose it would align single common letters, so it is left for a word
+level approach if it matters.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write

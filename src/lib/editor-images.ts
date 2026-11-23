@@ -54,7 +54,7 @@ export function withoutRanges(text: string, ranges: Range[]) {
 	kept += text.slice(at);
 	const mapPos = (pos: number) =>
 		pos - cuts.reduce((shift, cut) => shift + Math.max(0, Math.min(pos, cut.to) - cut.from), 0);
-	return { text: kept, mapPos };
+	return { text: kept, mapPos, cuts };
 }
 
 // The text to store: an image still uploading is not the writer's text yet,
