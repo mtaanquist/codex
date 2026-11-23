@@ -1,11 +1,8 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { isUniqueViolation } from '#lib/server/db-errors';
-import { universes } from '#lib/server/db/schema';
 import { ownedUniverse } from '#lib/server/universe-access';
-import { uniqueSlug } from '#lib/server/slugs';
+import { saveUniverseDetails } from '#lib/server/universe-details';
 import { universeTimeline, universeRevisionCount } from '#lib/server/revisions';
 import { listCategories, saveCategories, universeContents } from '#lib/server/categories';
 import { trashUniverse, UNIVERSE_TRASH_DAYS } from '#lib/server/universe-lifecycle';
@@ -113,24 +110,12 @@ export const actions: Actions = {
 		if (!name) {
 			return fail(400, { action: 'update', message: 'The universe needs a name.' });
 		}
-		// The slug follows the name: a rename moves the universe's URL, an
-		// unchanged name leaves it alone.
-		const save = async (slug: string) => {
-			await db
-				.update(universes)
-				.set({ name, slug, descriptionMd, establishedSetting })
-				.where(eq(universes.id, universe.id));
-			return slug;
-		};
-		const freshSlug = () => uniqueSlug(db, 'universes', locals.user!.id, name, 'universe');
-		let slug;
-		try {
-			slug = await save(name === universe.name ? universe.slug : await freshSlug());
-		} catch (err) {
-			// A concurrent create took the slug between the pick and the update.
-			if (!isUniqueViolation(err)) throw err;
-			slug = await save(await freshSlug());
-		}
+		const slug = await saveUniverseDetails(db, locals.user!.id, universe, {
+			name,
+			descriptionMd,
+			establishedSetting
+		});
+		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.
 		if (slug !== universe.slug) redirect(303, `/universes/${slug}`);
 		return { action: 'update', saved: true };

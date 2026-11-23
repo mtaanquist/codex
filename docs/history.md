@@ -13,6 +13,68 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Public pages at /@handle/slug (2026-11-22, `feat/public-slug-pages` on
+`staging/phase-10`, #854). The roadmap assumed `(owner_id, slug)` made
+`/@handle/<slug>` collision-free, but stories and universes keep separate
+unique indexes, so one account can hold a story and a universe both called
+`ember-reach`. A flat address would need a precedence rule, and a later
+rename on either side could quietly re-point a link someone shared, so the
+story keeps the flat address the uuid links already used and the universe
+takes `/@handle/universes/<slug>`. Two segments never meet one, so no
+reserved words are needed. One `ref` matcher (an id or a valid slug, any
+case) replaces `uuid` on these routes; a malformed address is still a router
+404. `publicEdition` and the new `publicUniverse` take either form and scope
+the lookup by the handle's owner (`stories.owner_id = publications.owner_id`,
+`universes.owner_id` through `users.handle`). The shelf, the story menu and
+the publish confirmation now hand out slug links. Review round 1 caught that
+this made unlisted stories guessable from their titles, so a slug resolves
+only a public story and an unlisted one keeps its id address
+(`readingAddress`). It also caught that `src/params.ts` is loaded by Node
+itself during the build, where `#lib/slug` has no extension to resolve: the
+build failed in CI until it imported `./lib/slug.ts`. The matcher also
+accepts slugs up to 100 characters, since the 0035 backfill could append a
+suffix to a 60-character base.
+
+Old slugs redirect (decided by Mads after round 1). A rename used to break a
+shared slug link, and a later story could take the freed slug and inherit
+it. `slug_history` (migration 0108) keeps each slug a rename moves off, per
+account and kind, always for a universe and, for a story, once it has been
+published; an unpublished story's rename has no public link to protect,
+and reserving it would only push suffixes onto later drafts. Universes are
+reserved regardless (review round 3): judging them by their stories'
+publications failed once those stories were purged. `saveStoryDetails`
+and the new `saveUniverseDetails` go through `saveWithSlug`, which locks the
+row, compares the name it holds now (review round 3: a form that read an
+older name could leave the slug behind), and on a rename takes a
+per-account advisory lock, picks, saves and records (review round 2: two
+renames at once used to retire a stale slug and lose the one in between). `uniqueSlug` counts history
+as taken, except a story's own old slugs, so renaming back works. A restore
+from the trash whose slug became another story's old slug picks a fresh one,
+since coming back under it would re-point that story's links; it runs under
+the same lock, so a rename cannot reserve the slug between the check and
+the revive. Trashing still frees a story's current slug, unchanged. The public
+loaders redirect with 308 (SvelteKit's permanent redirect) only when the
+target is readable at its slug, which keeps an unlisted story's id out of
+any redirect. Purge keeps the reservation with a null target (safer than
+freeing it: an old link 404s rather than opening another work); the account
+deletion cascade removes the rows. The private app routes do not redirect
+old slugs, to keep this to the public promise. Both public pages now carry
+`rel=canonical`. No redirect from the id
+address to the slug one: the id is the address that survives a rename.
+
+The universe page shows the name and the shelf's own query narrowed to that
+universe, so takedowns, visibility, adult labels and noindex follow the
+shelf exactly. It is a 404 while nothing in it is listed, so a guessed slug
+never confirms a private universe's name, and the standalone universe never
+gets one. No description: universes have no frozen copy, and public pages
+show only frozen editions. Each story's kicker links its universe page when
+there is one, since nothing else would lead a reader there.
+
+While there: the public reads checked `stories.deleted_at` but not the
+universe's, so a trashed universe's editions, covers, inline images and
+reader downloads stayed public until the purge. They now use `storyIsLive()`
+(`publicEdition`, `publicShelf`, `isPublicAsset`, `artifactForDownload`).
+
 Plans, usage accounting and quota enforcement (2026-11-23, `feat/quotas` on
 `staging/phase-10`, #858). Migration 0107 creates `plans` and
 `entitlements` as `schema.md` had them, seeds a default plan with no

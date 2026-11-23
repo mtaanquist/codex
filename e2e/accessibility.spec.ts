@@ -53,6 +53,7 @@ let universePlanPath = '';
 let suggestionsPath = '';
 let consentPath = '';
 let readingPath = '';
+let universePagePath = '';
 let draftPath = '';
 
 test.beforeAll(async ({ browser }) => {
@@ -148,6 +149,11 @@ test.beforeAll(async ({ browser }) => {
 		.getByRole('link', { name: 'Axe story' })
 		.first()
 		.getAttribute('href')) as string;
+	await gotoReady(page, readingPath);
+	universePagePath = (await page
+		.locator('.reader-kicker')
+		.getByRole('link', { name: universeName })
+		.getAttribute('href')) as string;
 	await page.close();
 });
 
@@ -170,6 +176,7 @@ const signedOut = () => [
 	['sign in', '/login'],
 	['sign in with a link', '/login/link'],
 	['public story', readingPath],
+	['public universe', universePagePath],
 	['not found', '/@nobody-here/no-such-story']
 ];
 

@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { formatDateTime } from '#lib/format';
+	import { readingAddress } from '#lib/slug';
 	import { tick } from 'svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
@@ -78,12 +79,12 @@
 			<p class="field-hint" role="status" style="color:var(--status-final-ink);">
 				Edition published. Readers see it at
 				<a
-					href={resolve('/@[handle]/[story=uuid]', {
+					href={resolve('/@[handle]/[story=ref]', {
 						handle: data.archive.handle,
-						story: data.story.id
+						story: readingAddress(data.story)
 					})}
 				>
-					/@{data.archive.handle}/{data.story.id}
+					/@{data.archive.handle}/{readingAddress(data.story)}
 				</a>.
 			</p>
 		{/if}

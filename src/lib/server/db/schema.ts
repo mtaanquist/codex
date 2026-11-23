@@ -289,6 +289,34 @@ export const stories = pgTable(
 	]
 );
 
+// Slugs a story or universe has moved off by a rename: always for a
+// universe, and for a story once it has been published. Two jobs: a public link made
+// before the rename redirects to the current address, and no other story (or
+// universe) of the account can take the old slug, so an old link never opens
+// a different work. A purge keeps the reservation (the target goes null
+// and the old link 404s); deleting the account removes the rows. Not authored
+// content, so it stays out of exports.
+export const slugHistory = pgTable(
+	'slug_history',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		ownerId: uuid('owner_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind', { enum: ['story', 'universe'] }).notNull(),
+		slug: text('slug').notNull(),
+		// The one the kind names; null once it has been purged.
+		storyId: uuid('story_id').references(() => stories.id, { onDelete: 'set null' }),
+		universeId: uuid('universe_id').references(() => universes.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		uniqueIndex('slug_history_owner_kind_slug_idx').on(table.ownerId, table.kind, table.slug),
+		index('slug_history_story_idx').on(table.storyId),
+		index('slug_history_universe_idx').on(table.universeId)
+	]
+);
+
 // Chapters are organisational only; prose lives on scenes.
 export const chapters = pgTable(
 	'chapters',

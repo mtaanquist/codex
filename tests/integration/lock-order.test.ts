@@ -33,7 +33,8 @@ import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { setSceneStatus } from '../../src/lib/server/scene-status';
 import { rebuildSceneMentions } from '../../src/lib/server/mentions';
 import { saveStoryDetails } from '../../src/lib/server/story-details';
-import { trashStory } from '../../src/lib/server/story-lifecycle';
+import { restoreStory, trashStory } from '../../src/lib/server/story-lifecycle';
+import { saveUniverseDetails } from '../../src/lib/server/universe-details';
 import { purgeStory } from '../../src/lib/server/story-delete';
 import { saveEntity } from '../../src/lib/server/entity-save';
 import { saveAccountLlmConfig, saveStoryLlmOverride } from '../../src/lib/server/llm/config';
@@ -139,7 +140,7 @@ const ROWS: { table: string; key: Key }[] = [
 ];
 
 // The advisory locks the write paths take (row-locks.ts, revisions.ts,
-// review.ts, story-drafts.ts).
+// review.ts, story-drafts.ts, slugs.ts).
 const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the story-scenes lock', advisory: () => `story-scenes:${S.story}` },
 	...(['A', 'B', 'C', 'D', 'T'] as const).map((key) => ({
@@ -149,7 +150,8 @@ const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the revision lock of character Aldric', advisory: () => `character:${S.aldric}` },
 	{ name: 'the revision lock of place Quay', advisory: () => `place:${S.quay}` },
 	{ name: 'the revision lock of lore entry Toll', advisory: () => `lore_entry:${S.toll}` },
-	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` }
+	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` },
+	{ name: 'the slug lock of the account', advisory: () => `slugs:${S.user}` }
 ];
 
 const TARGETS: Target[] = [...ROWS.map((row) => ({ ...row, name: NAMES[row.key] })), ...ADVISORY];
@@ -390,7 +392,7 @@ const OPS: Op[] = [
 			await saveStoryDetails(
 				db,
 				S.user,
-				{ id: S.story, title: 'Turns', slug: 'turns' },
+				{ id: S.story },
 				{
 					title: 'Other Turns',
 					author: null,
@@ -405,7 +407,24 @@ const OPS: Op[] = [
 		name: 'mute story for the Assistant',
 		run: async (db) => await saveStoryLlmOverride(db, S.story, { enabled: false })
 	},
+	{
+		name: 'rename universe',
+		run: async (db) =>
+			await saveUniverseDetails(
+				db,
+				S.user,
+				{ id: S.universe },
+				{ name: 'Other Lockland', descriptionMd: null, establishedSetting: false }
+			)
+	},
 	{ name: 'trash story', run: async (db) => ok(await trashStory(db, S.user, S.story)) },
+	{
+		name: 'restore story',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+		},
+		run: async (db) => ok(await restoreStory(db, S.user, S.story))
+	},
 	{ name: 'purge story', run: async (db) => await purgeStory(db, S.story) },
 	{
 		name: 'delete trashed scene for good',
