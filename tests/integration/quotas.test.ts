@@ -545,6 +545,8 @@ describe('storage', () => {
 		await trashUniverse(db, ownerId, world.id);
 		// The trash keeps the images until the purge.
 		expect(await used()).toBe(250);
+		// The purge frees images past the unused image grace period.
+		await db.update(assets).set({ createdAt: new Date(Date.now() - 60 * 86_400_000) });
 		await purgeUniverse(db, world.id);
 		expect(await used()).toBe(0);
 	});

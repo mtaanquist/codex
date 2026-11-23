@@ -24,7 +24,7 @@ import { untrash } from './slugs.ts';
 import { holdCountQuota, lockStorageOwners, releaseStorage } from './quotas.ts';
 import { ENTITY_TYPES, entityTable } from './entity-lookups.ts';
 import { deleteStoryWithin, trashedFor, type Tx } from './story-delete.ts';
-import { referencedAssetIds } from './unused-assets.ts';
+import { referencedAssetIds, UNUSED_ASSET_GRACE_DAYS } from './unused-assets.ts';
 import { ownedUniverseRow } from './universe-scope.ts';
 
 export const UNIVERSE_TRASH_DAYS = 30;
@@ -121,10 +121,10 @@ export async function destroyUniverse(
  * first) or, with dueAfterDays, has not been there that long: the scheduled
  * purge read its list before the lock.
  *
- * Its images go with it only when nothing else uses them. A scene, edition or
- * profile elsewhere can show an image uploaded here; those are kept, no longer
- * tied to any universe, and the unused image sweep frees each once nothing
- * shows it.
+ * Its images more than UNUSED_ASSET_GRACE_DAYS old go with it when nothing
+ * else uses them. A scene, edition or profile elsewhere can show an image
+ * uploaded here; those, and newer ones, are kept, no longer tied to any
+ * universe, and the unused image sweep frees each once nothing shows it.
  */
 export async function purgeUniverse(
 	db: Database,
@@ -149,18 +149,25 @@ export async function purgeUniverse(
 			.for('no key update');
 		if (!row?.deletedAt || !row.due) return false;
 		const fileKeys = await universeEditionFileKeys(tx, universeId);
-		const images = await tx
-			.select({ id: assets.id })
-			.from(assets)
-			.where(eq(assets.universeId, universeId));
+		// Only images past the sweep's grace period go now, for the same reason
+		// the sweep waits: a newer one may sit only in an editor elsewhere that
+		// has not saved yet.
+		const images = (
+			await tx
+				.select({ id: assets.id })
+				.from(assets)
+				.where(
+					and(
+						eq(assets.universeId, universeId),
+						lte(assets.createdAt, sql`now() - make_interval(days => ${UNUSED_ASSET_GRACE_DAYS})`)
+					)
+				)
+		).map((image) => image.id);
 		await purgeUniverseWithin(tx, universeId);
 		// Read after the universe's own rows are gone, so only uses elsewhere
 		// count.
-		const kept = await referencedAssetIds(
-			tx,
-			images.map((image) => image.id)
-		);
-		const unused = images.map((image) => image.id).filter((id) => !kept.has(id));
+		const kept = await referencedAssetIds(tx, images);
+		const unused = images.filter((id) => !kept.has(id));
 		const freed =
 			unused.length === 0
 				? []

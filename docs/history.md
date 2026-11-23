@@ -21,8 +21,8 @@ loops. A universe purge deleted every image with its `universe_id`, though a
 scene, edition or profile elsewhere can show one (and a `publication_assets`
 row made the purge fail every hour). It now detaches the images
 (`universe_id` null) with the rest of the universe, then deletes only those
-the full reference check (the same one the sweep uses) finds unused; the rest
-wait for the sweep. Replacing or clearing a cover, avatar or badge no longer
+past the 30-day grace that the full reference check (the same one the sweep
+uses) finds unused; the rest wait for the sweep. Replacing or clearing a cover, avatar or badge no longer
 deletes the old image either, and so no longer credits its bytes to the
 upload that replaces it: checking references there would scan the whole
 database on every avatar change, and the eager delete threw after the new

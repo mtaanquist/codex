@@ -497,10 +497,11 @@ the scene's history still holds the older text with the image in it.
 Deleting a story for good frees, within a few minutes, the images only that
 story used and that are more than 30 days old, including its cover. Newer ones
 are freed once they reach 30 days. An image another story still shows is
-kept. Deleting a universe for good frees at once the images in it that nothing
-else shows; one that a story in another universe still shows is kept until
-the daily check finds it unused. Moving a story or universe to the trash is
-not enough; its images are kept until the trash is emptied.
+kept. Deleting a universe for good frees at once the images in it that are
+more than 30 days old and that nothing else shows. Newer ones, and any that a
+story in another universe still shows, are kept until the daily check finds
+them unused. Moving a story or universe to the trash is not enough; its images
+are kept until the trash is emptied.
 
 ## Getting your work out
 

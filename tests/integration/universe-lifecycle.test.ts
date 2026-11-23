@@ -413,7 +413,8 @@ describe('destroy', () => {
 			filename: 'gone.png',
 			contentType: 'image/png',
 			byteSize: 1,
-			storageKey: 'destroyed-img-key'
+			storageKey: 'destroyed-img-key',
+			createdAt: new Date(Date.now() - 60 * 86_400_000)
 		});
 		expect((await destroyUniverse(db, strangerId, universeId)).ok).toBe(false);
 		expect((await destroyUniverse(db, ownerId, universeId)).ok).toBe(true);
@@ -447,8 +448,9 @@ describe('destroy', () => {
 });
 
 describe('purging a universe', () => {
-	// An image uploaded in this universe, 5 bytes, counted against its owner.
-	async function imageHere(storageKey = 'shared-key') {
+	// An image uploaded in this universe, 5 bytes, counted against its owner,
+	// old enough by default to be past the unused image grace period.
+	async function imageHere(storageKey = 'shared-key', daysOld = 60) {
 		const [image] = await db
 			.insert(assets)
 			.values({
@@ -458,7 +460,8 @@ describe('purging a universe', () => {
 				filename: 'map.png',
 				contentType: 'image/png',
 				byteSize: 5,
-				storageKey
+				storageKey,
+				createdAt: new Date(Date.now() - daysOld * 86_400_000)
 			})
 			.returning();
 		await db.update(users).set({ storageUsedBytes: 5 }).where(eq(users.id, ownerId));
@@ -497,6 +500,15 @@ describe('purging a universe', () => {
 		expect(await db.select().from(assets).where(eq(assets.id, image.id))).toEqual([]);
 		expect(await storageUsed()).toBe(0);
 		expect(await queued('shared-key')).toBe(true);
+	});
+
+	it('leaves an image newer than the grace period for the sweep', async () => {
+		const image = await imageHere('new-key', 1);
+		await trashUniverse(db, ownerId, universeId);
+		expect(await purgeUniverse(db, universeId)).toBe(true);
+		const [kept] = await db.select().from(assets).where(eq(assets.id, image.id));
+		expect(kept).toMatchObject({ universeId: null });
+		expect(await storageUsed()).toBe(5);
 	});
 
 	it('keeps an image a scene in another universe shows', async () => {
