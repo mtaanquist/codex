@@ -1,6 +1,7 @@
 import {
 	ChangeSet,
 	StateEffect,
+	Text,
 	StateField,
 	Prec,
 	type ChangeDesc,
@@ -10,6 +11,7 @@ import { invertedEffects } from '@codemirror/commands';
 import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet } from '@codemirror/view';
 import type { ViewUpdate } from '@codemirror/view';
 import { findTodoLines } from './todo-markers';
+import { textHash } from './text-hash';
 
 // TODO markers in the editor: plain "TODO:" lines get a line highlight
 // straight from the text, and selection markers (rows in scene_markers)
@@ -37,9 +39,10 @@ const restoreMarker = StateEffect.define<MarkerRange>({
 
 // Takes a marker away again on undo or redo when it was gone before the
 // change being reverted. Without it, a marker that undo put back can map
-// onto the replacement text on redo and survive. Scoped to the marker set
-// that recorded it, so a set rebuilt from fresh server anchors keeps its own.
-const dropMarker = StateEffect.define<{ id: string; owner: object }>();
+// onto the replacement text on redo and survive. It applies across a marker
+// set rebuilt in between, since a rebuild keeps the positions the editor
+// shows and never places a held marker it was not showing.
+const dropMarker = StateEffect.define<string>();
 
 function markerMark(id: string, from: number, to: number) {
 	return Decoration.mark({ class: 'todo-marker', todoId: id }).range(from, to);
@@ -73,8 +76,7 @@ function markerField(markers: SceneMarker[]) {
 			value = value.map(tr.changes);
 			for (const effect of tr.effects) {
 				if (effect.is(dropMarker)) {
-					const { id, owner } = effect.value;
-					if (owner !== held) continue;
+					const id = effect.value;
 					value = value.update({ filter: (_from, _to, mark) => mark.spec.todoId !== id });
 					continue;
 				}
@@ -128,7 +130,7 @@ function markerField(markers: SceneMarker[]) {
 		);
 		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
 		return [
-			...gone.map((id) => dropMarker.of({ id, owner: held })),
+			...gone.map((id) => dropMarker.of(id)),
 			...[...touched.values()].map((range) => restoreMarker.of(range))
 		];
 	});
@@ -241,46 +243,97 @@ export function rebuiltMarkers(
 // The edits made since the text the server last stored, for rebuiltMarkers.
 // Saves run one at a time: sent() marks the text a save is sending, and
 // landed() drops the edits up to it once the server has stored it. A failed
-// save leaves them in, since the server still holds the older text.
-export function unsavedChanges(length: number) {
-	let total = ChangeSet.empty(length).desc;
-	let sinceSent: ChangeDesc | null = null;
-	const pins = new Set<{ since: ChangeDesc }>();
+// save leaves them in, since the server still holds the older text. The
+// texts are kept too, so edits that cancel out (a deletion and its undo) do
+// not move positions: composed, they read as a replacement of the span.
+// version is the fingerprint of the text the server holds as this editor
+// knows it, which the caller passes with each save.
+export function unsavedChanges(text: string) {
+	// Split into lines as the editor splits its doc.
+	let base = Text.of(text.split(/\r\n?|\n/));
+	let version = textHash(text);
+	let total = ChangeSet.empty(base.length);
+	let sending: { text: Text; version: string; since: ChangeSet } | null = null;
+	const pins = new Set<{ start: Text; since: ChangeSet }>();
 	return {
-		record(changes: ChangeDesc) {
-			total = total.composeDesc(changes);
-			if (sinceSent) sinceSent = sinceSent.composeDesc(changes);
-			for (const pin of pins) pin.since = pin.since.composeDesc(changes);
+		record(changes: ChangeSet) {
+			total = total.compose(changes);
+			if (sending) sending.since = sending.since.compose(changes);
+			for (const pin of pins) pin.since = pin.since.compose(changes);
 		},
-		// Follows a range on screen through the edits after it. The function
-		// returned, called once, gives the range in the text the server holds at
-		// that moment, or null when none of its words are stored yet (a save
-		// failed or has not run).
+		// Follows a range on screen through the edits after it until released.
+		// at() gives the range in the text the server holds at that moment (the
+		// one version names), or null when none of its words are stored yet (a
+		// save failed or has not run). A range that runs into words not stored
+		// yet is cut to the stored part.
 		pin(from: number, to: number) {
-			const pin = { since: ChangeSet.empty(total.newLength).desc };
+			const pin = { start: total.apply(base), since: ChangeSet.empty(total.newLength) };
 			pins.add(pin);
-			return (): { from: number; to: number } | null => {
-				pins.delete(pin);
-				const back = total.invertedDesc;
-				const start = back.mapPos(pin.since.mapPos(from, 1), 1);
-				const end = back.mapPos(pin.since.mapPos(to, -1), -1);
-				return start < end ? { from: start, to: end } : null;
+			return {
+				at(): { from: number; to: number } | null {
+					const back = net(total, base).invertedDesc;
+					const after = net(pin.since, pin.start);
+					const start = back.mapPos(after.mapPos(from, 1), 1);
+					const end = back.mapPos(after.mapPos(to, -1), -1);
+					return start < end ? { from: start, to: end } : null;
+				},
+				release() {
+					pins.delete(pin);
+				}
 			};
 		},
-		sent() {
-			sinceSent = ChangeSet.empty(total.newLength).desc;
+		sent(sentVersion: string) {
+			sending = {
+				text: total.apply(base),
+				version: sentVersion,
+				since: ChangeSet.empty(total.newLength)
+			};
 		},
 		landed() {
-			if (sinceSent) total = sinceSent;
-			sinceSent = null;
+			if (sending) {
+				base = sending.text;
+				version = sending.version;
+				total = sending.since;
+			}
+			sending = null;
 		},
 		// The editor now shows exactly what the server holds.
-		reset() {
-			total = ChangeSet.empty(total.newLength).desc;
-			sinceSent = null;
+		reset(resetVersion: string) {
+			base = total.apply(base);
+			version = resetVersion;
+			total = ChangeSet.empty(base.length);
+			sending = null;
 		},
 		get changes(): ChangeDesc {
-			return total;
+			return net(total, base);
+		},
+		get version(): string {
+			return version;
 		}
 	};
+}
+
+// changes as applied to before, with the text each replacement puts back
+// unchanged at its start and end left out of it.
+function net(changes: ChangeSet, before: Text): ChangeDesc {
+	const specs: { from: number; to: number; insert: string }[] = [];
+	changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+		const removed = before.sliceString(fromA, toA);
+		const added = inserted.toString();
+		let head = 0;
+		while (head < removed.length && head < added.length && removed[head] === added[head]) head++;
+		let tail = 0;
+		while (
+			tail < removed.length - head &&
+			tail < added.length - head &&
+			removed[removed.length - 1 - tail] === added[added.length - 1 - tail]
+		)
+			tail++;
+		specs.push({
+			from: fromA + head,
+			to: toA - tail,
+			insert: added.slice(head, added.length - tail)
+		});
+	});
+	return ChangeSet.of(specs, before.length).desc;
 }

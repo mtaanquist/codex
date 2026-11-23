@@ -6,13 +6,16 @@ import { rateLimitWrites } from '#lib/server/write-guard';
 import { createMarker } from '#lib/server/markers';
 import { readJson } from '#lib/server/validation';
 
-// Turns the editor's current selection into a checkable marker.
+// Turns the editor's current selection into a checkable marker. baseHash is
+// the fingerprint of the text the anchors count into; a 409 means the scene
+// holds another text by now.
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	rateLimitWrites(locals.user!.id);
 	const payload = await readJson<{
 		anchorStart?: unknown;
 		anchorEnd?: unknown;
 		bodyMd?: unknown;
+		baseHash?: unknown;
 	}>(request);
 	if (typeof payload.anchorStart !== 'number' || typeof payload.anchorEnd !== 'number') {
 		error(400, 'anchorStart and anchorEnd must be numbers');
@@ -23,7 +26,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		params.id,
 		payload.anchorStart,
 		payload.anchorEnd,
-		typeof payload.bodyMd === 'string' ? payload.bodyMd : undefined
+		typeof payload.bodyMd === 'string' ? payload.bodyMd : undefined,
+		typeof payload.baseHash === 'string' ? payload.baseHash : undefined
 	);
 	if (!result.ok) {
 		throwActionError(result);
