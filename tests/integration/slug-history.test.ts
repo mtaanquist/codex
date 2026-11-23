@@ -127,6 +127,25 @@ describe('a story renamed before it was published', () => {
 	});
 });
 
+describe('a rename that keeps the slug base', () => {
+	it('keeps its suffixed slug rather than moving to a lower one that came free', async () => {
+		const [third] = await db
+			.insert(stories)
+			.values({ universeId, ownerId, title: 'Ember', slug: 'ember-3' })
+			.returning();
+		expect(await renameStory(third.id, 'EMBER!')).toBe('ember-3');
+		expect(await db.select().from(slugHistory)).toEqual([]);
+	});
+
+	it('still moves when the base changes', async () => {
+		const [third] = await db
+			.insert(stories)
+			.values({ universeId, ownerId, title: 'Ember', slug: 'ember-3' })
+			.returning();
+		expect(await renameStory(third.id, 'Ash')).toBe('ash');
+	});
+});
+
 describe('reserving old slugs', () => {
 	beforeEach(async () => {
 		await publishStory(db, ownerId, storyId);

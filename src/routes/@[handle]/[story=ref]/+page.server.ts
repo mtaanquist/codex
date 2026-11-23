@@ -12,18 +12,20 @@ import { listEditionArtifacts } from '#lib/server/export-artifacts';
 import { authorName } from '#lib/author-name';
 import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
+import { OLD_SLUG_REDIRECT_HEADERS } from '#lib/server/slugs';
 
 // The reader view of one frozen edition, at /@handle/<story slug> or, for
 // links made before slugs, /@handle/<story id>. Adult work sits behind a
 // confirmation link; the page then carries noindex either way. A slug the
 // story had before a rename redirects permanently to the current one.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 	const handle = params.handle.toLowerCase();
 	const ref = params.story.toLowerCase();
 	const edition = await publicEdition(db, handle, ref);
 	if (!edition) {
 		const moved = isUuid(ref) ? null : await publicStoryRedirect(db, handle, ref);
 		if (moved) {
+			setHeaders(OLD_SLUG_REDIRECT_HEADERS);
 			redirect(308, resolve('/@[handle]/[story=ref]', { handle, story: moved }) + url.search);
 		}
 		error(404, 'Not found');

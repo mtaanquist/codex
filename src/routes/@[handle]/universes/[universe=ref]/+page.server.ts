@@ -4,6 +4,7 @@ import type { PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { publicAuthorIdentity, publicUniverse, publicUniverseRedirect } from '#lib/server/publish';
 import { isUuid } from '#lib/slug';
+import { OLD_SLUG_REDIRECT_HEADERS } from '#lib/server/slugs';
 import { authorNameOrHandle } from '#lib/author-name';
 
 // A universe's public page: its name and the author's listed stories in it,
@@ -11,7 +12,7 @@ import { authorNameOrHandle } from '#lib/author-name';
 // like the shelf, and like the shelf it shows only frozen editions. A
 // universe with nothing listed is a 404, so its name never leaks. A slug
 // the universe had before a rename redirects permanently to the current one.
-export const load: PageServerLoad = async ({ params, url }) => {
+export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 	const handle = params.handle.toLowerCase();
 	const ref = params.universe.toLowerCase();
 	const [universe, identity] = await Promise.all([
@@ -20,11 +21,13 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	]);
 	if (!universe) {
 		const moved = isUuid(ref) ? null : await publicUniverseRedirect(db, handle, ref);
-		if (moved)
+		if (moved) {
+			setHeaders(OLD_SLUG_REDIRECT_HEADERS);
 			redirect(
 				308,
 				resolve('/@[handle]/universes/[universe=ref]', { handle, universe: moved }) + url.search
 			);
+		}
 		error(404, 'Not found');
 	}
 	return {
