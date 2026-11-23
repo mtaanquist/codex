@@ -267,7 +267,7 @@ export function rebuiltMarkers(
 		}
 		const from = unsaved.mapPos(start, 1);
 		const to = unsaved.mapPos(end, -1);
-		return from < to
+		return from < to && keepsSome(unsaved, start, end)
 			? { id: marker.id, anchorStart: from, anchorEnd: to }
 			: { id: marker.id, anchorStart: null, anchorEnd: null };
 	});
@@ -375,6 +375,7 @@ export function unsavedChanges(text: string) {
 				locate(next: ChangeSet): { from: number; to: number } | null {
 					if (next.length !== pin.since.newLength || end > pin.start.length) return null;
 					const mapping = net(pin.since.compose(next), pin.start);
+					if (!keepsSome(mapping, start, end)) return null;
 					const at = mapping.mapPos(start, 1);
 					const to = mapping.mapPos(end, -1);
 					return at < to ? { from: at, to } : null;
@@ -398,6 +399,17 @@ export function unsavedChanges(text: string) {
 			return version;
 		}
 	};
+}
+
+// Whether any character in [start, end) comes through the changes untouched.
+// Mapping alone can give a range that holds only new words typed where the
+// old ones were.
+function keepsSome(changes: ChangeDesc, start: number, end: number) {
+	let pos = start;
+	changes.iterChangedRanges((fromA, toA) => {
+		if (fromA <= pos && toA > pos) pos = toA;
+	});
+	return pos < end;
 }
 
 // Sorted, with overlapping or touching ranges joined, as ChangeSet.of needs.
