@@ -687,6 +687,15 @@ describe('a migration starting during the full read', () => {
 		return rows[0].n as number;
 	}
 
+	async function blockedSweepReads() {
+		const { rows } = await pool.query(
+			`select count(*)::int as n from pg_stat_activity
+			where application_name = $1 and wait_event_type = 'Lock'`,
+			[CANCEL_ON_MIGRATE_APP_NAME]
+		);
+		return rows[0].n as number;
+	}
+
 	it('cancels it, and the sweep fails without changing anything', async () => {
 		const orphan = await image();
 		const holder = await pool.connect();
@@ -696,13 +705,15 @@ describe('a migration starting during the full read', () => {
 			await holder.query('lock table notes in access exclusive mode');
 			const running = sweepUnusedAssets(db);
 			running.catch(() => {});
-			for (let i = 0; i < 50 && (await sweepReads()) === 0; i++) {
+			// Cancel only once the read is blocked on the lock: a cancel that
+			// lands between the read's statements finds it idle and is lost.
+			for (let i = 0; i < 250 && (await blockedSweepReads()) === 0; i++) {
 				await new Promise((resolve) => setTimeout(resolve, 20));
 			}
 			expect(await cancelLongReads(migrator)).toBe(1);
 			await expect(running).rejects.toThrow();
-			await holder.query('commit');
 		} finally {
+			await holder.query('rollback');
 			holder.release();
 			migrator.release();
 		}
