@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq, inArray } from 'drizzle-orm';
@@ -437,6 +437,76 @@ describe('after a story is deleted for good', () => {
 
 // The worker's pool cancels a statement after a few minutes, but reading every
 // column of a large database can take longer. A lock another session holds on
+// A chunk whose DELETE fails after earlier chunks committed. The trigger
+// stands in for what can break a chunk at that point: a badge or publish
+// pointing at the image by foreign key, saved after the last reference read
+// (23503), or anything else (P0001).
+describe('a chunk that fails partway through', () => {
+	let lines: Record<string, unknown>[];
+
+	beforeEach(() => {
+		lines = [];
+		const record = (line: unknown) => {
+			lines.push(JSON.parse(String(line)));
+		};
+		vi.spyOn(console, 'log').mockImplementation(record);
+		vi.spyOn(console, 'error').mockImplementation(record);
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		await pool.query('drop trigger if exists test_refuse_delete on assets');
+		await pool.query('drop function if exists test_refuse_delete()');
+	});
+
+	async function refuseDelete(id: string, errcode: string) {
+		await pool.query(`
+			create function test_refuse_delete() returns trigger language plpgsql as $$
+			begin
+				if old.id = '${id}' then
+					raise exception 'refused' using errcode = '${errcode}';
+				end if;
+				return old;
+			end $$`);
+		await pool.query(`create trigger test_refuse_delete before delete on assets
+			for each row execute function test_refuse_delete()`);
+	}
+
+	// 101 images, so the last (by id, the order the sweep works in) is alone
+	// in a second chunk.
+	async function twoChunks() {
+		const ids: string[] = [];
+		for (let i = 0; i < 101; i += 1) ids.push(await image({ bytes: 1, unusedFor: LONG }));
+		ids.sort();
+		return { first: ids.slice(0, 100), last: ids[100] };
+	}
+
+	const loggedFreed = () =>
+		new Set(lines.filter((l) => l.event === 'assets.unused_deleted').map((l) => l.id));
+
+	it('has logged the deletions earlier chunks committed', async () => {
+		const { first, last } = await twoChunks();
+		await refuseDelete(last, 'P0001');
+		await expect(sweepUnusedAssets(db)).rejects.toThrow();
+		expect(await remaining([...first, last])).toEqual(new Set([last]));
+		expect(loggedFreed()).toEqual(new Set(first));
+	});
+
+	it('skips a chunk a foreign key refuses and carries on with the rest', async () => {
+		const { first, last } = await twoChunks();
+		// The refused image sits in the first chunk; the second chunk still goes.
+		await refuseDelete(first[0], '23503');
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 1, bytes: 1 });
+		expect(await remaining([...first, last])).toEqual(new Set(first));
+		expect(loggedFreed()).toEqual(new Set([last]));
+		expect(lines.some((l) => l.event === 'assets.unused_delete_skipped')).toBe(true);
+		// Their marks are cleared, so they are found unused again from the start.
+		const left = await marks(first);
+		expect([...left.values()].every((since) => since === null)).toBe(true);
+		expect(await used()).toBe(100);
+	});
+});
+
 // a scanned table stands in for a slow read here: the wait counts toward
 // statement_timeout like work does.
 describe('reads on a pool with a short statement limit', () => {
@@ -522,6 +592,39 @@ describe('a migration starting during the full read', () => {
 			migrator.release();
 		}
 		expect((await marks([orphan])).get(orphan)).toBeNull();
+	});
+
+	// pg_cancel_backend raises an error for a backend the role may not signal
+	// (here a superuser's), which must not stop the migrations from starting.
+	it('passes over a read the migrator may not cancel', async () => {
+		const named = await pool.connect();
+		const migrator = await pool.connect();
+		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await named.query(`set application_name = '${CANCEL_ON_MIGRATE_APP_NAME}'`);
+			await pool.query(`do $$ begin
+				if not exists (select 1 from pg_roles where rolname = 'codex_test_signal') then
+					create role codex_test_signal;
+				end if;
+				if not exists (select 1 from pg_roles where rolname = 'codex_test_plain') then
+					create role codex_test_plain;
+				end if;
+			end $$`);
+			await pool.query('grant pg_signal_backend to codex_test_signal');
+			await migrator.query('set role codex_test_plain');
+			expect(await cancelLongReads(migrator)).toBe(0);
+			await migrator.query('set role codex_test_signal');
+			expect(await cancelLongReads(migrator)).toBe(0);
+			expect(warned).toHaveBeenCalled();
+			await migrator.query('reset role');
+			expect(await cancelLongReads(migrator)).toBe(1);
+		} finally {
+			warned.mockRestore();
+			await migrator.query('reset role');
+			await named.query('reset application_name');
+			named.release();
+			migrator.release();
+		}
 	});
 
 	it('leaves the connection unnamed once the read is done', async () => {

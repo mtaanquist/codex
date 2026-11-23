@@ -384,8 +384,9 @@ export async function publicUniverseLink(db: Database, handle: string, universeI
 				eq(stories.universeId, universes.id),
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
-				isNull(stories.deletedAt),
-				eq(stories.visibility, 'public')
+				storyIsLive(),
+				eq(stories.visibility, 'public'),
+				authorNotSuspended(publications.ownerId)
 			)
 		);
 	const [row] = await db

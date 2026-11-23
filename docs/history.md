@@ -13,6 +13,24 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 7 (2026-11-23, `fix/phase-10-review-7` on
+`staging/phase-10`). The sweep committed each delete chunk on its own but
+logged `assets.unused_deleted` only after the last one, so a later chunk that
+threw left committed deletions unlogged and so not restorable by hand. Each
+chunk is now logged as it commits. A chunk whose DELETE hits a foreign key (a
+badge or publish saved after the second read) rolls back, clears that chunk's
+marks so its images start over rather than go early once the row is gone,
+logs `assets.unused_delete_skipped`, and the run goes on. Clearing the whole
+chunk delays up to 99 innocent images by a cycle in a rare race; finding the
+one offender would need another full read. `cancelLongReads` skips backends
+the migrator's role may not signal and catches a refusal per pid, since
+`pg_cancel_backend` raises rather than returning false and would stop
+startup. The upload shrink falls back to `requestSubmit()` when the pressed
+button left the form, which lost the upload. `publicUniverseLink` uses
+`storyIsLive()` and `authorNotSuspended()` like `publicShelf`. Help: the
+nightly image clean-up for operators, imported pictures not shrunk, and the
+swap text no longer says a later swap is always refused.
+
 Phase 10 staging review round 6 (2026-11-23, `fix/phase-10-review-6` on
 `staging/phase-10`). The sweep matched ids as text (`id::text = any(...)`),
 which skips the primary key index, so each 100-image chunk scanned `users`
