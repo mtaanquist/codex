@@ -224,11 +224,30 @@
 	// the swap-in, and the save would then overwrite the newer text.
 	function loadNewer() {
 		if (!view || !conflict || leaving) return;
-		const newer = conflict;
+		markError = null;
+		showServerText(view, conflict);
+	}
+
+	// Only the part that differs is replaced, so marker highlights outside it
+	// stay.
+	function showServerText(view: EditorView, newer: SceneConflict) {
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
-		view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newer.bodyMd } });
-		unsaved.reset(textHash(newer.bodyMd));
+		const doc = view.state.doc.toString();
+		const next = newer.bodyMd;
+		let head = 0;
+		while (head < doc.length && head < next.length && doc[head] === next[head]) head++;
+		let tail = 0;
+		while (
+			tail < doc.length - head &&
+			tail < next.length - head &&
+			doc[doc.length - 1 - tail] === next[next.length - 1 - tail]
+		)
+			tail++;
+		view.dispatch({
+			changes: { from: head, to: doc.length - tail, insert: next.slice(head, next.length - tail) }
+		});
+		unsaved.reset(textHash(next));
 		swaps++;
 		void autosave.flush();
 	}
@@ -236,6 +255,7 @@
 	function keepMine() {
 		if (!conflict || leaving) return;
 		saver.keepMine(conflict.bodyMd);
+		markError = null;
 		void autosave.flush();
 	}
 	const scheduleSave = autosave.schedule;
@@ -246,18 +266,22 @@
 	let swaps = 0;
 	const CHANGED_ELSEWHERE =
 		'This scene was changed in another window. Choose which version to keep, then mark the words again.';
+	const LOADED_NEWER =
+		'This scene was changed in another window and now shows the newer version. Select the words and mark them again.';
 
 	// A new marker's anchors must count into the text the server holds. The
 	// prose is flushed first, and the selection is then mapped onto the text
 	// this editor last saved (the writer can keep typing meanwhile, and a save
 	// can fail). The server refuses the marker when it holds another text by
-	// then, such as a later save of this editor that landed first; the mark
-	// is then tried once more, after a save of the text on screen even when
-	// nothing is waiting to save, so a scene changed elsewhere (another
-	// window, the review centre, find and replace) shows up as a conflict.
-	// While the scene was changed in another window the server holds text
-	// this editor has not seen, so nothing is marked until the writer picks a
-	// version. The page data refresh then re-renders the highlights.
+	// then, and sends that text. With nothing here waiting to save, it was
+	// changed elsewhere (another window, the review centre, find and replace)
+	// and there is nothing to lose: the editor shows it and the writer marks
+	// again. A save is never forced, since an idle editor's text may be the
+	// older one. Otherwise the mark is tried once more after the waiting save,
+	// which reports a conflict if there is one. While the scene was changed in
+	// another window and this editor has edits of its own, nothing is marked
+	// until the writer picks a version. The page data refresh then re-renders
+	// the highlights.
 	async function markSelection(from: number, to: number) {
 		markError = null;
 		if (conflict) {
@@ -292,7 +316,26 @@
 					return;
 				}
 				if (response?.status !== 409) break;
-				if (attempt === 0) autosave.schedule();
+				const newer = (await response.json().catch(() => null)) as SceneConflict | null;
+				if (conflict || swaps !== started) {
+					markError = CHANGED_ELSEWHERE;
+					return;
+				}
+				// Nothing here is waiting to save, so the newer text replaces only
+				// what this editor already stored.
+				if (
+					view &&
+					newer &&
+					typeof newer.bodyMd === 'string' &&
+					textHash(newer.bodyMd) !== unsaved.version &&
+					!autosave.hasUnsaved() &&
+					!hasPendingUploads(view.state) &&
+					!leaving
+				) {
+					showServerText(view, newer);
+					markError = LOADED_NEWER;
+					return;
+				}
 			}
 			markError = 'The TODO marker could not be made. Try again.';
 		} finally {

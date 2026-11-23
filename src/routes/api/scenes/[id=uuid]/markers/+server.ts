@@ -8,7 +8,7 @@ import { readJson } from '#lib/server/validation';
 
 // Turns the editor's current selection into a checkable marker. baseHash is
 // the fingerprint of the text the anchors count into; a 409 means the scene
-// holds another text by now.
+// holds another text by now, and carries that text and title.
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	rateLimitWrites(locals.user!.id);
 	const payload = await readJson<{
@@ -30,6 +30,9 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		typeof payload.baseHash === 'string' ? payload.baseHash : undefined
 	);
 	if (!result.ok) {
+		if (result.scene) {
+			return Response.json({ message: result.reason, ...result.scene }, { status: 409 });
+		}
 		throwActionError(result);
 	}
 	return Response.json({ id: result.id }, { status: 201 });

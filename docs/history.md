@@ -128,6 +128,16 @@ fewer of its words than are there (net() trims only a replacement's
 unchanged ends). A character diff per replacement clears it in the fuzz, but
 in prose it would align single common letters, so it is left for a word
 level approach if it matters.
+Sixth follow-up (`fix/marker-review-4` on `staging/bug-fixes-4`, fourth
+review of #1448). Saving the text on screen to surface a change elsewhere
+was wrong for an idle editor: its text is the older one, the notice claimed
+unsaved edits, and Keep mine would have put the old text over the newer
+one. The marker refusal now carries the scene's text, and an editor with
+nothing waiting to save (and no image uploading) shows it, replacing only
+the part that differs so other highlights stay, and asks the writer to mark
+again. A waiting marker, and a new one mapped through unsaved edits, is
+placed only when at least one of its original characters is back; mapping
+alone put it on new words typed where its words had been.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write

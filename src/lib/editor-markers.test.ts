@@ -486,6 +486,15 @@ describe('rebuiltMarkers', () => {
 		expect(editor.marked()).toEqual([['cat', 'cat']]);
 	});
 
+	it('leaves out a new marker whose words were deleted and new words typed in their place', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 11);
+		editor.edit(8, 8, 'ran');
+		editor.reload([cat, sat]);
+		expect(editor.state.doc.toString()).toBe('The cat ran on the mat.');
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
+	});
+
 	it('puts a new marker on its words when undo brings back words deleted before it arrived', () => {
 		const editor = setupRebuild([cat]);
 		editor.edit(8, 12);
@@ -504,6 +513,17 @@ describe('rebuiltMarkers', () => {
 			['cat', 'cat'],
 			['sat', 'sat']
 		]);
+	});
+
+	it('does not put a waiting marker on new words typed where its words were', () => {
+		const editor = setupRebuild([cat]);
+		editor.edit(8, 11, '', false);
+		editor.reload([cat, sat]);
+		editor.edit(8, 8, 'ran', false);
+		editor.edit(0, 0, 'Oh. ', false);
+		editor.undo();
+		expect(editor.state.doc.toString()).toBe('The cat ran on the mat.');
+		expect(editor.marked()).toEqual([['cat', 'cat']]);
 	});
 
 	it('still puts a new marker back on undo after another reload', () => {

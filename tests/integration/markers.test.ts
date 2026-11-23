@@ -108,7 +108,12 @@ describe('createMarker', () => {
 	it('refuses anchors counted into a text the scene no longer holds', async () => {
 		expect(
 			await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash('Other words.'))
-		).toMatchObject({ ok: false, code: 'conflict' });
+		).toMatchObject({
+			ok: false,
+			code: 'conflict',
+			// The editor loads it when it has no edits of its own to keep.
+			scene: { bodyMd: BODY, title: 'Toll' }
+		});
 		expect(await listSceneMarkers(db, sceneId)).toHaveLength(0);
 		expect(await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash(BODY))).toMatchObject(
 			{ ok: true }

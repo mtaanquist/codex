@@ -12,8 +12,9 @@ import type { ActionFailure } from './action-result.ts';
 // A selection turned into a checkable marker. Anchors are clamped to the
 // scene body so a stale client cannot write ranges past the end. With
 // baseHash (the fingerprint of the text the editor counted the anchors into)
-// the marker is refused when the scene holds another text by now; the scene
-// row is locked while checking, so a save cannot land in between.
+// the marker is refused when the scene holds another text by now, and the
+// refusal carries that text; the scene row is locked while checking, so a
+// save cannot land in between.
 export async function createMarker(
 	db: Database,
 	userId: string,
@@ -22,12 +23,14 @@ export async function createMarker(
 	anchorEnd: number,
 	bodyMd?: string,
 	baseHash?: string
-): Promise<{ ok: true; id: string } | ActionFailure> {
+): Promise<
+	{ ok: true; id: string } | (ActionFailure & { scene?: { bodyMd: string; title: string | null } })
+> {
 	return await db.transaction(async (tx) => {
 		const scene = await ownedScene(tx, userId, sceneId);
 		if (!scene) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
 		const [locked] = await tx
-			.select({ bodyMd: scenes.bodyMd })
+			.select({ bodyMd: scenes.bodyMd, title: scenes.title })
 			.from(scenes)
 			.where(eq(scenes.id, sceneId))
 			.for('share');
@@ -36,7 +39,8 @@ export async function createMarker(
 			return {
 				ok: false,
 				code: 'conflict',
-				reason: 'The scene text changed. Select the words and mark them again.'
+				reason: 'The scene text changed. Select the words and mark them again.',
+				scene: { bodyMd: locked.bodyMd, title: locked.title }
 			};
 		}
 		const length = locked.bodyMd.length;
