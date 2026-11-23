@@ -101,6 +101,7 @@ import {
 	mcpInstanceEnabled,
 	setMcpAccountEnabled
 } from '#lib/server/mcp/settings';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The actions that re-verify the password share one throttle (see reauthLimit),
 // so a borrowed session cannot brute-force the password through them. Passkey
@@ -463,7 +464,7 @@ export const actions: Actions = {
 		}
 		const config = await effectiveAssetConfig(db);
 		if (!config) {
-			return fail(503, { scope: 'avatar', message: 'Image uploads are not configured.' });
+			return fail(503, { scope: 'avatar', message: ASSETS_OFF_MESSAGE });
 		}
 		const data = await request.formData();
 		const file = data.get('file');

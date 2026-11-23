@@ -96,10 +96,11 @@ export async function uploadImage(
 	}
 }
 
-// onError gets the message when an upload fails; its placeholder is removed.
+// onNotice gets the message when an upload fails (its placeholder is
+// removed), and null when a later upload succeeds, to clear that message.
 export function imageUploadExtension(
 	universeId: string,
-	onError?: (message: string) => void
+	onNotice?: (message: string | null) => void
 ): Extension {
 	// Replace a placeholder's current (mapped) range; a null replacement just
 	// removes it, the failed-upload case.
@@ -122,12 +123,8 @@ export function imageUploadExtension(
 
 	async function resolve(view: EditorView, file: File, id: number) {
 		const result = await uploadImage(file, universeId);
-		if (result.ok) {
-			clear(view, id, `![${file.name}](${result.path})\n`);
-		} else {
-			clear(view, id, null);
-			if (view.dom.isConnected) onError?.(result.message);
-		}
+		clear(view, id, result.ok ? `![${file.name}](${result.path})\n` : null);
+		if (view.dom.isConnected) onNotice?.(result.ok ? null : result.message);
 	}
 
 	// Insert a placeholder per file at consecutive positions, then start the

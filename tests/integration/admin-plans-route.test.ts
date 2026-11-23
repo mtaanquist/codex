@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import type pg from 'pg';
 import { entitlements, plans, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
-import { MEGABYTE } from '../../src/lib/quota';
+import { imageMegabytesValue, MEGABYTE } from '../../src/lib/quota';
 import { ensureTestDatabase } from './test-db';
 
 // Admin > Plans, called as the real savePlan action against the test
@@ -135,6 +135,19 @@ describe('savePlan: largest image', () => {
 		});
 	});
 
+	it('saves unchanged a plan whose largest image was set above 10 MB outside the form', async () => {
+		await db.insert(entitlements).values({ planId, key: 'max_image_bytes', value: 15 * MEGABYTE });
+		const stored = (await limits()).max_image_bytes;
+		// What the form posts untouched: the field shows the 10 MB that applies.
+		expect(
+			await savePlan({
+				maxImageMb: imageMegabytesValue(stored),
+				maxImageBytes: String(stored)
+			})
+		).toMatchObject({ saved: true });
+		expect((await limits()).max_image_bytes).toBe(10 * MEGABYTE);
+	});
+
 	it('leaves the other limits as they were saved', async () => {
 		await savePlan({ maxStories: '3', storageMb: '50', maxImageMb: '1' });
 		expect(await limits()).toEqual({
@@ -143,5 +156,36 @@ describe('savePlan: largest image', () => {
 			storage_bytes: 50 * MEGABYTE,
 			max_image_bytes: MEGABYTE
 		});
+	});
+});
+
+describe('recountStorage: batches', () => {
+	function recount(fields: Record<string, string>) {
+		const form = new FormData();
+		for (const [key, value] of Object.entries(fields)) form.set(key, value);
+		const run = actions.recountStorage as (event: unknown) => Promise<unknown>;
+		return run({
+			request: { formData: async () => form },
+			locals: { user: { id: adminId, role: 'admin' } }
+		});
+	}
+
+	it('recounts and says it is done once every account is counted', async () => {
+		await db.update(users).set({ storageUsedBytes: 500 });
+		expect(await recount({})).toEqual({ scope: 'usage', recounted: 1, next: null });
+		const [admin] = await db.select({ used: users.storageUsedBytes }).from(users);
+		expect(admin.used).toBe(0);
+	});
+
+	it('carries the running total and continues after the given account', async () => {
+		expect(await recount({ after: adminId, done: '200' })).toEqual({
+			scope: 'usage',
+			recounted: 200,
+			next: null
+		});
+	});
+
+	it('refuses a cursor that is not an account id', async () => {
+		expect(await recount({ after: 'nope' })).toMatchObject({ status: 400 });
 	});
 });

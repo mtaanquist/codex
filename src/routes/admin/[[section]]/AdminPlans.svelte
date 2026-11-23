@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PageData, ActionData } from './$types';
 	import FormStatus from '#lib/components/FormStatus.svelte';
-	import { MAX_IMAGE_BYTES, MEGABYTE, megabytesValue } from '#lib/quota';
+	import { imageMegabytesValue, MAX_IMAGE_BYTES, MEGABYTE, megabytesValue } from '#lib/quota';
 	import { formatNumber, pluralSuffix } from '#lib/format';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -128,11 +128,15 @@
 							step="0.1"
 							max={MAX_IMAGE_BYTES / MEGABYTE}
 							placeholder={String(MAX_IMAGE_BYTES / MEGABYTE)}
-							value={megabytesValue(plan.limits.max_image_bytes)}
+							value={imageMegabytesValue(plan.limits.max_image_bytes)}
 						/>
 						<span class="field-hint">
 							The most one uploaded image can be. Leave it blank for {MAX_IMAGE_BYTES / MEGABYTE} MB,
 							the most any plan allows.
+							{#if (plan.limits.max_image_bytes ?? 0) > MAX_IMAGE_BYTES}
+								The saved limit is above {MAX_IMAGE_BYTES / MEGABYTE} MB, so {MAX_IMAGE_BYTES /
+									MEGABYTE} MB applies. Saving this form stores {MAX_IMAGE_BYTES / MEGABYTE} MB.
+							{/if}
 						</span>
 					</div>
 				</div>

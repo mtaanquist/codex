@@ -56,11 +56,11 @@ import {
 	createPlan,
 	listAccountUsage,
 	listPlans,
+	recountStorageBatch,
 	savePlan,
 	setDefaultPlan,
 	setUserPlan
 } from '#lib/server/plans';
-import { recountStorageUsed } from '#lib/server/quotas';
 import { MAX_IMAGE_BYTES, MEGABYTE, parseLimitInput, parseMegabytesField } from '#lib/quota';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
@@ -107,7 +107,14 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		assetMigration: await assetMigrationResult(db),
 		// Only the sections that show them pay for these.
 		plans: section === 'plans' || section === 'usage' ? await listPlans(db) : [],
-		usage: section === 'usage' ? await listAccountUsage(db) : [],
+		// The accounts table pages through ?page=N (zero-based) and searches ?q=.
+		usage:
+			section === 'usage'
+				? await listAccountUsage(db, {
+						query: url.searchParams.get('q') ?? '',
+						page: Number(url.searchParams.get('page')) || 0
+					})
+				: null,
 		smtp: await smtpView(db),
 		egress: await egressPolicy(db),
 		externalAccess: await mcpInstanceEnabled(db),
@@ -432,10 +439,21 @@ export const actions: Actions = {
 		}
 		return { scope: 'usage', done: true };
 	},
-	recountStorage: async ({ locals }) => {
+	// One batch of accounts per request; the page posts again with next until
+	// it is null. done carries the running total.
+	recountStorage: async ({ request, locals }) => {
 		requireAdmin(locals);
-		await recountStorageUsed(db);
-		return { scope: 'usage', recounted: true };
+		const data = await request.formData();
+		const after = formText(data, 'after');
+		const done = Math.max(0, Math.floor(Number(formText(data, 'done')) || 0));
+		if (after !== '' && !isUuid(after)) {
+			return fail(400, {
+				scope: 'usage',
+				message: 'The recount could not continue. Start it again.'
+			});
+		}
+		const batch = await recountStorageBatch(db, after || null);
+		return { scope: 'usage', recounted: done + batch.recounted, next: batch.next };
 	},
 	saveSmtp: async ({ request, locals }) => {
 		requireAdmin(locals);

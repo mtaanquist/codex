@@ -13,6 +13,44 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 leftover lows (UI, admin, docs) (2026-11-23,
+`fix/phase-10-lows-b` on `staging/phase-10`). A restore refused at a count
+limit now says that moving another universe or story to the trash makes
+room, and that the item stays in the trash and is still deleted on its date
+(#1485); the date itself is not in the message, since the trash list beside
+the button already shows the days left and passing it would mean changing
+the lifecycle modules. Image shrinking (#1491) now also works by bytes: an
+image over the per-image limit is re-encoded at falling WebP quality, then
+at 75, 50, 35 and 25 percent of its size, until one fits. A PNG is
+re-encoded as a PNG unless the WebP at the same size is at most a fifth of
+it, which keeps screenshots lossless and still turns photos saved as PNG
+into WebP. The animation check walks a PNG's chunk headers over the file by
+offset instead of reading the first 64 KB, so a large chunk before the image
+data no longer makes a still PNG look animated. The cover and avatar forms
+show "Uploading..." while the image shrinks, the badge shows it is busy,
+and a later successful upload clears the editor's failed-upload notice. The
+cover form and avatar form pass the account's own per-image limit; the
+editor and badge upload use the 10 MB ceiling, since passing the plan limit
+down to every editor was not worth it for a case the server still refuses
+with a clear message. Admin > Usage & storage (#1493) pages the accounts 50
+at a time with a search by email or name, and counts universes and stories
+for the whole page in one grouped query (the same rules as
+`liveCountsSql`, checked against `countLive` in a test). Recount images runs
+200 accounts per request through `recountStorageBatch` in `plans.ts`; the
+page posts the next batch itself and shows the running count. A worker job
+was not used because adding a queue meant touching modules another branch
+was changing, and batches from the page need no new state. A plan whose
+largest image was set above 10 MB by SQL shows 10 MB (the size that
+applies) with a note, so the form saves unchanged. Small corrections
+(#1494): one shared "Image storage is not set up on this server." message
+for every upload, download and form; the roadmap says a story's old slug is
+kept only once the story has been published; the `slugAddress` comment
+names where uuid-shaped slugs came from; the self-hosting image paragraph
+has its backup sentence back in place. The MCP latency tests (#1496) allow
+2 s for the other writer's save (the pool check still catches an emptied
+pool) and 500 ms of event loop stall, against a full character diff that
+holds the thread for over a minute.
+
 Phase 10 leftover review fixes (2026-11-23, `fix/phase-10-leftover-mediums`
 on `staging/phase-10`). An image used and dropped again between two nightly
 sweeps kept its old unused mark (#1484). Round 9 left a save-time clear out
