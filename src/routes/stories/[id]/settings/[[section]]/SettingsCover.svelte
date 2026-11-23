@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { storyCoverColor } from '#lib/entity-color';
+	import { shrinkImagesOnSubmit } from '#lib/image-shrink';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -25,7 +26,7 @@
 			{data.story.title}
 		</span>
 	{/if}
-	<form method="POST" action="?/setCover" enctype="multipart/form-data">
+	<form method="POST" action="?/setCover" enctype="multipart/form-data" use:shrinkImagesOnSubmit>
 		{#if form?.action === 'cover' && form.message}
 			<p class="form-error" role="alert">{form.message}</p>
 		{/if}
