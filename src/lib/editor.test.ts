@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { Compartment, EditorState, type TransactionSpec } from '@codemirror/state';
+import { Compartment, EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
-import { redo, undo, undoDepth } from '@codemirror/commands';
-import { proseExtensions, showNewerText } from './editor';
+import { history, isolateHistory, redo, undo, undoDepth } from '@codemirror/commands';
+import { proseExtensions, redoText, showNewerText, undoText } from './editor';
 import { markerExtensions } from './editor-markers';
 
 function setup(text: string, markers: { id: string; anchorStart: number; anchorEnd: number }[]) {
@@ -119,5 +119,76 @@ describe('showNewerText', () => {
 		const editor = setup('a\nb', []);
 		expect(editor.changedBy(() => editor.load('a\r\nb'))).toBe(false);
 		expect(editor.text).toBe('a\nb');
+	});
+});
+
+describe('undoText and redoText', () => {
+	const doc = 'The cat sat on the mat.';
+	// "sat"
+	const sat = { id: 'sat', anchorStart: 8, anchorEnd: 11 };
+
+	function setupHistory(text = doc) {
+		const handle = markerExtensions([sat], () => {});
+		let state = EditorState.create({
+			doc: text,
+			extensions: [history({ newGroupDelay: 1e9 }), handle.extension]
+		});
+		const target = {
+			get state() {
+				return state;
+			},
+			dispatch: (tr: Transaction) => {
+				state = tr.state;
+			}
+		};
+		return {
+			get text() {
+				return state.doc.toString();
+			},
+			edit(from: number, to: number, insert: string, joined = false) {
+				state = state.update({
+					changes: { from, to, insert },
+					userEvent: insert ? 'input.type' : 'delete.backward',
+					annotations: joined ? [] : [isolateHistory.of('full')]
+				}).state;
+			},
+			// A change kept out of undo, as removing an image placeholder is.
+			outside(from: number, to: number) {
+				state = state.update({
+					changes: { from, to },
+					annotations: Transaction.addToHistory.of(false)
+				}).state;
+			},
+			undo: () => undoText(target),
+			redo: () => redoText(target)
+		};
+	}
+
+	it('undoes the step before one a change kept out of undo emptied', () => {
+		const editor = setupHistory();
+		editor.edit(0, 0, 'Oh. ');
+		// Typed inside the marked words, so the step carries a marker record.
+		editor.edit(13, 13, 'XYZ');
+		editor.outside(13, 16);
+		expect(editor.text).toBe('Oh. ' + doc);
+		expect(editor.undo()).toBe(true);
+		expect(editor.text).toBe(doc);
+		expect(editor.redo()).toBe(true);
+		expect(editor.text).toBe('Oh. ' + doc);
+	});
+
+	it('undoes the step before keystrokes that cancelled out', () => {
+		const editor = setupHistory();
+		editor.edit(0, 0, 'Oh. ');
+		editor.edit(23, 23, 'x', true);
+		editor.edit(23, 24, '', true);
+		expect(editor.undo()).toBe(true);
+		expect(editor.text).toBe(doc);
+	});
+
+	it('does nothing when there is nothing to undo', () => {
+		const editor = setupHistory();
+		expect(editor.undo()).toBe(false);
+		expect(editor.redo()).toBe(false);
 	});
 });

@@ -23,6 +23,34 @@ longer running, and they would then be saved.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Marker limits after the #1448 reviews (2026-11-23,
+`fix/marker-limits-1477-1478` on `staging/bug-fixes-4`, #1478 and part of
+#1477). The page data's markers now carry the fingerprint of the text their
+anchors count into, read with the markers in one repeatable-read snapshot
+(`readSceneMarkers`, `readStoryMarkers`), and `unsavedChanges().from()` maps
+them only through the edits made after that text: the one a save is sending
+(stored, not yet answered), the last one the editor heard was stored, or one
+of the three before it. An unknown text (changed elsewhere) places no new
+marker until a reload. This closes the race the third follow-up left open.
+The unsaved edits now also keep each deletion that held stored words with
+the stored offset of every character (a "grave"), and an insertion of exactly
+that text at that place (undo, mostly) restores those offsets, so text undo
+brings back inside a larger combined change counts as stored character by
+character instead of all new. A new or waiting marker is placed from its
+first stored character still there to its last, rather than by mapping its
+ends, which could end it on words typed over its last ones. In the review
+fuzz, new markers placed short or wrong fell from 170 to 12 in 3000 seeds;
+what is left is keystrokes joined into one undo step whose put-back mixes
+with other unsaved edits, since the step comes back in one insertion that
+matches no single deletion. Joining graves for runs of deletions was tried
+and cleared 1 of those, so it was left out. An undo record whose range a
+change kept out of undo took entirely now takes the marker away instead of
+leaving what mapping put on the redone words (the rare marker on other words;
+none left in 10,000 seeds with deletions kept out of undo, which is all the
+app makes). Ctrl+Z and redo now pass over steps that change no text (one
+emptied by a change kept out of undo, or keystrokes that cancel out) and
+undo the next one with them (`undoText` in `src/lib/editor.ts`).
+
 Undo cleared when newer text loads (2026-11-23, `fix/review-6` on
 `staging/bug-fixes-4`, part of #1448). Loading the other window's text (Load
 newer version, or the automatic load after a refused marker) kept the change

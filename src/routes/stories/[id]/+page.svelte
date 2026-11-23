@@ -1018,7 +1018,8 @@
 								{nonPrintingMarks}
 								{commandMarkers}
 								imageUniverseId={data.universe.id}
-								markers={data.storyDocMarkers[scene.id] ?? []}
+								markers={data.storyDocMarkers[scene.id]?.markers ?? []}
+								markersVersion={data.storyDocMarkers[scene.id]?.version ?? null}
 								loreCategories={data.loreCategories}
 								onCreateEntity={createEntity}
 								onAskAssistant={data.assistant.surfacesEnabled
@@ -1145,6 +1146,7 @@
 						writingLanguage={data.preferences.writingLanguage}
 						imageUniverseId={data.universe.id}
 						markers={data.sceneMarkers}
+						markersVersion={data.sceneMarkersVersion}
 						loreCategories={data.loreCategories}
 						onCreateEntity={createEntity}
 						onAskAssistant={data.assistant.surfacesEnabled

@@ -17,6 +17,8 @@ import {
 	deleteMarker,
 	listSceneMarkers,
 	listStoryTodos,
+	readSceneMarkers,
+	readStoryMarkers,
 	setMarkerResolved,
 	updateMarkerAnchors
 } from '../../src/lib/server/markers';
@@ -118,6 +120,50 @@ describe('createMarker', () => {
 		expect(await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash(BODY))).toMatchObject(
 			{ ok: true }
 		);
+	});
+});
+
+// The editor maps the page data's anchors only through the edits it made
+// after the text they count into, so the list names that text.
+describe('readSceneMarkers and readStoryMarkers', () => {
+	it('name the text the anchors count into, before and after a save', async () => {
+		const created = await createMarker(db, ownerId, sceneId, 0, 5);
+		if (!created.ok) throw new Error('setup failed');
+		expect(await readSceneMarkers(db, sceneId)).toEqual({
+			markers: [{ id: created.id, anchorStart: 0, anchorEnd: 5, bodyMd: null }],
+			version: textHash(BODY)
+		});
+		const edited = 'Oh. ' + BODY;
+		const saved = await saveSceneBody(db, sceneId, {
+			title: 'Toll',
+			bodyMd: edited,
+			anchors: [{ id: created.id, anchorStart: 4, anchorEnd: 9 }],
+			baseHashes: null,
+			overwrite: false
+		});
+		expect(saved.ok).toBe(true);
+		const read = await readSceneMarkers(db, sceneId);
+		expect(read.version).toBe(textHash(edited));
+		expect(edited.slice(read.markers[0].anchorStart!, read.markers[0].anchorEnd!)).toBe('Alice');
+	});
+
+	it('lists each scene with markers and its text fingerprint for the continuous view', async () => {
+		const created = await createMarker(db, ownerId, sceneId, 6, 10);
+		if (!created.ok) throw new Error('setup failed');
+		await db.insert(scenes).values({ storyId, globalPosition: 2, bodyMd: 'No markers here.' });
+		expect(await readStoryMarkers(db, storyId)).toEqual({
+			[sceneId]: {
+				markers: [{ id: created.id, anchorStart: 6, anchorEnd: 10 }],
+				version: textHash(BODY)
+			}
+		});
+	});
+
+	it('names a scene with no markers too', async () => {
+		expect(await readSceneMarkers(db, sceneId)).toEqual({
+			markers: [],
+			version: textHash(BODY)
+		});
 	});
 });
 

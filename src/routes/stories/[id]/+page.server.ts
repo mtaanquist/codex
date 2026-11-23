@@ -6,7 +6,7 @@ import { chapters, entityCategories, scenes } from '#lib/server/db/schema';
 import { storyPreferences } from '#lib/server/preferences';
 import { storyPageSetup } from '#lib/server/page-setup';
 import { getRevision, type RevisionRow } from '#lib/server/revisions';
-import { listSceneMarkers, listStoryMarkersByScene } from '#lib/server/markers';
+import { readSceneMarkers, readStoryMarkers } from '#lib/server/markers';
 import { loadSceneLive, loadStoryLive, type InSceneEntity } from '#lib/server/story-live';
 import { reviewMentionData } from '#lib/server/mention-entities';
 import { ownedStory } from '#lib/server/story-access';
@@ -98,8 +98,8 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		selectScene(),
 		// Marker highlights for the continuous view's stitched editors.
 		view === 'story'
-			? listStoryMarkersByScene(db, story.id)
-			: Promise.resolve({} as Awaited<ReturnType<typeof listStoryMarkersByScene>>),
+			? readStoryMarkers(db, story.id)
+			: Promise.resolve({} as Awaited<ReturnType<typeof readStoryMarkers>>),
 		// Known entities feed the editor's live underlines, the autocomplete, and
 		// the hover cards (category colour and name drive the badges, related
 		// lists become the card's chips), together with the disambiguation
@@ -147,7 +147,9 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	let sceneNotes: Awaited<ReturnType<typeof listSceneNotes>> = [];
 	let sceneRevisions: RevisionRow[] = [];
 	let revisionPreview = null;
-	let sceneMarkers: Awaited<ReturnType<typeof listSceneMarkers>> = [];
+	let sceneMarkers: Awaited<ReturnType<typeof readSceneMarkers>>['markers'] = [];
+	// The fingerprint of the text the marker anchors count into.
+	let sceneMarkersVersion: string | null = null;
 	let inScene: InSceneEntity[] = [];
 	if (selectedScene) {
 		const revisionParam = url.searchParams.get('revision');
@@ -155,14 +157,15 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		const revisionId = revisionParam && isUuid(revisionParam) ? revisionParam : null;
 		const [sceneLive, markers, preview, notesOnScene] = await Promise.all([
 			loadSceneLive(db, selectedScene.id),
-			listSceneMarkers(db, selectedScene.id),
+			readSceneMarkers(db, selectedScene.id),
 			revisionId ? getRevision(db, revisionId, 'scene', selectedScene.id) : Promise.resolve(null),
 			// The Notes panel: what is written about this scene, not the story.
 			listSceneNotes(db, selectedScene.id, locals.user!.id)
 		]);
 		sceneRevisions = sceneLive.revisions;
 		inScene = sceneLive.inScene;
-		sceneMarkers = markers;
+		sceneMarkers = markers.markers;
+		sceneMarkersVersion = markers.version;
 		revisionPreview = preview ?? null;
 		sceneNotes = notesOnScene;
 	}
@@ -200,6 +203,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		sceneRevisions,
 		revisionPreview,
 		sceneMarkers,
+		sceneMarkersVersion,
 		storyTodos,
 		storyDocMarkers,
 		mentionEntities,
