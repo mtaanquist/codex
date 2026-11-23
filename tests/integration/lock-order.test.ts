@@ -703,6 +703,16 @@ const OPS: Op[] = [
 		run: async (db) => ok(await purgeUniverse(db, S.universe))
 	},
 	{
+		// With no images there is no image owner to lock first; the account row
+		// must still come before the universe row.
+		name: 'purge universe with no images',
+		prepare: async () => {
+			await db.delete(assets).where(eq(assets.id, S.image));
+			await trashUniverse(db, S.user, S.universe);
+		},
+		run: async (db) => ok(await purgeUniverse(db, S.universe))
+	},
+	{
 		name: 'purge universe on schedule',
 		prepare: async () => {
 			await trashUniverse(db, S.user, S.universe);

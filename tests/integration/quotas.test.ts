@@ -16,6 +16,7 @@ import {
 	users
 } from '../../src/lib/server/db/schema';
 import {
+	clearAssetConfigCache,
 	createAsset,
 	deleteAsset,
 	ObjectNotFoundError,
@@ -40,6 +41,7 @@ import {
 import {
 	createStoryInUniverse,
 	createUniverse,
+	reviveIfTrashed,
 	standaloneUniverse
 } from '../../src/lib/server/story-create';
 import { restoreStory, trashStory } from '../../src/lib/server/story-lifecycle';
@@ -304,6 +306,32 @@ describe('universe and story limits', () => {
 		expect(still.deletedAt).not.toBeNull();
 	});
 
+	// Two new standalone stories at once both read the home as trashed; the
+	// one that waited finds it live and must not count its stories again.
+	it('takes a standalone home another request revived meanwhile as it is', async () => {
+		await limitOwner({ max_stories: 2 });
+		const solo = await standaloneUniverse(db, ownerId);
+		await createStoryInUniverse(db, ownerId, solo.id, 'A');
+		await createStoryInUniverse(db, ownerId, solo.id, 'B');
+		await trashUniverse(db, ownerId, solo.id);
+		const [stale] = await db.select().from(universes).where(eq(universes.id, solo.id));
+		await restoreUniverse(db, ownerId, solo.id);
+		const home = await reviveIfTrashed(db, stale);
+		expect(home.id).toBe(solo.id);
+		expect(home.deletedAt).toBeNull();
+	});
+
+	it('makes a new standalone home when the trashed one was purged meanwhile', async () => {
+		const solo = await standaloneUniverse(db, ownerId);
+		await trashUniverse(db, ownerId, solo.id);
+		const [stale] = await db.select().from(universes).where(eq(universes.id, solo.id));
+		await purgeUniverse(db, solo.id);
+		const home = await reviveIfTrashed(db, stale);
+		expect(home.id).not.toBe(solo.id);
+		expect(home.standalone).toBe(true);
+		expect(home.deletedAt).toBeNull();
+	});
+
 	it('treats a second restore of the same story as done, not over the limit', async () => {
 		await limitOwner({ max_stories: 1 });
 		const world = await universe();
@@ -541,6 +569,27 @@ describe('storage', () => {
 		expect(other.ok).toBe(true);
 	});
 
+	// A preview with image storage set up, from the environment.
+	async function previewWithStorage(world: Parameters<typeof previewImport>[1], plan: ImportPlan) {
+		const env = {
+			ASSET_S3_BUCKET: 'test',
+			ASSET_S3_ACCESS_KEY_ID: 'id',
+			ASSET_S3_SECRET_ACCESS_KEY: 'secret'
+		};
+		const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+		Object.assign(process.env, env);
+		clearAssetConfigCache();
+		try {
+			return await previewImport(db, world, plan);
+		} finally {
+			for (const [key, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			clearAssetConfigCache();
+		}
+	}
+
 	it('names the images an import will skip for the per-image limit', async () => {
 		await limitOwner({ max_image_bytes: MEGABYTE });
 		const world = await universe();
@@ -549,10 +598,21 @@ describe('storage', () => {
 			{ id: 'a', path: 'assets/small.png', bytes: png(MEGABYTE) },
 			{ id: 'b', path: 'assets/big.png', bytes: png(MEGABYTE + 1) }
 		];
-		const preview = await previewImport(db, world, plan);
+		const preview = await previewWithStorage(world, plan);
 		expect(preview.problems).toEqual([
 			'The image assets/big.png is larger than 1 MB and will not be imported.'
 		]);
+	});
+
+	it('warns about no single image when image storage is not set up', async () => {
+		await limitOwner({ max_image_bytes: MEGABYTE, storage_bytes: 10 });
+		const world = await universe();
+		const plan = importPlan('Pictures');
+		plan.assets = [{ id: 'b', path: 'assets/big.png', bytes: png(MEGABYTE + 1) }];
+		clearAssetConfigCache();
+		const preview = await previewImport(db, world, plan);
+		expect(preview.assetsConfigured).toBe(false);
+		expect(preview.problems).toEqual([]);
 	});
 
 	it('warns before an import when its images do not fit in the storage left', async () => {
@@ -564,9 +624,9 @@ describe('storage', () => {
 			{ id: 'a', path: 'assets/one.png', bytes: png(3000) },
 			{ id: 'b', path: 'assets/two.png', bytes: png(3000) }
 		];
-		expect((await previewImport(db, world, plan)).problems).toEqual([]);
+		expect((await previewWithStorage(world, plan)).problems).toEqual([]);
 		plan.assets.push({ id: 'c', path: 'assets/three.png', bytes: png(2000) });
-		expect((await previewImport(db, world, plan)).problems).toEqual([
+		expect((await previewWithStorage(world, plan)).problems).toEqual([
 			'The images in this file take 7.8 KB, but you have 5.9 KB of image storage left. Images that do not fit will not be imported.'
 		]);
 	});

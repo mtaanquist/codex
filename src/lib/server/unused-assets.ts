@@ -192,6 +192,14 @@ async function clearMarks(db: Database, ids: string[]): Promise<void> {
 	}
 }
 
+// The ids are bound once, in the wanted CTE every column's part reads: bound
+// per part, a large backlog would send the whole list hundreds of times.
+export function referencedAssetIdsQuery(columns: Column[], ids: string[]): SQL {
+	return sql`
+		with wanted as materialized (select unnest(string_to_array(${ids.join(',')}, ',')) as id)
+		select distinct id from (${referencesIn(columns, sql`select id from wanted`)}) refs`;
+}
+
 /**
  * Which of the given image ids some row still references, by the same wide
  * reading as scanAssetUse, so a reference saved after an earlier full read is
@@ -200,11 +208,8 @@ async function clearMarks(db: Database, ids: string[]): Promise<void> {
  */
 async function referencedAssetIds(db: Database, ids: string[]): Promise<Set<string>> {
 	if (ids.length === 0) return new Set();
-	const wanted = sql`select unnest(string_to_array(${ids.join(',')}, ',')) as id`;
 	const result = await longRead(db, async (tx) =>
-		tx.execute(
-			sql`select distinct id from (${referencesIn(await referenceColumns(tx), wanted)}) refs`
-		)
+		tx.execute(referencedAssetIdsQuery(await referenceColumns(tx), ids))
 	);
 	return new Set((result.rows as { id: string }[]).map((row) => row.id));
 }

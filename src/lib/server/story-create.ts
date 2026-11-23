@@ -104,11 +104,21 @@ export async function standaloneUniverse(db: Database, ownerId: string) {
 // Brings a trashed standalone universe back so a new story has a live home.
 // Its live stories come back with it, so there must be room for them and the
 // new story; otherwise this throws QuotaExceededError and nothing is revived.
-async function reviveIfTrashed(db: Database, universe: typeof universes.$inferSelect) {
+// Exported for tests.
+export async function reviveIfTrashed(
+	db: Database,
+	universe: typeof universes.$inferSelect
+): Promise<typeof universes.$inferSelect> {
 	if (!universe.deletedAt) return universe;
-	await db.transaction(async (tx) => {
-		// The row before the quota lock, as restoreUniverse takes them.
-		await tx.execute(sql`select id from universes where id = ${universe.id} for update`);
+	const outcome = await db.transaction(async (tx) => {
+		// The row before the quota lock, as restoreUniverse takes them. The
+		// trash state is read again under the lock: another request may have
+		// revived it, or the purge removed it, since it was read.
+		const { rows } = await tx.execute<{ trashed: boolean }>(
+			sql`select deleted_at is not null as trashed from universes where id = ${universe.id} for update`
+		);
+		if (rows.length === 0) return 'gone';
+		if (!rows[0].trashed) return 'live';
 		const [inside] = await tx
 			.select({ n: count() })
 			.from(stories)
@@ -117,8 +127,11 @@ async function reviveIfTrashed(db: Database, universe: typeof universes.$inferSe
 			await holdCountQuota(tx, universe.ownerId, { stories: inside.n + 1 }, 'revive');
 		}
 		await untrash(tx, 'universes', universe.id);
+		return 'revived';
 	});
+	// Purged meanwhile: make a new one, as for an owner who never had one.
+	if (outcome === 'gone') return standaloneUniverse(db, universe.ownerId);
 	// Re-read: the restore may have given it a fresh slug.
 	const [live] = await db.select().from(universes).where(eq(universes.id, universe.id));
-	return live ?? { ...universe, deletedAt: null };
+	return live ?? standaloneUniverse(db, universe.ownerId);
 }

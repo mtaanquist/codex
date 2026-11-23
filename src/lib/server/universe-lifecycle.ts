@@ -136,8 +136,15 @@ export async function purgeUniverse(
 		// images. The universe row is then read under its lock, so a restore
 		// (which locks it for update) either finished before this or waits for
 		// it. No key update leaves foreign-key checks on the universe free until
-		// the row is deleted at the end, as before.
-		await lockStorageOwners(tx, await universeImageOwners(tx, universeId));
+		// the row is deleted at the end, as before. The owner's row is locked
+		// even when there are no images, so this takes rows in the account
+		// purge's order (account, then universe) and the two cannot deadlock.
+		const [owner] = await tx
+			.select({ id: universes.ownerId })
+			.from(universes)
+			.where(eq(universes.id, universeId));
+		if (!owner) return false;
+		await lockStorageOwners(tx, [owner.id, ...(await universeImageOwners(tx, universeId))]);
 		const [row] = await tx
 			.select({
 				deletedAt: universes.deletedAt,

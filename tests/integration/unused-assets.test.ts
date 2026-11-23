@@ -3,12 +3,15 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq, inArray } from 'drizzle-orm';
 import pg from 'pg';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../src/lib/server/db/schema';
 import { assets, pendingObjectDeletions, stories, users } from '../../src/lib/server/db/schema';
 import {
 	deleteUnusedAssets,
 	FREED_OBJECT_EXTRA_DAYS,
+	referenceColumns,
+	referencedAssetIdsQuery,
 	scanAssetUse,
 	sweepUnusedAssets,
 	UNREFERENCED_DAYS,
@@ -375,6 +378,27 @@ describe('sweepUnusedAssets', () => {
 		} finally {
 			holder.release();
 		}
+	});
+});
+
+describe('the read before the delete', () => {
+	// Bound once per column, a large backlog sent the list hundreds of times
+	// over and the sweep failed every night without freeing anything.
+	it('binds the id list once however many columns it reads', async () => {
+		const ids = Array.from({ length: 20_000 }, () => randomUUID());
+		const columns = await referenceColumns(db);
+		expect(columns.length).toBeGreaterThan(50);
+		const { params } = new PgDialect().sqlToQuery(referencedAssetIdsQuery(columns, ids));
+		expect(params).toEqual([ids.join(',')]);
+	});
+
+	it('finds the referenced ids among many', async () => {
+		const storyId = await story();
+		const kept = await image();
+		await scene(storyId, link(kept.toUpperCase()));
+		const ids = [...Array.from({ length: 20_000 }, () => randomUUID()), kept];
+		const result = await db.execute(referencedAssetIdsQuery(await referenceColumns(db), ids));
+		expect(result.rows).toEqual([{ id: kept }]);
 	});
 });
 

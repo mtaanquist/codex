@@ -113,10 +113,13 @@ export async function previewImport(
 		if (reason === undefined) throw err;
 		problems.unshift(reason);
 	}
+	const assetsConfigured = (await effectiveAssetConfig(db)) !== null;
 	const limits = await accountLimits(db, universe.ownerId);
 	const maxImage = imageLimit(limits);
 	let imageBytes = 0;
-	for (const asset of plan.assets) {
+	// Without image storage no image is imported, which the preview says once
+	// (assetsConfigured), so the per-image and space warnings would only add noise.
+	for (const asset of assetsConfigured ? plan.assets : []) {
 		if (asset.bytes.length > maxImage) {
 			problems.push(
 				`The image ${asset.path} is larger than ${formatBytes(maxImage)} and will not be imported.`
@@ -147,7 +150,7 @@ export async function previewImport(
 		freeformNoteCount: plan.freeformNotes?.length ?? 0,
 		waitingDraftCount: plan.waitingDrafts?.length ?? 0,
 		assetCount: plan.assets.length,
-		assetsConfigured: (await effectiveAssetConfig(db)) !== null,
+		assetsConfigured,
 		problems
 	};
 }

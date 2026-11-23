@@ -489,7 +489,11 @@ export const characters = pgTable(
 		// The palette search filters by owner and substring-matches the name.
 		index('characters_owner_idx').on(table.ownerId),
 		index('characters_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
-		index('characters_universe_idx').on(table.universeId)
+		index('characters_universe_idx').on(table.universeId),
+		// For the foreign-key check on each image the unused image sweep deletes.
+		index('characters_badge_asset_idx')
+			.on(table.badgeAssetId)
+			.where(sql`${table.badgeAssetId} is not null`)
 	]
 );
 
@@ -579,7 +583,11 @@ export const loreEntries = pgTable(
 		// The palette search filters by owner and substring-matches the title.
 		index('lore_entries_owner_idx').on(table.ownerId),
 		index('lore_entries_title_trgm_idx').using('gin', table.title.op('gin_trgm_ops')),
-		index('lore_entries_universe_idx').on(table.universeId)
+		index('lore_entries_universe_idx').on(table.universeId),
+		// For the foreign-key check on each image the unused image sweep deletes.
+		index('lore_entries_badge_asset_idx')
+			.on(table.badgeAssetId)
+			.where(sql`${table.badgeAssetId} is not null`)
 	]
 );
 
@@ -648,7 +656,11 @@ export const places = pgTable(
 		// The palette search filters by owner and substring-matches the name.
 		index('places_owner_idx').on(table.ownerId),
 		index('places_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
-		index('places_universe_idx').on(table.universeId)
+		index('places_universe_idx').on(table.universeId),
+		// For the foreign-key check on each image the unused image sweep deletes.
+		index('places_badge_asset_idx')
+			.on(table.badgeAssetId)
+			.where(sql`${table.badgeAssetId} is not null`)
 	]
 );
 
