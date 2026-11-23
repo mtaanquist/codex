@@ -120,7 +120,13 @@ function markerField(markers: SceneMarker[]) {
 		for (const cursor = before.iter(); cursor.value; cursor.next()) {
 			present.add(cursor.value.spec.todoId as string);
 		}
-		const gone = [...shown].filter((id) => !present.has(id));
+		// A marker this transaction puts back was gone before it, whether or not
+		// this set has shown it yet: undo can restore a marker that loaded with
+		// no position, and the redo step must take it away again.
+		const restored = tr.effects.flatMap((effect) =>
+			effect.is(restoreMarker) && held.has(effect.value.id) ? [effect.value.id] : []
+		);
+		const gone = [...new Set([...shown, ...restored])].filter((id) => !present.has(id));
 		return [
 			...gone.map((id) => dropMarker.of({ id, owner: held })),
 			...[...touched.values()].map((range) => restoreMarker.of(range))
@@ -203,21 +209,25 @@ export function markerExtensions(
 // The marker set for a rebuild when the page data brings a changed set (one
 // checked off, one made). The server's anchors are against the text it last
 // stored, so edits made since would put them on the wrong words: a marker the
-// editor still highlights keeps its own mapped range, which is newer, and any
-// other marker's anchors are mapped through the unsaved changes. A marker
-// whose words are gone comes back with no anchors, so it stays held and undo
-// can still put it back.
+// editor still highlights keeps its own mapped range, which is newer, and a
+// marker new to the editor has its anchors mapped through the unsaved
+// changes. A marker the editor held but no longer shows (its words are gone)
+// comes back with no anchors, so it stays held and undo can still put it
+// back; mapping its old anchors would not do, since the combined changes can
+// lose the step that removed it and land it on the words that replaced them.
 export function rebuiltMarkers(
 	incoming: SceneMarker[],
 	current: { id: string; anchorStart: number; anchorEnd: number }[],
+	held: string[],
 	unsaved: ChangeDesc
 ): SceneMarker[] {
 	const shown = new Map(current.map((anchor) => [anchor.id, anchor]));
+	const before = new Set(held);
 	return incoming.map((marker) => {
 		const own = shown.get(marker.id);
 		if (own) return { id: marker.id, anchorStart: own.anchorStart, anchorEnd: own.anchorEnd };
 		const { anchorStart: start, anchorEnd: end } = marker;
-		if (start === null || end === null || end > unsaved.length) {
+		if (before.has(marker.id) || start === null || end === null || end > unsaved.length) {
 			return { id: marker.id, anchorStart: null, anchorEnd: null };
 		}
 		const from = unsaved.mapPos(start, 1);
@@ -235,10 +245,27 @@ export function rebuiltMarkers(
 export function unsavedChanges(length: number) {
 	let total = ChangeSet.empty(length).desc;
 	let sinceSent: ChangeDesc | null = null;
+	const pins = new Set<{ since: ChangeDesc }>();
 	return {
 		record(changes: ChangeDesc) {
 			total = total.composeDesc(changes);
 			if (sinceSent) sinceSent = sinceSent.composeDesc(changes);
+			for (const pin of pins) pin.since = pin.since.composeDesc(changes);
+		},
+		// Follows a range on screen through the edits after it. The function
+		// returned, called once, gives the range in the text the server holds at
+		// that moment, or null when none of its words are stored yet (a save
+		// failed or has not run).
+		pin(from: number, to: number) {
+			const pin = { since: ChangeSet.empty(total.newLength).desc };
+			pins.add(pin);
+			return (): { from: number; to: number } | null => {
+				pins.delete(pin);
+				const back = total.invertedDesc;
+				const start = back.mapPos(pin.since.mapPos(from, 1), 1);
+				const end = back.mapPos(pin.since.mapPos(to, -1), -1);
+				return start < end ? { from: start, to: end } : null;
+			};
 		},
 		sent() {
 			sinceSent = ChangeSet.empty(total.newLength).desc;

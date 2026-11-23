@@ -526,6 +526,23 @@ async function journey({ page, browser }: { page: Page; browser: Browser }) {
 	await markWords(['End', ...Array(5).fill('Shift+ArrowLeft')]);
 	await markWords(['Home', ...Array(5).fill('Shift+ArrowRight')]);
 	await expect(page.locator('.todo-marker')).toHaveCount(2);
+	// A marker made in another tab is new to this editor when the page data
+	// next brings it, so it is placed through the typing not yet saved.
+	const otherTab = await page.context().newPage();
+	await otherTab.goto(page.url());
+	await expect(otherTab.locator('.todo-marker')).toHaveCount(2);
+	const otherCreate = otherTab.waitForResponse(
+		(r) => r.url().includes('/markers') && r.request().method() === 'POST' && r.ok()
+	);
+	await otherTab.locator('.cm-content').click();
+	await otherTab.keyboard.press('ControlOrMeta+End');
+	for (const key of ['End', ...Array(6).fill('ArrowLeft'), ...Array(4).fill('Shift+ArrowLeft')])
+		await otherTab.keyboard.press(key);
+	await otherTab.keyboard.press('ControlOrMeta+Alt+m');
+	await otherCreate;
+	await otherTab.close();
+	await page.locator('.cm-content').click();
+	await page.keyboard.press('ControlOrMeta+End');
 	await page.keyboard.press('Home');
 	await page.keyboard.type('Now ');
 	const earlyResolve = page.waitForResponse(
@@ -533,8 +550,7 @@ async function journey({ page, browser }: { page: Page; browser: Browser }) {
 	);
 	await page.locator('.todo-check').first().click();
 	await earlyResolve;
-	await expect(page.locator('.todo-marker')).toHaveCount(1);
-	await expect(page.locator('.todo-marker')).toHaveText('scene');
+	await expect(page.locator('.todo-marker')).toHaveText(['toll', 'scene']);
 	await expect(page.locator('.cm-content')).toContainText('Now TODO: tighten the toll scene');
 
 	// Assets: a story cover uploads to the bucket and serves back, and a
