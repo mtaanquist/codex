@@ -475,6 +475,11 @@ ask the admin of your site to raise it.
 Universes and stories in the trash do not count toward the limits, so moving
 one to the trash makes room. Restoring it counts again. Text never counts.
 
+Before a picture uploads, Codex shrinks one wider or taller than 2560 pixels
+to that size and saves it as a WebP image, so it takes less space. Smaller
+pictures and GIFs upload as they are. This applies to pictures in your text,
+covers, avatars and badges.
+
 Images count until they are deleted. Replacing or removing your avatar or a
 badge deletes the old image. Replacing a story's cover deletes the old cover,
 unless a saved draft of the story still shows it; then it is kept with the

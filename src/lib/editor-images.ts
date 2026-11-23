@@ -2,6 +2,7 @@ import { EditorView } from '@codemirror/view';
 import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { landsWhilePaused } from './editor-paused';
 import { apiErrorMessage } from './format';
+import { shrinkImage } from './image-shrink';
 
 // Paste or drop an image into the prose: it uploads and lands as a
 // markdown image pointing at the app-served path. Markdown is the stored
@@ -73,8 +74,9 @@ export function hasPendingUploads(state: EditorState): boolean {
 
 const UPLOAD_FAILED = 'The image could not be uploaded. Try again.';
 
-// Uploads one image into the universe: its app-served path, or the message to
-// show the writer when the server refuses it (over the storage limit, say).
+// Uploads one image into the universe, shrunk first when it is large: its
+// app-served path, or the message to show the writer when the server refuses
+// it (over the storage limit, say).
 export async function uploadImage(
 	file: File,
 	universeId: string,
@@ -82,7 +84,7 @@ export async function uploadImage(
 ): Promise<{ ok: true; path: string } | { ok: false; message: string }> {
 	try {
 		const form = new FormData();
-		form.set('file', file);
+		form.set('file', await shrinkImage(file));
 		form.set('kind', 'inline');
 		form.set('universeId', universeId);
 		const response = await fetcher('/api/assets', { method: 'POST', body: form });

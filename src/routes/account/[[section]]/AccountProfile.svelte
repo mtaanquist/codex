@@ -4,6 +4,7 @@
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { shrinkImagesOnSubmit } from '#lib/image-shrink';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
 	import type { ActionData, PageData } from './$types';
 
@@ -89,6 +90,7 @@
 							action="?/uploadAvatar"
 							enctype="multipart/form-data"
 							bind:this={avatarForm}
+							use:shrinkImagesOnSubmit
 						>
 							<label class="btn btn-secondary btn-sm">
 								Upload photo
