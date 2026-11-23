@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
@@ -375,6 +375,48 @@ describe('concurrent publish', () => {
 		await expect(db.insert(publications).values(row)).rejects.toMatchObject({
 			cause: { code: '23505' }
 		});
+	});
+});
+
+// The unused-image sweep deleting an image the moment a publish links it.
+// The trigger stands in for that delete landing between the publish's read
+// of the image and its link row.
+describe('an image deleted while the story publishes', () => {
+	afterEach(async () => {
+		await pool.query('drop trigger if exists test_delete_asset on publication_assets');
+		await pool.query('drop function if exists test_delete_asset()');
+	});
+
+	it('refuses the publish with a plain message', async () => {
+		const [asset] = await db
+			.insert(assets)
+			.values({
+				ownerId: authorId,
+				universeId,
+				kind: 'inline',
+				filename: 'gone.png',
+				contentType: 'image/png',
+				byteSize: 8,
+				storageKey: 'codex-assets/gone'
+			})
+			.returning();
+		await db
+			.update(scenes)
+			.set({ bodyMd: `![gone](/assets/${asset.id})` })
+			.where(eq(scenes.id, sceneId));
+		await pool.query(`
+			create function test_delete_asset() returns trigger language plpgsql as $$
+			begin
+				delete from assets where id = new.asset_id;
+				return new;
+			end $$`);
+		await pool.query(`create trigger test_delete_asset before insert on publication_assets
+			for each row execute function test_delete_asset()`);
+		expect(await publishStory(db, authorId, storyId)).toEqual({
+			ok: false,
+			reason: 'One of the images in this story was just deleted. Check the story and publish again.'
+		});
+		expect(await db.select().from(publications)).toEqual([]);
 	});
 });
 

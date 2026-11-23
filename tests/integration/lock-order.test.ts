@@ -47,6 +47,7 @@ import {
 	createAsset,
 	deleteAsset,
 	ObjectNotFoundError,
+	setStoryCover,
 	setUserAvatar,
 	type AssetConfig,
 	type AssetObjectStore
@@ -581,6 +582,27 @@ const OPS: Op[] = [
 	{
 		name: 'set the story cover',
 		run: async (db) => await replaceCover(db, S.story, S.image)
+	},
+	{
+		name: 'upload a story cover',
+		prepare: async () => {
+			await db.update(stories).set({ coverAssetId: S.image }).where(eq(stories.id, S.story));
+		},
+		run: async (db) =>
+			ok(
+				await setStoryCover(
+					db,
+					memoryStore,
+					assetConfig,
+					S.user,
+					{ id: S.story, universeId: S.universe },
+					{
+						filename: 'cover.png',
+						contentType: 'image/png',
+						bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+					}
+				)
+			)
 	},
 	{
 		name: 'publish the story',

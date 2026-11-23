@@ -5,15 +5,9 @@ import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { stories } from '#lib/server/db/schema';
 import { storyTimeline } from '#lib/server/revisions';
-import { effectiveAssetConfig, createAsset, s3AssetStore } from '#lib/server/assets';
+import { effectiveAssetConfig, s3AssetStore, setStoryCover } from '#lib/server/assets';
 import { publishStory, readingPageRef } from '#lib/server/publish';
-import {
-	deleteDraft,
-	listDrafts,
-	replaceCover,
-	saveDraft,
-	updateDraftDetails
-} from '#lib/server/story-drafts';
+import { deleteDraft, listDrafts, saveDraft, updateDraftDetails } from '#lib/server/story-drafts';
 import { rateLimitWrites } from '#lib/server/write-guard';
 import { setPenNameIfUnset } from '#lib/server/account';
 import { listEditionArtifacts, setDownloadsPublic } from '#lib/server/export-artifacts';
@@ -427,14 +421,10 @@ export const actions: Actions = {
 		if (!(file instanceof File) || file.size === 0) {
 			return fail(400, { action: 'cover', message: 'Choose an image file.' });
 		}
-		const store = s3AssetStore(config);
-		const created = await createAsset(db, store, config, locals.user!.id, {
-			universeId: story.universeId,
-			kind: 'cover',
+		const created = await setStoryCover(db, s3AssetStore(config), config, locals.user!.id, story, {
 			filename: file.name,
 			contentType: file.type,
-			bytes: Buffer.from(await file.arrayBuffer()),
-			replaces: story.coverAssetId
+			bytes: Buffer.from(await file.arrayBuffer())
 		});
 		if (!created.ok) {
 			return fail(created.code === 'over_limit' ? 403 : 400, {
@@ -442,8 +432,6 @@ export const actions: Actions = {
 				message: created.reason
 			});
 		}
-		// The replaced cover is left for the unused image sweep.
-		await replaceCover(db, story.id, created.id);
 		return { action: 'cover', saved: true };
 	},
 	saveDraft: async ({ request, params, locals }) => {

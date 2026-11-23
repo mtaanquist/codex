@@ -300,6 +300,36 @@ describe('runImport', () => {
 		expect(titles.filter((row) => row.title === 'Halden')).toHaveLength(3);
 	});
 
+	// Only the story slug index is a clash a fresh pick can fix.
+	it('does not try again after a clash other than the slug', async () => {
+		await db.insert(characters).values({ universeId: universe.id, ownerId, name: 'Alice' });
+		let writes = 0;
+		const counting = new Proxy(db, {
+			get(target, prop) {
+				const value = Reflect.get(target, prop, target);
+				if (typeof value !== 'function') return value;
+				if (prop !== 'transaction') return value.bind(target);
+				return (...args: unknown[]) => {
+					writes += 1;
+					return value.apply(target, args);
+				};
+			}
+		});
+		const note = { kind: 'character' as const, name: 'Alice', notesMd: 'Twice.' };
+		await expect(
+			runImport(counting, universe, {
+				story: { title: 'Twice', author: null, brief: null, descriptionMd: '' },
+				chapters: [],
+				unfiled: [{ title: null, status: null, bodyMd: 'Prose.' }],
+				notes: [note, note],
+				assets: [],
+				problems: []
+			})
+		).rejects.toMatchObject({ cause: { constraint: 'character_story_notes_unique' } });
+		expect(writes).toBe(1);
+		expect(await db.select().from(stories).where(eq(stories.title, 'Twice'))).toEqual([]);
+	});
+
 	it('writes the adult flag and chapter summaries a document plan carries', async () => {
 		const result = await runImport(db, universe, {
 			story: {
