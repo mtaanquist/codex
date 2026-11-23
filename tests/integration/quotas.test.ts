@@ -406,31 +406,17 @@ describe('storage', () => {
 		expect(await db.select().from(assets)).toHaveLength(1);
 	});
 
-	it('lets an image replace another of the same size at the limit', async () => {
-		await limitOwner({ storage_bytes: 500 });
-		const { store } = memoryStore();
-		const input = {
-			universeId: null,
-			kind: 'avatar' as const,
-			filename: 'a.png',
-			contentType: 'image/png',
-			bytes: png(400)
-		};
-		const first = await createAsset(db, store, config, ownerId, input);
-		if (!first.ok) throw new Error(first.reason);
-		expect((await createAsset(db, store, config, ownerId, input)).ok).toBe(false);
-		const swap = await createAsset(db, store, config, ownerId, { ...input, replaces: first.id });
-		expect(swap.ok).toBe(true);
-		await deleteAsset(db, ownerId, first.id);
-		expect(await used()).toBe(400);
-	});
-
-	it('credits the old avatar or badge when one replaces it at the limit', async () => {
+	// A replaced avatar or badge stays until the unused image sweep frees it,
+	// so it still counts, and the new one has to fit beside it.
+	it('counts a replaced avatar or badge until the sweep frees it', async () => {
 		await limitOwner({ storage_bytes: 500 });
 		const { store } = memoryStore();
 		const image = { filename: 'a.png', contentType: 'image/png', bytes: png(400) };
 		expect((await setUserAvatar(db, store, config, ownerId, image)).ok).toBe(true);
-		expect((await setUserAvatar(db, store, config, ownerId, image)).ok).toBe(true);
+		expect(await setUserAvatar(db, store, config, ownerId, image)).toMatchObject({
+			ok: false,
+			code: 'over_limit'
+		});
 		expect(await used()).toBe(400);
 
 		await limitOwner({ storage_bytes: 900 });
@@ -443,9 +429,9 @@ describe('storage', () => {
 			true
 		);
 		expect(await used()).toBe(800);
-		expect((await setEntityBadgeImage(db, store, config, ownerId, character.id, image)).ok).toBe(
-			true
-		);
+		expect(
+			await setEntityBadgeImage(db, store, config, ownerId, character.id, image)
+		).toMatchObject({ ok: false, code: 'over_limit' });
 		expect(await used()).toBe(800);
 		expect(await db.select().from(assets)).toHaveLength(2);
 	});
@@ -559,6 +545,8 @@ describe('storage', () => {
 		await trashUniverse(db, ownerId, world.id);
 		// The trash keeps the images until the purge.
 		expect(await used()).toBe(250);
+		// The purge frees images past the unused image grace period.
+		await db.update(assets).set({ createdAt: new Date(Date.now() - 60 * 86_400_000) });
 		await purgeUniverse(db, world.id);
 		expect(await used()).toBe(0);
 	});

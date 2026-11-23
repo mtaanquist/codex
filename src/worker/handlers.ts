@@ -28,8 +28,12 @@ import {
 	markReviewerNotified
 } from '../lib/server/notification-digest.ts';
 import { listAccountsDueForPurge, purgeAccount } from '../lib/server/account-deletion.ts';
-import { listUniversesDueForPurge, purgeUniverse } from '../lib/server/universe-lifecycle.ts';
-import { listStoriesDueForPurge } from '../lib/server/story-lifecycle.ts';
+import {
+	listUniversesDueForPurge,
+	purgeUniverse,
+	UNIVERSE_TRASH_DAYS
+} from '../lib/server/universe-lifecycle.ts';
+import { listStoriesDueForPurge, STORY_TRASH_DAYS } from '../lib/server/story-lifecycle.ts';
 import { purgeStory } from '../lib/server/story-delete.ts';
 import { sweepUnusedAssets } from '../lib/server/unused-assets.ts';
 import {
@@ -1177,8 +1181,9 @@ export function createHandlers(deps: WorkerDeps) {
 		async purgeUniverses() {
 			for (const universeId of await listUniversesDueForPurge(db)) {
 				try {
-					await purgeUniverse(db, universeId);
-					logEvent('info', 'purge.universe', { universeId });
+					if (await purgeUniverse(db, universeId, { dueAfterDays: UNIVERSE_TRASH_DAYS })) {
+						logEvent('info', 'purge.universe', { universeId });
+					}
 				} catch (error) {
 					logEvent('error', 'purge.universe_failed', { universeId, ...errorFields(error) });
 				}
@@ -1186,9 +1191,10 @@ export function createHandlers(deps: WorkerDeps) {
 			let storiesPurged = 0;
 			for (const storyId of await listStoriesDueForPurge(db)) {
 				try {
-					await purgeStory(db, storyId);
-					storiesPurged += 1;
-					logEvent('info', 'purge.story', { storyId });
+					if (await purgeStory(db, storyId, { dueAfterDays: STORY_TRASH_DAYS })) {
+						storiesPurged += 1;
+						logEvent('info', 'purge.story', { storyId });
+					}
 				} catch (error) {
 					logEvent('error', 'purge.story_failed', { storyId, ...errorFields(error) });
 				}

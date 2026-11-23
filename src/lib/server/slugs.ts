@@ -10,6 +10,12 @@ const BASE_MAX = 55;
 
 type Table = 'universes' | 'stories';
 
+// Sent with the permanent redirect from an old public slug. A browser would
+// otherwise cache the redirect for good, and a rename back to the old slug
+// would then bounce the reader between the two addresses forever; no-cache
+// makes it ask the server again each time.
+export const OLD_SLUG_REDIRECT_HEADERS = { 'cache-control': 'no-cache' };
+
 const historyKind = (table: Table) => (table === 'universes' ? 'universe' : 'story');
 const historyTarget = (table: Table) =>
 	table === 'universes' ? slugHistory.universeId : slugHistory.storyId;
@@ -20,8 +26,11 @@ const historyTarget = (table: Table) =>
  * hold a slug; one in the trash has freed it. A slug that another story (or
  * universe) moved off by a rename stays reserved in slug_history, so an old
  * public link never opens a different work; selfId lets a rename take back
- * its own old slug. The unique index is the real guard against live clashes;
- * this just picks a free name.
+ * its own old slug. current, when given, is kept if still free: saveWithSlug
+ * passes the row's slug when the new name slugs to the same base as the old,
+ * so such a rename does not move to a lower suffix that has come free since.
+ * The unique index is the real guard against live clashes; this just picks a
+ * free name.
  */
 export async function uniqueSlug(
 	db: Database | Tx,
@@ -29,9 +38,10 @@ export async function uniqueSlug(
 	ownerId: string,
 	name: string,
 	fallback: string,
-	selfId?: string
+	selfId?: string,
+	current?: string
 ): Promise<string> {
-	const base = slugify(name, fallback).slice(0, BASE_MAX).replace(/-+$/, '') || fallback;
+	const base = slugBase(name, fallback);
 	const target = table === 'universes' ? universes : stories;
 	const rows = await db
 		.select({ slug: target.slug })
@@ -52,12 +62,18 @@ export async function uniqueSlug(
 		selfId
 	);
 	const taken = new Set([...rows.map((row) => row.slug), ...reserved]);
+	// Only a current slug under the base is in taken's range.
+	if (current?.startsWith(base) && !taken.has(current) && !isUuid(current)) return current;
 	// A uuid-shaped base would be looked up as an id and never resolve, so it
 	// always takes a suffix.
 	if (!taken.has(base) && !isUuid(base)) return base;
 	let n = 2;
 	while (taken.has(`${base}-${n}`)) n++;
 	return `${base}-${n}`;
+}
+
+function slugBase(name: string, fallback: string): string {
+	return slugify(name, fallback).slice(0, BASE_MAX).replace(/-+$/, '') || fallback;
 }
 
 // The owner's reserved old slugs matching the condition, purged targets
@@ -167,7 +183,8 @@ export async function saveWithSlug(
 				return row.slug;
 			}
 			await lockSlugs(tx, row.ownerId);
-			const slug = await uniqueSlug(tx, table, row.ownerId, name, fallback, id);
+			const keep = slugBase(row.name, fallback) === slugBase(name, fallback) ? row.slug : undefined;
+			const slug = await uniqueSlug(tx, table, row.ownerId, name, fallback, id, keep);
 			await write(tx, slug);
 			if (slug !== row.slug) {
 				await forgetOwnSlug(tx, table, row.ownerId, id, slug);

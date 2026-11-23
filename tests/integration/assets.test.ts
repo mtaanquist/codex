@@ -4,7 +4,14 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Readable } from 'node:stream';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
-import { assets, pendingObjectDeletions, universes, users } from '../../src/lib/server/db/schema';
+import {
+	assets,
+	pendingObjectDeletions,
+	scenes,
+	stories,
+	universes,
+	users
+} from '../../src/lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import {
 	clearUserAvatar,
@@ -168,7 +175,9 @@ describe('createAsset', () => {
 });
 
 describe('avatars', () => {
-	it('sets the avatar, replaces the previous one, and clears it', async () => {
+	// The unused image sweep frees an old avatar once nothing shows it, so a
+	// replace or a clear never deletes one that a scene or edition still uses.
+	it('sets the avatar, replaces it, and clears it, leaving old images for the sweep', async () => {
 		const { store, objects } = memoryStore();
 		const first = await setUserAvatar(db, store, config, ownerId, {
 			filename: 'me.png',
@@ -179,10 +188,7 @@ describe('avatars', () => {
 		if (!first.ok) return;
 		let [row] = await db.select().from(users).where(eq(users.id, ownerId));
 		expect(row.avatarAssetId).toBe(first.id);
-		expect(objects.size).toBe(1);
 
-		// A second upload points the user at the new asset and drops the old row;
-		// the old object waits for the deferred sweep.
 		const second = await setUserAvatar(db, store, config, ownerId, {
 			filename: 'me2.png',
 			contentType: 'image/png',
@@ -192,42 +198,40 @@ describe('avatars', () => {
 		if (!second.ok) return;
 		[row] = await db.select().from(users).where(eq(users.id, ownerId));
 		expect(row.avatarAssetId).toBe(second.id);
-		expect(await openAsset(db, store, ownerId, first.id)).toBeNull();
-		expect(await pendingKeys()).toContain(`codex-assets/${first.id}`);
+		expect(await openAsset(db, store, ownerId, first.id)).not.toBeNull();
 
 		await clearUserAvatar(db, ownerId);
 		[row] = await db.select().from(users).where(eq(users.id, ownerId));
 		expect(row.avatarAssetId).toBeNull();
-		expect(await pendingKeys()).toContain(`codex-assets/${second.id}`);
+		expect(await openAsset(db, store, ownerId, second.id)).not.toBeNull();
+		expect(await pendingKeys()).toEqual([]);
 		expect(objects.size).toBe(2);
+		// Both still count until the sweep frees them.
+		expect(row.storageUsedBytes).toBe(2 * PNG.length);
 	});
 
-	it('does not orphan an asset when two uploads race', async () => {
+	it('keeps an old avatar a scene still shows', async () => {
 		const { store } = memoryStore();
-		const [a, b] = await Promise.all([
-			setUserAvatar(db, store, config, ownerId, {
-				filename: 'a.png',
-				contentType: 'image/png',
-				bytes: PNG
-			}),
-			setUserAvatar(db, store, config, ownerId, {
-				filename: 'b.png',
-				contentType: 'image/png',
-				bytes: PNG
-			})
-		]);
-		expect(a.ok && b.ok).toBe(true);
-		if (!a.ok || !b.ok) return;
-		const [row] = await db.select().from(users).where(eq(users.id, ownerId));
-		// One upload wins the row; the other's asset must be cleaned up (its
-		// object queued for removal) rather than left as an orphan.
-		expect([a.id, b.id]).toContain(row.avatarAssetId);
-		const loser = row.avatarAssetId === a.id ? b.id : a.id;
-		expect(await openAsset(db, store, ownerId, loser)).toBeNull();
-		expect(await pendingKeys()).toContain(`codex-assets/${loser}`);
-		expect(await pendingKeys()).not.toContain(`codex-assets/${row.avatarAssetId}`);
-
-		await clearUserAvatar(db, ownerId);
+		const first = await setUserAvatar(db, store, config, ownerId, {
+			filename: 'me.png',
+			contentType: 'image/png',
+			bytes: PNG
+		});
+		if (!first.ok) throw new Error(first.reason);
+		const [story] = await db
+			.insert(stories)
+			.values({ universeId, ownerId, title: 'Portraits', slug: 'portraits' })
+			.returning();
+		await db
+			.insert(scenes)
+			.values({ storyId: story.id, globalPosition: 1, bodyMd: `![me](/assets/${first.id})` });
+		const second = await setUserAvatar(db, store, config, ownerId, {
+			filename: 'me2.png',
+			contentType: 'image/png',
+			bytes: PNG
+		});
+		expect(second.ok).toBe(true);
+		expect(await openAsset(db, store, ownerId, first.id)).not.toBeNull();
 	});
 });
 

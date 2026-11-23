@@ -5,11 +5,10 @@ import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { stories } from '#lib/server/db/schema';
 import { storyTimeline } from '#lib/server/revisions';
-import { effectiveAssetConfig, createAsset, deleteAsset, s3AssetStore } from '#lib/server/assets';
+import { effectiveAssetConfig, createAsset, s3AssetStore } from '#lib/server/assets';
 import { publishStory } from '#lib/server/publish';
 import {
 	deleteDraft,
-	draftUsesCover,
 	listDrafts,
 	replaceCover,
 	saveDraft,
@@ -430,18 +429,12 @@ export const actions: Actions = {
 			return fail(400, { action: 'cover', message: 'Choose an image file.' });
 		}
 		const store = s3AssetStore(config);
-		// The old cover's space counts as free when it is about to be deleted.
-		const replaces =
-			story.coverAssetId && !(await draftUsesCover(db, story.id, story.coverAssetId))
-				? story.coverAssetId
-				: null;
 		const created = await createAsset(db, store, config, locals.user!.id, {
 			universeId: story.universeId,
 			kind: 'cover',
 			filename: file.name,
 			contentType: file.type,
-			bytes: Buffer.from(await file.arrayBuffer()),
-			replaces
+			bytes: Buffer.from(await file.arrayBuffer())
 		});
 		if (!created.ok) {
 			return fail(created.code === 'over_limit' ? 403 : 400, {
@@ -449,9 +442,8 @@ export const actions: Actions = {
 				message: created.reason
 			});
 		}
-		// The replaced cover goes, unless a saved draft still shows it.
-		const unused = await replaceCover(db, story.id, created.id);
-		if (unused) await deleteAsset(db, locals.user!.id, unused);
+		// The replaced cover is left for the unused image sweep.
+		await replaceCover(db, story.id, created.id);
 		return { action: 'cover', saved: true };
 	},
 	saveDraft: async ({ request, params, locals }) => {
@@ -485,7 +477,7 @@ export const actions: Actions = {
 		if (!isUuid(draftId)) {
 			return fail(400, { action: 'drafts', message: 'That saved draft no longer exists.' });
 		}
-		const result = await deleteDraft(db, locals.user!.id, story.id, draftId);
+		const result = await deleteDraft(db, story.id, draftId);
 		if (!result.ok) return fail(400, { action: 'drafts', message: result.reason });
 		return { action: 'drafts', deleted: true };
 	},

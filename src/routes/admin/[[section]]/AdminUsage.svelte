@@ -125,8 +125,10 @@
 			</h2>
 			<p class="admin-block-sub">
 				What each account uses against its plan. Universes and stories in the trash do not count.
-				Images count until they are deleted: when their universe is deleted for good, or by the
-				daily check for images nothing uses, once they are 30 days old. Set limits under Plans.
+				Images count until they are deleted: by the daily check for images nothing uses, once they
+				are 30 days old (it also runs when a story is deleted for good), when their universe is
+				deleted for good and nothing else shows them, or with the account. A replaced avatar, badge
+				or cover waits for the daily check. Set limits under Plans.
 			</p>
 		</div>
 	</div>
@@ -195,7 +197,7 @@
 		</table>
 		<form method="POST" action="?/recountStorage" class="settings-actions">
 			<span class="field-hint">
-				If the image totals look wrong, recount them from the files each account has stored.
+				If the image totals look wrong, recount them from the image records each account has.
 			</span>
 			<button type="submit" class="btn btn-ghost btn-sm">Recount images</button>
 		</form>

@@ -136,6 +136,12 @@ beforeEach(async () => {
 	});
 });
 
+// Only a story in the trash is purged.
+async function purgeTrashed(storyId: string) {
+	await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+	await purgeStory(db, storyId);
+}
+
 afterAll(async () => {
 	await pool.end();
 });
@@ -1166,12 +1172,12 @@ describe('an out-of-date arc and a muted story', () => {
 
 	it('stays out when the muted story is deleted for good', async () => {
 		await saveStoryLlmOverride(db, secondStoryId, { enabled: false });
-		await purgeStory(db, secondStoryId);
+		await purgeTrashed(secondStoryId);
 		expect(await contextText()).not.toContain(ARC);
 	});
 
 	it('stays out when a story it read is deleted for good without a mute', async () => {
-		await purgeStory(db, secondStoryId);
+		await purgeTrashed(secondStoryId);
 		expect(await contextText()).not.toContain(ARC);
 	});
 
@@ -1229,7 +1235,7 @@ describe('an out-of-date arc and a muted story', () => {
 		expect(await contextText()).toMatch(/Across the stories \(written before[^)]*\): Bram leaves/);
 		await saveStoryLlmOverride(db, secondStoryId, { enabled: false });
 		expect(await contextText()).not.toContain(ARC);
-		await purgeStory(db, secondStoryId);
+		await purgeTrashed(secondStoryId);
 		expect(await contextText()).not.toContain(ARC);
 	});
 

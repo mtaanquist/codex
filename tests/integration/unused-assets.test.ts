@@ -5,7 +5,7 @@ import { eq, inArray } from 'drizzle-orm';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../src/lib/server/db/schema';
-import { assets, pendingObjectDeletions, users } from '../../src/lib/server/db/schema';
+import { assets, pendingObjectDeletions, stories, users } from '../../src/lib/server/db/schema';
 import {
 	deleteUnusedAssets,
 	FREED_OBJECT_EXTRA_DAYS,
@@ -41,6 +41,12 @@ beforeEach(async () => {
 	ownerId = owner.id;
 	universeId = (await createUniverse(db, ownerId, 'World')).id;
 });
+
+// Only a story in the trash is purged.
+async function trashAndPurge(storyId: string) {
+	await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+	await purgeStory(db, storyId);
+}
 
 afterAll(async () => {
 	await pool.query('truncate table assets, pending_object_deletions, universes, users cascade');
@@ -222,6 +228,26 @@ describe('sweepUnusedAssets', () => {
 		expect(await remaining([target])).toEqual(new Set([target]));
 	});
 
+	// Columns the old hand-kept recheck list left out.
+	it('keeps an image linked after the full read from any text column', async () => {
+		const storyId = await story();
+		const inSummary = await image();
+		const inCommissions = await image();
+		const candidates = await findUnusedAssets(db);
+		await pool.query(
+			`insert into chapters (story_id, position, title, summary_md) values ($1, 1, 'One', $2)`,
+			[storyId, link(inSummary)]
+		);
+		await pool.query('update users set commissions_md = $1 where id = $2', [
+			link(inCommissions),
+			ownerId
+		]);
+		expect(await deleteUnusedAssets(db, candidates)).toEqual([]);
+		expect(await remaining([inSummary, inCommissions])).toEqual(
+			new Set([inSummary, inCommissions])
+		);
+	});
+
 	it('skips an account another session holds and frees its images next time', async () => {
 		const target = await image({ bytes: 40 });
 		const holder = await pool.connect();
@@ -265,7 +291,7 @@ describe('after a story is deleted for good', () => {
 		await pool.query(`update scenes set body_md = 'Cut.' where id = $1`, [otherScene]);
 		const before = await used();
 
-		await purgeStory(db, doomed);
+		await trashAndPurge(doomed);
 		expect(await sweepUnusedAssets(db)).toEqual({ count: 3, bytes: 60 });
 
 		expect(await remaining(Object.values(ids))).toEqual(
@@ -281,7 +307,7 @@ describe('after a story is deleted for good', () => {
 		const id = await image();
 		await scene(doomed, link(id));
 		await scene(far, link(id));
-		await purgeStory(db, doomed);
+		await trashAndPurge(doomed);
 		await sweepUnusedAssets(db);
 		expect(await remaining([id])).toEqual(new Set([id]));
 	});

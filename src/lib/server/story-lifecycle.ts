@@ -108,8 +108,7 @@ export async function destroyStory(
 ): Promise<boolean> {
 	const story = await ownedStoryRow(db, userId, storyId, { deleted: true });
 	if (!story) return false;
-	await purgeStory(db, story.id);
-	return true;
+	return purgeStory(db, story.id);
 }
 
 /** Stories whose trash window has elapsed and are due for the purge. */

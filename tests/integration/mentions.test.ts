@@ -347,6 +347,8 @@ describe('a rebuild racing another write', () => {
 		const [scene] = await db.select().from(scenes).where(eq(scenes.id, sceneId));
 		await rebuildSceneMentions(db, sceneId);
 		await db.update(scenes).set({ bodyMd: 'Alice alone.' }).where(eq(scenes.id, sceneId));
+		// Only a story in the trash is purged.
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, scene.storyId));
 		// The held story row pauses the rebuild after it takes the scene row and
 		// before it rewrites the scene's mentions, while the purge starts.
 		const { rebuild, other } = await withHeldLock(
@@ -356,7 +358,7 @@ describe('a rebuild racing another write', () => {
 			() => purgeStory(db, scene.storyId)
 		);
 		expect(rebuild).toEqual({ ok: true, count: 1 });
-		expect(other).toBeUndefined();
+		expect(other).toBe(true);
 		expect(await db.select().from(scenes).where(eq(scenes.id, sceneId))).toHaveLength(0);
 		expect(await mentionRows(sceneId)).toHaveLength(0);
 	});

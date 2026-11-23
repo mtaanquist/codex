@@ -83,6 +83,12 @@ beforeEach(async () => {
 	await db.insert(scenes).values({ storyId, globalPosition: 1, bodyMd: 'The gate opened.' });
 });
 
+// Only a story in the trash is purged.
+async function trashAndPurge(storyId: string) {
+	await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+	await purgeStory(db, storyId);
+}
+
 afterAll(async () => {
 	await pool.end();
 });
@@ -124,6 +130,25 @@ describe('a story renamed before it was published', () => {
 		expect(await renameStory(storyId, 'Ember Rising')).toBe('ember-rising');
 		expect(await db.select().from(slugHistory)).toEqual([]);
 		expect((await createStoryInUniverse(db, ownerId, universeId, 'Ember')).slug).toBe('ember');
+	});
+});
+
+describe('a rename that keeps the slug base', () => {
+	it('keeps its suffixed slug rather than moving to a lower one that came free', async () => {
+		const [third] = await db
+			.insert(stories)
+			.values({ universeId, ownerId, title: 'Ember', slug: 'ember-3' })
+			.returning();
+		expect(await renameStory(third.id, 'EMBER!')).toBe('ember-3');
+		expect(await db.select().from(slugHistory)).toEqual([]);
+	});
+
+	it('still moves when the base changes', async () => {
+		const [third] = await db
+			.insert(stories)
+			.values({ universeId, ownerId, title: 'Ember', slug: 'ember-3' })
+			.returning();
+		expect(await renameStory(third.id, 'Ash')).toBe('ash');
 	});
 });
 
@@ -173,7 +198,7 @@ describe('reserving old slugs', () => {
 
 	it('keeps the reservation after the story is purged', async () => {
 		await renameStory(storyId, 'Ember Rising');
-		await purgeStory(db, storyId);
+		await trashAndPurge(storyId);
 		const [row] = await db.select().from(slugHistory);
 		expect(row).toMatchObject({ slug: 'ember', storyId: null });
 		expect(await uniqueSlug(db, 'stories', ownerId, 'Ember', 'story')).toBe('ember-2');
@@ -222,7 +247,7 @@ describe('reserving old slugs', () => {
 	});
 
 	it('reserves a universe slug even after its published stories are purged', async () => {
-		await purgeStory(db, storyId);
+		await trashAndPurge(storyId);
 		await renameUniverse('Far Shore');
 		expect(await uniqueSlug(db, 'universes', ownerId, 'Ember Reach', 'universe')).toBe(
 			'ember-reach-2'
@@ -280,7 +305,7 @@ describe('public redirects from old slugs', () => {
 		await publishStory(db, ownerId, storyId);
 		await renameStory(storyId, 'Ember Rising');
 		await db.delete(publications).where(eq(publications.storyId, storyId));
-		await purgeStory(db, storyId);
+		await trashAndPurge(storyId);
 		expect(await publicStoryRedirect(db, 'inkwright', 'ember')).toBeNull();
 	});
 

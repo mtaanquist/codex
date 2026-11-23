@@ -43,10 +43,13 @@ import { sweepUnusedAssets } from '../../src/lib/server/unused-assets';
 import { publishStory } from '../../src/lib/server/publish';
 import { setEntityBadgeImage } from '../../src/lib/server/entity-badge';
 import {
+	createAsset,
 	ObjectNotFoundError,
 	type AssetConfig,
 	type AssetObjectStore
 } from '../../src/lib/server/assets';
+import { purgeAccount } from '../../src/lib/server/account-deletion';
+import { runImport } from '../../src/lib/server/import-story';
 import { saveEntity } from '../../src/lib/server/entity-save';
 import { saveAccountLlmConfig, saveStoryLlmOverride } from '../../src/lib/server/llm/config';
 import {
@@ -73,7 +76,11 @@ import {
 	restoreUniverse,
 	trashUniverse
 } from '../../src/lib/server/universe-lifecycle';
-import { createStoryInUniverse, standaloneUniverse } from '../../src/lib/server/story-create';
+import {
+	createStoryInUniverse,
+	createUniverse,
+	standaloneUniverse
+} from '../../src/lib/server/story-create';
 import type { Database } from '../../src/lib/server/auth';
 import { lockStoryScenes } from '../../src/lib/server/row-locks';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
@@ -498,7 +505,13 @@ const OPS: Op[] = [
 		},
 		run: async (db) => ok(await restoreStory(db, S.user, S.story))
 	},
-	{ name: 'purge story', run: async (db) => await purgeStory(db, S.story) },
+	{
+		name: 'purge story',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+		},
+		run: async (db) => ok(await purgeStory(db, S.story))
+	},
 	{ name: 'sweep unused images', run: async (db) => await sweepUnusedAssets(db) },
 	{
 		name: 'set the story cover',
@@ -617,7 +630,50 @@ const OPS: Op[] = [
 			return ok(await newStoryFromDraft(db, S.user, story, made.draftId, 'Copy'));
 		}
 	},
-	{ name: 'purge universe', run: async (db) => await purgeUniverse(db, S.universe) },
+	{
+		name: 'purge universe',
+		prepare: async () => {
+			await trashUniverse(db, S.user, S.universe);
+		},
+		run: async (db) => ok(await purgeUniverse(db, S.universe))
+	},
+	{
+		name: 'delete the account',
+		run: async (db) => await purgeAccount(db, S.user, null)
+	},
+	{
+		name: 'create universe',
+		run: async (db) => await createUniverse(db, S.user, 'Second Lockland')
+	},
+	{
+		name: 'import a story',
+		run: async (db) =>
+			await runImport(
+				db,
+				{ id: S.universe, ownerId: S.user },
+				{
+					story: { title: 'Imported', author: null, brief: null, descriptionMd: '' },
+					chapters: [],
+					unfiled: [{ title: null, status: null, bodyMd: 'Aldric came by boat.' }],
+					notes: [],
+					assets: [],
+					problems: []
+				}
+			)
+	},
+	{
+		name: 'upload an image',
+		run: async (db) =>
+			ok(
+				await createAsset(db, memoryStore, assetConfig, S.user, {
+					universeId: S.universe,
+					kind: 'inline',
+					filename: 'upload.png',
+					contentType: 'image/png',
+					bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+				})
+			)
+	},
 	{
 		name: 'restore universe',
 		prepare: async () => {
@@ -964,12 +1020,13 @@ describe('lock order', () => {
 		const t = Date.now();
 		// Stops of one operation that hold the same rows are the same point in
 		// its work for this purpose; one of each is enough. A purge only runs on
-		// a trashed story or universe, which every racer refuses, so neither
-		// purge is raced.
+		// a trashed story or universe, which every racer refuses, and an account
+		// is deleted only once it is signed out everywhere, so no purge is raced.
+		const unraced = new Set(['purge story', 'purge universe', 'delete the account']);
 		const seen = new Set<string>();
 		const points = stops.filter((stop) => {
 			const at = `${stop.op}: ${[...stop.held.keys()].sort().join()}`;
-			if (stop.op === 'purge story' || stop.op === 'purge universe' || seen.has(at)) return false;
+			if (unraced.has(stop.op) || seen.has(at)) return false;
 			seen.add(at);
 			return true;
 		});
@@ -1153,6 +1210,35 @@ describe('lock order around scenes being added', () => {
 			.from(assistantDrafts)
 			.where(eq(assistantDrafts.id, failed.id));
 		expect(after.status).toBe('discarded');
+	});
+
+	// The purge reads the trash state under the row lock, so a restore that
+	// committed while it waited leaves the work in place.
+	it('a story restored while its purge waits is kept', async () => {
+		await seed();
+		await trashStory(db, S.user, S.story);
+		let purged: unknown = null;
+		const failure = await overlap(
+			(tx) => restoreStory(tx, S.user, S.story),
+			async () => (purged = await purgeStory(opDb, S.story))
+		);
+		expect(failure).toBeNull();
+		expect(purged).toBe(false);
+		expect(await db.select().from(scenes).where(eq(scenes.storyId, S.story))).toHaveLength(5);
+	});
+
+	it('a universe restored while its purge waits is kept', async () => {
+		await seed();
+		await trashUniverse(db, S.user, S.universe);
+		let purged: unknown = null;
+		const failure = await overlap(
+			(tx) => restoreUniverse(tx, S.user, S.universe),
+			async () => (purged = await purgeUniverse(opDb, S.universe))
+		);
+		expect(failure).toBeNull();
+		expect(purged).toBe(false);
+		expect(await db.select().from(stories).where(eq(stories.id, S.story))).toHaveLength(1);
+		expect(await db.select().from(assets).where(eq(assets.id, S.image))).toHaveLength(1);
 	});
 
 	// The move must read the chapter list under its lock, or it writes back a

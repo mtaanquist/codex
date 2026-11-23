@@ -23,7 +23,8 @@ import { scheduleObjectDeletions } from './assets.ts';
 import { untrash } from './slugs.ts';
 import { holdCountQuota, lockStorageOwners, releaseStorage } from './quotas.ts';
 import { ENTITY_TYPES, entityTable } from './entity-lookups.ts';
-import { deleteStoryWithin, type Tx } from './story-delete.ts';
+import { deleteStoryWithin, trashedFor, type Tx } from './story-delete.ts';
+import { referencedAssetIds, UNUSED_ASSET_GRACE_DAYS } from './unused-assets.ts';
 import { ownedUniverseRow } from './universe-scope.ts';
 
 export const UNIVERSE_TRASH_DAYS = 30;
@@ -110,18 +111,83 @@ export async function destroyUniverse(
 ): Promise<{ ok: boolean }> {
 	const universe = await ownedUniverseRow(db, userId, universeId, { deleted: true });
 	if (!universe) return { ok: false };
-	await purgeUniverse(db, universe.id);
-	return { ok: true };
+	return { ok: await purgeUniverse(db, universe.id) };
 }
 
-/** Hard-deletes a universe and queues its bucket objects for the deferred
- * sweep (see scheduleObjectDeletions). */
-export async function purgeUniverse(db: Database, universeId: string): Promise<void> {
-	await db.transaction(async (tx) => {
-		const keys = await universeAssetKeys(tx, universeId);
+/**
+ * Hard-deletes a universe in the trash and queues its stored files for the
+ * deferred sweep (see scheduleObjectDeletions). Nothing happens, and false
+ * comes back, when the universe is no longer in the trash (a restore got there
+ * first) or, with dueAfterDays, has not been there that long: the scheduled
+ * purge read its list before the lock.
+ *
+ * Its images more than UNUSED_ASSET_GRACE_DAYS old go with it when nothing
+ * else uses them. A scene, edition or profile elsewhere can show an image
+ * uploaded here; those, and newer ones, are kept, no longer tied to any
+ * universe, and the unused image sweep frees each once nothing shows it.
+ */
+export async function purgeUniverse(
+	db: Database,
+	universeId: string,
+	options: { dueAfterDays?: number } = {}
+): Promise<boolean> {
+	return db.transaction(async (tx) => {
+		// The account rows before the universe row: every storage path locks
+		// the account first (see lockStorageOwners), and the purge changes the
+		// images. The universe row is then read under its lock, so a restore
+		// (which locks it for update) either finished before this or waits for
+		// it. No key update leaves foreign-key checks on the universe free until
+		// the row is deleted at the end, as before.
+		await lockStorageOwners(tx, await universeImageOwners(tx, universeId));
+		const [row] = await tx
+			.select({
+				deletedAt: universes.deletedAt,
+				due: trashedFor(universes.deletedAt, options.dueAfterDays)
+			})
+			.from(universes)
+			.where(eq(universes.id, universeId))
+			.for('no key update');
+		if (!row?.deletedAt || !row.due) return false;
+		const fileKeys = await universeEditionFileKeys(tx, universeId);
+		// Only images past the sweep's grace period go now, for the same reason
+		// the sweep waits: a newer one may sit only in an editor elsewhere that
+		// has not saved yet.
+		const images = (
+			await tx
+				.select({ id: assets.id })
+				.from(assets)
+				.where(
+					and(
+						eq(assets.universeId, universeId),
+						lte(assets.createdAt, sql`now() - make_interval(days => ${UNUSED_ASSET_GRACE_DAYS})`)
+					)
+				)
+		).map((image) => image.id);
 		await purgeUniverseWithin(tx, universeId);
-		await scheduleObjectDeletions(tx, keys);
+		// Read after the universe's own rows are gone, so only uses elsewhere
+		// count.
+		const kept = await referencedAssetIds(tx, images);
+		const unused = images.filter((id) => !kept.has(id));
+		const freed =
+			unused.length === 0
+				? []
+				: await tx.delete(assets).where(inArray(assets.id, unused)).returning({
+						ownerId: assets.ownerId,
+						byteSize: assets.byteSize,
+						storageKey: assets.storageKey
+					});
+		await releaseStorage(tx, freed);
+		await scheduleObjectDeletions(tx, [...fileKeys, ...freed.map((image) => image.storageKey)]);
+		return true;
 	});
+}
+
+async function universeImageOwners(db: Database | Tx, universeId: string): Promise<string[]> {
+	const rows = await db
+		.selectDistinct({ ownerId: assets.ownerId })
+		.from(assets)
+		.where(eq(assets.universeId, universeId));
+	return rows.map((row) => row.ownerId);
 }
 
 /** Universes whose trash window has elapsed and are due for the purge. */
@@ -138,39 +204,31 @@ export async function listUniversesDueForPurge(db: Database): Promise<string[]> 
 	return rows.map((row) => row.id);
 }
 
-/** The bucket keys of everything the universe's purge will orphan: uploaded
- * images and the stored export files of its published editions. */
-export async function universeAssetKeys(db: Database | Tx, universeId: string): Promise<string[]> {
-	const assetRows = await db
-		.select({ storageKey: assets.storageKey })
-		.from(assets)
-		.where(eq(assets.universeId, universeId));
-	// Export-artifact rows cascade with their publications during the purge, but
-	// the bucket objects must be swept here, the way account deletion does.
-	const artifactRows = await db
+/** The bucket keys of the stored export files of the universe's editions,
+ * whose rows cascade away with their publications in the purge. */
+export async function universeEditionFileKeys(
+	db: Database | Tx,
+	universeId: string
+): Promise<string[]> {
+	const rows = await db
 		.select({ storageKey: exportArtifacts.storageKey })
 		.from(exportArtifacts)
 		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
 		.innerJoin(stories, eq(publications.storyId, stories.id))
 		.where(eq(stories.universeId, universeId));
-	return [...assetRows, ...artifactRows].map((row) => row.storageKey);
+	return rows.map((row) => row.storageKey);
 }
 
 /**
  * Hard-deletes a universe and everything in it, child-first, within the
- * caller's transaction. Shared by the trash purge and the account purge.
+ * caller's transaction. Shared by the trash purge and the account purge. Its
+ * images are left in place, no longer tied to the universe: the caller
+ * decides which of them go.
  */
 export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<void> {
-	// The owners whose storage use the asset delete below changes, locked
-	// before any other row (see lockStorageOwners).
-	const owners = await tx
-		.selectDistinct({ ownerId: assets.ownerId })
-		.from(assets)
-		.where(eq(assets.universeId, universeId));
-	await lockStorageOwners(
-		tx,
-		owners.map((row) => row.ownerId)
-	);
+	// The owners of the images the detach below changes, locked before any
+	// other row (see lockStorageOwners).
+	await lockStorageOwners(tx, await universeImageOwners(tx, universeId));
 
 	// Stories first: each clears its scenes, chapters, markers, revisions,
 	// memberships, notes, publications, reviews, and mentions.
@@ -222,10 +280,6 @@ export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<v
 		await tx.delete(table).where(eq(table.universeId, universeId));
 	}
 	await tx.delete(entityCategories).where(eq(entityCategories.universeId, universeId));
-	const freed = await tx
-		.delete(assets)
-		.where(eq(assets.universeId, universeId))
-		.returning({ ownerId: assets.ownerId, byteSize: assets.byteSize });
-	await releaseStorage(tx, freed);
+	await tx.update(assets).set({ universeId: null }).where(eq(assets.universeId, universeId));
 	await tx.delete(universes).where(eq(universes.id, universeId));
 }
