@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
-import { chapters, scenes, stories } from '../db/schema.ts';
+import { chapters, entityMentions, scenes, stories } from '../db/schema.ts';
 import { defaultMaxTokens } from '../../assistant-tuning.ts';
 import { entityAppearances } from '../plan-data.ts';
 import { storyAssistantOn, storyIsLive } from '../universe-scope.ts';
@@ -229,6 +229,48 @@ export async function entityExcerpts(
 		outline.map((scene) => scene.id)
 	);
 	return rows.map(toExcerpt);
+}
+
+// Whether a read with nothing to send would have had scenes but for stories
+// muted for the Assistant or in the trash, so the writer is told that rather
+// than that nothing mentions the entity. Reads ids only, never text.
+export async function excerptsWithheld(
+	db: Database,
+	opts: { userId: string; scope: Scope; kind: EntityKind; entityId: string; mode: EnrichTextMode }
+): Promise<boolean> {
+	if (opts.mode === 'book' && !('storyId' in opts.scope)) return false;
+	const inScope = and(
+		eq(stories.ownerId, opts.userId),
+		'storyId' in opts.scope
+			? eq(stories.id, opts.scope.storyId)
+			: eq(stories.universeId, opts.scope.universeId),
+		isNull(scenes.deletedAt),
+		sql`not (${storyIsLive()} and ${storyAssistantOn()})`
+	);
+	const targetType = opts.kind === 'lore' ? 'lore_entry' : opts.kind;
+	const rows =
+		opts.mode === 'book'
+			? await db
+					.select({ id: scenes.id })
+					.from(scenes)
+					.innerJoin(stories, eq(scenes.storyId, stories.id))
+					.where(inScope)
+					.limit(1)
+			: await db
+					.select({ id: scenes.id })
+					.from(entityMentions)
+					.innerJoin(scenes, eq(entityMentions.sourceId, scenes.id))
+					.innerJoin(stories, eq(scenes.storyId, stories.id))
+					.where(
+						and(
+							eq(entityMentions.sourceType, 'scene'),
+							eq(entityMentions.targetType, targetType),
+							eq(entityMentions.targetId, opts.entityId),
+							inScope
+						)
+					)
+					.limit(1);
+	return rows.length > 0;
 }
 
 // The model a text read runs on and the text each request may carry.
