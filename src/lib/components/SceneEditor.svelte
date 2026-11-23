@@ -25,7 +25,13 @@
 	import { autocompleteExtensions, type AutocompleteMode } from '#lib/editor-autocomplete';
 	import { continuationExtensions } from '#lib/editor-continuation';
 	import { hasPendingUploads, imageUploadExtension, storedText } from '#lib/editor-images';
-	import { markerExtensions, type MarkerHandle, type SceneMarker } from '#lib/editor-markers';
+	import {
+		markerExtensions,
+		rebuiltMarkers,
+		unsavedChanges,
+		type MarkerHandle,
+		type SceneMarker
+	} from '#lib/editor-markers';
 	import { searchScopeChanged, type WiderSearch } from '#lib/editor-search-scope';
 	import EditorToolbar from './EditorToolbar.svelte';
 	import CoauthorPanel from './CoauthorPanel.svelte';
@@ -155,6 +161,10 @@
 	const leavingCompartment = new Compartment();
 	// svelte-ignore state_referenced_locally
 	let markerHandle: MarkerHandle = markerExtensions(markers, markSelection);
+	// Edits since the text the server holds, so a marker set rebuilt from the
+	// server's anchors lands on the words on screen.
+	// svelte-ignore state_referenced_locally
+	const unsaved = unsavedChanges(body.length);
 
 	// Bound from one of two mutually exclusive branches (compact or full),
 	// hence the state wrapper.
@@ -191,6 +201,7 @@
 		save: async ({ keepalive }) => {
 			if (!view) return;
 			const stored = storedText(view.state);
+			unsaved.sent();
 			await saver.save({
 				keepalive,
 				title: titleValue,
@@ -202,6 +213,7 @@
 					anchorEnd: stored.mapPos(marker.anchorEnd)
 				}))
 			});
+			unsaved.landed();
 		}
 	});
 
@@ -214,6 +226,7 @@
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
 		view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newer.bodyMd } });
+		unsaved.reset();
 		void autosave.flush();
 	}
 
@@ -363,8 +376,10 @@
 	}
 
 	// Checking a marker off elsewhere (or creating one) changes the set of
-	// ids; rebuild the highlights from the fresh server anchors. Same-set
-	// updates keep the editor's own mapped positions, which are newer.
+	// ids; rebuild the highlights. Markers the editor already shows keep their
+	// own mapped positions, which are newer than the server's; the others map
+	// the server's anchors through edits not saved yet. Same-set updates keep
+	// the editor's positions as they are.
 	$effect(() => {
 		const incoming = markers
 			.map((marker) => marker.id)
@@ -372,7 +387,8 @@
 			.join(',');
 		const current = [...markerHandle.ids].sort().join(',');
 		if (!view || incoming === current) return;
-		markerHandle = markerExtensions(markers, markSelection);
+		const shown = markerHandle.anchors(view);
+		markerHandle = markerExtensions(rebuiltMarkers(markers, shown, unsaved.changes), markSelection);
 		view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
 	});
 
@@ -533,6 +549,9 @@
 					leavingCompartment.of(pausedExtension(leaving)),
 					assistantContinuation && storyId ? continuationExtensions(storyId) : [],
 					boundaryKeymap(),
+					EditorView.updateListener.of((update) => {
+						if (update.docChanged) unsaved.record(update.changes.desc);
+					}),
 					onFocus
 						? EditorView.updateListener.of((update) => {
 								if (update.focusChanged && update.view.hasFocus) onFocus();
