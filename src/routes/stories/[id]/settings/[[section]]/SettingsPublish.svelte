@@ -68,7 +68,7 @@
 				Adult content
 			</label>
 			{#if data.edition}
-				<p class="field-hint">Readers see a change here after you publish again.</p>
+				<p class="field-hint">Readers see a change to Adult content after you publish again.</p>
 			{/if}
 		</div>
 		{#if data.reading}

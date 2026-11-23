@@ -1,0 +1,2 @@
+CREATE INDEX "assets_universe_idx" ON "assets" USING btree ("universe_id") WHERE "assets"."universe_id" is not null;--> statement-breakpoint
+CREATE INDEX "assets_owner_idx" ON "assets" USING btree ("owner_id");

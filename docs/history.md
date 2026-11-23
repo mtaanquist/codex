@@ -13,6 +13,21 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 9 (2026-11-23, `fix/phase-10-review-9` on
+`staging/phase-10`). An image used and dropped again between two nightly
+sweeps keeps its old unused mark, so it can be deleted while an open tab's
+undo still holds a link to it. Clearing the mark on save was considered and
+left out: markdown is written by about a dozen separate paths (scenes,
+notes, descriptions, entity text, bio, find and replace, Assistant and MCP
+writes) with no shared save helper, so the help and design now say plainly
+that only a daily check that sees the image in use restarts the countdown.
+Migration 0111 indexes `assets.universe_id` (partial, non-null) for the
+universe purge's unlink and `assets.owner_id`. The story import retries
+once with a fresh slug when a concurrent create takes its pick, resetting
+its counts and problems for the second attempt. Self-hosting docs describe
+the nightly image sweep, plans, and a recount after upgrading; the publishing
+help says a universe always keeps its old address after a rename.
+
 Phase 10 staging review round 8 (2026-11-23, `fix/phase-10-review-8` on
 `staging/phase-10`). The sweep's read before the delete bound the due id list
 once per column it reads (about 400), so a large backlog sent hundreds of MB

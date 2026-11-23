@@ -502,8 +502,11 @@ them any more. Codex checks once a day. The first time it finds that no scene,
 note, entry, profile, saved draft, published edition or saved version in a
 history shows an image, it notes the date and keeps the image. If the image
 is still unused 30 days later, it is deleted. If you use it again in the
-meantime, the next daily check sees that and cancels the countdown, so the 30
-days start over if it later goes unused again. An image is
+meantime, the next daily check that finds it in use cancels the countdown, so
+the 30 days start over if it later goes unused again. Using it only for a
+while between two daily checks does not cancel the countdown: if you add an
+image back to a description and take it out again the same day, it is deleted
+on the date already set. An image is
 also always kept for 30 days after you add it, used or not. Taking an image
 out of a scene usually does not free it, because the scene's history still
 holds the older text with the image in it.

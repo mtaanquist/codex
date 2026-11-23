@@ -15,6 +15,7 @@ import {
 } from './db/schema';
 import { entityNameColumn, entityTable, type EntityType } from './entity-lookups';
 import { uniqueSlug } from './slugs';
+import { isUniqueViolation } from './db-errors';
 import { wordCount } from '../word-count';
 import { clampDraftWords, MAX_DRAFT_BRIEF_CHARS } from '../scene-draft';
 import { rewriteBundledAssetLinks, type ImportedNote, type ImportPlan } from '../import-markdown';
@@ -224,162 +225,180 @@ export async function runImport(
 
 		// The slug is picked up front; the story row itself is inserted inside the
 		// transaction below, so a failure partway through the import rolls the empty
-		// story away rather than leaving a visible shell.
-		const slug = await uniqueSlug(db, 'stories', universe.ownerId, plan.story.title, 'story');
-
-		story = await db.transaction(async (tx) => {
-			await holdStoryQuota(tx, universe.ownerId, universe.id);
-			const [created] = await tx
-				.insert(stories)
-				.values({
-					universeId: universe.id,
-					ownerId: universe.ownerId,
-					title: plan.story.title,
-					author: plan.story.author,
-					brief: plan.story.brief,
-					descriptionMd: rewrite(plan.story.descriptionMd) || null,
-					isAdult: plan.story.isAdult ?? false,
-					slug
-				})
-				.returning({ id: stories.id, slug: stories.slug });
-			const story = created;
-			let globalPosition = 0;
-			const insertScene = async (
-				scene: ImportPlan['unfiled'][number],
-				chapterId: string | null,
-				positionInChapter: number | null
-			) => {
-				const bodyMd = rewrite(scene.bodyMd);
-				globalPosition += 1;
-				sceneCount += 1;
-				const [row] = await tx
-					.insert(scenes)
+		// story away rather than leaving a visible shell. A concurrent create can
+		// take the picked slug before the insert; the import then tries once more
+		// with a fresh pick, starting its counts and problems over.
+		const problemsBefore = problems.length;
+		const write = (slug: string) =>
+			db.transaction(async (tx) => {
+				problems.length = problemsBefore;
+				sceneCount = 0;
+				notesAttached = 0;
+				entitiesCreated = 0;
+				notesSkipped = 0;
+				freeformNotesCreated = 0;
+				waitingDraftsCreated = 0;
+				await holdStoryQuota(tx, universe.ownerId, universe.id);
+				const [created] = await tx
+					.insert(stories)
 					.values({
-						storyId: story.id,
-						chapterId,
-						positionInChapter,
-						globalPosition,
-						title: scene.title,
-						bodyMd,
-						status: scene.status ?? 'draft',
-						wordCount: wordCount(bodyMd)
+						universeId: universe.id,
+						ownerId: universe.ownerId,
+						title: plan.story.title,
+						author: plan.story.author,
+						brief: plan.story.brief,
+						descriptionMd: rewrite(plan.story.descriptionMd) || null,
+						isAdult: plan.story.isAdult ?? false,
+						slug
 					})
-					.returning({ id: scenes.id });
-				return row.id;
-			};
-			// New scene ids by plan position, for notebook notes attached to a scene.
-			const chapterSceneIds: string[][] = [];
-			const unfiledSceneIds: string[] = [];
+					.returning({ id: stories.id, slug: stories.slug });
+				const story = created;
+				let globalPosition = 0;
+				const insertScene = async (
+					scene: ImportPlan['unfiled'][number],
+					chapterId: string | null,
+					positionInChapter: number | null
+				) => {
+					const bodyMd = rewrite(scene.bodyMd);
+					globalPosition += 1;
+					sceneCount += 1;
+					const [row] = await tx
+						.insert(scenes)
+						.values({
+							storyId: story.id,
+							chapterId,
+							positionInChapter,
+							globalPosition,
+							title: scene.title,
+							bodyMd,
+							status: scene.status ?? 'draft',
+							wordCount: wordCount(bodyMd)
+						})
+						.returning({ id: scenes.id });
+					return row.id;
+				};
+				// New scene ids by plan position, for notebook notes attached to a scene.
+				const chapterSceneIds: string[][] = [];
+				const unfiledSceneIds: string[] = [];
 
-			for (const [chapterIndex, chapter] of plan.chapters.entries()) {
-				const [row] = await tx
-					.insert(chapters)
-					.values({
-						storyId: story.id,
-						title: chapter.title,
-						summaryMd: chapter.summaryMd ? rewrite(chapter.summaryMd) : null,
-						position: chapterIndex + 1
-					})
-					.returning({ id: chapters.id });
-				const ids: string[] = [];
-				for (const [sceneIndex, scene] of chapter.scenes.entries()) {
-					ids.push(await insertScene(scene, row.id, sceneIndex + 1));
+				for (const [chapterIndex, chapter] of plan.chapters.entries()) {
+					const [row] = await tx
+						.insert(chapters)
+						.values({
+							storyId: story.id,
+							title: chapter.title,
+							summaryMd: chapter.summaryMd ? rewrite(chapter.summaryMd) : null,
+							position: chapterIndex + 1
+						})
+						.returning({ id: chapters.id });
+					const ids: string[] = [];
+					for (const [sceneIndex, scene] of chapter.scenes.entries()) {
+						ids.push(await insertScene(scene, row.id, sceneIndex + 1));
+					}
+					chapterSceneIds.push(ids);
 				}
-				chapterSceneIds.push(ids);
-			}
-			for (const scene of plan.unfiled) {
-				unfiledSceneIds.push(await insertScene(scene, null, null));
-			}
+				for (const scene of plan.unfiled) {
+					unfiledSceneIds.push(await insertScene(scene, null, null));
+				}
 
-			for (const note of resolutions) {
-				let entityId = note.entityId;
-				if (note.outcome === 'ambiguous') {
-					notesSkipped += 1;
-					problems.push(
-						`${note.name}: more than one ${note.kind === 'lore' ? 'lore entry' : note.kind} shares this name; the note was skipped.`
-					);
-					continue;
-				}
-				if (note.outcome === 'create') {
-					const created = await createStoryEntity(
-						tx,
-						{ universeId: universe.id, ownerId: universe.ownerId, storyId: story.id },
-						note.kind === 'lore' ? 'lore_entry' : note.kind,
-						note.name
-					);
-					if (!created.ok) {
+				for (const note of resolutions) {
+					let entityId = note.entityId;
+					if (note.outcome === 'ambiguous') {
 						notesSkipped += 1;
-						problems.push(`${note.name}: could not be created (${created.reason}); note skipped.`);
+						problems.push(
+							`${note.name}: more than one ${note.kind === 'lore' ? 'lore entry' : note.kind} shares this name; the note was skipped.`
+						);
 						continue;
 					}
-					entityId = created.id;
-					entitiesCreated += 1;
-				} else if (note.kind === 'character') {
-					await tx
-						.insert(characterStoryMemberships)
-						.values({ characterId: entityId!, storyId: story.id })
-						.onConflictDoNothing();
-				} else if (note.kind === 'place') {
-					await tx
-						.insert(placeStoryMemberships)
-						.values({ placeId: entityId!, storyId: story.id })
-						.onConflictDoNothing();
+					if (note.outcome === 'create') {
+						const created = await createStoryEntity(
+							tx,
+							{ universeId: universe.id, ownerId: universe.ownerId, storyId: story.id },
+							note.kind === 'lore' ? 'lore_entry' : note.kind,
+							note.name
+						);
+						if (!created.ok) {
+							notesSkipped += 1;
+							problems.push(
+								`${note.name}: could not be created (${created.reason}); note skipped.`
+							);
+							continue;
+						}
+						entityId = created.id;
+						entitiesCreated += 1;
+					} else if (note.kind === 'character') {
+						await tx
+							.insert(characterStoryMemberships)
+							.values({ characterId: entityId!, storyId: story.id })
+							.onConflictDoNothing();
+					} else if (note.kind === 'place') {
+						await tx
+							.insert(placeStoryMemberships)
+							.values({ placeId: entityId!, storyId: story.id })
+							.onConflictDoNothing();
+					}
+					const notesMd = rewrite(note.notesMd);
+					if (note.kind === 'character') {
+						await tx
+							.insert(characterStoryNotes)
+							.values({ characterId: entityId!, storyId: story.id, notesMd });
+					} else if (note.kind === 'place') {
+						await tx
+							.insert(placeStoryNotes)
+							.values({ placeId: entityId!, storyId: story.id, notesMd });
+					} else {
+						await tx
+							.insert(loreStoryNotes)
+							.values({ loreEntryId: entityId!, storyId: story.id, notesMd });
+					}
+					notesAttached += 1;
 				}
-				const notesMd = rewrite(note.notesMd);
-				if (note.kind === 'character') {
-					await tx
-						.insert(characterStoryNotes)
-						.values({ characterId: entityId!, storyId: story.id, notesMd });
-				} else if (note.kind === 'place') {
-					await tx
-						.insert(placeStoryNotes)
-						.values({ placeId: entityId!, storyId: story.id, notesMd });
-				} else {
-					await tx
-						.insert(loreStoryNotes)
-						.values({ loreEntryId: entityId!, storyId: story.id, notesMd });
+
+				const sceneIdAt = (at: { chapter: number | null; index: number }) =>
+					at.chapter === null ? unfiledSceneIds[at.index] : chapterSceneIds[at.chapter][at.index];
+
+				for (const note of plan.freeformNotes ?? []) {
+					await tx.insert(notes).values({
+						ownerId: universe.ownerId,
+						universeId: universe.id,
+						storyId: story.id,
+						sceneId: note.scene ? sceneIdAt(note.scene) : null,
+						title: note.title,
+						bodyMd: rewrite(note.bodyMd),
+						pinned: note.pinned,
+						// Undefined falls back to the column default for older zips.
+						createdAt: note.createdAt ?? undefined
+					});
+					freeformNotesCreated += 1;
 				}
-				notesAttached += 1;
-			}
 
-			const sceneIdAt = (at: { chapter: number | null; index: number }) =>
-				at.chapter === null ? unfiledSceneIds[at.index] : chapterSceneIds[at.chapter][at.index];
-
-			for (const note of plan.freeformNotes ?? []) {
-				await tx.insert(notes).values({
-					ownerId: universe.ownerId,
-					universeId: universe.id,
-					storyId: story.id,
-					sceneId: note.scene ? sceneIdAt(note.scene) : null,
-					title: note.title,
-					bodyMd: rewrite(note.bodyMd),
-					pinned: note.pinned,
-					// Undefined falls back to the column default for older zips.
-					createdAt: note.createdAt ?? undefined
-				});
-				freeformNotesCreated += 1;
-			}
-
-			// Back as drafts waiting on their scenes, each asked for its scene alone.
-			for (const draft of plan.waitingDrafts ?? []) {
-				const textMd = rewrite(draft.textMd);
-				await tx.insert(assistantDrafts).values({
-					userId: universe.ownerId,
-					storyId: story.id,
-					sceneId: sceneIdAt(draft.scene),
-					brief: draft.brief.slice(0, MAX_DRAFT_BRIEF_CHARS),
-					targetWords: clampDraftWords(draft.targetWords ?? wordCount(textMd)),
-					pov: draft.pov,
-					textMd,
-					status: 'ready',
-					note: draft.note,
-					chapterBrief: draft.chapterBrief,
-					source: draft.source
-				});
-				waitingDraftsCreated += 1;
-			}
-			return story;
-		});
+				// Back as drafts waiting on their scenes, each asked for its scene alone.
+				for (const draft of plan.waitingDrafts ?? []) {
+					const textMd = rewrite(draft.textMd);
+					await tx.insert(assistantDrafts).values({
+						userId: universe.ownerId,
+						storyId: story.id,
+						sceneId: sceneIdAt(draft.scene),
+						brief: draft.brief.slice(0, MAX_DRAFT_BRIEF_CHARS),
+						targetWords: clampDraftWords(draft.targetWords ?? wordCount(textMd)),
+						pov: draft.pov,
+						textMd,
+						status: 'ready',
+						note: draft.note,
+						chapterBrief: draft.chapterBrief,
+						source: draft.source
+					});
+					waitingDraftsCreated += 1;
+				}
+				return story;
+			});
+		const pick = () => uniqueSlug(db, 'stories', universe.ownerId, plan.story.title, 'story');
+		try {
+			story = await write(await pick());
+		} catch (err) {
+			if (!isUniqueViolation(err)) throw err;
+			story = await write(await pick());
+		}
 	} catch (err) {
 		for (const id of storedAssets) {
 			await deleteAsset(db, universe.ownerId, id).catch(() => {});

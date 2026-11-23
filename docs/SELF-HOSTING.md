@@ -324,12 +324,18 @@ The dump excludes the job-queue tables, so any jobs that were pending at dump
 time are not restored; the worker simply carries on with new ones.
 
 Uploaded images live in the asset bucket, not the database, and **the backups
-do not copy them**. Deleting or replacing an image removes its database row at
-once, but the worker only removes the stored file once it is older than the
-oldest kept backup: one day longer than `BACKUP_KEEP_DAYS` or
-`BACKUP_KEEP_RECENT_HOURS`, whichever reaches further back, or one day when
-backups are off. Restoring any kept dump therefore still finds every image it
-points at. If you switch backups off later, the dumps already in the bucket
+do not copy them**. Replacing or clearing a cover, avatar or badge, taking an
+image out of the text, and deleting a story or universe for good delete no
+image at once. A worker job at 03:00 UTC each night deletes the images that
+nothing has used for 30 days and that were uploaded more than 30 days ago.
+Each deletion is logged as `assets.unused_deleted` with the full image row.
+The worker removes a stored file only once it is older than the oldest kept
+backup: one day longer than `BACKUP_KEEP_DAYS` or `BACKUP_KEEP_RECENT_HOURS`,
+whichever reaches further back, or one day when backups are off. Files freed
+by the nightly job wait 30 days more on top of that, so an image deleted by
+mistake can be put back by inserting its logged row again; run **Admin > Usage
+& storage > Recount images** afterwards so the account's storage total counts
+it. Restoring any kept dump therefore still finds every image it points at. If you switch backups off later, the dumps already in the bucket
 stay there but the wait drops to one day, so images deleted after that are
 missing if you restore one of those older dumps.
 If the asset bucket itself is lost, though, the images are gone: turn on
@@ -337,6 +343,11 @@ versioning or replication for that bucket at your storage provider, or copy it
 somewhere else on a schedule. The bundled RustFS bucket lives in a Docker
 volume on the same host, so back that volume up too. Deleting an account
 removes its images straight away, without the wait.
+
+Images count toward the storage limit of the account's plan until they are
+deleted. Plans and their limits (universes, stories, image storage, and the
+size of one image) are set in **Admin > Plans** and assigned per account in
+**Admin > Usage & storage**; the default plan has no limits.
 
 ## Health checks and monitoring
 
@@ -371,6 +382,11 @@ forward-only, so take a backup before updating if you are not running the
 scheduled ones; with
 `BACKUP_S3_*` set the worker already keeps hourly dumps, and
 `node scripts/restore-backup.ts latest` brings the newest one back.
+
+After updating to the release that adds plans and storage limits, run
+**Admin > Usage & storage > Recount images** once if anyone uploaded images
+while the update was rolling out, so each account's storage total includes
+them.
 
 If you used the bundled `minio` profile: it is now `rustfs`, with
 `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` in place of `MINIO_ROOT_USER` and
