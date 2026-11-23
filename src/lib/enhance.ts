@@ -61,7 +61,18 @@ function restore(taken: { el: HTMLElement; ranges: Range[] } | null) {
 	if (active && active !== document.body) return;
 	const selection = document.getSelection();
 	if (!selection) return;
-	selection.removeAllRanges();
-	for (const range of taken.ranges) selection.addRange(range);
+	const put = () => {
+		selection.removeAllRanges();
+		for (const range of taken.ranges) selection.addRange(range);
+	};
+	put();
 	taken.el.focus({ preventScroll: true });
+	// Kit's reset also queued a timer that clears the selection when it still
+	// matches the one it saw, which the restored caret does: the editor keeps
+	// focus with no caret, and the next keys land at the start of the text.
+	// This timer runs after kit's and puts the caret back once more.
+	const el = taken.el;
+	setTimeout(() => {
+		if (document.activeElement === el && selection.rangeCount === 0) put();
+	});
 }

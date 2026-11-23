@@ -18,18 +18,31 @@
 		proseExtensions,
 		commandMarkerExtensions,
 		nonPrintingFor,
+		showNewerText,
 		type EditingMode,
 		type MarkVisibility
 	} from '#lib/editor';
 	import { mentionExtensions, type MentionEntity, type MentionOptions } from '#lib/editor-mentions';
 	import { autocompleteExtensions, type AutocompleteMode } from '#lib/editor-autocomplete';
 	import { continuationExtensions } from '#lib/editor-continuation';
-	import { hasPendingUploads, imageUploadExtension, storedText } from '#lib/editor-images';
-	import { markerExtensions, type MarkerHandle, type SceneMarker } from '#lib/editor-markers';
+	import {
+		hasPendingUploads,
+		imageUploadExtension,
+		storedText,
+		withoutUndoAdvice
+	} from '#lib/editor-images';
+	import {
+		markerExtensions,
+		rebuiltMarkers,
+		unsavedChanges,
+		type MarkerHandle,
+		type SceneMarker
+	} from '#lib/editor-markers';
 	import { searchScopeChanged, type WiderSearch } from '#lib/editor-search-scope';
 	import EditorToolbar from './EditorToolbar.svelte';
 	import CoauthorPanel from './CoauthorPanel.svelte';
 	import SceneConflictBanner from './SceneConflictBanner.svelte';
+	import FormStatus from './FormStatus.svelte';
 	import SelectionMenu from './SelectionMenu.svelte';
 	import type { ViewItem } from './ViewMenu.svelte';
 
@@ -46,6 +59,7 @@
 		spellCheck = 'off',
 		writingLanguage = '',
 		markers = [],
+		markersVersion = null,
 		imageUniverseId,
 		findText = null,
 		findAt = null,
@@ -83,6 +97,8 @@
 		spellCheck?: 'on' | 'off';
 		writingLanguage?: string;
 		markers?: SceneMarker[];
+		// The fingerprint of the text the markers' anchors count into.
+		markersVersion?: string | null;
 		// The page is switching to another scene: the text stays on screen but
 		// takes no input, so nothing is typed into a scene about to be replaced.
 		leaving?: boolean;
@@ -149,12 +165,20 @@
 	const mentionsCompartment = new Compartment();
 	const autocompleteCompartment = new Compartment();
 	const markersCompartment = new Compartment();
+	const historyCompartment = new Compartment();
 	// The toolbar toggles flip these at runtime.
 	const nonPrintingCompartment = new Compartment();
 	const alignmentCompartment = new Compartment();
 	const leavingCompartment = new Compartment();
 	// svelte-ignore state_referenced_locally
 	let markerHandle: MarkerHandle = markerExtensions(markers, markSelection);
+	// Edits since the text the server holds, so a new marker is placed only
+	// when the server's anchors count into the text on screen.
+	// svelte-ignore state_referenced_locally
+	const unsaved = unsavedChanges(body);
+	// Bumped when this editor's own save lands with nothing typed since, so
+	// new markers waiting on it are placed (see the marker rebuild below).
+	let saveSettled = $state(0);
 
 	// Bound from one of two mutually exclusive branches (compact or full),
 	// hence the state wrapper.
@@ -188,9 +212,13 @@
 		onStatus: (status) => {
 			if (!tornDown || status === 'saved') onStatus(status);
 		},
+		onSettled: () => {
+			if (!tornDown) saveSettled++;
+		},
 		save: async ({ keepalive }) => {
 			if (!view) return;
 			const stored = storedText(view.state);
+			unsaved.sent(textHash(stored.text), stored.cuts);
 			await saver.save({
 				keepalive,
 				title: titleValue,
@@ -202,6 +230,7 @@
 					anchorEnd: stored.mapPos(marker.anchorEnd)
 				}))
 			});
+			unsaved.landed();
 		}
 	});
 
@@ -210,30 +239,126 @@
 	// the swap-in, and the save would then overwrite the newer text.
 	function loadNewer() {
 		if (!view || !conflict || leaving) return;
-		const newer = conflict;
+		markError = null;
+		showServerText(view, conflict);
+	}
+
+	// Undo history is cleared (see showNewerText), so nothing from before can
+	// be undone onto the other window's words.
+	// The bases take the text as stored, \r\n and all, since the server
+	// checks its fingerprint; the editor shows it with plain newlines.
+	function showServerText(view: EditorView, newer: SceneConflict) {
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
-		view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newer.bodyMd } });
+		showNewerText(view, newer.bodyMd, historyCompartment);
+		lostImages = lostImages.map(withoutUndoAdvice);
+		unsaved.reset(textHash(newer.bodyMd));
+		swaps++;
 		void autosave.flush();
 	}
 
 	function keepMine() {
 		if (!conflict || leaving) return;
 		saver.keepMine(conflict.bodyMd);
+		markError = null;
 		void autosave.flush();
 	}
 	const scheduleSave = autosave.schedule;
 
-	// A new marker's anchors must land against saved text, so the prose is
-	// flushed first; the page data refresh then re-renders the highlights.
+	// Why the last Ctrl/Cmd+Alt+M made no marker; cleared by the next edit.
+	let markError = $state<string | null>(null);
+	// Images that finished uploading but could not be added. Kept until the
+	// writer dismisses them, so the next keystroke does not hide them.
+	let lostImages = $state<string[]>([]);
+	// Bumped when the newer text from another window replaces this editor's.
+	let swaps = 0;
+	const CHANGED_ELSEWHERE =
+		'This scene was changed in another window. Choose which version to keep, then mark the words again.';
+	const LOADED_NEWER =
+		'This scene was changed in another window and now shows the newer version. Select the words and mark them again.';
+	const WAIT_FOR_IMAGE =
+		'This scene was changed in another window. Wait for the image to finish uploading, then mark the words again.';
+
+	// A new marker's anchors must count into the text the server holds. The
+	// prose is flushed first, and the selection is then mapped onto the text
+	// this editor last saved (the writer can keep typing meanwhile, and a save
+	// can fail). The server refuses the marker when it holds another text by
+	// then, and sends that text. With nothing here waiting to save, it was
+	// changed elsewhere (another window, the review centre, find and replace)
+	// and there is nothing to lose: the editor shows it and the writer marks
+	// again. A save is never forced, since an idle editor's text may be the
+	// older one. Otherwise the mark is tried once more after the waiting save,
+	// which reports a conflict if there is one. While the scene was changed in
+	// another window and this editor has edits of its own, nothing is marked
+	// until the writer picks a version. The page data refresh then re-renders
+	// the highlights.
 	async function markSelection(from: number, to: number) {
-		await autosave.flush();
-		const response = await fetch(`/api/scenes/${sceneId}/markers`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ anchorStart: from, anchorEnd: to })
-		});
-		if (response.ok) await refreshAll();
+		markError = null;
+		if (conflict) {
+			markError = CHANGED_ELSEWHERE;
+			return;
+		}
+		const pinned = unsaved.pin(from, to);
+		const started = swaps;
+		// Whether the text changed under this mark, and if so, says what to do:
+		// choose a version, or mark again on the newer text already on screen
+		// (another mark or Load newer version brought it in).
+		const overtaken = () => {
+			const why = conflict ? CHANGED_ELSEWHERE : swaps !== started ? LOADED_NEWER : null;
+			if (why) markError = why;
+			return why !== null;
+		};
+		// Set when the newer text could not be shown because an image is still
+		// uploading, which marking again cannot get past.
+		let uploading = false;
+		try {
+			for (let attempt = 0; attempt < 2; attempt++) {
+				await autosave.flush();
+				if (overtaken()) return;
+				uploading = false;
+				const anchor = pinned.at();
+				if (!anchor) {
+					markError = 'These words are not saved yet. Mark them once the scene has saved.';
+					return;
+				}
+				const response = await fetch(`/api/scenes/${sceneId}/markers`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						anchorStart: anchor.from,
+						anchorEnd: anchor.to,
+						baseHash: unsaved.version
+					})
+				}).catch(() => null);
+				if (response?.ok) {
+					await refreshAll();
+					return;
+				}
+				if (response?.status !== 409) break;
+				const newer = (await response.json().catch(() => null)) as SceneConflict | null;
+				if (overtaken()) return;
+				// Nothing here is waiting to save, so the newer text replaces only
+				// what this editor already stored.
+				if (
+					view &&
+					newer &&
+					typeof newer.bodyMd === 'string' &&
+					textHash(newer.bodyMd) !== unsaved.version &&
+					!autosave.hasUnsaved() &&
+					!leaving
+				) {
+					uploading = hasPendingUploads(view.state);
+					if (!uploading) {
+						showServerText(view, newer);
+						markError = LOADED_NEWER;
+						return;
+					}
+				}
+			}
+			markError = uploading ? WAIT_FOR_IMAGE : 'The TODO marker could not be made. Try again.';
+		} finally {
+			pinned.release();
+		}
 	}
 
 	// At the visual top or bottom of this editor, vertical arrows hand
@@ -363,17 +488,34 @@
 	}
 
 	// Checking a marker off elsewhere (or creating one) changes the set of
-	// ids; rebuild the highlights from the fresh server anchors. Same-set
-	// updates keep the editor's own mapped positions, which are newer.
+	// ids; rebuild the highlights. Markers the editor already shows keep their
+	// own mapped positions, which are newer than the server's. New ones are
+	// placed only once the text on screen is the one their anchors count into,
+	// with nothing typed since (see rebuiltMarkers); until then they wait for
+	// this editor's save to land. The server maps them through that save, so
+	// the markers are then read again, once for each pair of texts, and fit as
+	// they are. Same-set updates keep the editor's positions as they are.
+	const idSet = (ids: string[]) => [...ids].sort().join(',');
+	let refreshedFor = '';
 	$effect(() => {
-		const incoming = markers
-			.map((marker) => marker.id)
-			.sort()
-			.join(',');
-		const current = [...markerHandle.ids].sort().join(',');
+		void saveSettled;
+		const incoming = idSet(markers.map((marker) => marker.id));
+		const settled = unsaved.settledFrom(markersVersion);
+		const current = idSet(markerHandle.ids);
 		if (!view || incoming === current) return;
-		markerHandle = markerExtensions(markers, markSelection);
-		view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
+		const rebuilt = rebuiltMarkers(markers, markerHandle.anchors(view), markerHandle.ids, settled);
+		const next = idSet(rebuilt.map((marker) => marker.id));
+		if (next !== current) {
+			markerHandle = markerExtensions(rebuilt, markSelection);
+			view.dispatch({ effects: markersCompartment.reconfigure(markerHandle.extension) });
+		}
+		// Some wait, though this editor's save has landed with nothing typed
+		// since: their anchors count into an older text, so read them again.
+		const pair = `${markersVersion}>${unsaved.version}`;
+		if (next !== incoming && unsaved.settledFrom(unsaved.version) && refreshedFor !== pair) {
+			refreshedFor = pair;
+			void refreshAll();
+		}
 	});
 
 	// The toolbar's view toggles, flipped from any editor in the story; each
@@ -517,7 +659,8 @@
 						commandMarkers,
 						compartments: {
 							nonPrinting: nonPrintingCompartment,
-							alignment: alignmentCompartment
+							alignment: alignmentCompartment,
+							history: historyCompartment
 						},
 						// Read through the prop each time, so the page can change it.
 						widerSearch: widerSearch
@@ -533,12 +676,28 @@
 					leavingCompartment.of(pausedExtension(leaving)),
 					assistantContinuation && storyId ? continuationExtensions(storyId) : [],
 					boundaryKeymap(),
+					EditorView.updateListener.of((update) => {
+						if (!update.docChanged) return;
+						unsaved.record(update.changes);
+						markError = null;
+					}),
 					onFocus
 						? EditorView.updateListener.of((update) => {
 								if (update.focusChanged && update.view.hasFocus) onFocus();
 							})
 						: [],
-					imageUniverseId ? imageUploadExtension(imageUniverseId) : []
+					imageUniverseId
+						? imageUploadExtension(
+								imageUniverseId,
+								(message) => {
+									lostImages = [...lostImages, message];
+								},
+								(message) => {
+									const at = lostImages.indexOf(message);
+									if (at !== -1) lostImages = lostImages.filter((_, i) => i !== at);
+								}
+							)
+						: []
 				]
 			})
 		});
@@ -557,6 +716,19 @@
 	});
 </script>
 
+{#snippet lostImagesNotice()}
+	{#if lostImages.length > 0}
+		<div class="lost-images" role="alert">
+			{#each lostImages as message, i (i)}
+				<p class="field-hint lost-images-text">{message}</p>
+			{/each}
+			<button class="btn btn-sm btn-secondary" type="button" onclick={() => (lostImages = [])}>
+				Dismiss
+			</button>
+		</div>
+	{/if}
+{/snippet}
+
 {#if compact}
 	<div
 		class="editor compact"
@@ -568,6 +740,8 @@
 		{#if conflict}
 			<SceneConflictBanner onLoadNewer={loadNewer} onKeepMine={keepMine} paused={leaving} />
 		{/if}
+		<FormStatus error={markError} live />
+		{@render lostImagesNotice()}
 		<div class="editor-cm" bind:this={editorEl}></div>
 	</div>
 {:else}
@@ -615,6 +789,8 @@
 					oninput={scheduleSave}
 					onchange={flushTitle}
 				/>
+				<FormStatus error={markError} live />
+				{@render lostImagesNotice()}
 				<div class="editor-cm" bind:this={editorEl}></div>
 			</div>
 		</div>
@@ -635,6 +811,17 @@
 {/if}
 
 <style>
+	.lost-images {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 12px;
+		margin-bottom: 8px;
+	}
+	.lost-images-text {
+		color: var(--danger-ink);
+		margin: 0;
+	}
 	.editor-title-input {
 		width: 100%;
 		border: 0;
