@@ -27,7 +27,8 @@ Option on a Mac, Ctrl and Alt everywhere else.
   scene was changed in another window and you have edits here that are not
   saved, choose which version to keep first, then mark the words again. If you
   have no unsaved edits, the editor shows the newer version instead; select the
-  words and mark them again.
+  words and mark them again. A mark made in another window, or one you make and
+  then keep typing, is highlighted here once your latest words have saved.
 - **Ctrl+Z** and **Ctrl+Shift+Z**: undo and redo. Once the editor shows a
   newer version from another window, undo cannot go back past it.
 - **Ctrl+J**: ask the Assistant to continue the passage at the cursor (when the

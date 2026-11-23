@@ -323,6 +323,73 @@ test('a mark answered after the newer text loads keeps the right message', async
 	await expect(page.getByText('Choose which version to keep')).toHaveCount(0);
 });
 
+// A marker made in another window reaches this one while it has edits of its
+// own still unsaved. It waits for this window's save, which the server maps it
+// through, and then shows on its words without a reload. Mapping it through
+// the unsaved edits instead lost it here: "The ferry" was typed over as
+// "A ferry", so no stored word was left to place it from.
+test('a marker made in another window shows on its words once unsaved edits save', async ({
+	page
+}) => {
+	test.slow();
+	await newStory(page, `Quay ${Date.now()}`);
+	const editor = page.getByRole('textbox', { name: 'Scene text' });
+	const landed = saved(page);
+	await editor.click();
+	await page.keyboard.type('The ferry left at dawn.');
+	await landed;
+
+	const other = await page.context().newPage();
+	await gotoReady(other, page.url());
+	const otherEditor = other.getByRole('textbox', { name: 'Scene text' });
+	await expect(otherEditor).toHaveText('The ferry left at dawn.');
+	const made = other.waitForResponse(
+		(r) => r.url().includes('/markers') && r.request().method() === 'POST' && r.ok()
+	);
+	await otherEditor.click();
+	await other.keyboard.press('ControlOrMeta+Home');
+	for (let i = 0; i < 4; i++) await other.keyboard.press('ArrowRight');
+	for (let i = 0; i < 5; i++) await other.keyboard.press('Shift+ArrowRight');
+	await other.keyboard.press('ControlOrMeta+Alt+m');
+	await made;
+	await expect(other.locator('.todo-marker')).toHaveText(['ferry']);
+	await other.close();
+
+	// Saves from this window are held until the marker has reached it.
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	await page.route('**/api/scenes/*', async (route) => {
+		if (route.request().method() === 'PUT') await gate;
+		await route.continue();
+	});
+	await editor.click();
+	await page.keyboard.press('ControlOrMeta+Home');
+	for (let i = 0; i < 9; i++) await page.keyboard.press('Shift+ArrowRight');
+	await page.keyboard.type('A ferry');
+	await expect(editor).toHaveText('A ferry left at dawn.');
+
+	// Making a character reads the page data again, which brings the marker.
+	await page.keyboard.press('ControlOrMeta+End');
+	await page.keyboard.press('ArrowLeft');
+	for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+ArrowLeft');
+	await page.locator('.cm-content').click({ button: 'right' });
+	await page.getByRole('menuitem', { name: 'New character' }).click();
+	await expect(page.locator('.cm-content .ref-word', { hasText: 'dawn' })).toBeVisible();
+	await expect(page.locator('.todo-marker')).toHaveCount(0);
+
+	const stored = saved(page);
+	release();
+	await stored;
+	await expect(page.locator('.todo-marker')).toHaveText(['ferry']);
+	await expect(editor).toHaveText('A ferry left at dawn.');
+
+	await page.reload();
+	await expect(page.getByRole('textbox', { name: 'Scene text' })).toHaveText(
+		'A ferry left at dawn.'
+	);
+	await expect(page.locator('.todo-marker')).toHaveText(['ferry']);
+});
+
 async function pasteImage(page: Page, name: string) {
 	await page.getByRole('textbox', { name: 'Scene text' }).evaluate((el, fileName) => {
 		const data = new DataTransfer();

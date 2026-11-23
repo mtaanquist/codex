@@ -527,7 +527,8 @@ async function journey({ page, browser }: { page: Page; browser: Browser }) {
 	await markWords(['Home', ...Array(5).fill('Shift+ArrowRight')]);
 	await expect(page.locator('.todo-marker')).toHaveCount(2);
 	// A marker made in another tab is new to this editor when the page data
-	// next brings it, so it is placed through the typing not yet saved.
+	// next brings it, so it waits for the typing not yet saved to land and is
+	// then placed on its words.
 	const otherTab = await page.context().newPage();
 	await otherTab.goto(page.url());
 	await expect(otherTab.locator('.todo-marker')).toHaveCount(2);
