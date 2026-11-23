@@ -40,6 +40,11 @@ function markerMark(id: string, from: number, to: number) {
 
 function markerField(markers: SceneMarker[]) {
 	const held = new Set(markers.map((marker) => marker.id));
+	// Markers this set has placed in the text, at load or by a restore. Only
+	// these can be brought back by undo, so only these need a drop record;
+	// one that loaded with no position would otherwise add a record per
+	// keystroke for nothing.
+	const shown = new Set<string>();
 	const field = StateField.define<DecorationSet>({
 		create(state) {
 			const length = state.doc.length;
@@ -54,6 +59,7 @@ function markerField(markers: SceneMarker[]) {
 				.map((marker) =>
 					markerMark(marker.id, marker.anchorStart!, Math.min(marker.anchorEnd!, length))
 				);
+			for (const range of ranges) shown.add(range.value.spec.todoId as string);
 			return Decoration.set(ranges, true);
 		},
 		update(value, tr) {
@@ -71,6 +77,7 @@ function markerField(markers: SceneMarker[]) {
 				// left of it is replaced, not merged, since that remnant can map
 				// onto words the marker never covered.
 				if (!held.has(id) || to > tr.newDoc.length) continue;
+				shown.add(id);
 				value = value.update({
 					filter: (_from, _to, mark) => mark.spec.todoId !== id,
 					add: [markerMark(id, from, to)]
@@ -87,9 +94,10 @@ function markerField(markers: SceneMarker[]) {
 	// the autosave after that sends the full anchor again. Mapping the marker
 	// back through the undone change would not do: an edge inside or at the
 	// edge of the change can land on the wrong side of text put back or taken
-	// out. Markers already gone before the edit are recorded as gone. Undo
-	// steps joined from several keystrokes carry every keystroke's record,
-	// earliest last, so the state from before the whole step wins.
+	// out. Markers it has shown that are gone before the edit are recorded
+	// as gone. Undo steps joined from several keystrokes carry every
+	// keystroke's record, earliest last, so the state from before the whole
+	// step wins.
 	const undoable = invertedEffects.of((tr) => {
 		if (tr.changes.empty) return [];
 		const before = tr.startState.field(field, false);
@@ -105,7 +113,7 @@ function markerField(markers: SceneMarker[]) {
 		for (const cursor = before.iter(); cursor.value; cursor.next()) {
 			present.add(cursor.value.spec.todoId as string);
 		}
-		const gone = [...held].filter((id) => !present.has(id));
+		const gone = [...shown].filter((id) => !present.has(id));
 		return [
 			...gone.map((id) => dropMarker.of({ id, owner: held })),
 			...[...touched.values()].map((range) => restoreMarker.of(range))
