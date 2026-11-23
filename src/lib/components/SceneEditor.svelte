@@ -25,7 +25,12 @@
 	import { mentionExtensions, type MentionEntity, type MentionOptions } from '#lib/editor-mentions';
 	import { autocompleteExtensions, type AutocompleteMode } from '#lib/editor-autocomplete';
 	import { continuationExtensions } from '#lib/editor-continuation';
-	import { hasPendingUploads, imageUploadExtension, storedText } from '#lib/editor-images';
+	import {
+		hasPendingUploads,
+		imageUploadExtension,
+		storedText,
+		withoutUndoAdvice
+	} from '#lib/editor-images';
 	import {
 		markerExtensions,
 		rebuiltMarkers,
@@ -241,6 +246,7 @@
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
 		showNewerText(view, newer.bodyMd, historyCompartment);
+		lostImages = lostImages.map(withoutUndoAdvice);
 		unsaved.reset(textHash(newer.bodyMd));
 		swaps++;
 		void autosave.flush();
@@ -265,6 +271,8 @@
 		'This scene was changed in another window. Choose which version to keep, then mark the words again.';
 	const LOADED_NEWER =
 		'This scene was changed in another window and now shows the newer version. Select the words and mark them again.';
+	const WAIT_FOR_IMAGE =
+		'This scene was changed in another window. Wait for the image to finish uploading, then mark the words again.';
 
 	// A new marker's anchors must count into the text the server holds. The
 	// prose is flushed first, and the selection is then mapped onto the text
@@ -287,13 +295,22 @@
 		}
 		const pinned = unsaved.pin(from, to);
 		const started = swaps;
+		// Whether the text changed under this mark, and if so, says what to do:
+		// choose a version, or mark again on the newer text already on screen
+		// (another mark or Load newer version brought it in).
+		const overtaken = () => {
+			const why = conflict ? CHANGED_ELSEWHERE : swaps !== started ? LOADED_NEWER : null;
+			if (why) markError = why;
+			return why !== null;
+		};
+		// Set when the newer text could not be shown because an image is still
+		// uploading, which marking again cannot get past.
+		let uploading = false;
 		try {
 			for (let attempt = 0; attempt < 2; attempt++) {
 				await autosave.flush();
-				if (conflict || swaps !== started) {
-					markError = CHANGED_ELSEWHERE;
-					return;
-				}
+				if (overtaken()) return;
+				uploading = false;
 				const anchor = pinned.at();
 				if (!anchor) {
 					markError = 'These words are not saved yet. Mark them once the scene has saved.';
@@ -314,10 +331,7 @@
 				}
 				if (response?.status !== 409) break;
 				const newer = (await response.json().catch(() => null)) as SceneConflict | null;
-				if (conflict || swaps !== started) {
-					markError = CHANGED_ELSEWHERE;
-					return;
-				}
+				if (overtaken()) return;
 				// Nothing here is waiting to save, so the newer text replaces only
 				// what this editor already stored.
 				if (
@@ -326,15 +340,17 @@
 					typeof newer.bodyMd === 'string' &&
 					textHash(newer.bodyMd) !== unsaved.version &&
 					!autosave.hasUnsaved() &&
-					!hasPendingUploads(view.state) &&
 					!leaving
 				) {
-					showServerText(view, newer);
-					markError = LOADED_NEWER;
-					return;
+					uploading = hasPendingUploads(view.state);
+					if (!uploading) {
+						showServerText(view, newer);
+						markError = LOADED_NEWER;
+						return;
+					}
 				}
 			}
-			markError = 'The TODO marker could not be made. Try again.';
+			markError = uploading ? WAIT_FOR_IMAGE : 'The TODO marker could not be made. Try again.';
 		} finally {
 			pinned.release();
 		}
