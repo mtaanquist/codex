@@ -3,9 +3,10 @@
 	import { resolve } from '$app/paths';
 	import { renderMarkdown } from '#lib/markdown';
 	import { formatLongDate } from '#lib/format';
+	import { slugAddress } from '#lib/slug';
 
 	// The covers on a public shelf: the author's shelf and a universe page.
-	// Each links to the story's reading page by its slug.
+	// Each links to the story's reading page by its slug (see slugAddress).
 	type Book = {
 		storyId: string;
 		slug: string;
@@ -23,7 +24,13 @@
 <ul class="shelf-grid">
 	{#each books as book (book.storyId)}
 		<li>
-			<a class="shelf-item" href={resolve('/@[handle]/[story=ref]', { handle, story: book.slug })}>
+			<a
+				class="shelf-item"
+				href={resolve('/@[handle]/[story=ref]', {
+					handle,
+					story: slugAddress({ id: book.storyId, slug: book.slug })
+				})}
+			>
 				<!-- A cover is the story's own title, set on the story's
 				     colour, until an author uploads artwork. Hidden from
 				     readers because the title repeats right below. -->

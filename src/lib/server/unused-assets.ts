@@ -4,6 +4,7 @@ import { scheduleObjectDeletions } from './assets.ts';
 import { releaseStorage } from './quotas.ts';
 import { logEvent } from './log.ts';
 import { SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS } from './queues.ts';
+import { CANCEL_ON_MIGRATE_APP_NAME } from './db/migrate.ts';
 
 // Frees the storage of uploaded images nothing uses any more: the worker's
 // sweepUnusedAssets, nightly. Deleting an image a writer still uses is the
@@ -40,14 +41,20 @@ const CHUNK = 100;
 
 // The reads below scan every row of every column, which on a large database
 // outlasts the worker pool's per-statement limit. They run in their own
-// read-only transaction with the limit raised to the job's expiry. A plain
-// read takes no lock a write waits on, so nothing is held up meanwhile.
-const LONG_READ_TIMEOUT_MS = SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS.expireInSeconds * 1000;
+// read-only transaction with the limit raised, each to well under the job's
+// expiry so both fit in one run and an expired job never overlaps a read
+// still going. A plain read takes no lock a write waits on, but it does hold
+// up a migration's ALTER TABLE, so it names itself for the migrator to cancel
+// (see CANCEL_ON_MIGRATE_APP_NAME); the run then fails and the next one retries.
+const LONG_READ_TIMEOUT_MS = Math.floor(
+	(SWEEP_UNUSED_ASSETS_QUEUE_OPTIONS.expireInSeconds * 1000) / 2.5
+);
 
 async function longRead<T>(db: Database, read: (tx: Database) => Promise<T>): Promise<T> {
 	return await db.transaction(
 		async (tx) => {
 			await tx.execute(sql.raw(`set local statement_timeout = ${LONG_READ_TIMEOUT_MS}`));
+			await tx.execute(sql.raw(`set local application_name = '${CANCEL_ON_MIGRATE_APP_NAME}'`));
 			return await read(tx);
 		},
 		{ accessMode: 'read only' }
@@ -167,7 +174,7 @@ async function recordAssetUse(
 			update assets set unreferenced_since = now()
 			where id in (
 				select id from assets
-				where id::text = any(string_to_array(${fresh.join(',')}, ','))
+				where id = any(string_to_array(${fresh.join(',')}, ',')::uuid[])
 					and unreferenced_since is null
 				for update skip locked
 			)
@@ -243,7 +250,7 @@ export async function deleteUnusedAssets(
 		const owners = [...new Set(unused.map((row) => row.ownerId))].sort().join(',');
 		const deleted = await db.transaction(async (tx) => {
 			const locked = await tx.execute(sql`
-				select id from users where id::text = any(string_to_array(${owners}, ','))
+				select id from users where id = any(string_to_array(${owners}, ',')::uuid[])
 				order by id for no key update skip locked
 			`);
 			if (locked.rows.length === 0) return [];
@@ -252,15 +259,15 @@ export async function deleteUnusedAssets(
 			// image in use since cleared its mark.
 			const rows = await tx.execute(sql`
 				select id::text as id from assets
-				where id::text = any(string_to_array(${ids}, ','))
-					and owner_id::text = any(string_to_array(${lockedOwners}, ','))
+				where id = any(string_to_array(${ids}, ',')::uuid[])
+					and owner_id = any(string_to_array(${lockedOwners}, ',')::uuid[])
 					and ${dueSql}
 				order by id for update skip locked
 			`);
 			const held = (rows.rows as { id: string }[]).map((row) => row.id);
 			if (held.length === 0) return [];
 			const result = await tx.execute(sql`
-				delete from assets where id::text = any(string_to_array(${held.join(',')}, ','))
+				delete from assets where id = any(string_to_array(${held.join(',')}, ',')::uuid[])
 				returning id::text as id, owner_id::text as "ownerId", storage_key as "storageKey",
 					byte_size::float8 as "byteSize", content_type as "contentType", kind, filename,
 					universe_id::text as "universeId", created_at::text as "createdAt"

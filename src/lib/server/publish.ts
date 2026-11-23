@@ -15,7 +15,7 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
-import { isUuid, readingAddress } from '#lib/slug';
+import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
 // public reading pages serve only these snapshots, never live drafts.
@@ -389,7 +389,7 @@ export async function publicUniverseLink(db: Database, handle: string, universeI
 			)
 		);
 	const [row] = await db
-		.select({ name: universes.name, slug: universes.slug })
+		.select({ id: universes.id, name: universes.name, slug: universes.slug })
 		.from(universes)
 		.innerJoin(users, eq(universes.ownerId, users.id))
 		.where(
@@ -402,7 +402,7 @@ export async function publicUniverseLink(db: Database, handle: string, universeI
 				exists(listed)
 			)
 		);
-	return row ?? null;
+	return row ? { name: row.name, slug: slugAddress(row) } : null;
 }
 
 // Where an old slug now leads, for the permanent redirect from a public
@@ -425,7 +425,7 @@ export async function publicStoryRedirect(
 	if (!row?.storyId) return null;
 	const edition = await publicEdition(db, handle, row.storyId);
 	if (!edition || edition.visibility !== 'public') return null;
-	return edition.slug;
+	return edition.address;
 }
 
 // The same for a universe's public page: its current slug while that page

@@ -56,6 +56,15 @@ export function isPublicRef(value: string): boolean {
 }
 
 /**
+ * The public address of a story or universe listed by slug. A uuid-shaped
+ * ref is always looked up as an id, so a slug of that shape (set before
+ * isValidSlug refused them) is linked by the id instead.
+ */
+export function slugAddress(item: { id: string; slug: string }): string {
+	return isUuid(item.slug.toLowerCase()) ? item.id : item.slug;
+}
+
+/**
  * The address a story's reading page is linked at: its slug when the story
  * is listed publicly, its id when unlisted. A slug comes from the title and
  * can be guessed, so an unlisted story answers only at its id.
@@ -65,5 +74,5 @@ export function readingAddress(story: {
 	slug: string;
 	visibility: 'private' | 'unlisted' | 'public';
 }): string {
-	return story.visibility === 'public' ? story.slug : story.id;
+	return story.visibility === 'public' ? slugAddress(story) : story.id;
 }

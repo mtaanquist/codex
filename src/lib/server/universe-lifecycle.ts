@@ -195,7 +195,8 @@ export async function universeEditionFileKeys(
  * Hard-deletes a universe and everything in it, child-first, within the
  * caller's transaction. Shared by the trash purge and the account purge. Its
  * images are left in place, no longer tied to the universe and marked as
- * unused (an earlier mark is kept), for the unused image sweep to free.
+ * unused as of now (over any earlier mark), for the unused image sweep to
+ * free.
  */
 export async function purgeUniverseWithin(tx: Tx, universeId: string): Promise<void> {
 	// The owners of the images the detach below changes, locked before any
