@@ -95,6 +95,9 @@
 						value={limitValue(plan.limits.max_stories)}
 					/>
 				</div>
+				<!-- The stored sizes, kept as they are when the rounded MB fields are not edited. -->
+				<input type="hidden" name="storageBytes" value={plan.limits.storage_bytes ?? ''} />
+				<input type="hidden" name="maxImageBytes" value={plan.limits.max_image_bytes ?? ''} />
 				<div class="field">
 					<label for="plan-storage-{plan.id}">Image storage (MB)</label>
 					<div>

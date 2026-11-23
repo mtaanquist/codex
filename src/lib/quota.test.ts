@@ -8,6 +8,7 @@ import {
 	parseLimit,
 	megabytesValue,
 	parseLimitInput,
+	parseMegabytesField,
 	parseMegabytesInput,
 	quotaMessage
 } from './quota';
@@ -65,6 +66,9 @@ describe('quota wording', () => {
 		expect(create).toContain('limit of 3 stories');
 		expect(create).toContain('ask the admin');
 		expect(quotaMessage('max_universes', 2, 'restore')).toMatch(/^Restoring this/);
+		expect(quotaMessage('max_stories', 3, 'revive')).toMatch(
+			/^Your standalone stories are in the trash.*limit of 3 stories/
+		);
 		expect(quotaMessage('storage_bytes', MEGABYTE)).toContain('1 MB of uploaded images');
 		expect(quotaMessage('max_image_bytes', 2 * MEGABYTE)).toContain('limit of 2 MB per image');
 	});
@@ -120,5 +124,24 @@ describe('megabyte limits', () => {
 			expect(saved).not.toBeUndefined();
 			expect(megabytesValue(saved ?? null)).toBe(shown);
 		}
+	});
+});
+
+describe('parseMegabytesField', () => {
+	it('keeps the stored size when the MB text was not edited', () => {
+		expect(parseMegabytesField('0.1', '1000', 10)).toBe(1000);
+		expect(parseMegabytesField('2.4', '2500000', 10)).toBe(2_500_000);
+	});
+
+	it('reads an edited MB text as usual', () => {
+		expect(parseMegabytesField('0.2', '1000', 10)).toBe(Math.round(0.2 * MEGABYTE));
+		expect(parseMegabytesField('', '1000', 10)).toBeNull();
+		expect(parseMegabytesField('3', '', 10)).toBe(3 * MEGABYTE);
+	});
+
+	it('does not keep a stored size over the most allowed', () => {
+		expect(parseMegabytesField(megabytesValue(11 * MEGABYTE), String(11 * MEGABYTE), 10)).toBe(
+			undefined
+		);
 	});
 });

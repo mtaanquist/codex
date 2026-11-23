@@ -13,6 +13,27 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Phase 10 staging review round 5 (2026-11-23, `fix/phase-10-review-5` on
+`staging/phase-10`). The unused-image sweep's whole-database reads ran under
+the worker pool's five-minute statement limit, so on a large database they
+were cancelled long before the job's six-hour expiry. They now run in their
+own read-only transaction with `statement_timeout` raised to that expiry (a
+plain read holds no lock a write waits on), and the recheck before deleting
+reads once for every due image rather than once per 100-image chunk; the
+short locked delete transactions are unchanged. The extra runs (one per
+account after a story was deleted for good, one after the hourly purge) were
+dropped: with the two-phase rule nothing is due right after a purge, so the
+nightly run is enough. A failed run is logged (`assets.unused_sweep_failed`).
+A universe purge now sets `unreferenced_since` to now over any earlier mark,
+since that mark may be stale (it is cleared only when a run sees the image in
+use) and would cut the 30 days short. A new standalone story that brings back
+trashed standalone stories is refused with a message saying so. The unused
+`deleteStory` (a hard delete with no trash check) is gone. The plan form posts
+each size limit's stored bytes beside the rounded MB field, and a field left
+as shown keeps the stored value. Restoring a story whose universe is in the
+trash was checked and is not reachable (`ownedStoryRow` requires a live
+universe), so its count was left alone.
+
 Phase 10 staging review round 3 (2026-11-23, `fix/phase-10-review-3` on
 `staging/phase-10`). The sweep's 30-day grace counted from upload, so an old
 image taken out of a field with no history (a description, a bio) could be

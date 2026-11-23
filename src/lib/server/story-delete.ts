@@ -35,7 +35,7 @@ export type Tx = Parameters<Parameters<Database['transaction']>[0]>[0];
 // Deletes a story and everything scoped to it, child-first, within a caller's
 // transaction. Universe-scoped entities (characters, places, lore) are not the
 // story's to delete; only the per-story overlays, memberships, and story-scoped
-// relationship rows go. Shared by deleteStory and the account purge.
+// relationship rows go. Shared by purgeStory and the account purge.
 export async function deleteStoryWithin(tx: Tx, storyId: string): Promise<void> {
 	// The scene rows are locked first, lowest id first: a mention rebuild holds
 	// its scene row while it rewrites the scene's mentions, so deleting those
@@ -152,19 +152,6 @@ export async function deleteStoryWithin(tx: Tx, storyId: string): Promise<void> 
 	await tx.delete(stories).where(eq(stories.id, storyId));
 }
 
-// Deletes a story the user owns, live or trashed, in one transaction. Without
-// this a story with any content cannot be deleted at all (the FKs are ON
-// DELETE NO ACTION).
-export async function deleteStory(db: Database, storyId: string, userId: string): Promise<boolean> {
-	const [story] = await db
-		.select({ id: stories.id })
-		.from(stories)
-		.where(and(eq(stories.id, storyId), eq(stories.ownerId, userId)));
-	if (!story) return false;
-	await db.transaction((tx) => purgeStoryWithin(tx, story.id));
-	return true;
-}
-
 // Hard-deletes a story in the trash, with no owner check, for the trash purge
 // and for deleting it for good from the dashboard. Nothing happens, and false
 // comes back, when the story is no longer in the trash (a restore got there
@@ -172,8 +159,8 @@ export async function deleteStory(db: Database, storyId: string, userId: string)
 // purge read its list before the lock. The stored export files of the story's
 // editions, whose rows cascade away with the publications, are queued for the
 // deferred object sweep. The images the story alone used are not touched
-// here: the caller asks for a run of the unused image sweep
-// (sweepUnusedAssets), which frees them in the background.
+// here: the nightly unused image sweep (sweepUnusedAssets) marks them and
+// frees them once they have stayed unused long enough.
 export async function purgeStory(
 	db: Database,
 	storyId: string,

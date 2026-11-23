@@ -32,7 +32,7 @@ const {
 	setChatSettings,
 	setProposalConfirmed
 } = await import('../../src/lib/server/llm/chat-history');
-const { deleteStory } = await import('../../src/lib/server/story-delete');
+const { destroyStory, trashStory } = await import('../../src/lib/server/story-lifecycle');
 const { purgeAccount } = await import('../../src/lib/server/account-deletion');
 const { purgeUniverseWithin } = await import('../../src/lib/server/universe-lifecycle');
 
@@ -279,7 +279,8 @@ describe('chat history', () => {
 
 	it('goes with the story and with the account', async () => {
 		await say({ storyId }, await newChat({ storyId }), 'hello');
-		await deleteStory(db, storyId, userId);
+		await trashStory(db, userId, storyId);
+		expect(await destroyStory(db, userId, storyId)).toBe(true);
 		expect(
 			await db.select().from(assistantChatMessages).where(eq(assistantChatMessages.userId, userId))
 		).toHaveLength(0);

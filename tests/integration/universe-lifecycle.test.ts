@@ -535,13 +535,15 @@ describe('purging a universe', () => {
 		expect(ahead).toBeGreaterThan(FREED_OBJECT_EXTRA_DAYS - 1);
 	});
 
-	it('keeps an earlier unused mark', async () => {
+	it('starts the 30 days afresh over an earlier unused mark', async () => {
 		const image = await imageHere();
-		const earlier = new Date(Date.now() - 10 * 86_400_000);
-		await db.update(assets).set({ unreferencedSince: earlier }).where(eq(assets.id, image.id));
+		// A stale mark, old enough that keeping it would let the image go at once.
+		await markLongAgo(image.id);
 		await trashUniverse(db, ownerId, universeId);
 		expect(await purgeUniverse(db, universeId)).toBe(true);
-		expect((await imageRow(image.id)).unreferencedSince?.getTime()).toBe(earlier.getTime());
+		const since = (await imageRow(image.id)).unreferencedSince!;
+		expect(Date.now() - since.getTime()).toBeLessThan(60_000);
+		expect(await sweepUnusedAssets(db)).toEqual({ count: 0, bytes: 0 });
 	});
 
 	it('does not free an image newer than the grace period', async () => {

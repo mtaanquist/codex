@@ -499,14 +499,15 @@ them any more. Codex checks once a day. The first time it finds that no scene,
 note, entry, profile, saved draft, published edition or saved version in a
 history shows an image, it notes the date and keeps the image. If the image
 is still unused 30 days later, it is deleted. If you use it again in the
-meantime, the 30 days start over the next time it goes unused. An image is
+meantime, the next daily check sees that and cancels the countdown, so the 30
+days start over if it later goes unused again. An image is
 also always kept for 30 days after you add it, used or not. Taking an image
 out of a scene usually does not free it, because the scene's history still
 holds the older text with the image in it.
 
-Deleting a story for good starts those 30 days, within a few minutes, for the
-images only that story used, including its cover. An image another story still
-shows is kept. Deleting a universe for good starts those 30 days at once for
+After you delete a story for good, the next daily check starts those 30 days
+for the images only that story used, including its cover. An image another
+story still shows is kept. Deleting a universe for good starts those 30 days at once for
 every image in it. The daily check then deletes each one that is still unused
 30 days later and was added more than 30 days ago. An image a story in another
 universe still shows is kept. Moving a story or universe to the trash is not

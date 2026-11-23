@@ -12,7 +12,7 @@ import {
 	users
 } from '../../src/lib/server/db/schema';
 import { reanchorRange } from '../../src/lib/review-anchor';
-import { deleteStory } from '../../src/lib/server/story-delete';
+import { destroyStory, trashStory } from '../../src/lib/server/story-lifecycle';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
@@ -454,7 +454,8 @@ describe('lifecycle', () => {
 			author: { reviewerId: robin.id },
 			body: 'Going with the story.'
 		});
-		expect(await deleteStory(db, storyId, authorId)).toBe(true);
+		await trashStory(db, authorId, storyId);
+		expect(await destroyStory(db, authorId, storyId)).toBe(true);
 		expect(await listReviewInvitations(db, storyId)).toEqual([]);
 		expect(
 			await db.select().from(reviewersTable).where(eq(reviewersTable.invitationId, id))

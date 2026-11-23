@@ -112,6 +112,29 @@ describe('savePlan: largest image', () => {
 		expect((await limits()).max_image_bytes).toBeNull();
 	});
 
+	it('keeps a size set to the byte when the form is saved unchanged', async () => {
+		await db.insert(entitlements).values([
+			{ planId, key: 'max_image_bytes', value: 1000 },
+			{ planId, key: 'storage_bytes', value: 2_500_000 }
+		]);
+		// What the form posts untouched: the rounded MB text and the stored bytes.
+		expect(
+			await savePlan({
+				maxImageMb: '0.1',
+				maxImageBytes: '1000',
+				storageMb: '2.4',
+				storageBytes: '2500000'
+			})
+		).toMatchObject({ saved: true });
+		expect(await limits()).toMatchObject({ max_image_bytes: 1000, storage_bytes: 2_500_000 });
+		// An edited field is saved as typed.
+		await savePlan({ maxImageMb: '0.2', maxImageBytes: '1000', storageBytes: '2500000' });
+		expect(await limits()).toMatchObject({
+			max_image_bytes: Math.round(0.2 * MEGABYTE),
+			storage_bytes: null
+		});
+	});
+
 	it('leaves the other limits as they were saved', async () => {
 		await savePlan({ maxStories: '3', storageMb: '50', maxImageMb: '1' });
 		expect(await limits()).toEqual({

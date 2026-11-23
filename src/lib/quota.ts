@@ -65,6 +65,25 @@ export function megabytesValue(bytes: number | null): string {
 	return String((bytes > 0 ? Math.max(tenths, 1) : 0) / 10);
 }
 
+/**
+ * parseMegabytesInput for a form that also posts the stored size in bytes.
+ * The MB field rounds to 0.1 MB, so when it still shows exactly what
+ * megabytesValue gives for the stored size (not edited), the stored size is
+ * kept as it is rather than rewritten to the rounded one.
+ */
+export function parseMegabytesField(
+	text: string,
+	storedText: string,
+	max: number
+): number | null | undefined {
+	const stored = storedText.trim();
+	if (/^\d+$/.test(stored)) {
+		const bytes = Number(stored);
+		if (bytes <= max * MEGABYTE && megabytesValue(bytes) === text.trim()) return bytes;
+	}
+	return parseMegabytesInput(text, max);
+}
+
 const NOUNS: Record<'max_universes' | 'max_stories', [string, string]> = {
 	max_universes: ['universe', 'universes'],
 	max_stories: ['story', 'stories']
@@ -77,12 +96,12 @@ export function limitPhrase(key: QuotaKey, limit: number): string {
 	return `${formatNumber(limit)} ${limit === 1 ? one : many}`;
 }
 
+/** How a count limit was reached: a create, a restore from the trash, or a
+ * new standalone story bringing the trashed standalone stories back with it. */
+export type QuotaAction = 'create' | 'restore' | 'revive';
+
 /** What a writer sees when a create, restore, or upload would pass a limit. */
-export function quotaMessage(
-	key: QuotaKey,
-	limit: number,
-	action: 'create' | 'restore' = 'create'
-): string {
+export function quotaMessage(key: QuotaKey, limit: number, action: QuotaAction = 'create'): string {
 	const ask = 'ask the admin of this site to raise your limit.';
 	const phrase = limitPhrase(key, limit);
 	if (key === 'max_image_bytes') {
@@ -93,6 +112,9 @@ export function quotaMessage(
 	}
 	if (action === 'restore') {
 		return `Restoring this would take you past your account's limit of ${phrase}. To restore it, ${ask}`;
+	}
+	if (action === 'revive') {
+		return `Your standalone stories are in the trash, and a new standalone story brings them back. Together they would take you past your account's limit of ${phrase}. To add it, ${ask}`;
 	}
 	return `You have reached your account's limit of ${phrase}. To make more, ${ask}`;
 }

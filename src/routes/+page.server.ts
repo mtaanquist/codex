@@ -18,7 +18,6 @@ import {
 	restoreUniverse
 } from '#lib/server/universe-lifecycle';
 import { destroyStory, listTrashedStories, restoreStory } from '#lib/server/story-lifecycle';
-import { queueUnusedAssetSweep } from '#lib/server/jobs';
 import { signupMode } from '#lib/server/settings';
 import { saveLibraryView, userPreferences } from '#lib/server/preferences';
 import { formText } from '#lib/server/validation';
@@ -266,8 +265,6 @@ export const actions: Actions = {
 		if (!isUuid(storyId) || !(await destroyStory(db, locals.user.id, storyId))) {
 			return fail(404, { scope: 'story-trash', message: 'That story is not in the trash.' });
 		}
-		// Marks the images only that story used, in the background.
-		await queueUnusedAssetSweep(locals.user.id);
 		return { scope: 'story-trash', destroyed: true };
 	}
 };
