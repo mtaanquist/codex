@@ -33,7 +33,23 @@ only a public story and an unlisted one keeps its id address
 itself during the build, where `#lib/slug` has no extension to resolve: the
 build failed in CI until it imported `./lib/slug.ts`. The matcher also
 accepts slugs up to 100 characters, since the 0035 backfill could append a
-suffix to a 60-character base. No redirect from the id
+suffix to a 60-character base.
+
+Old slugs redirect (decided by Mads after round 1). A rename used to break a
+shared slug link, and a later story could take the freed slug and inherit
+it. `slug_history` (migration 0107) keeps each slug a rename moves off, per
+account and kind: `saveStoryDetails` and the new `saveUniverseDetails` write
+it in the rename's transaction (`retireSlug`), and `uniqueSlug` counts it as
+taken, except a story's own old slugs, so renaming back works. A restore
+from the trash whose slug became another story's old slug picks a fresh one,
+since coming back under it would re-point that story's links. The public
+loaders redirect with 308 (SvelteKit's permanent redirect) only when the
+target is readable at its slug, which keeps an unlisted story's id out of
+any redirect. Purge keeps the reservation with a null target (safer than
+freeing it: an old link 404s rather than opening another work); the account
+deletion cascade removes the rows. The private app routes do not redirect
+old slugs, to keep this to the public promise. Both public pages now carry
+`rel=canonical`. No redirect from the id
 address to the slug one: the id is the address that survives a rename.
 
 The universe page shows the name and the shelf's own query narrowed to that

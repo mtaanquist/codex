@@ -1,6 +1,14 @@
 import { and, desc, eq, exists, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { assets, publicationAssets, publications, stories, universes, users } from './db/schema.ts';
+import {
+	assets,
+	publicationAssets,
+	publications,
+	slugHistory,
+	stories,
+	universes,
+	users
+} from './db/schema.ts';
 import { gatherStory, type ExportScene } from './export.ts';
 import { getDraft } from './story-drafts.ts';
 import { findAssetReferences } from '#lib/markdown';
@@ -379,6 +387,48 @@ export async function publicUniverseLink(db: Database, handle: string, universeI
 			)
 		);
 	return row ?? null;
+}
+
+// Where an old slug now leads, for the permanent redirect from a public
+// address made before a rename: the story's current slug, but only while the
+// story is readable at that slug (public, live, current edition, no
+// takedown). An unlisted story is never a target, since the redirect would
+// hand out its id. Null otherwise, and the old address 404s as before.
+export async function publicStoryRedirect(
+	db: Database,
+	handle: string,
+	oldSlug: string
+): Promise<string | null> {
+	const [row] = await db
+		.select({ storyId: slugHistory.storyId })
+		.from(slugHistory)
+		.innerJoin(users, eq(slugHistory.ownerId, users.id))
+		.where(
+			and(eq(users.handle, handle), eq(slugHistory.kind, 'story'), eq(slugHistory.slug, oldSlug))
+		);
+	if (!row?.storyId) return null;
+	const edition = await publicEdition(db, handle, row.storyId);
+	if (!edition || edition.visibility !== 'public') return null;
+	return edition.slug;
+}
+
+// The same for a universe's public page: its current slug while that page
+// shows (publicUniverse), else null.
+export async function publicUniverseRedirect(
+	db: Database,
+	handle: string,
+	oldSlug: string
+): Promise<string | null> {
+	const [row] = await db
+		.select({ universeId: slugHistory.universeId })
+		.from(slugHistory)
+		.innerJoin(users, eq(slugHistory.ownerId, users.id))
+		.where(
+			and(eq(users.handle, handle), eq(slugHistory.kind, 'universe'), eq(slugHistory.slug, oldSlug))
+		);
+	if (!row?.universeId) return null;
+	const universe = await publicUniverseLink(db, handle, row.universeId);
+	return universe?.slug ?? null;
 }
 
 // True when an asset belongs to a publicly readable edition, which makes

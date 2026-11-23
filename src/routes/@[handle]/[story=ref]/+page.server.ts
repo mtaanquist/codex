@@ -1,18 +1,33 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import type { PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { publicEdition, publicUniverseLink, type EditionContent } from '#lib/server/publish';
+import {
+	publicEdition,
+	publicStoryRedirect,
+	publicUniverseLink,
+	type EditionContent
+} from '#lib/server/publish';
 import { listEditionArtifacts } from '#lib/server/export-artifacts';
 import { authorName } from '#lib/author-name';
 import { wordCount } from '#lib/word-count';
+import { isUuid } from '#lib/slug';
 
 // The reader view of one frozen edition, at /@handle/<story slug> or, for
 // links made before slugs, /@handle/<story id>. Adult work sits behind a
-// confirmation link; the page then carries noindex either way.
+// confirmation link; the page then carries noindex either way. A slug the
+// story had before a rename redirects permanently to the current one.
 export const load: PageServerLoad = async ({ params, url }) => {
 	const handle = params.handle.toLowerCase();
-	const edition = await publicEdition(db, handle, params.story.toLowerCase());
-	if (!edition) error(404, 'Not found');
+	const ref = params.story.toLowerCase();
+	const edition = await publicEdition(db, handle, ref);
+	if (!edition) {
+		const moved = isUuid(ref) ? null : await publicStoryRedirect(db, handle, ref);
+		if (moved) {
+			redirect(308, resolve('/@[handle]/[story=ref]', { handle, story: moved }) + url.search);
+		}
+		error(404, 'Not found');
+	}
 	// Links built here use the story's own address: the slug when it is
 	// listed, the id when it is unlisted.
 	const story = edition.address;

@@ -1,24 +1,35 @@
-import { and, eq, isNull, like } from 'drizzle-orm';
+import { and, eq, isNull, like, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { isUniqueViolation } from './db-errors.ts';
-import { stories, universes } from './db/schema.ts';
+import { slugHistory, stories, universes } from './db/schema.ts';
 import { isUuid, slugify } from '../slug.ts';
+import type { Tx } from './story-delete.ts';
 
 // Suffix room: a deduped slug must still fit the column conventions.
 const BASE_MAX = 55;
 
+type Table = 'universes' | 'stories';
+
+const historyKind = (table: Table) => (table === 'universes' ? 'universe' : 'story');
+const historyTarget = (table: Table) =>
+	table === 'universes' ? slugHistory.universeId : slugHistory.storyId;
+
 /**
  * A slug for a new universe or story, unique within the owner's account:
  * the slugified name, with -2, -3, ... appended when taken. Only live rows
- * hold a slug; one in the trash has freed it. The unique index is the real
- * guard; this just picks a free name.
+ * hold a slug; one in the trash has freed it. A slug that another story (or
+ * universe) moved off by a rename stays reserved in slug_history, so an old
+ * public link never opens a different work; selfId lets a rename take back
+ * its own old slug. The unique index is the real guard against live clashes;
+ * this just picks a free name.
  */
 export async function uniqueSlug(
-	db: Database,
-	table: 'universes' | 'stories',
+	db: Database | Tx,
+	table: Table,
 	ownerId: string,
 	name: string,
-	fallback: string
+	fallback: string,
+	selfId?: string
 ): Promise<string> {
 	const base = slugify(name, fallback).slice(0, BASE_MAX).replace(/-+$/, '') || fallback;
 	const target = table === 'universes' ? universes : stories;
@@ -26,9 +37,21 @@ export async function uniqueSlug(
 		.select({ slug: target.slug })
 		.from(target)
 		.where(
-			and(eq(target.ownerId, ownerId), like(target.slug, `${base}%`), isNull(target.deletedAt))
+			and(
+				eq(target.ownerId, ownerId),
+				like(target.slug, `${base}%`),
+				isNull(target.deletedAt),
+				selfId ? ne(target.id, selfId) : undefined
+			)
 		);
-	const taken = new Set(rows.map((row) => row.slug));
+	const reserved = await reservedSlugs(
+		db,
+		table,
+		ownerId,
+		like(slugHistory.slug, `${base}%`),
+		selfId
+	);
+	const taken = new Set([...rows.map((row) => row.slug), ...reserved]);
 	// A uuid-shaped base would be looked up as an id and never resolve, so it
 	// always takes a suffix.
 	if (!taken.has(base) && !isUuid(base)) return base;
@@ -37,23 +60,86 @@ export async function uniqueSlug(
 	return `${base}-${n}`;
 }
 
+// The owner's reserved old slugs matching the condition, purged targets
+// included, leaving out selfId's own.
+async function reservedSlugs(
+	db: Database | Tx,
+	table: Table,
+	ownerId: string,
+	match: SQL,
+	selfId?: string
+): Promise<string[]> {
+	const target = historyTarget(table);
+	const rows = await db
+		.select({ slug: slugHistory.slug })
+		.from(slugHistory)
+		.where(
+			and(
+				eq(slugHistory.ownerId, ownerId),
+				eq(slugHistory.kind, historyKind(table)),
+				match,
+				selfId ? or(isNull(target), sql`${target} <> ${selfId}`) : undefined
+			)
+		);
+	return rows.map((row) => row.slug);
+}
+
+/**
+ * Records a rename's slug change, inside the caller's transaction: the old
+ * slug becomes reserved for this story (or universe) and redirects to it,
+ * and a slug it takes back stops being history.
+ */
+export async function retireSlug(
+	tx: Database | Tx,
+	table: Table,
+	ownerId: string,
+	id: string,
+	oldSlug: string,
+	newSlug: string
+): Promise<void> {
+	if (oldSlug === newSlug) return;
+	const kind = historyKind(table);
+	await tx
+		.delete(slugHistory)
+		.where(
+			and(
+				eq(slugHistory.ownerId, ownerId),
+				eq(slugHistory.kind, kind),
+				eq(slugHistory.slug, newSlug),
+				eq(historyTarget(table), id)
+			)
+		);
+	await tx
+		.insert(slugHistory)
+		.values({
+			ownerId,
+			kind,
+			slug: oldSlug,
+			...(table === 'universes' ? { universeId: id } : { storyId: id })
+		})
+		.onConflictDoNothing();
+}
+
 /**
  * Takes a universe or story out of the trash. A live row may have claimed its
  * slug meanwhile; it then comes back under a fresh one picked from its name,
- * the same as a rename. Retries once if a concurrent write takes that pick.
+ * the same as a rename. It does the same when its slug became another one's
+ * reserved old slug while it sat in the trash (taken, then renamed away), so
+ * that one's old links keep their target. Retries once if a concurrent write
+ * takes that pick.
  *
  * Nothing is done here for the Assistant: what it wrote from the scenes as
  * they were without this story reads as out of date by its fingerprint.
  */
-export async function untrash(db: Database, table: 'universes' | 'stories', id: string) {
+export async function untrash(db: Database, table: Table, id: string) {
 	const [row] =
 		table === 'universes'
 			? await db
-					.select({ ownerId: universes.ownerId, name: universes.name })
+					.select({ ownerId: universes.ownerId, name: universes.name, slug: universes.slug })
 					.from(universes)
 					.where(eq(universes.id, id))
 			: await db
-					.select({ ownerId: stories.ownerId, name: stories.title })
+					.select({ ownerId: stories.ownerId, name: stories.title, slug: stories.slug })
 					.from(stories)
 					.where(eq(stories.id, id));
 	if (!row) return;
@@ -64,8 +150,9 @@ export async function untrash(db: Database, table: 'universes' | 'stories', id: 
 			: db.update(stories).set(values).where(eq(stories.id, id));
 	};
 	const fallback = table === 'universes' ? 'universe' : 'story';
-	const fresh = () => uniqueSlug(db, table, row.ownerId, row.name, fallback);
-	const attempts = [undefined, fresh, fresh];
+	const fresh = () => uniqueSlug(db, table, row.ownerId, row.name, fallback, id);
+	const reserved = await reservedSlugs(db, table, row.ownerId, eq(slugHistory.slug, row.slug), id);
+	const attempts = reserved.length > 0 ? [fresh, fresh] : [undefined, fresh, fresh];
 	for (const [i, pick] of attempts.entries()) {
 		try {
 			const slug = pick && (await pick());

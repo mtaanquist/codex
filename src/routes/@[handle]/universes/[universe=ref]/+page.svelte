@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
@@ -10,12 +11,18 @@
 	let { data }: { data: PageData } = $props();
 
 	const shelfHref = $derived(resolve('/@[handle]', { handle: data.handle }));
+	// One address for search engines whether the reader came by id or by slug.
+	const canonical = $derived(
+		page.url.origin +
+			resolve('/@[handle]/universes/[universe=ref]', { handle: data.handle, universe: data.slug })
+	);
 	// Same rule as the shelf: any adult book on the page de-indexes it.
 	const hasAdult = $derived(data.shelf.some((book) => book.isAdult));
 </script>
 
 <svelte:head>
 	<title>{data.name} - by {data.author}</title>
+	<link rel="canonical" href={canonical} />
 	{#if hasAdult}
 		<meta name="robots" content="noindex" />
 	{/if}

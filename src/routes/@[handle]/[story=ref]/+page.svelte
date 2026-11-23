@@ -12,6 +12,10 @@
 	let { data }: { data: PageData } = $props();
 
 	const shelfHref = $derived(resolve('/@[handle]', { handle: data.handle }));
+	// One address for search engines whether the reader came by id or by slug.
+	const canonical = $derived(
+		page.url.origin + resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story })
+	);
 
 	// Every chapter of the edition in one list, unfiled scenes last, so the
 	// contents and the prose below it are built from the same thing.
@@ -39,6 +43,7 @@
 
 <svelte:head>
 	<title>{data.title} - by {data.author}</title>
+	<link rel="canonical" href={canonical} />
 	{#if data.gate || data.isAdult}
 		<meta name="robots" content="noindex" />
 	{/if}
