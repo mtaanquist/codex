@@ -7,6 +7,7 @@ import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import {
 	assets,
+	characters,
 	entitlements,
 	plans,
 	scenes,
@@ -18,6 +19,7 @@ import {
 	createAsset,
 	deleteAsset,
 	ObjectNotFoundError,
+	setUserAvatar,
 	type AssetConfig,
 	type AssetObjectStore
 } from '../../src/lib/server/assets';
@@ -41,6 +43,7 @@ import {
 	standaloneUniverse
 } from '../../src/lib/server/story-create';
 import { restoreStory, trashStory } from '../../src/lib/server/story-lifecycle';
+import { setEntityBadgeImage } from '../../src/lib/server/entity-badge';
 import {
 	purgeUniverse,
 	restoreUniverse,
@@ -420,6 +423,31 @@ describe('storage', () => {
 		expect(swap.ok).toBe(true);
 		await deleteAsset(db, ownerId, first.id);
 		expect(await used()).toBe(400);
+	});
+
+	it('credits the old avatar or badge when one replaces it at the limit', async () => {
+		await limitOwner({ storage_bytes: 500 });
+		const { store } = memoryStore();
+		const image = { filename: 'a.png', contentType: 'image/png', bytes: png(400) };
+		expect((await setUserAvatar(db, store, config, ownerId, image)).ok).toBe(true);
+		expect((await setUserAvatar(db, store, config, ownerId, image)).ok).toBe(true);
+		expect(await used()).toBe(400);
+
+		await limitOwner({ storage_bytes: 900 });
+		const world = await universe();
+		const [character] = await db
+			.insert(characters)
+			.values({ universeId: world.id, ownerId, name: 'Aldric' })
+			.returning({ id: characters.id });
+		expect((await setEntityBadgeImage(db, store, config, ownerId, character.id, image)).ok).toBe(
+			true
+		);
+		expect(await used()).toBe(800);
+		expect((await setEntityBadgeImage(db, store, config, ownerId, character.id, image)).ok).toBe(
+			true
+		);
+		expect(await used()).toBe(800);
+		expect(await db.select().from(assets)).toHaveLength(2);
 	});
 
 	it('checks an upload against the plan as it is when the file lands', async () => {

@@ -8,9 +8,11 @@ import {
 	assistantDrafts,
 	chapters,
 	characters,
+	entitlements,
 	entityCategories,
 	loreEntries,
 	places,
+	plans,
 	revisions,
 	scenes,
 	stories,
@@ -52,7 +54,12 @@ import {
 import { recordRevision, restoreRevision } from '../../src/lib/server/revisions';
 import { createSuggestion, decideSuggestion } from '../../src/lib/server/review';
 import { newStoryFromDraft, restoreDraftScene, saveDraft } from '../../src/lib/server/story-drafts';
-import { purgeUniverse } from '../../src/lib/server/universe-lifecycle';
+import {
+	purgeUniverse,
+	restoreUniverse,
+	trashUniverse
+} from '../../src/lib/server/universe-lifecycle';
+import { createStoryInUniverse, standaloneUniverse } from '../../src/lib/server/story-create';
 import type { Database } from '../../src/lib/server/auth';
 import { lockStoryScenes } from '../../src/lib/server/row-locks';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
@@ -140,7 +147,7 @@ const ROWS: { table: string; key: Key }[] = [
 ];
 
 // The advisory locks the write paths take (row-locks.ts, revisions.ts,
-// review.ts, story-drafts.ts, slugs.ts).
+// review.ts, story-drafts.ts, slugs.ts, quotas.ts).
 const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the story-scenes lock', advisory: () => `story-scenes:${S.story}` },
 	...(['A', 'B', 'C', 'D', 'T'] as const).map((key) => ({
@@ -151,7 +158,8 @@ const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the revision lock of place Quay', advisory: () => `place:${S.quay}` },
 	{ name: 'the revision lock of lore entry Toll', advisory: () => `lore_entry:${S.toll}` },
 	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` },
-	{ name: 'the slug lock of the account', advisory: () => `slugs:${S.user}` }
+	{ name: 'the slug lock of the account', advisory: () => `slugs:${S.user}` },
+	{ name: 'the quota lock of the account', advisory: () => `quota:${S.user}` }
 ];
 
 const TARGETS: Target[] = [...ROWS.map((row) => ({ ...row, name: NAMES[row.key] })), ...ADVISORY];
@@ -160,6 +168,7 @@ let pool: pg.Pool;
 let opPool: pg.Pool;
 let db: Database;
 let opDb: Database;
+let limitedPlanId: string;
 
 beforeAll(async () => {
 	await ensureTestDatabase();
@@ -175,6 +184,20 @@ beforeAll(async () => {
 	await pool.query(
 		'truncate table entity_mentions, scene_markers, revisions, scenes, chapters, characters, stories, universes, users cascade'
 	);
+	// A plan with limits, so the creates and restores take the quota lock.
+	const [plan] = await db
+		.insert(plans)
+		.values({ key: 'lock-order-limits', name: 'Lock order limits' })
+		.onConflictDoUpdate({ target: plans.key, set: { name: 'Lock order limits' } })
+		.returning({ id: plans.id });
+	limitedPlanId = plan.id;
+	await db
+		.insert(entitlements)
+		.values([
+			{ planId: plan.id, key: 'max_universes', value: 100 },
+			{ planId: plan.id, key: 'max_stories', value: 100 }
+		])
+		.onConflictDoNothing();
 });
 
 afterAll(async () => {
@@ -192,7 +215,8 @@ async function seed() {
 		email: `locks${scenario}@example.com`,
 		displayName: 'L',
 		passwordHash: 'x',
-		role: 'user'
+		role: 'user',
+		planId: limitedPlanId
 	});
 	await db.insert(universes).values({ id: S.universe, ownerId: S.user, name: 'Lockland' });
 	await db
@@ -516,6 +540,28 @@ const OPS: Op[] = [
 		}
 	},
 	{ name: 'purge universe', run: async (db) => await purgeUniverse(db, S.universe) },
+	{
+		name: 'restore universe',
+		prepare: async () => {
+			await trashUniverse(db, S.user, S.universe);
+		},
+		run: async (db) => ok(await restoreUniverse(db, S.user, S.universe))
+	},
+	{
+		// The seeded universe stands in for a trashed standalone-stories
+		// universe, which a new standalone story brings back.
+		name: 'new standalone story',
+		prepare: async () => {
+			await db
+				.update(universes)
+				.set({ standalone: true, deletedAt: new Date() })
+				.where(eq(universes.id, S.universe));
+		},
+		run: async (db) => {
+			const universe = await standaloneUniverse(db, S.user);
+			return ok(await createStoryInUniverse(db, S.user, universe.id, 'Loose'));
+		}
+	},
 	{
 		name: 'save place with a first story note',
 		run: async (db) =>

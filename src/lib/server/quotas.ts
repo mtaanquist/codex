@@ -68,8 +68,9 @@ export async function countLive(
  * pass the account's limits. Call it inside the create's transaction, before
  * the insert: it takes a per-account lock (only when a limit applies) that
  * holds until the transaction ends, so two creates at once cannot both pass on
- * the same count. Outside a transaction it is a plain check, for refusing early
- * before slow work.
+ * the same count. Take it after any row lock the transaction needs (see
+ * holdStoryQuota). Outside a transaction it is a plain check, for refusing
+ * early before slow work.
  */
 export async function holdCountQuota(
 	tx: Database,
@@ -92,6 +93,22 @@ export async function holdCountQuota(
 	if (storyLimit !== null && live.stories + addStories > storyLimit) {
 		throw new QuotaExceededError(quotaMessage('max_stories', storyLimit, action));
 	}
+}
+
+/**
+ * holdCountQuota for one new story in the universe. Lock order is the row,
+ * then the quota lock, then the slug lock (restoreUniverse locks the universe
+ * row before the quota). The story insert's foreign-key check would take the
+ * universe row after the quota lock, so this takes it first, in key share mode
+ * so that creates do not wait on each other.
+ */
+export async function holdStoryQuota(
+	tx: Database,
+	userId: string,
+	universeId: string
+): Promise<void> {
+	await tx.execute(sql`select id from universes where id = ${universeId} for key share`);
+	await holdCountQuota(tx, userId, { stories: 1 });
 }
 
 /** The message of a QuotaExceededError, or undefined for anything else. */

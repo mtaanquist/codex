@@ -124,8 +124,9 @@
 				Accounts <span class="n">{data.usage.length}</span>
 			</h2>
 			<p class="admin-block-sub">
-				What each account uses against its plan. Universes and stories in the trash do not count;
-				their images count until the trash is emptied. Set limits under Plans.
+				What each account uses against its plan. Universes and stories in the trash do not count.
+				Images count until they are deleted: a universe's images when the universe is deleted for
+				good, but not those of a single story deleted for good. Set limits under Plans.
 			</p>
 		</div>
 	</div>

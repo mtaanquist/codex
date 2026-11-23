@@ -90,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	if (legacy && isSectionSlug(legacy)) redirect(308, `/admin/${legacy}`);
 	// The overview rests on /admin itself; anything else must be a known slug.
 	if (params.section !== undefined && !isSectionSlug(params.section)) error(404, 'Not found');
+	const section = params.section ?? 'overview';
 	return {
 		meId: locals.user!.id,
 		meEmail: locals.user!.email,
@@ -104,8 +105,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		assetStorage: await assetStorageView(db),
 		assetMigrationPending: (await assetMigrationSource(db)) !== null,
 		assetMigration: await assetMigrationResult(db),
-		plans: await listPlans(db),
-		usage: await listAccountUsage(db),
+		// Only the sections that show them pay for these.
+		plans: section === 'plans' || section === 'usage' ? await listPlans(db) : [],
+		usage: section === 'usage' ? await listAccountUsage(db) : [],
 		smtp: await smtpView(db),
 		egress: await egressPolicy(db),
 		externalAccess: await mcpInstanceEnabled(db),

@@ -1,9 +1,9 @@
-import { and, count, eq, isNull } from 'drizzle-orm';
+import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import { isUniqueViolation } from './db-errors.ts';
 import { entityCategories, stories, universes } from './db/schema';
 import { uniqueSlug, untrash } from './slugs';
-import { holdCountQuota } from './quotas.ts';
+import { holdCountQuota, holdStoryQuota } from './quotas.ts';
 
 // Creates a story with a readable slug, shared by the library's new-story
 // card and the universe plan board. Retries once when a concurrent create
@@ -17,7 +17,7 @@ export async function createStoryInUniverse(
 ) {
 	const create = (slug: string) =>
 		db.transaction(async (tx) => {
-			await holdCountQuota(tx, ownerId, { stories: 1 });
+			await holdStoryQuota(tx, ownerId, universeId);
 			const [story] = await tx
 				.insert(stories)
 				.values({ universeId, ownerId, title, slug })
@@ -107,6 +107,8 @@ export async function standaloneUniverse(db: Database, ownerId: string) {
 async function reviveIfTrashed(db: Database, universe: typeof universes.$inferSelect) {
 	if (!universe.deletedAt) return universe;
 	await db.transaction(async (tx) => {
+		// The row before the quota lock, as restoreUniverse takes them.
+		await tx.execute(sql`select id from universes where id = ${universe.id} for update`);
 		const [inside] = await tx
 			.select({ n: count() })
 			.from(stories)

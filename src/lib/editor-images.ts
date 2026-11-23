@@ -1,6 +1,7 @@
 import { EditorView } from '@codemirror/view';
 import { EditorState, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { landsWhilePaused } from './editor-paused';
+import { apiErrorMessage } from './format';
 
 // Paste or drop an image into the prose: it uploads and lands as a
 // markdown image pointing at the app-served path. Markdown is the stored
@@ -70,7 +71,34 @@ export function hasPendingUploads(state: EditorState): boolean {
 	return (state.field(pendingField, false) ?? []).length > 0;
 }
 
-export function imageUploadExtension(universeId: string): Extension {
+const UPLOAD_FAILED = 'The image could not be uploaded. Try again.';
+
+// Uploads one image into the universe: its app-served path, or the message to
+// show the writer when the server refuses it (over the storage limit, say).
+export async function uploadImage(
+	file: File,
+	universeId: string,
+	fetcher: typeof fetch = fetch
+): Promise<{ ok: true; path: string } | { ok: false; message: string }> {
+	try {
+		const form = new FormData();
+		form.set('file', file);
+		form.set('kind', 'inline');
+		form.set('universeId', universeId);
+		const response = await fetcher('/api/assets', { method: 'POST', body: form });
+		if (!response.ok) return { ok: false, message: await apiErrorMessage(response, UPLOAD_FAILED) };
+		const { path } = (await response.json()) as { path: string };
+		return { ok: true, path };
+	} catch {
+		return { ok: false, message: UPLOAD_FAILED };
+	}
+}
+
+// onError gets the message when an upload fails; its placeholder is removed.
+export function imageUploadExtension(
+	universeId: string,
+	onError?: (message: string) => void
+): Extension {
 	// Replace a placeholder's current (mapped) range; a null replacement just
 	// removes it, the failed-upload case.
 	function clear(view: EditorView, id: number, replacement: string | null) {
@@ -91,20 +119,12 @@ export function imageUploadExtension(universeId: string): Extension {
 	}
 
 	async function resolve(view: EditorView, file: File, id: number) {
-		try {
-			const form = new FormData();
-			form.set('file', file);
-			form.set('kind', 'inline');
-			form.set('universeId', universeId);
-			const response = await fetch('/api/assets', { method: 'POST', body: form });
-			if (!response.ok) {
-				clear(view, id, null);
-				return;
-			}
-			const { path } = (await response.json()) as { path: string };
-			clear(view, id, `![${file.name}](${path})\n`);
-		} catch {
+		const result = await uploadImage(file, universeId);
+		if (result.ok) {
+			clear(view, id, `![${file.name}](${result.path})\n`);
+		} else {
 			clear(view, id, null);
+			if (view.dom.isConnected) onError?.(result.message);
 		}
 	}
 

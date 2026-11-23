@@ -94,9 +94,9 @@ async function lockSlugs(tx: Tx, ownerId: string) {
 
 // Whether a slug a row moves off is worth reserving. A story's is, once the
 // story has been published: before that no public link can name it, and
-// reserving it would only push suffixes onto later drafts. A purged story
-// takes its history with it, so the question never outlives it. A universe's
-// always is: its stories' editions can be purged while the universe lives on,
+// reserving it would only push suffixes onto later drafts. Purging the story
+// keeps the reservation (its story_id goes null), so its old address stays
+// out of reach of the account's other stories. A universe's always is: its stories' editions can be purged while the universe lives on,
 // and that must not free an address readers may have shared.
 async function reserveOnRename(tx: Tx, table: Table, id: string): Promise<boolean> {
 	if (table === 'universes') return true;

@@ -125,14 +125,16 @@ export async function purgeAccount(
 		// blocks on the lock until the purge commits (by then the account is
 		// already gone, and its clearing update matches nothing). Admin deletion
 		// is immediate and not scheduled, so it skips this check.
-		if (options.requireSchedule) {
-			const [stillDue] = await tx
-				.select({ id: users.id })
-				.from(users)
-				.where(and(eq(users.id, userId), isNotNull(users.deletionScheduledAt)))
-				.for('update');
-			if (!stillDue) return false;
-		}
+		// The lock comes first either way: every storage path locks the account
+		// row before asset rows (see lockStorageOwners), and the purge deletes
+		// both.
+		const [account] = await tx
+			.select({ scheduledAt: users.deletionScheduledAt })
+			.from(users)
+			.where(eq(users.id, userId))
+			.for('update');
+		if (!account) return false;
+		if (options.requireSchedule && !account.scheduledAt) return false;
 
 		// Each universe purges through the shared cascade (stories first, then
 		// entities, history, categories, relation types, and assets).
