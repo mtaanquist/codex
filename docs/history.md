@@ -13,6 +13,19 @@ version, date, branch or PR where it had one.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Undo brings back a marker whose words were deleted (2026-11-23,
+`fix/marker-undo-reattach` on `staging/bug-fixes-2`, #1429). Since #1415 a
+Write save detaches a marker whose words the writer deleted, and undo did not
+bring it back: CodeMirror drops an emptied mark decoration and the marker
+field is not part of the undo history. The editor now registers the marker
+field with `invertedEffects`, so an edit that drops a marker stores its old
+range in the undo step; undoing it adds the highlight back on the restored
+words and the next autosave sends the anchor again. Chosen over having the
+server re-place a detached marker when "its words reappear": the server keeps
+no copy of a marker's words, and matching text would risk landing on another
+copy of the same phrase. The editor's own history maps the range exactly.
+Not covered: an undo after a reload, which has no history to undo from.
+
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write
 autosave sends anchors only for the markers its editor highlights, and the

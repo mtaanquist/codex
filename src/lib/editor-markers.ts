@@ -1,4 +1,5 @@
-import { StateField, Prec, type Extension } from '@codemirror/state';
+import { StateEffect, StateField, Prec, type Extension } from '@codemirror/state';
+import { invertedEffects } from '@codemirror/commands';
 import { Decoration, EditorView, keymap, ViewPlugin, type DecorationSet } from '@codemirror/view';
 import type { ViewUpdate } from '@codemirror/view';
 import { findTodoLines } from './todo-markers';
@@ -14,8 +15,25 @@ export type SceneMarker = {
 	anchorEnd: number | null;
 };
 
+type MarkerRange = { id: string; from: number; to: number };
+
+// Puts back a marker whose words an undone edit had deleted. Carried in the
+// undo history, so it maps through later changes like the text does.
+const restoreMarker = StateEffect.define<MarkerRange>({
+	map: (value, mapping) => {
+		const from = mapping.mapPos(value.from, 1);
+		const to = mapping.mapPos(value.to, -1);
+		return from < to ? { id: value.id, from, to } : undefined;
+	}
+});
+
+function markerMark(id: string, from: number, to: number) {
+	return Decoration.mark({ class: 'todo-marker', todoId: id }).range(from, to);
+}
+
 function markerField(markers: SceneMarker[]) {
-	return StateField.define<DecorationSet>({
+	const held = new Set(markers.map((marker) => marker.id));
+	const field = StateField.define<DecorationSet>({
 		create(state) {
 			const length = state.doc.length;
 			const ranges = markers
@@ -27,18 +45,48 @@ function markerField(markers: SceneMarker[]) {
 						marker.anchorStart < length
 				)
 				.map((marker) =>
-					Decoration.mark({ class: 'todo-marker', todoId: marker.id }).range(
-						marker.anchorStart!,
-						Math.min(marker.anchorEnd!, length)
-					)
+					markerMark(marker.id, marker.anchorStart!, Math.min(marker.anchorEnd!, length))
 				);
 			return Decoration.set(ranges, true);
 		},
 		update(value, tr) {
-			return value.map(tr.changes);
+			value = value.map(tr.changes);
+			for (const effect of tr.effects) {
+				if (!effect.is(restoreMarker)) continue;
+				const { id, from, to } = effect.value;
+				// Only a marker this editor still holds, and never twice.
+				if (!held.has(id) || to > tr.newDoc.length || idsIn(value).has(id)) continue;
+				value = value.update({ add: [markerMark(id, from, to)] });
+			}
+			return value;
 		},
 		provide: (field) => EditorView.decorations.from(field)
 	});
+	// An edit that deletes a marker's words drops its highlight, so the next
+	// autosave detaches it. Undoing the edit puts the marker back on the
+	// restored words, and the autosave after that sends its anchor again.
+	const undoable = invertedEffects.of((tr) => {
+		if (tr.changes.empty) return [];
+		const before = tr.startState.field(field, false);
+		if (!before) return [];
+		const kept = idsIn(before.map(tr.changes));
+		const effects: StateEffect<MarkerRange>[] = [];
+		const cursor = before.iter();
+		for (; cursor.value; cursor.next()) {
+			const id = cursor.value.spec.todoId as string;
+			if (!kept.has(id)) effects.push(restoreMarker.of({ id, from: cursor.from, to: cursor.to }));
+		}
+		return effects;
+	});
+	return { field, extension: [field, undoable] };
+}
+
+function idsIn(set: DecorationSet) {
+	const ids = new Set<string>();
+	for (const cursor = set.iter(); cursor.value; cursor.next()) {
+		ids.add(cursor.value.spec.todoId as string);
+	}
+	return ids;
 }
 
 const todoLine = Decoration.line({ class: 'todo-line' });
@@ -80,7 +128,7 @@ export function markerExtensions(
 	markers: SceneMarker[],
 	onMark: (from: number, to: number) => void
 ): MarkerHandle {
-	const field = markerField(markers);
+	const { field, extension } = markerField(markers);
 
 	const markKeymap = keymap.of([
 		{
@@ -95,7 +143,7 @@ export function markerExtensions(
 	]);
 
 	return {
-		extension: [field, todoLinePlugin, Prec.high(markKeymap)],
+		extension: [extension, todoLinePlugin, Prec.high(markKeymap)],
 		anchors: (view) => {
 			const anchors: { id: string; anchorStart: number; anchorEnd: number }[] = [];
 			const set = view.state.field(field, false);
