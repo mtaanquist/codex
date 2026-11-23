@@ -30,6 +30,7 @@
 	import EditorToolbar from './EditorToolbar.svelte';
 	import CoauthorPanel from './CoauthorPanel.svelte';
 	import SceneConflictBanner from './SceneConflictBanner.svelte';
+	import ImageUploadNotice from './ImageUploadNotice.svelte';
 	import SelectionMenu from './SelectionMenu.svelte';
 	import type { ViewItem } from './ViewMenu.svelte';
 
@@ -178,6 +179,8 @@
 	let titleValue = $state(title ?? '');
 	// Set when a save was refused because the scene changed elsewhere.
 	let conflict = $state<SceneConflict | null>(null);
+	// Why the last pasted or dropped image was not added, until dismissed.
+	let uploadError = $state<string | null>(null);
 	let tornDown = false;
 	// svelte-ignore state_referenced_locally
 	const saver = createSceneSaver(sceneId, body, (next) => (conflict = next));
@@ -538,7 +541,9 @@
 								if (update.focusChanged && update.view.hasFocus) onFocus();
 							})
 						: [],
-					imageUniverseId ? imageUploadExtension(imageUniverseId) : []
+					imageUniverseId
+						? imageUploadExtension(imageUniverseId, (message) => (uploadError = message))
+						: []
 				]
 			})
 		});
@@ -567,6 +572,9 @@
 	>
 		{#if conflict}
 			<SceneConflictBanner onLoadNewer={loadNewer} onKeepMine={keepMine} paused={leaving} />
+		{/if}
+		{#if uploadError}
+			<ImageUploadNotice message={uploadError} onDismiss={() => (uploadError = null)} />
 		{/if}
 		<div class="editor-cm" bind:this={editorEl}></div>
 	</div>
@@ -605,6 +613,9 @@
 			<div class="editor" class:is-leaving={leaving} style={editorStyle}>
 				{#if conflict}
 					<SceneConflictBanner onLoadNewer={loadNewer} onKeepMine={keepMine} paused={leaving} />
+				{/if}
+				{#if uploadError}
+					<ImageUploadNotice message={uploadError} onDismiss={() => (uploadError = null)} />
 				{/if}
 				<input
 					class="editor-title-input"

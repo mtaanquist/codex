@@ -21,7 +21,7 @@ import { effectiveAssetConfig, createAsset, deleteAsset, s3AssetStore } from './
 import { createStoryEntity } from './create-entity';
 import { queueUniverseMentions } from './jobs';
 import { IMAGE_EXTENSIONS } from './media-types';
-import { holdCountQuota, quotaFailure } from './quotas';
+import { holdCountQuota, holdStoryQuota, quotaFailure } from './quotas';
 
 // Turns a parsed story zip into a new story in the chosen universe. The
 // preview names every collision and how it will resolve; the commit follows
@@ -148,43 +148,10 @@ export async function runImport(
 	await holdCountQuota(db, universe.ownerId, { stories: 1 });
 
 	// Assets first, outside the transaction: object storage is not
-	// transactional anyway, and a failed import at worst leaves unreferenced
-	// uploads. Each bundled file becomes a new asset; links rewrite to it.
+	// transactional anyway. Each bundled file becomes a new asset; links
+	// rewrite to it.
 	const assetLinks = new Map<string, string>();
 	const storedAssets: string[] = [];
-	const config = await effectiveAssetConfig(db);
-	if (config && plan.assets.length > 0) {
-		const store = s3AssetStore(config);
-		const typeOf = new Map(Object.entries(IMAGE_EXTENSIONS).map(([type, ext]) => [ext, type]));
-		for (const asset of plan.assets) {
-			const extension = asset.path.slice(asset.path.lastIndexOf('.') + 1).toLowerCase();
-			const created = await createAsset(db, store, config, universe.ownerId, {
-				universeId: universe.id,
-				kind: 'inline',
-				filename: asset.path,
-				contentType: typeOf.get(extension) ?? 'application/octet-stream',
-				bytes: Buffer.from(asset.bytes)
-			});
-			if (created.ok) {
-				assetLinks.set(asset.id, `/assets/${created.id}`);
-				storedAssets.push(created.id);
-			} else {
-				problems.push(`The image ${asset.path} could not be stored: ${created.reason}`);
-			}
-		}
-	} else if (plan.assets.length > 0) {
-		problems.push('Image storage is not configured; bundled images were not imported.');
-	}
-	const rewrite = (body: string) =>
-		rewriteBundledAssetLinks(body, (id) => assetLinks.get(id) ?? null);
-
-	const resolutions = await resolveNotes(db, universe.id, plan.notes);
-
-	// The slug is picked up front; the story row itself is inserted inside the
-	// transaction below, so a failure partway through the import rolls the empty
-	// story away rather than leaving a visible shell.
-	const slug = await uniqueSlug(db, 'stories', universe.ownerId, plan.story.title, 'story');
-
 	let sceneCount = 0;
 	let notesAttached = 0;
 	let entitiesCreated = 0;
@@ -192,9 +159,46 @@ export async function runImport(
 	let freeformNotesCreated = 0;
 	let waitingDraftsCreated = 0;
 
-	const story = await db
-		.transaction(async (tx) => {
-			await holdCountQuota(tx, universe.ownerId, { stories: 1 });
+	let story: { id: string; slug: string };
+	// From the first stored image on, a failure deletes the images stored so
+	// far: nothing refers to them, and they would count against the storage
+	// limit for good.
+	try {
+		const config = await effectiveAssetConfig(db);
+		if (config && plan.assets.length > 0) {
+			const store = s3AssetStore(config);
+			const typeOf = new Map(Object.entries(IMAGE_EXTENSIONS).map(([type, ext]) => [ext, type]));
+			for (const asset of plan.assets) {
+				const extension = asset.path.slice(asset.path.lastIndexOf('.') + 1).toLowerCase();
+				const created = await createAsset(db, store, config, universe.ownerId, {
+					universeId: universe.id,
+					kind: 'inline',
+					filename: asset.path,
+					contentType: typeOf.get(extension) ?? 'application/octet-stream',
+					bytes: Buffer.from(asset.bytes)
+				});
+				if (created.ok) {
+					assetLinks.set(asset.id, `/assets/${created.id}`);
+					storedAssets.push(created.id);
+				} else {
+					problems.push(`The image ${asset.path} could not be stored: ${created.reason}`);
+				}
+			}
+		} else if (plan.assets.length > 0) {
+			problems.push('Image storage is not configured; bundled images were not imported.');
+		}
+		const rewrite = (body: string) =>
+			rewriteBundledAssetLinks(body, (id) => assetLinks.get(id) ?? null);
+
+		const resolutions = await resolveNotes(db, universe.id, plan.notes);
+
+		// The slug is picked up front; the story row itself is inserted inside the
+		// transaction below, so a failure partway through the import rolls the empty
+		// story away rather than leaving a visible shell.
+		const slug = await uniqueSlug(db, 'stories', universe.ownerId, plan.story.title, 'story');
+
+		story = await db.transaction(async (tx) => {
+			await holdStoryQuota(tx, universe.ownerId, universe.id);
 			const [created] = await tx
 				.insert(stories)
 				.values({
@@ -345,15 +349,13 @@ export async function runImport(
 				waitingDraftsCreated += 1;
 			}
 			return story;
-		})
-		.catch(async (err) => {
-			// Nothing refers to the images of a story that did not land, and
-			// they would count against the storage limit for good.
-			for (const id of storedAssets) {
-				await deleteAsset(db, universe.ownerId, id).catch(() => {});
-			}
-			throw err;
 		});
+	} catch (err) {
+		for (const id of storedAssets) {
+			await deleteAsset(db, universe.ownerId, id).catch(() => {});
+		}
+		throw err;
+	}
 
 	// One universe-wide rebuild covers every imported scene.
 	await queueUniverseMentions(universe.id);

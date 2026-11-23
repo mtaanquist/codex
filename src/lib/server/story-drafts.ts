@@ -27,7 +27,7 @@ import { uniqueSlug } from './slugs.ts';
 import { isSerializationFailure, isUniqueViolation } from './db-errors.ts';
 import { copiedSummaryStamp, summaryIsCurrent } from './summary-currency.ts';
 import { deleteAsset } from './assets.ts';
-import { holdCountQuota, quotaFailure } from './quotas.ts';
+import { holdStoryQuota, quotaFailure } from './quotas.ts';
 import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
 import {
@@ -666,7 +666,7 @@ export async function newStoryFromDraft(
 
 	async function copy(slug: string) {
 		return await db.transaction(async (tx) => {
-			await holdCountQuota(tx, userId, { stories: 1 });
+			await holdStoryQuota(tx, userId, story.universeId);
 			const [created] = await tx
 				.insert(stories)
 				.values({

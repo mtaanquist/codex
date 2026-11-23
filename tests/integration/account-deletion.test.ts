@@ -252,6 +252,60 @@ describe('purgeAccount', () => {
 	});
 });
 
+describe('purgeAccount lock order', () => {
+	// Every storage path locks the account row before asset rows (see
+	// lockStorageOwners). While another transaction holds the account row, as
+	// an image delete or upload does, the purge must wait on it before it
+	// touches any of the account's images, or the two deadlock.
+	it('waits on the account row before it locks any of its images', async () => {
+		const owner = await makeUser('purged@example.com');
+		const [avatar] = await db
+			.insert(assets)
+			.values({
+				ownerId: owner,
+				universeId: null,
+				kind: 'avatar',
+				filename: 'a.png',
+				contentType: 'image/png',
+				byteSize: 10,
+				storageKey: `avatar-${owner}`
+			})
+			.returning({ id: assets.id });
+		const holder = await pool.connect();
+		const probe = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from users where id = $1 for no key update', [owner]);
+			const purge = purgeAccount(db, owner, stubStore);
+			// Until the purge is stuck waiting on the account row.
+			for (let i = 0; i < 200; i++) {
+				const { rows } = await probe.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n > 0) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await probe.query('begin');
+			const free = await probe
+				.query('select id from assets where id = $1 for update nowait', [avatar.id])
+				.then(
+					() => true,
+					() => false
+				);
+			await probe.query('rollback');
+			await holder.query('rollback');
+			await purge;
+			expect(free).toBe(true);
+			expect(await db.select().from(assets).where(eq(assets.ownerId, owner))).toHaveLength(0);
+			expect(await db.select().from(users).where(eq(users.id, owner))).toHaveLength(0);
+		} finally {
+			holder.release();
+			probe.release();
+		}
+	});
+});
+
 describe('scheduleAccountDeletion and cancel', () => {
 	it('deactivates, takes down editions, schedules, and can be cancelled', async () => {
 		const userId = await makeUser('go@example.com');

@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, desc, eq, exists, inArray, isNull, ne, sql, type AnyColumn } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import {
 	assets,
@@ -19,6 +19,11 @@ import { isUuid, readingAddress } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
 // public reading pages serve only these snapshots, never live drafts.
+
+// The author given by the owner column is not suspended. A suspended author's
+// public pages and files answer as not found until the suspension is lifted.
+export const authorNotSuspended = (owner: AnyColumn) =>
+	sql`not exists (select 1 from users su where su.id = ${owner} and su.suspended_at is not null)`;
 
 export type EditionContent = {
 	chapters: { title: string | null; scenes: { title: string | null; bodyMd: string }[] }[];
@@ -171,7 +176,8 @@ export async function readingPageRef(
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
 				storyIsLive(),
-				ne(stories.visibility, 'private')
+				ne(stories.visibility, 'private'),
+				authorNotSuspended(publications.ownerId)
 			)
 		);
 	return row ? { handle: row.handle, story: readingAddress(row) } : null;
@@ -203,7 +209,8 @@ export async function publicShelf(db: Database, handle: string, universeId?: str
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
 				storyIsLive(),
-				eq(stories.visibility, 'public')
+				eq(stories.visibility, 'public'),
+				authorNotSuspended(publications.ownerId)
 			)
 		)
 		.orderBy(desc(publications.publishedAt));
@@ -228,7 +235,7 @@ export async function publicProfile(db: Database, handle: string) {
 			avatarAssetId: users.avatarAssetId
 		})
 		.from(users)
-		.where(and(eq(users.handle, handle), eq(users.profilePublic, true)));
+		.where(and(eq(users.handle, handle), eq(users.profilePublic, true), isNull(users.suspendedAt)));
 	return row ?? null;
 }
 
@@ -259,7 +266,7 @@ export async function publicAuthorIdentity(db: Database, handle: string) {
 	const [row] = await db
 		.select({ penName: users.penName, displayName: users.displayName })
 		.from(users)
-		.where(eq(users.handle, handle));
+		.where(and(eq(users.handle, handle), isNull(users.suspendedAt)));
 	return row ?? null;
 }
 
@@ -270,16 +277,22 @@ export async function isPublicAvatar(db: Database, assetId: string): Promise<boo
 	const [row] = await db
 		.select({ id: users.id })
 		.from(users)
-		.where(and(eq(users.avatarAssetId, assetId), eq(users.profilePublic, true)))
+		.where(
+			and(
+				eq(users.avatarAssetId, assetId),
+				eq(users.profilePublic, true),
+				isNull(users.suspendedAt)
+			)
+		)
 		.limit(1);
 	return Boolean(row);
 }
 
 // The reader view: the current edition, provided the story is not
-// private, no takedown applies, and neither the story nor its universe is
-// in the trash. The ref is the story's id, or its slug when the story is
-// listed publicly: a slug comes from the title and can be guessed, so an
-// unlisted story answers only at its id. Slugs are unique among the owner's
+// private, no takedown applies, neither the story nor its universe is in
+// the trash, and the author is not suspended. The ref is the story's id, or
+// its slug when the story is listed publicly: a slug comes from the title and
+// can be guessed, so an unlisted story answers only at its id. Slugs are unique among the owner's
 // live stories, and the owner is the handle's.
 export async function publicEdition(db: Database, handle: string, ref: string) {
 	const [edition] = await db
@@ -315,7 +328,8 @@ export async function publicEdition(db: Database, handle: string, ref: string) {
 					: and(eq(stories.slug, ref), eq(stories.visibility, 'public')),
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
-				storyIsLive()
+				storyIsLive(),
+				isNull(users.suspendedAt)
 			)
 		);
 	if (!edition || edition.visibility === 'private') return null;
@@ -345,7 +359,8 @@ export async function publicUniverse(db: Database, handle: string, ref: string) 
 				eq(users.handle, handle),
 				isUuid(ref) ? eq(universes.id, ref) : eq(universes.slug, ref),
 				eq(universes.standalone, false),
-				isNull(universes.deletedAt)
+				isNull(universes.deletedAt),
+				isNull(users.suspendedAt)
 			)
 		);
 	if (!universe) return null;
@@ -383,6 +398,7 @@ export async function publicUniverseLink(db: Database, handle: string, universeI
 				eq(universes.id, universeId),
 				eq(universes.standalone, false),
 				isNull(universes.deletedAt),
+				isNull(users.suspendedAt),
 				exists(listed)
 			)
 		);
@@ -435,8 +451,8 @@ export async function publicUniverseRedirect(
 // it servable without a session: either the story's live cover, or an
 // inline image the frozen prose references. The visibility test follows
 // publicEdition (private excluded, unlisted reachable by link, story and
-// universe out of the trash), so an asset never outlives the page it
-// belongs to.
+// universe out of the trash, author not suspended), so an asset never
+// outlives the page it belongs to.
 export async function isPublicAsset(db: Database, assetId: string): Promise<boolean> {
 	const [cover] = await db
 		.select({ id: publications.id })
@@ -448,7 +464,8 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
 				storyIsLive(),
-				ne(stories.visibility, 'private')
+				ne(stories.visibility, 'private'),
+				authorNotSuspended(publications.ownerId)
 			)
 		)
 		.limit(1);
@@ -471,7 +488,8 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 				eq(publications.isCurrent, true),
 				isNull(publications.removedAt),
 				storyIsLive(),
-				ne(stories.visibility, 'private')
+				ne(stories.visibility, 'private'),
+				authorNotSuspended(publications.ownerId)
 			)
 		)
 		.limit(1);

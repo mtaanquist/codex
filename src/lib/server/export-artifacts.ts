@@ -17,7 +17,7 @@ import {
 import { slugify } from '../slug.ts';
 import { uploadZip, type ZipArchive } from './zip-stream.ts';
 import { buildEpub } from './epub.ts';
-import type { EditionContent } from './publish.ts';
+import { authorNotSuspended, type EditionContent } from './publish.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findAssetReferences, renderMarkdown, rewriteAssetReferences } from '../markdown.ts';
 import { DEFAULT_PAGE_SETUP, pageCss, pdfRenderOptions, type PageSetup } from '../page-setup.ts';
@@ -368,8 +368,8 @@ export async function setDownloadsPublic(
 
 // Resolves an artifact for download, or null when the caller may not have
 // it. The owner can always fetch their own artifacts; anyone else gets EPUB
-// and PDF only, and only while the edition is current, readable, and has
-// reader downloads switched on. The markdown zip is a backup format and
+// and PDF only, and only while the edition is current, readable (its author
+// not suspended), and has reader downloads switched on. The markdown zip is a backup format and
 // stays owner-only. Mirrors the visibility rules of publicEdition.
 export async function artifactForDownload(db: Database, artifactId: string, userId: string | null) {
 	const [row] = await db
@@ -381,7 +381,8 @@ export async function artifactForDownload(db: Database, artifactId: string, user
 			downloadsPublic: publications.downloadsPublic,
 			visibility: stories.visibility,
 			// The story and its universe are both out of the trash.
-			storyLive: sql<boolean>`${storyIsLive()}`
+			storyLive: sql<boolean>`${storyIsLive()}`,
+			authorSuspended: sql<boolean>`not ${authorNotSuspended(publications.ownerId)}`
 		})
 		.from(exportArtifacts)
 		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
@@ -393,6 +394,7 @@ export async function artifactForDownload(db: Database, artifactId: string, user
 		row.isCurrent &&
 		!row.removedAt &&
 		row.storyLive &&
+		!row.authorSuspended &&
 		row.visibility !== 'private' &&
 		row.downloadsPublic;
 	if (readable && row.artifact.format !== 'markdown') return row.artifact;

@@ -7,22 +7,28 @@ import * as schema from '../../src/lib/server/db/schema';
 import {
 	assets,
 	chapters,
+	exportArtifacts,
 	publicationAssets,
 	publications,
 	scenes,
+	slugHistory,
 	stories,
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
+import { artifactForDownload } from '../../src/lib/server/export-artifacts';
 import {
 	isPublicAsset,
 	isPublicAvatar,
 	listPublications,
+	publicAuthorIdentity,
 	publicEdition,
 	publicProfile,
 	publicShelf,
+	publicStoryRedirect,
 	publicUniverse,
 	publicUniverseLink,
+	publicUniverseRedirect,
 	publishStory,
 	readingPageRef,
 	takedownPublication,
@@ -609,5 +615,90 @@ describe('public universe page', () => {
 		await publishStory(db, authorId, storyId);
 		expect((await publicEdition(db, 'inkwright', 'ember-reach'))?.storyId).toBe(storyId);
 		expect((await publicUniverse(db, 'inkwright', 'ember-reach'))?.id).toBe(universeId);
+	});
+});
+
+describe('suspended author', () => {
+	it('hides every public page and file until the suspension is lifted', async () => {
+		await db
+			.update(universes)
+			.set({ name: 'The Ember Reach', slug: 'ember-reach' })
+			.where(eq(universes.id, universeId));
+		const coverId = crypto.randomUUID();
+		await db
+			.update(stories)
+			.set({ slug: 'book-of-ash', coverAssetId: coverId })
+			.where(eq(stories.id, storyId));
+		const [image] = await db
+			.insert(assets)
+			.values({
+				ownerId: authorId,
+				universeId,
+				kind: 'inline',
+				filename: 'map.png',
+				contentType: 'image/png',
+				byteSize: 8,
+				storageKey: 'codex-assets/map'
+			})
+			.returning();
+		const avatarId = crypto.randomUUID();
+		await db
+			.update(users)
+			.set({ profilePublic: true, avatarAssetId: avatarId })
+			.where(eq(users.id, authorId));
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		await db
+			.update(publications)
+			.set({ downloadsPublic: true })
+			.where(eq(publications.id, published.publicationId));
+		await db.insert(publicationAssets).values({
+			publicationId: published.publicationId,
+			assetId: image.id
+		});
+		const [artifact] = await db
+			.insert(exportArtifacts)
+			.values({
+				publicationId: published.publicationId,
+				format: 'epub',
+				storageKey: 'codex-exports/book.epub',
+				filename: 'book.epub',
+				contentType: 'application/epub+zip',
+				byteSize: 10
+			})
+			.returning();
+		await db.insert(slugHistory).values([
+			{ ownerId: authorId, kind: 'story', slug: 'old-ash', storyId },
+			{ ownerId: authorId, kind: 'universe', slug: 'old-reach', universeId }
+		]);
+
+		const visible = async () => ({
+			shelf: (await publicShelf(db, 'inkwright')).length > 0,
+			profile: (await publicProfile(db, 'inkwright')) !== null,
+			identity: (await publicAuthorIdentity(db, 'inkwright')) !== null,
+			bySlug: (await publicEdition(db, 'inkwright', 'book-of-ash')) !== null,
+			byId: (await publicEdition(db, 'inkwright', storyId)) !== null,
+			universe: (await publicUniverse(db, 'inkwright', 'ember-reach')) !== null,
+			universeLink: (await publicUniverseLink(db, 'inkwright', universeId)) !== null,
+			storyRedirect: (await publicStoryRedirect(db, 'inkwright', 'old-ash')) !== null,
+			universeRedirect: (await publicUniverseRedirect(db, 'inkwright', 'old-reach')) !== null,
+			cover: await isPublicAsset(db, coverId),
+			image: await isPublicAsset(db, image.id),
+			avatar: await isPublicAvatar(db, avatarId),
+			download: (await artifactForDownload(db, artifact.id, null)) !== null,
+			readingPage: (await readingPageRef(db, storyId)) !== null
+		});
+		const everything = (value: boolean) =>
+			Object.fromEntries(Object.keys(VISIBLE_KEYS).map((key) => [key, value]));
+		const VISIBLE_KEYS = await visible();
+		expect(VISIBLE_KEYS).toEqual(everything(true));
+
+		await db.update(users).set({ suspendedAt: new Date() }).where(eq(users.id, authorId));
+		expect(await visible()).toEqual(everything(false));
+		// The author keeps their own download.
+		expect(await artifactForDownload(db, artifact.id, authorId)).not.toBeNull();
+
+		await db.update(users).set({ suspendedAt: null }).where(eq(users.id, authorId));
+		expect(await visible()).toEqual(everything(true));
 	});
 });

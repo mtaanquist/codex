@@ -94,9 +94,10 @@ count throws `QuotaExceededError`, which rolls the create's transaction
 back, and the routes turn it into a 403 form message; `newStoryFromDraft`
 returns it as an `over_limit` failure, matching its other failures.
 `untrash` now runs each slug attempt as a savepoint, so a restore can run in
-the caller's transaction. Storage is one conditional `update ... where
-storage_used_bytes + n <= limit` in the same transaction as the asset
-insert, after the object is stored; a refused upload removes its object. A
+the caller's transaction. Storage (`reserveStorage`) locks the account row,
+reads its use and the limit under that lock, and adds the bytes only when
+they fit, in the same transaction as the asset insert, after the object is
+stored; a refused upload removes its object. A
 pre-check before the bucket write keeps an obviously oversized file from
 being sent at all. Deletes and universe purges subtract in the same
 transaction. Trashing keeps the images counted until the purge. Review
@@ -114,7 +115,21 @@ upload in flight is counted once. Admin got a Plans section (rename, limits,
 make default, new plan) and an Accounts block under Usage & storage with the
 plan picker per account, under the asset storage block, which was left
 alone. Plan deletion and the `public_archive` entitlement were left out: the
-per-account publishing switch already gates that.
+per-account publishing switch already gates that. Staging review round 1
+(`fix/phase-10-review-1`): reviving a trashed standalone universe took the
+quota lock before the universe row, the reverse of `restoreUniverse`, and
+the story creates (new story, new story from a draft, import) took the quota
+lock before the insert's foreign-key check on the universe row. Lock order
+is now the row, then the quota lock, then the slug lock: the revive locks
+the row first and the creates key-share it first (`holdStoryQuota`). The
+lock-order harness now runs on a plan with limits and knows the quota lock,
+and it caught both. The account purge now locks the account row before
+anything else, so an image delete or upload running at the same time can no
+longer deadlock with it over the avatar. An import also deletes its stored
+images on a failure anywhere after the first one, not only in the final
+transaction. A suspended author's shelf, story and universe pages,
+redirects, covers, images, avatar and reader downloads answer as not found
+until the suspension is lifted (#1441).
 
 Review anchors on a body stored with \r\n (2026-11-22, `fix/review-marks-crlf`
 on `staging/bug-fixes`, staging review round 2). Review anchors count

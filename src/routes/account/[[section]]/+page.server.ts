@@ -470,7 +470,12 @@ export const actions: Actions = {
 			contentType: file.type,
 			bytes: Buffer.from(await file.arrayBuffer())
 		});
-		if (!result.ok) return fail(400, { scope: 'avatar', message: result.reason });
+		if (!result.ok) {
+			return fail(result.code === 'over_limit' ? 403 : 400, {
+				scope: 'avatar',
+				message: result.reason
+			});
+		}
 		return { scope: 'avatar', saved: true };
 	},
 	removeAvatar: async ({ locals }) => {
