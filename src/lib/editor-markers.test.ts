@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ChangeSet, Compartment, EditorState, Transaction } from '@codemirror/state';
+import { ChangeSet, Compartment, EditorState, Text, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { history, isolateHistory, redo, undo, undoDepth } from '@codemirror/commands';
 import {
@@ -8,6 +8,7 @@ import {
 	unsavedChanges,
 	type SceneMarker
 } from './editor-markers';
+import { textHash } from './text-hash';
 
 const doc = 'The cat sat on the mat.';
 // "sat"
@@ -378,12 +379,12 @@ describe('rebuiltMarkers', () => {
 			doc: initial,
 			extensions: [history({ newGroupDelay: 1e9 }), compartment.of(handle.extension)]
 		});
-		const unsaved = unsavedChanges(initial.length);
+		const unsaved = unsavedChanges(initial);
 		// The markers as the server stores them.
 		let server = markers;
 		const anchors = () => handle.anchors({ state } as EditorView);
 		const apply = (tr: Transaction) => {
-			if (!tr.changes.empty) unsaved.record(tr.changes.desc);
+			if (!tr.changes.empty) unsaved.record(tr.changes);
 			state = tr.state;
 		};
 		const editor = {
@@ -414,7 +415,7 @@ describe('rebuiltMarkers', () => {
 			// would, for words that are gone, which is all these tests need).
 			send() {
 				const sent = anchors();
-				unsaved.sent();
+				unsaved.sent('');
 				return () => {
 					server = server.map(
 						(marker) =>
@@ -536,6 +537,53 @@ describe('rebuiltMarkers', () => {
 		expect(editor.marked()).toEqual([]);
 	});
 
+	it('takes a marker away again on redo after a reload between undo and redo', () => {
+		const editor = setupRebuild([dog, the], long);
+		// In one undo step: type before "dog", then type over it.
+		editor.edit(31, 31, 'xy');
+		editor.edit(32, 36, 'xy');
+		editor.undo();
+		expect(editor.marked()).toEqual([
+			['the', 'The'],
+			['dog', 'dog']
+		]);
+		editor.checkOff('the');
+		editor.redo();
+		expect(editor.state.doc.toString()).toBe('The cat sat on the mat and the xxy ran far away.');
+		expect(editor.marked()).toEqual([]);
+		editor.save();
+		expect(editor.server).toEqual([{ id: 'dog', anchorStart: null, anchorEnd: null }]);
+	});
+
+	it('places a new marker on its words when a deletion was undone before the save', () => {
+		const editor = setupRebuild([the], long);
+		// Delete "at on", then undo: the text is what the server holds again.
+		editor.edit(9, 14, '', false);
+		editor.undo();
+		editor.reload([
+			the,
+			{ id: 'sat', anchorStart: 8, anchorEnd: 14 },
+			{ id: 'on', anchorStart: 12, anchorEnd: 14 }
+		]);
+		expect(editor.marked()).toEqual([
+			['the', 'The'],
+			['sat', 'sat on'],
+			['on', 'on']
+		]);
+	});
+
+	it('places a new marker through edits that only partly cancel out', () => {
+		const editor = setupRebuild([the], long);
+		// "cat" typed over as "cot", then "Oh. " typed at the start.
+		editor.edit(4, 7, 'cot');
+		editor.edit(0, 0, 'Oh. ');
+		editor.reload([the, { id: 'sat', anchorStart: 8, anchorEnd: 11 }]);
+		expect(editor.marked()).toEqual([
+			['the', 'The'],
+			['sat', 'sat']
+		]);
+	});
+
 	it('places a new marker through the edits made while a save was on its way', () => {
 		const editor = setupRebuild([cat]);
 		editor.edit(0, 0, 'Oh. ');
@@ -641,34 +689,54 @@ describe('rebuiltMarkers', () => {
 
 describe('unsavedChanges', () => {
 	const insert = (length: number, at: number, text: string) =>
-		ChangeSet.of({ from: at, insert: text }, length).desc;
+		ChangeSet.of({ from: at, insert: text }, length);
 
 	it('maps saved positions through every edit while nothing has landed', () => {
-		const unsaved = unsavedChanges(10);
+		const unsaved = unsavedChanges('0123456789');
 		unsaved.record(insert(10, 0, 'ab'));
-		unsaved.sent();
+		unsaved.sent('');
 		unsaved.record(insert(12, 0, 'cd'));
 		expect(unsaved.changes.mapPos(5)).toBe(9);
 	});
 
 	it('keeps only the edits made after the text a landed save sent', () => {
-		const unsaved = unsavedChanges(10);
+		const unsaved = unsavedChanges('0123456789');
 		unsaved.record(insert(10, 0, 'ab'));
-		unsaved.sent();
+		unsaved.sent('');
 		unsaved.record(insert(12, 0, 'cd'));
 		unsaved.landed();
 		expect(unsaved.changes.mapPos(5)).toBe(7);
 	});
 
 	it('keeps every edit when a save fails, until a later one lands', () => {
-		const unsaved = unsavedChanges(10);
+		const unsaved = unsavedChanges('0123456789');
 		unsaved.record(insert(10, 0, 'ab'));
-		unsaved.sent();
+		unsaved.sent('');
 		unsaved.record(insert(12, 0, 'cd'));
-		unsaved.sent();
+		unsaved.sent('');
 		expect(unsaved.changes.mapPos(5)).toBe(9);
 		unsaved.landed();
 		expect(unsaved.changes.mapPos(5)).toBe(5);
+	});
+
+	it('counts a Windows line break as one character, as the editor does', () => {
+		const unsaved = unsavedChanges('Ab\r\ncd');
+		unsaved.record(insert(5, 0, 'x'));
+		expect(unsaved.changes.mapPos(4)).toBe(5);
+	});
+
+	it('names the text the server holds: the last one a save landed', () => {
+		const unsaved = unsavedChanges('0123456789');
+		expect(unsaved.version).toBe(textHash('0123456789'));
+		unsaved.record(insert(10, 0, 'ab'));
+		unsaved.sent('first');
+		// The save fails: the server still holds the loaded text.
+		expect(unsaved.version).toBe(textHash('0123456789'));
+		unsaved.sent('second');
+		unsaved.landed();
+		expect(unsaved.version).toBe('second');
+		unsaved.reset('newer');
+		expect(unsaved.version).toBe('newer');
 	});
 
 	describe('pin', () => {
@@ -676,37 +744,46 @@ describe('unsavedChanges', () => {
 		const text = 'The gate scene.';
 
 		it('gives a selection in the text the server holds when a save failed', () => {
-			const unsaved = unsavedChanges(text.length);
+			const unsaved = unsavedChanges(text);
 			unsaved.record(insert(text.length, 0, 'Oh. '));
 			// "gate" is now at 8-12 on screen.
 			const pinned = unsaved.pin(8, 12);
-			unsaved.sent();
+			unsaved.sent('');
 			// The save fails: landed() never runs.
-			expect(pinned()).toEqual({ from: 4, to: 8 });
+			expect(pinned.at()).toEqual({ from: 4, to: 8 });
 		});
 
 		it('follows edits made while the save was on its way', () => {
-			const unsaved = unsavedChanges(text.length);
+			const unsaved = unsavedChanges(text);
 			unsaved.record(insert(text.length, 0, 'Oh. '));
 			const pinned = unsaved.pin(8, 12);
-			unsaved.sent();
+			unsaved.sent('');
 			unsaved.record(insert(text.length + 4, 0, 'Ah. '));
 			unsaved.landed();
 			// The server holds 'Oh. The gate scene.'
-			expect(pinned()).toEqual({ from: 8, to: 12 });
+			expect(pinned.at()).toEqual({ from: 8, to: 12 });
 		});
 
 		it('gives nothing for words the server does not hold yet', () => {
-			const unsaved = unsavedChanges(text.length);
+			const unsaved = unsavedChanges(text);
 			unsaved.record(insert(text.length, 0, 'Oh. '));
-			expect(unsaved.pin(0, 3)()).toBeNull();
+			expect(unsaved.pin(0, 3).at()).toBeNull();
+		});
+
+		it('gives the whole selection when a deletion inside it was undone', () => {
+			const unsaved = unsavedChanges(text);
+			const del = ChangeSet.of({ from: 5, to: 7 }, text.length);
+			unsaved.record(del);
+			unsaved.record(del.invert(Text.of([text])));
+			expect(unsaved.pin(4, 8).at()).toEqual({ from: 4, to: 8 });
+			expect(unsaved.pin(5, 7).at()).toEqual({ from: 5, to: 7 });
 		});
 
 		it('keeps only the stored part of a selection that runs into unsaved words', () => {
-			const unsaved = unsavedChanges(text.length);
+			const unsaved = unsavedChanges(text);
 			unsaved.record(insert(text.length, 8, 'way'));
 			// "gateway" on screen.
-			expect(unsaved.pin(4, 11)()).toEqual({ from: 4, to: 8 });
+			expect(unsaved.pin(4, 11).at()).toEqual({ from: 4, to: 8 });
 		});
 	});
 });

@@ -74,6 +74,22 @@ twice. The page load reads the body and the markers in separate queries and
 carries no save version, so telling the two cases apart needs the markers
 read to return the version of the text they count into; since the first fix
 above, only a marker new to the editor arriving mid-save is exposed.
+Fourth follow-up (`fix/marker-rebuild-review-2` on `staging/bug-fixes-4`,
+second review of #1448). The "gone" records were still scoped to the set
+that wrote them, so a rebuild between undo and redo let redo leave a marker
+on the replacement text. The scope dated from when a rebuild placed held
+markers from server anchors; now that a rebuild keeps shown positions and
+detaches held hidden markers, a record from an older set is still true, so
+the scope is gone. The unsaved-edits record composed every edit into one
+change, and a deletion followed by its undo composed into a replacement of
+the span, collapsing a new marker inside it to an edge; it now keeps the
+texts too and leaves out of each replacement what it puts back unchanged at
+either end. Marking while the "changed in another window" notice is up is
+refused, since the server holds text this editor never saw. A marker POST
+now carries the fingerprint of the text its anchors count into and the
+server refuses it (scene row locked while checking) when a later save landed
+first; the editor tries once more. The page-load half (anchors read beside a
+save that has landed but not answered) stays open for the reason above.
 
 Markers a Write save does not mention (2026-11-22,
 `fix/marker-remap-write-editor` on `staging/bug-fixes-2`, #1415). The Write

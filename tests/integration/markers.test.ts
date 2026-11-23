@@ -23,6 +23,7 @@ import {
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { recordRevision, restoreRevision } from '../../src/lib/server/revisions';
 import type { Database } from '../../src/lib/server/auth';
+import { textHash } from '../../src/lib/text-hash';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 import {
 	join,
@@ -100,6 +101,18 @@ describe('createMarker', () => {
 			ok: false,
 			code: 'not_found'
 		});
+	});
+
+	// The editor counts the anchors into the text it last saved; a save from
+	// another window, or this editor's next one, may have landed first.
+	it('refuses anchors counted into a text the scene no longer holds', async () => {
+		expect(
+			await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash('Other words.'))
+		).toMatchObject({ ok: false, code: 'conflict' });
+		expect(await listSceneMarkers(db, sceneId)).toHaveLength(0);
+		expect(await createMarker(db, ownerId, sceneId, 0, 5, undefined, textHash(BODY))).toMatchObject(
+			{ ok: true }
+		);
 	});
 });
 

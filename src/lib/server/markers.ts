@@ -5,36 +5,56 @@ import { ownedScene } from './scene-access.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { findTodoLines } from '#lib/todo-markers';
 import { toLf } from '#lib/line-endings';
+import { textHash } from '#lib/text-hash';
 import { BACKGROUND_DIFF_BUDGET, createAnchorMapper, SAVE_DIFF_BUDGET } from '../review-anchor.ts';
 import type { ActionFailure } from './action-result.ts';
 
 // A selection turned into a checkable marker. Anchors are clamped to the
-// scene body so a stale client cannot write ranges past the end.
+// scene body so a stale client cannot write ranges past the end. With
+// baseHash (the fingerprint of the text the editor counted the anchors into)
+// the marker is refused when the scene holds another text by now; the scene
+// row is locked while checking, so a save cannot land in between.
 export async function createMarker(
 	db: Database,
 	userId: string,
 	sceneId: string,
 	anchorStart: number,
 	anchorEnd: number,
-	bodyMd?: string
+	bodyMd?: string,
+	baseHash?: string
 ): Promise<{ ok: true; id: string } | ActionFailure> {
-	const scene = await ownedScene(db, userId, sceneId);
-	if (!scene) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
-	const length = scene.bodyMd.length;
-	const start = Math.max(0, Math.min(anchorStart, length));
-	const end = Math.max(start, Math.min(anchorEnd, length));
-	if (end === start) return { ok: false, code: 'invalid', reason: 'Select some text to mark.' };
-	const [marker] = await db
-		.insert(sceneMarkers)
-		.values({
-			sceneId,
-			ownerId: userId,
-			anchorStart: start,
-			anchorEnd: end,
-			bodyMd: bodyMd?.trim() || null
-		})
-		.returning({ id: sceneMarkers.id });
-	return { ok: true, id: marker.id };
+	return await db.transaction(async (tx) => {
+		const scene = await ownedScene(tx, userId, sceneId);
+		if (!scene) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
+		const [locked] = await tx
+			.select({ bodyMd: scenes.bodyMd })
+			.from(scenes)
+			.where(eq(scenes.id, sceneId))
+			.for('share');
+		if (!locked) return { ok: false, code: 'not_found', reason: 'That scene does not exist.' };
+		if (baseHash !== undefined && textHash(locked.bodyMd) !== baseHash) {
+			return {
+				ok: false,
+				code: 'conflict',
+				reason: 'The scene text changed. Select the words and mark them again.'
+			};
+		}
+		const length = locked.bodyMd.length;
+		const start = Math.max(0, Math.min(anchorStart, length));
+		const end = Math.max(start, Math.min(anchorEnd, length));
+		if (end === start) return { ok: false, code: 'invalid', reason: 'Select some text to mark.' };
+		const [marker] = await tx
+			.insert(sceneMarkers)
+			.values({
+				sceneId,
+				ownerId: userId,
+				anchorStart: start,
+				anchorEnd: end,
+				bodyMd: bodyMd?.trim() || null
+			})
+			.returning({ id: sceneMarkers.id });
+		return { ok: true, id: marker.id };
+	});
 }
 
 // Markers own their scene by id; this keeps a marker in a trashed universe

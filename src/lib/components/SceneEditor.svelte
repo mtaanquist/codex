@@ -165,7 +165,7 @@
 	// Edits since the text the server holds, so a marker set rebuilt from the
 	// server's anchors lands on the words on screen.
 	// svelte-ignore state_referenced_locally
-	const unsaved = unsavedChanges(body.length);
+	const unsaved = unsavedChanges(body);
 
 	// Bound from one of two mutually exclusive branches (compact or full),
 	// hence the state wrapper.
@@ -202,7 +202,7 @@
 		save: async ({ keepalive }) => {
 			if (!view) return;
 			const stored = storedText(view.state);
-			unsaved.sent();
+			unsaved.sent(textHash(stored.text));
 			await saver.save({
 				keepalive,
 				title: titleValue,
@@ -227,7 +227,8 @@
 		saver.adopt(newer.bodyMd);
 		titleValue = newer.title ?? '';
 		view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: newer.bodyMd } });
-		unsaved.reset();
+		unsaved.reset(textHash(newer.bodyMd));
+		swaps++;
 		void autosave.flush();
 	}
 
@@ -240,28 +241,59 @@
 
 	// Why the last Ctrl/Cmd+Alt+M made no marker; cleared by the next edit.
 	let markError = $state<string | null>(null);
+	// Bumped when the newer text from another window replaces this editor's.
+	let swaps = 0;
+	const CHANGED_ELSEWHERE =
+		'This scene was changed in another window. Choose which version to keep, then mark the words again.';
 
 	// A new marker's anchors must count into the text the server holds. The
-	// prose is flushed first, and the selection is then mapped onto whatever
-	// the server ended up with: the flush can fail (a conflict, a server
-	// error) and the writer can keep typing meanwhile. The page data refresh
-	// then re-renders the highlights.
+	// prose is flushed first, and the selection is then mapped onto the text
+	// this editor last saved (the writer can keep typing meanwhile, and a save
+	// can fail). The server refuses the marker when it holds another text by
+	// then, such as a later save of this editor that landed first; the mark
+	// is then tried once more. While the scene was changed in another window
+	// the server holds text this editor has not seen, so nothing is marked
+	// until the writer picks a version. The page data refresh then re-renders
+	// the highlights.
 	async function markSelection(from: number, to: number) {
 		markError = null;
-		const pinned = unsaved.pin(from, to);
-		await autosave.flush();
-		const anchor = pinned();
-		if (!anchor) {
-			markError = 'These words are not saved yet. Mark them once the scene has saved.';
+		if (conflict) {
+			markError = CHANGED_ELSEWHERE;
 			return;
 		}
-		const response = await fetch(`/api/scenes/${sceneId}/markers`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ anchorStart: anchor.from, anchorEnd: anchor.to })
-		}).catch(() => null);
-		if (response?.ok) await refreshAll();
-		else markError = 'The TODO marker could not be made. Try again.';
+		const pinned = unsaved.pin(from, to);
+		const started = swaps;
+		try {
+			for (let attempt = 0; attempt < 2; attempt++) {
+				await autosave.flush();
+				if (conflict || swaps !== started) {
+					markError = CHANGED_ELSEWHERE;
+					return;
+				}
+				const anchor = pinned.at();
+				if (!anchor) {
+					markError = 'These words are not saved yet. Mark them once the scene has saved.';
+					return;
+				}
+				const response = await fetch(`/api/scenes/${sceneId}/markers`, {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({
+						anchorStart: anchor.from,
+						anchorEnd: anchor.to,
+						baseHash: unsaved.version
+					})
+				}).catch(() => null);
+				if (response?.ok) {
+					await refreshAll();
+					return;
+				}
+				if (response?.status !== 409) break;
+			}
+			markError = 'The TODO marker could not be made. Try again.';
+		} finally {
+			pinned.release();
+		}
 	}
 
 	// At the visual top or bottom of this editor, vertical arrows hand
@@ -569,7 +601,7 @@
 					boundaryKeymap(),
 					EditorView.updateListener.of((update) => {
 						if (!update.docChanged) return;
-						unsaved.record(update.changes.desc);
+						unsaved.record(update.changes);
 						markError = null;
 					}),
 					onFocus
