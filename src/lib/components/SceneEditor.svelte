@@ -620,7 +620,9 @@
 								if (update.focusChanged && update.view.hasFocus) onFocus();
 							})
 						: [],
-					imageUniverseId ? imageUploadExtension(imageUniverseId) : []
+					imageUniverseId
+						? imageUploadExtension(imageUniverseId, (message) => (markError = message))
+						: []
 				]
 			})
 		});
