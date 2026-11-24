@@ -616,9 +616,10 @@ const PATTERN_KINDS: [HabitCheck, string][] = [
 	]
 ];
 
-// With every kind left alone the survey still looks for any other habit.
+// With every kind left alone the survey still looks for any other habit. It
+// names no examples: they would be the very habits the writer left alone.
 const OTHER_HABITS =
-	'- Any other habit that recurs often enough to register: a word, a construction, or a gesture used again and again.';
+	'- Any habit that recurs often enough to register and is not one of those listed below to leave alone.';
 
 const patternLooksFor = (preferences: PreferenceSetting) => {
 	const kinds = PATTERN_KINDS.filter(([habit]) => checks(preferences, habit)).map(

@@ -10,6 +10,27 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 7
+(2026-11-24, `fix/llm-staging-review-7`, into `staging/llm-issues`). The
+story chat's frame used the prose language rule ("Write in X"), so a writer
+who typed in Danish about a British English story got English answers,
+where before the setting the chat answered in the writer's language. The
+frame now carries `chatLanguageRule`: prose, passages and suggested edits in
+the story's language, answers in the language the writer uses. The notes
+fence no longer cuts a hyphen run to one ("scene breaks are written as
+---" read as "-"); it spaces each run out ("- - -"), keeping its length
+with no two hyphens adjacent, so the "---" markers stay unforgeable. With
+every pattern kind left alone, the survey's fallback line no longer gives
+the left-alone habits as examples; it asks for any habit not listed to
+leave alone (the unset prompt never reaches that line). The review estimate
+returns `overCap` when web search is on and the cap's room for the largest
+scene's first request (`capCeilingUsage`, now shared with the gateway) is
+already over the cap, and the review modal says the run will stop at its
+first scene until the cap is raised. The worker logs, rather than dies on,
+a failure deleting the legacy queues. Connecting-apps help now says apps
+see each story's language, preferences and notes, and the House style
+group has a one-line hint.
+
 Staging review of the language setting and Assistant preferences, round 6
 (2026-11-24, `fix/llm-staging-review-6`, into `staging/llm-issues`). Round 5
 hid the preference forms unless the Assistant tab was on, but connected apps

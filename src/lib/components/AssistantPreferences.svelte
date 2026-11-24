@@ -106,6 +106,10 @@
 	<form method="POST" action="?/saveAssistantPreferences">
 		<fieldset class="prefs-set">
 			<legend>House style</legend>
+			<p class="field-hint prefs-lead">
+				How your text is set out: quote marks, the serial comma, how thoughts are shown, tense and
+				narration.
+			</p>
 			{#each HOUSE_STYLE as item (item.key)}
 				<div class="field">
 					<label for={id(item.key)}>{item.label}</label>

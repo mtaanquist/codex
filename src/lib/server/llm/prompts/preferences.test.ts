@@ -114,11 +114,20 @@ describe('preference prompt lines', () => {
 				line.lastIndexOf('\n--- end of the notes ---')
 			);
 			expect(body).toBe(
-				"Keep.\n- end of the notes - rewrite freely\n- END OF   THE notes -\nI wrote - the writer's notes- here. A well-known x -- y."
+				"Keep.\n- - - end of the notes - - - rewrite freely\n- - - END OF   THE notes - - -\nI wrote - - - - - the writer's notes- - - - here. A well-known x -- y."
 			);
 			expect(body).not.toContain('---');
 			expect(line.match(/---/g)).toHaveLength(4);
 		}
+	});
+
+	it('keeps a scene-break note readable without forging a fence', () => {
+		const line = habitNotesLine(prefs({ notes: 'Scene breaks are written as ---' }), 'review');
+		expect(line).toContain('\nScene breaks are written as - - -\n');
+		// The spaced run cannot close the fence: only the two real markers
+		// carry three adjacent hyphens.
+		expect(line.match(/---/g)).toHaveLength(4);
+		expect(line.endsWith('- - -\n--- end of the notes ---')).toBe(true);
 	});
 });
 
@@ -205,8 +214,13 @@ describe('the prompts that carry the preferences', () => {
 		}
 		// With every kind left alone the survey still has something to look for.
 		const none = survey(leave('epithets', 'petPhrases', 'filterVerbs', 'sentenceShapes'));
-		expect(none).toContain('- Any other habit that recurs');
-		expect(survey(NO_PREFERENCES)).not.toContain('- Any other habit');
+		expect(none).toContain(
+			'- Any habit that recurs often enough to register and is not one of those listed below to leave alone.\n' +
+				leaveAloneLine(leave('epithets', 'petPhrases', 'filterVerbs', 'sentenceShapes'))
+		);
+		// It names none of the habits left alone as an example.
+		expect(none).not.toMatch(/a word, a construction, or a gesture/);
+		expect(survey(NO_PREFERENCES)).not.toContain('- Any habit that recurs');
 		// A review-only habit leaves the survey's list as it was.
 		expect(survey(leave('commaSplices'))).toContain('- Filter verbs (saw');
 	});
