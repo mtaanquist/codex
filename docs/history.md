@@ -10,6 +10,32 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 5
+(2026-11-24, `fix/llm-staging-review-5`, into `staging/llm-issues`). Merged
+`main` (#1545, migrations 0115 to 0120) into the branch: staging's three
+migrations were dropped and regenerated after main's, with the same additive
+DDL, as `0121_assistant-usage-provider`, `0122_language-setting` and
+`0123_assistant-preferences`; local databases that ran the old numbering need
+a reset. The search loop's cache-write bound from round 3
+(`searchingCacheWriteTokens`) assumed a token is written to the cache at most
+once, but the cache markers sit on the system block and the last user block,
+so every round resends the prefix and a missed lookup writes it again. The
+whole multi-round input is priced at the write rate again: for a 20k prompt
+and a 4k reply, 686k tokens written, where round 4 had 106k written plus 580k
+plain. A job held at the cap now asks for a higher cap first (rather than
+offering a plain rerun) when the held request alone could cost more than the
+whole cap (`SpendMeter.hold(overCap)`, `spentFields().overCap`), since a rerun
+would stop at it again; the help says so for a run that stopped before it
+spent anything, too. The Assistant preferences forms are hidden where the
+Assistant is not available, like its models section, and their hints say the
+chat in a story uses the habits left alone and the notes. The chat's story
+frame adds the narration-only clause for tense and narration that check mode
+has. A lore-only review's pattern tool line no longer drops the habits left
+alone from its examples. The notes' framing lines are matched ignoring case
+and runs of whitespace. A review capped under the old scope key
+`full:<story>` (written before v3.21.3) is no longer adopted after this
+release, so running it again starts over and reviews its done scenes again.
+
 Staging review of the language setting and Assistant preferences, round 4
 (2026-11-24, `fix/llm-staging-review-4`, into `staging/llm-issues`). The
 search loop's bound (`searchingPromptTokens`) counted each search's results
