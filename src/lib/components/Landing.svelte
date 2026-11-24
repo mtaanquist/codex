@@ -5,6 +5,7 @@
 	import AppBar from './AppBar.svelte';
 	import ReaderFooter from './ReaderFooter.svelte';
 	import { signupOffered, type SignupMode } from '#lib/signup-mode';
+	import type { InstanceType } from '#lib/instance-type';
 
 	// The signed-out page shows the workspace instead of describing it, and one
 	// switch over that one figure stands in for three audiences.
@@ -12,7 +13,12 @@
 	// Who can make an account decides what the page offers, so it takes the mode
 	// rather than a boolean: 'invite' accepts new accounts but not requests, so
 	// offering a codeless visitor the sign-up page would send them nowhere.
-	let { mode = 'approval' }: { mode?: SignupMode } = $props();
+	//
+	// A private Codex (the default) gets the short face: the title, the
+	// sign-in, and one line on who can get an account. The full page speaks
+	// as a service ("let us run it"), which only a public instance can say.
+	let { mode = 'approval', type = 'personal' }: { mode?: SignupMode; type?: InstanceType } =
+		$props();
 
 	const offerSignup = $derived(signupOffered(mode));
 	const signupLabel = $derived(mode === 'open' ? 'Create an account' : 'Request access');
@@ -61,136 +67,158 @@
 		<div class="public-in">
 			<section class="hero">
 				<h1 class="hero-title">Write the story. Keep <em>the world it comes from.</em></h1>
-				<p class="hero-lede">
-					One workspace, three columns: what you are working through on the left, the page in the
-					middle, and everything that page mentions on the right. A novel, a serial, a world, a
-					campaign - the same three columns, holding whatever you keep.
-				</p>
+				{#if type === 'personal'}
+					<p class="hero-lede">
+						A private Codex: a writing workspace for novels, worlds and campaigns.
+					</p>
+				{:else}
+					<p class="hero-lede">
+						One workspace, three columns: what you are working through on the left, the page in the
+						middle, and everything that page mentions on the right. A novel, a serial, a world, a
+						campaign - the same three columns, holding whatever you keep.
+					</p>
+				{/if}
 				<div class="hero-cta">
 					<a class="btn btn-primary" href={resolve('/login')}>Sign in</a>
 					{#if offerSignup}
 						<a class="btn btn-secondary" href={resolve('/signup')}>{signupLabel}</a>
 					{/if}
 				</div>
-			</section>
-
-			<section class="figure" aria-labelledby="figure-label">
-				<div class="figure-head">
-					<span class="figure-label" id="figure-label">The workspace</span>
-					<div class="seg posture-strip" role="tablist" aria-label="Who is at the desk">
-						{#each postures as posture (posture.id)}
-							<button
-								bind:this={tabs[posture.id]}
-								class="seg-btn"
-								class:active={active === posture.id}
-								type="button"
-								role="tab"
-								id="tab-{posture.id}"
-								aria-controls="fig-{posture.id}"
-								aria-selected={active === posture.id}
-								tabindex={active === posture.id ? 0 : -1}
-								onclick={() => (active = posture.id)}
-								onkeydown={(event) => onKeydown(event, posture.id)}
-							>
-								{posture.label}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				{@render figurePanel(
-					'novel',
-					'Novelist',
-					'A novel.',
-					'Chapters and scenes on the left, the draft in the middle, and the people and places this scene mentions on the right. Four modes - Write, Plan, Notes, Review - and the same four wherever you are.',
-					novelFigure
-				)}
-				{@render figurePanel(
-					'world',
-					'Worldbuilder',
-					'A world.',
-					'The same window, no story open: entries by category on the left, the entry in the middle, and on the right every scene and entry that mentions it. Nothing was added to Codex to make this view; you switched modes.',
-					worldFigure
-				)}
-				{@render figurePanel(
-					'table',
-					'Game master',
-					'A campaign.',
-					"Sessions where chapters were, tonight's scene in the middle, and your notes on the right, attached to the scene rather than to a file somewhere else. Prep, run, and write up in one place.",
-					tableFigure
-				)}
-			</section>
-
-			<section class="model" aria-labelledby="model-head">
-				<h2 class="model-head" id="model-head">Four things worth stating before you sign in.</h2>
-				<div class="model-grid">
-					<div class="model-item">
-						<div class="model-term">Run it yourself, or let us run it</div>
-						<p class="model-body">
-							Install Codex on your own computer, or use the hosted version. It is the same Codex
-							either way, with the same features, and you can move your work from one to the other
-							whenever you like.
-						</p>
-					</div>
-					<div class="model-item">
+				{#if type === 'personal'}
+					<p class="hero-note">
 						{#if mode === 'open'}
-							<div class="model-term">Anyone can make an account</div>
-							<p class="model-body">
-								Sign up with an email address and start writing. There is no queue and nothing to
-								wait for.
-							</p>
+							Anyone can make an account here with an email address.
 						{:else if mode === 'none'}
-							<div class="model-term">New accounts are closed, for now</div>
-							<p class="model-body">
-								This Codex is not taking new accounts at the moment. If you need one, ask the person
-								who runs it.
-							</p>
+							This Codex is not taking new accounts.
 						{:else if mode === 'invite'}
-							<div class="model-term">Accounts open by invitation, for now</div>
-							<p class="model-body">
-								Accounts open by invitation while the work is young. Requests are closed at the
-								moment, but anyone already writing here can invite you, so ask them for a code. Have
-								a code already? <a href={resolve('/signup')}>Use it here</a>.
-							</p>
+							Accounts here need an invite code from someone already writing here. Have one?
+							<a href={resolve('/signup')}>Use it here</a>.
 						{:else}
-							<div class="model-term">Accounts open by invitation, for now</div>
-							<p class="model-body">
-								Accounts open by invitation while the work is young. Ask for one and you get an
-								answer - yes, or when - rather than a place in a queue nobody describes.
-							</p>
+							Ask for an account, and the person who runs this Codex will answer.
 						{/if}
-					</div>
-					<div class="model-item">
-						<div class="model-term">Your words leave as markdown</div>
-						<p class="model-body">
-							Every scene, entry and note exports as a plain markdown file, in the folders you see
-							in the app. Open the export in any editor and it still reads as your book.
-						</p>
-					</div>
-					<div class="model-item">
-						<div class="model-term">No AI unless you ask</div>
-						<p class="model-body">
-							The assistant is a panel you open, and it never writes into your draft until you
-							accept an edit. Turn it off in settings and nothing else changes: Codex is a complete
-							writing tool with the assistant off.
-						</p>
-					</div>
-				</div>
-				<div class="close-row">
-					<p class="close-note">
-						The <a href={docs}>handbook</a> is open before you sign in: the
-						<a href={shortcuts}>keyboard shortcuts</a>, how
-						<a href={publishing}>reading pages</a>
-						work, and how to <a href={selfhosting}>run Codex yourself</a>.
 					</p>
-					<span class="cta">
-						<a class="btn btn-primary" href={resolve('/login')}>Sign in</a>
-						{#if offerSignup}
-							<a class="btn btn-secondary" href={resolve('/signup')}>{signupLabel}</a>
-						{/if}
-					</span>
-				</div>
+				{/if}
 			</section>
+
+			{#if type === 'service'}
+				<section class="figure" aria-labelledby="figure-label">
+					<div class="figure-head">
+						<span class="figure-label" id="figure-label">The workspace</span>
+						<div class="seg posture-strip" role="tablist" aria-label="Who is at the desk">
+							{#each postures as posture (posture.id)}
+								<button
+									bind:this={tabs[posture.id]}
+									class="seg-btn"
+									class:active={active === posture.id}
+									type="button"
+									role="tab"
+									id="tab-{posture.id}"
+									aria-controls="fig-{posture.id}"
+									aria-selected={active === posture.id}
+									tabindex={active === posture.id ? 0 : -1}
+									onclick={() => (active = posture.id)}
+									onkeydown={(event) => onKeydown(event, posture.id)}
+								>
+									{posture.label}
+								</button>
+							{/each}
+						</div>
+					</div>
+
+					{@render figurePanel(
+						'novel',
+						'Novelist',
+						'A novel.',
+						'Chapters and scenes on the left, the draft in the middle, and the people and places this scene mentions on the right. Four modes - Write, Plan, Notes, Review - and the same four wherever you are.',
+						novelFigure
+					)}
+					{@render figurePanel(
+						'world',
+						'Worldbuilder',
+						'A world.',
+						'The same window, no story open: entries by category on the left, the entry in the middle, and on the right every scene and entry that mentions it. Nothing was added to Codex to make this view; you switched modes.',
+						worldFigure
+					)}
+					{@render figurePanel(
+						'table',
+						'Game master',
+						'A campaign.',
+						"Sessions where chapters were, tonight's scene in the middle, and your notes on the right, attached to the scene rather than to a file somewhere else. Prep, run, and write up in one place.",
+						tableFigure
+					)}
+				</section>
+
+				<section class="model" aria-labelledby="model-head">
+					<h2 class="model-head" id="model-head">Four things worth stating before you sign in.</h2>
+					<div class="model-grid">
+						<div class="model-item">
+							<div class="model-term">Run it yourself, or let us run it</div>
+							<p class="model-body">
+								Install Codex on your own computer, or use the hosted version. It is the same Codex
+								either way, with the same features, and you can move your work from one to the other
+								whenever you like.
+							</p>
+						</div>
+						<div class="model-item">
+							{#if mode === 'open'}
+								<div class="model-term">Anyone can make an account</div>
+								<p class="model-body">
+									Sign up with an email address and start writing. There is no queue and nothing to
+									wait for.
+								</p>
+							{:else if mode === 'none'}
+								<div class="model-term">New accounts are closed, for now</div>
+								<p class="model-body">
+									This Codex is not taking new accounts at the moment. If you need one, ask the
+									person who runs it.
+								</p>
+							{:else if mode === 'invite'}
+								<div class="model-term">Accounts open by invitation, for now</div>
+								<p class="model-body">
+									Accounts open by invitation while the work is young. Requests are closed at the
+									moment, but anyone already writing here can invite you, so ask them for a code.
+									Have a code already? <a href={resolve('/signup')}>Use it here</a>.
+								</p>
+							{:else}
+								<div class="model-term">Accounts open by invitation, for now</div>
+								<p class="model-body">
+									Accounts open by invitation while the work is young. Ask for one and you get an
+									answer - yes, or when - rather than a place in a queue nobody describes.
+								</p>
+							{/if}
+						</div>
+						<div class="model-item">
+							<div class="model-term">Your words leave as markdown</div>
+							<p class="model-body">
+								Every scene, entry and note exports as a plain markdown file, in the folders you see
+								in the app. Open the export in any editor and it still reads as your book.
+							</p>
+						</div>
+						<div class="model-item">
+							<div class="model-term">No AI unless you ask</div>
+							<p class="model-body">
+								The assistant is a panel you open, and it never writes into your draft until you
+								accept an edit. Turn it off in settings and nothing else changes: Codex is a
+								complete writing tool with the assistant off.
+							</p>
+						</div>
+					</div>
+					<div class="close-row">
+						<p class="close-note">
+							The <a href={docs}>handbook</a> is open before you sign in: the
+							<a href={shortcuts}>keyboard shortcuts</a>, how
+							<a href={publishing}>reading pages</a>
+							work, and how to <a href={selfhosting}>run Codex yourself</a>.
+						</p>
+						<span class="cta">
+							<a class="btn btn-primary" href={resolve('/login')}>Sign in</a>
+							{#if offerSignup}
+								<a class="btn btn-secondary" href={resolve('/signup')}>{signupLabel}</a>
+							{/if}
+						</span>
+					</div>
+				</section>
+			{/if}
 		</div>
 	</main>
 

@@ -29,6 +29,8 @@ import {
 } from '#lib/server/invites';
 import { listPublications, takedownPublication } from '#lib/server/publish';
 import {
+	instanceType,
+	saveInstanceType,
 	saveSignupMode,
 	saveSmtp,
 	SIGNUP_MODES,
@@ -36,6 +38,7 @@ import {
 	smtpView,
 	type SignupMode
 } from '#lib/server/settings';
+import { INSTANCE_TYPES, type InstanceType } from '#lib/instance-type';
 import { secretsAvailable } from '#lib/server/crypto';
 import { egressPolicy, saveEgressPolicy, type EgressPolicyName } from '#lib/server/llm/egress';
 import { mcpInstanceEnabled, saveMcpInstanceEnabled } from '#lib/server/mcp/settings';
@@ -96,6 +99,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		meEmail: locals.user!.email,
 		stats: await instanceStats(db),
 		signup: await signupMode(db),
+		instanceType: await instanceType(db),
 		users: await listAllUsers(db),
 		inviteCodes: await listInviteCodes(db),
 		published: await listPublications(db, 50),
@@ -217,6 +221,15 @@ export const actions: Actions = {
 		}
 		await saveSignupMode(db, mode as SignupMode);
 		return { scope: 'signup', saved: true };
+	},
+	saveInstanceType: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const type = formText(await request.formData(), 'type');
+		if (!INSTANCE_TYPES.includes(type as InstanceType)) {
+			return fail(400, { scope: 'instance-type', message: 'Pick one of the options.' });
+		}
+		await saveInstanceType(db, type as InstanceType);
+		return { scope: 'instance-type', saved: true };
 	},
 	createInvite: async ({ request, locals }) => {
 		requireAdmin(locals);

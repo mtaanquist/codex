@@ -90,7 +90,7 @@
 </svelte:head>
 
 {#if !data.user}
-	<Landing mode={data.signupMode ?? 'approval'} />
+	<Landing mode={data.signupMode ?? 'approval'} type={data.instanceType ?? 'personal'} />
 {:else}
 	{@render library()}
 {/if}

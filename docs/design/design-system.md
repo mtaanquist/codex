@@ -718,6 +718,11 @@ Everything a signed-out visitor sees, in `public.css`, loaded last.
   `shell="reader" | "public"`. The public reduction says "Codex" rather than
   "Written in Codex", names no author, and links to the handbook and Reading in
   Codex. Every link on these pages points at an article that exists.
+- **The landing page has a short face.** On a private instance (the default
+  instance type, set in Admin > Instance) it shows only the hero: title, one
+  line, the sign-in and sign-up buttons, and `.hero-note` saying who can get
+  an account. The figure and the model grid below belong to the public
+  service face.
 - **The landing page shows the workspace rather than describing it.** `.ws-*`
   is a stylised rendering of the three-pane shell drawn from the same tokens as
   the product, so it is correct in dark, light and warm and stays crisp at any
