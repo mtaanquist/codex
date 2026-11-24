@@ -381,7 +381,12 @@ export const actions: Actions = {
 		// Checked before anything is written, so a refused name saves nothing.
 		const checked = checkTagNames(splitTags(formText(data, 'tags')));
 		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
-		const fandoms = await findFandoms(db, splitTags(formText(data, 'fandoms')));
+		const inherited = (await storyTagView(db, story.id)).fandoms.filter((tag) => tag.inherited);
+		const fandoms = await findFandoms(
+			db,
+			splitTags(formText(data, 'fandoms')),
+			inherited.map((tag) => tag.slug)
+		);
 		if (!fandoms.ok) return fail(400, { action: 'tags', message: fandoms.message });
 		const { skipped } = await db.transaction(async (tx) => {
 			await setStoryList(tx, story.id, 'fandom', fandoms.ids);

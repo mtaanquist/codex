@@ -17,6 +17,9 @@ import {
 	renameTag,
 	setStoryList,
 	setStoryTags,
+	setUniverseFandom,
+	suggestFandoms,
+	universeFandom,
 	setTagRemoved,
 	storyTagView,
 	unmergeTag
@@ -237,5 +240,68 @@ describe('content warnings on editions', () => {
 			.from(publications)
 			.where(eq(publications.id, published.publicationId));
 		expect(edition.contentWarnings).toEqual(['Death']);
+	});
+});
+
+describe('a universe linked to a fandom', () => {
+	async function linked() {
+		await addListEntries(db, 'fandom', 'Forgotten Realms\nRealms of Old\nDiscworld');
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		return story.universeId;
+	}
+
+	it('gives every story in it the fandom, and ticks Established setting', async () => {
+		const universeId = await linked();
+		expect(await setUniverseFandom(db, universeId, await tagId('forgotten-realms'))).toBe(true);
+		const [universe] = await db.select().from(universes).where(eq(universes.id, universeId));
+		expect(universe.establishedSetting).toBe(true);
+		for (const id of [storyId, otherStoryId]) {
+			const view = await storyTagView(db, id);
+			expect(view.fandoms).toMatchObject([{ name: 'Forgotten Realms', inherited: true }]);
+		}
+		// Unlinking leaves the flag as it is.
+		await setUniverseFandom(db, universeId, null);
+		const [after] = await db.select().from(universes).where(eq(universes.id, universeId));
+		expect(after.establishedSetting).toBe(true);
+		expect((await storyTagView(db, storyId)).fandoms).toEqual([]);
+	});
+
+	it('follows a merge, hides a removed fandom, and refuses an entry not on the list', async () => {
+		const universeId = await linked();
+		await setUniverseFandom(db, universeId, await tagId('realms-of-old'));
+		await mergeTag(db, await tagId('realms-of-old'), 'Forgotten Realms');
+		expect(await universeFandom(db, universeId)).toMatchObject({ name: 'Forgotten Realms' });
+		expect((await storyTagView(db, storyId)).fandoms.map((tag) => tag.name)).toEqual([
+			'Forgotten Realms'
+		]);
+		await setTagRemoved(db, await tagId('forgotten-realms'), true, ownerId);
+		expect(await universeFandom(db, universeId)).toBeNull();
+		expect((await storyTagView(db, storyId)).fandoms).toEqual([]);
+		expect(await setUniverseFandom(db, universeId, await tagId('forgotten-realms'))).toBe(false);
+		expect(await setUniverseFandom(db, universeId, 'not-an-id')).toBe(false);
+	});
+
+	it('counts the inherited fandom toward the five, and does not store it again', async () => {
+		const universeId = await linked();
+		await setUniverseFandom(db, universeId, await tagId('discworld'));
+		await addListEntries(db, 'fandom', 'A\nB\nC\nD\nE');
+		expect((await findFandoms(db, ['A', 'B', 'C', 'D', 'E'], ['discworld'])).ok).toBe(false);
+		const found = await findFandoms(db, ['Discworld', 'A', 'B', 'C', 'D'], ['discworld']);
+		if (!found.ok) throw new Error(found.message);
+		expect(found.ids).toHaveLength(4);
+		await setStoryList(db, storyId, 'fandom', [await tagId('discworld')]);
+		// Both on the story and from the universe: shown once, as the story's own.
+		const view = await storyTagView(db, storyId);
+		expect(view.fandoms).toEqual([expect.objectContaining({ name: 'Discworld' })]);
+		expect(view.fandoms[0].inherited).toBeUndefined();
+	});
+
+	it('suggests close matches from the list as a writer types', async () => {
+		await linked();
+		expect((await suggestFandoms(db, 'forgoten realm')).map((row) => row.name)[0]).toBe(
+			'Forgotten Realms'
+		);
+		expect((await suggestFandoms(db, 'disc')).map((row) => row.name)).toEqual(['Discworld']);
+		expect(await suggestFandoms(db, 'x')).toEqual([]);
 	});
 });

@@ -18,7 +18,7 @@
 	let tags = $state<string[]>([]);
 	$effect.pre(() => {
 		genres = data.storyTags?.genres.map((tag) => tag.id) ?? [];
-		fandoms = data.storyTags?.fandoms.map((tag) => tag.name) ?? [];
+		fandoms = data.storyTags?.fandoms.filter((tag) => !tag.inherited).map((tag) => tag.name) ?? [];
 		tags = data.storyTags?.tags.map((tag) => tag.name) ?? [];
 	});
 
@@ -195,7 +195,8 @@
 				inputId="st-fandoms"
 			/>
 			<p class="field-hint">
-				For a story set in an existing world. Pick up to {MAX_FANDOMS} from the site's list.
+				For a story set in an existing world. Pick up to {MAX_FANDOMS} from the site's list.{#each data.storyTags?.fandoms.filter((tag) => tag.inherited) ?? [] as fandom (fandom.id)}
+					{fandom.name} comes from the universe and counts toward the {MAX_FANDOMS}.{/each}
 			</p>
 		</div>
 		<div class="field">

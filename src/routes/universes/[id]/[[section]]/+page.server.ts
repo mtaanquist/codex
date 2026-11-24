@@ -20,6 +20,7 @@ import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models
 import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/server/proposals';
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
+import { setUniverseFandom, universeFandom } from '#lib/server/tags';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
@@ -69,6 +70,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		categories,
 		// Entries and scene splits the Assistant or a connected app proposed.
 		proposals: await listProposals(db, locals.user!.id, universe.id),
+		// The known setting the universe is linked to, if any.
+		fandom: await universeFandom(db, universe.id),
 		timeline,
 		revisionCount,
 		trashDays: UNIVERSE_TRASH_DAYS,
@@ -116,6 +119,19 @@ export const actions: Actions = {
 			establishedSetting
 		});
 		if (!slug) error(404, 'Not found');
+		// The known setting: an empty field unlinks it. Linking ticks
+		// Established setting; a fandom no longer on the list is refused.
+		if (data.has('fandomId')) {
+			const fandomId = formText(data, 'fandomId') || null;
+			if (fandomId !== universe.fandomId) {
+				if (!(await setUniverseFandom(db, universe.id, fandomId))) {
+					return fail(400, {
+						action: 'update',
+						message: 'That setting is no longer on the list. Pick another.'
+					});
+				}
+			}
+		}
 		// A changed slug moves this page's own URL.
 		if (slug !== universe.slug) redirect(303, `/universes/${slug}`);
 		return { action: 'update', saved: true };

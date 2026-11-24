@@ -199,6 +199,14 @@ describe('search and filters', () => {
 		expect((await titles('hide=death')).sort()).toEqual(['A', 'C']);
 	});
 
+	it("matches a fandom given by the story's universe", async () => {
+		await addListEntries(db, 'fandom', 'Discworld');
+		const { rows } = await pool.query("select id from tags where slug = 'discworld'");
+		await story('Inherits');
+		await db.update(universes).set({ fandomId: rows[0].id }).where(eq(universes.id, universeId));
+		expect(await titles('fandom=discworld')).toEqual(['Inherits']);
+	});
+
 	it('hides a story whose edition carried a warning even if the story no longer does', async () => {
 		await addListEntries(db, 'warning', 'Death');
 		const { rows } = await pool.query("select id from tags where slug = 'death'");

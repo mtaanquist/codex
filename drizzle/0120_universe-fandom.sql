@@ -1,0 +1,2 @@
+ALTER TABLE "universes" ADD COLUMN "fandom_id" uuid;--> statement-breakpoint
+ALTER TABLE "universes" ADD CONSTRAINT "universes_fandom_id_tags_id_fk" FOREIGN KEY ("fandom_id") REFERENCES "public"."tags"("id") ON DELETE set null ON UPDATE no action;
