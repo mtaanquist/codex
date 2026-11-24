@@ -2,34 +2,102 @@
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	const TYPE_OPTIONS = [
+		{
+			value: 'personal',
+			name: 'Private',
+			desc: 'For you and the people you invite. The front page is short: a title and the sign-in button.'
+		},
+		{
+			value: 'service',
+			name: 'Public service',
+			desc: 'Anyone can find it and ask for an account. The front page introduces Codex in full.'
+		}
+	] as const;
 </script>
 
 <div class="admin-head">
 	<p class="admin-eyebrow">Configuration</p>
-	<h1 class="admin-title">Email relay</h1>
-	<p class="admin-lede">
-		Used to send verification, password-reset, and notification emails.
-		{#if data.smtp.source === 'environment'}
-			Currently taking values from the environment; saving here overrides them.
-		{:else if data.smtp.source === 'none'}
-			Not configured yet; until it is, emails are written to the worker log instead of sent.
-		{/if}
-	</p>
+	<h1 class="admin-title">Instance</h1>
+	<p class="admin-lede">What visitors see before they sign in, and how this Codex sends email.</p>
 </div>
 
-{#if !data.secretsAvailable}
-	<div
-		class="status-banner"
-		style="background:color-mix(in oklab, var(--status-draft) 12%, transparent);border:1px solid color-mix(in oklab, var(--status-draft) 32%, transparent);"
-	>
-		<span class="x">
-			Set APP_SECRET on the server to store a password here. Without it you can still seed SMTP from
-			environment variables.
-		</span>
+<div class="admin-block">
+	<div class="admin-block-head">
+		<div>
+			<h2 class="admin-block-title">Type</h2>
+			<p class="admin-block-sub">
+				Changes the front page that visitors see before they sign in. A private Codex shows a short
+				page with the sign-in button; a public service shows the full introduction.
+			</p>
+		</div>
 	</div>
-{/if}
+
+	{#if form?.scope === 'instance-type' && form.message}
+		<div
+			class="status-banner"
+			style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);margin-bottom:var(--space-4);"
+		>
+			<span class="x">{form.message}</span>
+		</div>
+	{:else if form?.scope === 'instance-type' && form.saved}
+		<div class="status-banner ok" style="margin-bottom:var(--space-4);">
+			<span class="dot"></span><span class="v">Saved.</span>
+		</div>
+	{/if}
+
+	<form method="POST" action="?/saveInstanceType">
+		<div class="policy-grid">
+			{#each TYPE_OPTIONS as option (option.value)}
+				<label class="policy-card">
+					<input
+						type="radio"
+						name="type"
+						value={option.value}
+						checked={data.instanceType === option.value}
+					/>
+					<span class="policy-radio"></span>
+					<div>
+						<div class="policy-name">{option.name}</div>
+						<div class="policy-desc">{option.desc}</div>
+					</div>
+				</label>
+			{/each}
+		</div>
+		<div class="settings-actions">
+			<button type="submit" class="btn btn-primary">Save</button>
+		</div>
+	</form>
+</div>
 
 <div class="admin-block">
+	<div class="admin-block-head">
+		<div>
+			<h2 class="admin-block-title">Email relay</h2>
+			<p class="admin-block-sub">
+				Used to send verification, password-reset, and notification emails.
+				{#if data.smtp.source === 'environment'}
+					Currently taking values from the environment; saving here overrides them.
+				{:else if data.smtp.source === 'none'}
+					Not configured yet; until it is, emails are written to the worker log instead of sent.
+				{/if}
+			</p>
+		</div>
+	</div>
+
+	{#if !data.secretsAvailable}
+		<div
+			class="status-banner"
+			style="background:color-mix(in oklab, var(--status-draft) 12%, transparent);border:1px solid color-mix(in oklab, var(--status-draft) 32%, transparent);"
+		>
+			<span class="x">
+				Set APP_SECRET on the server to store a password here. Without it you can still seed SMTP
+				from environment variables.
+			</span>
+		</div>
+	{/if}
+
 	<div class="admin-card">
 		<form method="POST" action="?/saveSmtp">
 			{#if form?.scope === 'smtp' && form.message}

@@ -18,7 +18,7 @@ import {
 	restoreUniverse
 } from '#lib/server/universe-lifecycle';
 import { destroyStory, listTrashedStories, restoreStory } from '#lib/server/story-lifecycle';
-import { signupMode } from '#lib/server/settings';
+import { instanceType, signupMode } from '#lib/server/settings';
 import { saveLibraryView, userPreferences } from '#lib/server/preferences';
 import { formText } from '#lib/server/validation';
 import { draftsByStory } from '#lib/server/story-drafts';
@@ -37,7 +37,8 @@ export const load: PageServerLoad = async ({ locals }) => {
 			trashedStories: [],
 			// The mode, not a boolean: the landing page offers a sign-up only
 			// where a visitor without an invite code can finish one.
-			signupMode: await signupMode(db)
+			signupMode: await signupMode(db),
+			instanceType: await instanceType(db)
 		};
 	}
 	const user = locals.user;

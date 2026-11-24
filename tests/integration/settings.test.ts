@@ -5,6 +5,8 @@ import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import {
 	effectiveSmtp,
+	instanceType,
+	saveInstanceType,
 	saveSignupMode,
 	saveSmtp,
 	signupMode,
@@ -136,5 +138,15 @@ describe('signupMode', () => {
 			`insert into app_settings (key, value) values ('signup', '{"mode":"everyone"}')`
 		);
 		expect(await signupMode(db)).toBe('approval');
+	});
+});
+
+describe('instanceType', () => {
+	it('defaults to personal until one is saved, then round-trips', async () => {
+		expect(await instanceType(db)).toBe('personal');
+		await saveInstanceType(db, 'service');
+		expect(await instanceType(db)).toBe('service');
+		await saveInstanceType(db, 'personal');
+		expect(await instanceType(db)).toBe('personal');
 	});
 });
