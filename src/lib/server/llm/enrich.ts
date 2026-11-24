@@ -257,6 +257,9 @@ async function stillReadable(
 // told what the earlier ones found. Each part's finds are staged as it is
 // read, so a later part that fails, or a job that is stopped, keeps what the
 // earlier parts found. With a job id the spend cap applies between parts.
+// A read that ran to the end and read every scene the /enrich pass would
+// stores that pass's fingerprint, so the pass does not read the entity again
+// until its input changes.
 export async function enrichEntityFromText(
 	db: Database,
 	opts: EnrichOptions & { mode: EnrichTextMode; jobId?: string },
@@ -274,6 +277,14 @@ export async function enrichEntityFromText(
 	if (!entity) return missing;
 	if (!(await entityInScope(db, opts.userId, opts.scope, entity.universeId))) return missing;
 	const kind = entity.type === 'lore_entry' ? ('lore' as const) : entity.type;
+	// Taken before the read, as the pass does, so an edit made while the model
+	// reads leaves it behind.
+	const passRequest = await enrichFingerprint(db, {
+		userId: opts.userId,
+		scope: { universeId: entity.universeId },
+		entityId: opts.entityId,
+		type: entity.type
+	});
 
 	const excerpts = await entityExcerpts(db, { ...opts, kind });
 	if (excerpts.length === 0) {
@@ -312,6 +323,8 @@ export async function enrichEntityFromText(
 	let failure: unknown;
 	let capped = false;
 	let summaryAsked = false;
+	// Scenes in a part whose reply came back whole.
+	const readScenes = new Set<string>();
 	for (const index of parts.keys()) {
 		if (opts.signal?.aborted) {
 			failure = opts.signal.reason ?? new Error('stopped');
@@ -363,6 +376,7 @@ export async function enrichEntityFromText(
 			if (result.cutOff) {
 				throw new ReplyCutOffError(CUT_OFF_ADVICE);
 			}
+			for (const scene of part) readScenes.add(scene.id);
 			// A summary offered against the instruction (an earlier part, or one
 			// the writer already has or turned down) is dropped.
 			const proposals = parseEnrichResponse(result.content).filter(
@@ -409,6 +423,32 @@ export async function enrichEntityFromText(
 	if (!failure && !capped) {
 		if (requests === 0) skipped = 'all';
 		else if (!summaryAsked && !summaryClosed) skipped = 'summary';
+	}
+	// Only a whole read: the pass stores nothing for a failed one. A cut-off
+	// reply here says nothing about the pass's shorter request, so no
+	// unusableReplyMark is stored either.
+	if (
+		passRequest &&
+		!failure &&
+		!capped &&
+		!skipped &&
+		passRequest.sceneIds.every((id) => readScenes.has(id))
+	) {
+		const table = entityTable(entity.type);
+		await db
+			.update(table)
+			.set({
+				assistantEnrichedAt: sql`now()`,
+				assistantEnrichedInput: passRequest.input,
+				updatedAt: sql`${table.updatedAt}`
+			})
+			.where(eq(table.id, opts.entityId))
+			.catch((err) =>
+				logEvent('error', 'assistant.enrich_store_failed', {
+					entityId: opts.entityId,
+					...errorFields(err)
+				})
+			);
 	}
 	return {
 		suggestions,
@@ -472,6 +512,8 @@ type EnrichFingerprint = {
 	entityId: string;
 	fields: EnrichFields;
 	snippets: string[];
+	// The scenes the snippets are from.
+	sceneIds: string[];
 	input: string;
 	// The same request's fingerprint as releases up to 3.21.4 stored it, with
 	// the entry's aliases and details as they are now, or as given.
@@ -511,9 +553,8 @@ async function enrichFingerprint(
 	const appearances = await entityAppearances(db, { kind, id: opts.entityId }, opts.scope, {
 		assistant: true
 	});
-	const snippets = spreadAppearances(appearances, MAX_APPEARANCES).map((a) =>
-		snippetLine(a, universeWide)
-	);
+	const picked = spreadAppearances(appearances, MAX_APPEARANCES);
+	const snippets = picked.map((a) => snippetLine(a, universeWide));
 
 	const fields: EnrichFields = {
 		kind,
@@ -540,6 +581,7 @@ async function enrichFingerprint(
 		entityId: opts.entityId,
 		fields,
 		snippets,
+		sceneIds: [...new Set(picked.map((a) => a.sceneId))],
 		input,
 		inputAsOf3_21: (known) => enrichInputAsOf3_21({ ...fields, ...known }, snippets),
 		lastInput: entity.lastInput

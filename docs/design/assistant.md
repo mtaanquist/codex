@@ -1193,7 +1193,14 @@ hashes:
   (aliases, details, whether a summary is asked for), so accepting what a
   read suggested does not buy another read of the same passages. The pass
   builds only the fingerprint (entry row and passages); the summary check
-  that shapes the messages runs only for an entry it sends.
+  that shapes the messages runs only for an entry it sends. A Suggest
+  details read (`enrichEntityFromText`) stores the same fingerprint, taken
+  before it reads, when it ran to the end (no part failed, nothing was
+  stopped, capped or skipped) and read every scene behind the pass's
+  passages, so the pass skips that entry until its input changes (#1371). A
+  story-scoped read of an entry mentioned in other stories does not cover
+  them and stores nothing. A cut-off Suggest details reply stores no
+  `unusableReplyMark`: its request is not the one the pass sends.
 - A reply that cannot be used (an enrich read cut off at the reply limit, a
   chapter summary that comes back empty) stores an `unusableReplyMark` in
   place of the fingerprint: the request's hash with the role's model, tuning

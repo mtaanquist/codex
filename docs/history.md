@@ -10,6 +10,22 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Suggest details stores the /enrich fingerprint (2026-11-24,
+`fix/suggest-details-fingerprint-1371` on `staging/llm-issues`, #1371). A
+Suggest details read stored nothing, so the next `/enrich` pass read the
+entry again with nothing changed. Mads chose to keep the fingerprint rule
+rather than document an exception, so the read now stores the pass's own
+fingerprint (the universe-wide snippet request, taken before the read) and
+`assistant_enriched_at`. Its request is a different one (full text, maybe one
+story), so it stores only when it covered what the pass would send: no part
+failed, the job was not stopped or capped, the summary was asked for (or is
+closed), and every scene behind the pass's passages was in a part whose reply
+came back whole. A story-scoped read of an entry also mentioned elsewhere
+stores nothing. Staged suggestions the writer has not seen are no reason to
+hold back: the pass stores its fingerprint right after staging too. A cut-off
+reply stores no `unusableReplyMark`, since it says nothing about the pass's
+shorter request and would make the pass report a cut-off it never sent.
+
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
 short or waiting when unsaved edits partly cancel out in one combined change)
