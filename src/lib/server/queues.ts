@@ -49,12 +49,6 @@ export const ASSISTANT_SUMMARIES_QUEUE = 'assistant-summaries-v2';
 export const ASSISTANT_ENRICH_QUEUE = 'assistant-enrich';
 // A scene the Assistant drafts from the writer's brief (see llm/scene-draft.ts).
 export const ASSISTANT_DRAFT_QUEUE = 'assistant-draft';
-// LEGACY, remove in a later release (#1041): the default-policy queues
-// review and summaries used before #986. Nothing sends to them any more; the
-// worker drains jobs queued there before the upgrade, and the job lookups
-// (status polling, running jobs) still read them until they are empty.
-export const LEGACY_ASSISTANT_REVIEW_QUEUE = 'assistant-review';
-export const LEGACY_ASSISTANT_SUMMARIES_QUEUE = 'assistant-summaries';
 // Sweeps the recorded progress of long-finished Assistant runs (see
 // review-runs.ts); the rows are disposable, so nothing is lost with them.
 export const PURGE_REVIEW_RUNS_QUEUE = 'purge-review-runs';

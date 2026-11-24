@@ -59,10 +59,10 @@ insert into entity_mentions (source_type, source_id, target_type, target_id, pos
 	('scene', '00000000-0000-4000-8000-0000000000e2', 'character', '00000000-0000-4000-8000-0000000000f2', 22, 'Mara sold the boat to Tam.'),
 	('scene', '00000000-0000-4000-8000-0000000000e1', 'place', '00000000-0000-4000-8000-0000000000f3', 17, 'Mara reached the quay.');
 
--- A whole-story review of prose and mechanics that hit the spend cap after two scenes, saved under
--- the scope key from before the categories were part of it and not continued since.
+-- A whole-story review of prose and mechanics that hit the spend cap after two scenes, not
+-- continued since.
 insert into assistant_review_runs (job_id, user_id, state) values
-	('00000000-0000-4000-8000-0000000000aa', '00000000-0000-4000-8000-0000000000a1', '{"phase":"scenes","scope":"full:00000000-0000-4000-8000-0000000000c1","total":3,"completed":["00000000-0000-4000-8000-0000000000e1","00000000-0000-4000-8000-0000000000e2"],"reviewed":2,"failed":0,"notes":4,"failures":[],"capped":true,"spentUsd":0.5}');
+	('00000000-0000-4000-8000-0000000000aa', '00000000-0000-4000-8000-0000000000a1', '{"phase":"scenes","scope":"full:00000000-0000-4000-8000-0000000000c1:mechanics+prose","total":3,"completed":["00000000-0000-4000-8000-0000000000e1","00000000-0000-4000-8000-0000000000e2"],"reviewed":2,"failed":0,"notes":4,"failures":[],"capped":true,"spentUsd":0.5}');
 
 -- Uploaded images from before storage use was counted, long past the unused
 -- image sweep's grace period: a cover in a universe and an account avatar

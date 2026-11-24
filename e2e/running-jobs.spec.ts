@@ -4,6 +4,7 @@ import { PgBoss } from 'pg-boss';
 import { e2eDatabaseUrl } from './database';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
+import { ASSISTANT_REVIEW_QUEUE } from '../src/lib/server/queues';
 
 // A background review started before a reload still shows afterwards: the card
 // in the corner comes back, and the story's pages say it is running under the
@@ -36,7 +37,7 @@ test('a queued Assistant review shows again after a reload', async ({ page }) =>
 		);
 		const [story] = rows;
 		jobId = await boss.send(
-			'assistant-review',
+			ASSISTANT_REVIEW_QUEUE,
 			{ userId: story.owner_id, storyId: story.id, categories: [] },
 			{ startAfter: 3600 }
 		);
@@ -71,7 +72,7 @@ test('a queued Assistant review shows again after a reload', async ({ page }) =>
 		await expect(page.getByRole('button', { name: 'Background jobs', exact: true })).toBeVisible();
 		await expect(page.locator('.run-note')).toHaveCount(0);
 	} finally {
-		if (jobId) await boss.deleteJob('assistant-review', jobId);
+		if (jobId) await boss.deleteJob(ASSISTANT_REVIEW_QUEUE, jobId);
 		await boss.stop({ graceful: false });
 		await pool.end();
 	}
