@@ -6,7 +6,7 @@
 	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
-	import { usageCostUsd, type TokenPrice } from '#lib/assistant-cost';
+	import { usageRowCostUsd, type TokenPrice, type UsageCostRow } from '#lib/assistant-cost';
 	import { askConfirm } from '#lib/confirm.svelte';
 	import { formatDateTime, formatNumber, pluralSuffix, spentPhrase } from '#lib/format';
 	import { resolveRoleModel, type AssistantRole } from '#lib/assistant-tuning';
@@ -163,30 +163,13 @@
 		].filter(Boolean);
 		return parts.length > 0 ? `${id} (${parts.join(', ')})` : id;
 	}
-	// A row's cost at the same cache rates the spend cap uses. A row with no
-	// cache shares is priced at the plain price. Rows do not record their
-	// provider, so the saved one decides the cache read rate; a row from
-	// before a provider switch seldom has a price left to show a cost with.
+	// A row's cost at the same cache rates the spend cap uses, at the rates of
+	// the provider the row went to (the saved one for an older row that did not
+	// record it). The price itself comes from the current price list, so a row
+	// from before a provider switch seldom has a price left to show a cost with.
 	const savedProvider = $derived(data.assistant.provider);
-	function usageCost(row: {
-		model: string;
-		promptTokens: number | null;
-		completionTokens: number | null;
-		cachedPromptTokens: number | null;
-		cacheWriteTokens: number | null;
-		cacheWrite1hTokens: number | null;
-	}) {
-		const price = modelPricing[row.model];
-		if (!price || (row.promptTokens === null && row.completionTokens === null)) return null;
-		return usageCostUsd(
-			price,
-			{
-				...row,
-				promptTokens: row.promptTokens ?? 0,
-				completionTokens: row.completionTokens ?? 0
-			},
-			savedProvider
-		);
+	function usageCost(row: UsageCostRow) {
+		return usageRowCostUsd(modelPricing, row, savedProvider);
 	}
 	const usageTotalCost = $derived.by(() => {
 		let total = 0;

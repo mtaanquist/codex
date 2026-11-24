@@ -14,7 +14,7 @@ import {
 	type RoleTuning
 } from './config.ts';
 import { loadStoryScope, loadUniverseScope } from './context/sources.ts';
-import { adapterKind } from './providers/presets.ts';
+import { adapterKind, type ProviderId } from './providers/presets.ts';
 import { estimateTokens } from './context/assemble.ts';
 import { ceilingTokens } from './context/budgets.ts';
 import {
@@ -478,6 +478,8 @@ type Prepared = {
 	messages: ChatMessage[];
 	http: HttpRequest;
 	provider: Provider;
+	// The account's provider id, recorded on each usage row.
+	providerId: ProviderId;
 	// Set only when tools are active this turn (enabled, story owned, endpoint
 	// capable); the agent loop runs when present.
 	tools?: ToolSpec[];
@@ -626,6 +628,7 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 		messages: [persona, ...req.messages],
 		http: deps.http ?? egressHttpRequest(policy),
 		provider: deps.provider ?? providerFor(resolved.config.provider),
+		providerId: resolved.config.provider,
 		tools,
 		toolContext,
 		toolBudget:
@@ -675,6 +678,7 @@ function recordUsage(
 		userId: req.userId,
 		storyId: req.storyId,
 		role: req.role,
+		provider: p.providerId,
 		model: p.model,
 		usage,
 		// Only worth the pass over the messages when there is a reported count to

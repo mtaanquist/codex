@@ -1617,8 +1617,8 @@ export const assistantChatSummaries = pgTable(
 );
 
 // One row per request the gateway sent to the writer's LLM endpoint: which
-// surface asked, which model answered, and the token counts the endpoint
-// reported (null when it reported none). Metadata only; the prompt text itself
+// surface asked, which provider and model answered, and the token counts the
+// endpoint reported (null when it reported none). Metadata only; the prompt text itself
 // is never stored. Feeds the usage log on the account Assistant page.
 export const assistantUsage = pgTable(
 	'assistant_usage',
@@ -1630,6 +1630,10 @@ export const assistantUsage = pgTable(
 		storyId: uuid('story_id').references(() => stories.id, { onDelete: 'set null' }),
 		role: text('role').notNull(),
 		model: text('model').notNull(),
+		// The provider id the request went to (see PROVIDER_IDS), which sets the
+		// rate its cached tokens are priced at. Null on every row from before it
+		// was stored; such a row is priced with the account's current provider.
+		provider: text('provider'),
 		promptTokens: integer('prompt_tokens'),
 		completionTokens: integer('completion_tokens'),
 		// The cache shares of promptTokens, where the endpoint reported them (see

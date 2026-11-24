@@ -304,7 +304,10 @@ endpoint, or OpenRouter with a typed price, gets the full price for cached
 tokens, since what it charges for them is not known. Those rates live in one place, `$lib/assistant-cost.ts`, shared by
 the meter, the estimate, and the usage list on the account page; each
 `assistant_usage` row stores its cache shares (null on rows from before
-they were kept, which price at the plain rate). A cost figure is only ever shown or enforced when
+they were kept, which price at the plain rate) and the provider it went to,
+so the list prices a row's cache reads at that provider's rate after a
+switch (null on rows from before #1373, which price at the saved provider's
+rate). A cost figure is only ever shown or enforced when
 the resolved model actually has a price there: with no price the pre-flight
 estimate reports tokens alone, and a set cap is reported as not applied
 rather than guessed at or skipped in silence. The estimate itself

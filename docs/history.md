@@ -10,6 +10,19 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+The provider on usage rows (2026-11-24, `feat/usage-provider-1373` on
+`staging/llm-issues`, #1373). `assistant_usage` gains a nullable `provider`
+column (migration 0115), written by the gateway's `recordUsage` from the
+resolved config, so the usage list prices each row's cache reads at the rate
+of the provider it went to rather than the one saved now. Existing rows stay
+null and fall back to the saved provider, as before. The thirty-day sums now
+group by model and provider, so the total prices each provider apart. The
+pricing moved into `usageRowCostUsd` in `$lib/assistant-cost.ts`. The price
+itself still comes from the current price list, which a provider switch
+clears, so an older row often still shows no cost; keeping per-row prices
+was left out. The MCP endpoint sends no model requests of its own, so it
+writes no usage rows.
+
 Legacy Assistant queues removed (2026-11-24,
 `chore/remove-legacy-queues-1041` on `staging/llm-issues`, #1041). The
 `assistant-review` and `assistant-summaries` queues kept since #986 (v3.21.3)
