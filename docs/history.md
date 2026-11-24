@@ -10,6 +10,45 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Remaining Phase 10 features (2026-11-24, `staging/public-browse`, lanes
+#1506 to #1512, review rounds #1513, #1514, #1516, #1521). Built in the order
+#857, #1439, #1440, #856, #855, plus #1460 and #1510.
+
+- Instance type (#1460): a setting with a short landing page for a public
+  service.
+- Moderators (#1439): a role between writer and admin with its own pages
+  (reports, published editions, tag lists). Admins cannot be changed by it, and
+  an admin cannot change their own role.
+- Reports and takedowns (#1440): a report form on public reading pages and a
+  queue. A takedown always carries a reason; account deletion hides editions
+  with no reason, so those do not hold after a cancel and can still be taken
+  down. Publish and takedown lock the stories row FOR UPDATE, so a publish that
+  races a takedown either lands first and is taken down, or is refused. A
+  takedown of a superseded edition also takes down the current one, since the
+  text is mostly the same. Restore is refused while the author's deletion is
+  pending.
+- Labels (#857): genres, content warnings, tags and fandoms on stories. Genres
+  and warnings are admin-editable lists seeded with suggestions (Mads did not
+  want them in code). Merges keep the writer's own row and resolve to the
+  survivor on read, so an unmerge or restore brings it back; a form save keeps
+  rows the form cannot show (merged or removed). Limits let a story already
+  over them keep what it has rather than dropping labels on the next save.
+  Warnings are frozen by name on the edition at publish.
+- Browse (#856): off by default; lists current, public, listed editions of
+  authors who did not opt out, with filters, search and paging. Every load is
+  rate limited per IP (pages 120/min, searches 30/min on top). Empty pages,
+  searches, adult pages and unresolved filters are noindex; the canonical link
+  uses merged survivor slugs. A free-form tag filter resolves only when a listed
+  story carries it, so private tags are not revealed. Moderators can remove a
+  story from Browse; the block is checked inside the visibility update so a
+  save cannot relist it.
+- Universe fandoms (#855): a universe links to a known setting from the fandom
+  list, inherited by its stories.
+
+Review: five fresh three-reviewer rounds (moderation, labels, Browse). The
+fifth found only lows, filed as #1523 to #1543. #1444 (similar stories) was
+left for later: it waits for tags to be in use.
+
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
 short or waiting when unsaved edits partly cancel out in one combined change)
