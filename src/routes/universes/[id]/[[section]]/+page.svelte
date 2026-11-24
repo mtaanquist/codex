@@ -272,7 +272,7 @@
 					<span class="field-hint">
 						The language and spelling your stories here are written in. The Assistant writes and
 						checks spelling in it, and the editor's spell-check uses it. A story can choose its own
-						in its settings. Not set, the Assistant works it out from the text.
+						in its settings. If you leave it unset, the Assistant works it out from the text.
 					</span>
 				</div>
 				<div class="field">

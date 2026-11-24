@@ -6,7 +6,6 @@ import { buildArcMessage, type ArcScene } from './prompts/arc.ts';
 import { requestHash } from './request-hash.ts';
 import type { ChatMessage } from './providers/types.ts';
 import { usableSceneSummary } from '../summary-currency.ts';
-import { universeLanguage } from '../language.ts';
 
 // The request a character's arc is written from, and the check that a stored
 // arc still matches it. Kept apart from the job (arc-summary.ts) so the
@@ -114,9 +113,6 @@ export async function arcRequests(
 			staleSummary: !summary && !!row.summaryMd?.trim()
 		});
 	}
-	// An arc spans the universe's stories, so it is written in the universe's
-	// language rather than any one story's.
-	const language = await universeLanguage(db, universeId);
 	for (const character of characters) {
 		const sampled = sampleEvenly(found.get(character.id) ?? [], MAX_ARC_SCENES);
 		if (sampled.length === 0) continue;
@@ -125,8 +121,7 @@ export async function arcRequests(
 				role: 'user',
 				content: buildArcMessage(
 					character.name,
-					sampled.map(({ storyTitle, sceneTitle, text }) => ({ storyTitle, sceneTitle, text })),
-					language
+					sampled.map(({ storyTitle, sceneTitle, text }) => ({ storyTitle, sceneTitle, text }))
 				)
 			}
 		];

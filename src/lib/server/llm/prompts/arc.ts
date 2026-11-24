@@ -3,9 +3,11 @@
 // account of what happens to them. Each scene is given as its summary where it
 // has one, otherwise the passage around the mention. The gateway prepends the
 // persona message; this is the task turn. No tools. Shipped-fixed in v1.
-
-import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
-import { writeInLine } from './language.ts';
+//
+// The arc states no language: its request is the fingerprint that says
+// whether a stored arc is current, so naming the language would mark every
+// arc out of date when the setting changed. It is written from scene
+// summaries, which already follow the story's language.
 
 export type ArcScene = {
 	storyTitle: string;
@@ -14,11 +16,7 @@ export type ArcScene = {
 	text: string;
 };
 
-export function buildArcMessage(
-	name: string,
-	scenes: ArcScene[],
-	language: LanguageSetting = NO_LANGUAGE
-): string {
+export function buildArcMessage(name: string, scenes: ArcScene[]): string {
 	const lines = scenes.map((scene, i) => {
 		const where = [scene.storyTitle, scene.sceneTitle ?? ''].filter(Boolean).join(' / ');
 		return `${i + 1}. [${where}] ${scene.text}`;
@@ -27,7 +25,7 @@ export function buildArcMessage(
 		`Write a short account of what happens to the character "${name}" across these stories, in the order given.`,
 		'Cover where they start, what changes for them, and where they are at the end of the latest scene. Use only what the scenes below support; never invent events.',
 		'Reply with only the account, in plain prose of at most five sentences - no preamble, no heading, no list. When the scenes span more than one story, name the story at each turn.',
-		writeInLine(language, 'Write in the same language as the scenes.'),
+		'Write in the same language as the scenes.',
 		'',
 		'---',
 		lines.join('\n')

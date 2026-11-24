@@ -14,8 +14,9 @@ On a large window, the sidebar lists the parts of Security and Assistant under
 
 Set your display name and, if you like, a separate pen name to show on your
 public pages. If you write in a language that is not the one you grew up
-speaking, set "Native language" to it: when you copyedit a story written in
-another language, or review its prose, the Assistant also looks for habits
+speaking, set "Native language" to it: when you copyedit a story whose
+language is set to another language, or review its prose, the Assistant also
+looks for habits
 carried over from your native language, such as idioms translated word for
 word, false friends, or prepositions and word order from it. Leave it on "Not
 set" to skip this. The public-page block is where you claim a handle: a short name
@@ -251,10 +252,11 @@ Your words are sent only to the endpoint you set here.
   stop well before the figure you set. First-time text is counted at Claude's
   higher rate. Requests made before
   Codex kept those counts are priced with every token sent at the plain price.
-  Each request is counted at the rate of the provider it was sent to, so
-  switching provider does not change the cost of earlier requests. Requests
-  made before Codex kept the provider are counted at your current provider's
-  rate.
+  Reused text in each request is counted at the rate of the provider it was
+  sent to (requests made before Codex kept the provider use your current
+  provider's rate). The price per model comes from your current price list, so
+  after you switch provider, earlier requests may show no cost or a different
+  one.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web

@@ -727,17 +727,18 @@ These cut across the surfaces and the architecture.
   universe) and `llm/prompts/language.ts` writes every line once: the prompts
   that write or edit prose (review, the passes, scene and chapter drafts,
   `/write`, the continuation, the pattern reread) state the language, scene
-  summaries, arcs and the recap say "Write in <language>" in place of "the
+  summaries and the recap say "Write in <language>" in place of "the
   same language as ...", and the mechanics category checks spelling against
   it. Not set, each prompt reads exactly as before and the model infers the
-  language from the text. A native language that is set and not the story's
-  (by primary subtag, so en-US is not interference for en-GB) adds one
+  language from the text. A native language that is set, with a story
+  language that is set and is a different language (by primary subtag, so
+  en-US is not interference for en-GB), adds one
   "interference" line to the mechanics and prose passes and the pattern
-  survey, as a hint of where to look. Two prompts stay on inferring on
-  purpose: the chapter summary, whose request is its currency fingerprint
-  (naming the language would mark every stored one stale when the setting
-  changed) and which is written from scene summaries that already follow the
-  setting, and the chat summary, which follows the conversation's language,
+  survey, as a hint of where to look. Three prompts stay on inferring on
+  purpose: the chapter summary and the character arc, whose requests are
+  their currency fingerprints (naming the language would mark every stored
+  one stale when the setting changed) and which are written from scene
+  summaries that already follow the setting, and the chat summary, which follows the conversation's language,
   not the story's. The editor's `lang` follows the effective language and
   falls back to the `writingLanguage` editor preference. The app interface
   language is a separate matter. Export carries a story's title, author and
@@ -1207,8 +1208,8 @@ SSOT): `assistant-review-v2` (scene/chapter/story passes), `assistant-enrich`
 maintenance). All three are created with pg-boss's `exclusive` policy, which is
 what makes a `singletonKey` hold one queued or running job per key; review and
 summaries moved off their original default-policy names (`assistant-review`,
-`assistant-summaries`) for that, and the worker drains the old names for one
-release (#1041). Expensive derived artifacts (a character's arc summary) cache on
+`assistant-summaries`) for that, and the worker deletes the old queues at
+startup (#1041). Expensive derived artifacts (a character's arc summary) cache on
 the entity with a fingerprint of the request they were written from.
 
 #### Out of date by fingerprint
@@ -1250,7 +1251,14 @@ hashes:
   (aliases, details, whether a summary is asked for), so accepting what a
   read suggested does not buy another read of the same passages. The pass
   builds only the fingerprint (entry row and passages); the summary check
-  that shapes the messages runs only for an entry it sends.
+  that shapes the messages runs only for an entry it sends. A Suggest
+  details read (`enrichEntityFromText`) stores the same fingerprint, taken
+  before it reads, when it ran to the end (no part failed, nothing was
+  stopped, capped or skipped) and read every scene behind the pass's
+  passages whole (every piece of a scene split across parts), so the pass skips that entry until its input changes (#1371). A
+  story-scoped read of an entry mentioned in other stories does not cover
+  them and stores nothing. A cut-off Suggest details reply stores no
+  `unusableReplyMark`: its request is not the one the pass sends.
 - A reply that cannot be used (an enrich read cut off at the reply limit, a
   chapter summary that comes back empty) stores an `unusableReplyMark` in
   place of the fingerprint: the request's hash with the role's model, tuning
@@ -1321,9 +1329,9 @@ newest run over the scope is looked at, it is adopted only if it was capped
 before it finished), and it starts again with the whole ceiling, minus the
 scenes whose pass failed and those edited since their pass read them, which
 are reviewed again. A failure to read or adopt the earlier run fails the
-attempt for pg-boss to retry rather than starting over. A copyedit capped before the
-categories joined the key is continued only when its job (still on the legacy
-queue) shows it checked the same categories; otherwise it starts over. The rows are
+attempt for pg-boss to retry rather than starting over. A copyedit capped
+under the key from before v3.21.3 (no categories in it) is not continued; it
+starts over. The rows are
 disposable, and a daily worker sweep drops those older than 30 days. The
 review enqueue holds one unfinished job per scope (and the summaries enqueue one
 per story), so a duplicate request cannot start a second pass over the same

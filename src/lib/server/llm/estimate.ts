@@ -1,3 +1,5 @@
+import { storyLanguage } from '../language.ts';
+import { storyPreferences } from '../assistant-preferences.ts';
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantUsage, scenes, stories } from '../db/schema.ts';
@@ -313,7 +315,9 @@ export async function estimateStoryReview(
 				? patternSurveyTokens(
 						units,
 						budgetTokens,
-						await patternSurveyOverhead(db, opts.userId, opts.storyId)
+						await patternSurveyOverhead(db, opts.userId, opts.storyId),
+						await storyLanguage(db, opts.storyId, opts.userId),
+						await storyPreferences(db, opts.storyId, opts.userId)
 					)
 				: 0;
 		}

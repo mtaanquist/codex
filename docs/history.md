@@ -63,20 +63,39 @@ page now sets the editor's `lang` from the story's effective language and
 falls back to the preference, which is relabelled "Spell-check language", and
 `lang` is set with spell-check off too. The prompt lines live in
 `llm/prompts/language.ts`, each returning '' or the old wording when nothing
-is set, so an unset story sends byte-identical prompts (and arc fingerprints
-do not move). Left on inferring on purpose: the chapter summary (its request
-is its fingerprint, so naming the language would stale every stored one, and
-it is written from scene summaries that follow the setting), the chat summary
-(it follows the conversation's language) and the continuity passes (they
-stage no prose). Arcs do take the universe's language, so changing it marks
-arcs out of date once. The native-language hint compares primary subtags, so
-en-US is not "interference" in en-GB, and with no story language set it is
-phrased to apply only where the text is in another language. MCP prompts
+is set, so an unset story sends byte-identical prompts
+(`unset-language.test.ts` checks them against a fixture taken from the
+release before). Left on inferring on purpose: the chapter summary and the
+character arc (each request is its fingerprint, so naming the language would
+mark every stored one out of date when the setting changed, and both are
+written from scene summaries that follow the setting), the chat summary (it
+follows the conversation's language) and the continuity passes (they stage
+no prose). The native-language hint compares primary subtags, so en-US is not
+"interference" in en-GB, and with no story language set there is no hint at
+all. A standalone story inherits the Standalone universe's language like any
+other, since that universe has its own settings page. MCP prompts
 stay pure builders; the server resolves the language for the connected
 writer's own work (`workLanguage`) and passes it in, and `list_universes` and
 `list_stories` return `language` and `languageName`. Export carries no
 universe or story settings, so it was left alone. The free chat gets no
 language line (not asked for; the frame could carry it later).
+
+Suggest details stores the /enrich fingerprint (2026-11-24,
+`fix/suggest-details-fingerprint-1371` on `staging/llm-issues`, #1371). A
+Suggest details read stored nothing, so the next `/enrich` pass read the
+entry again with nothing changed. Mads chose to keep the fingerprint rule
+rather than document an exception, so the read now stores the pass's own
+fingerprint (the universe-wide snippet request, taken before the read) and
+`assistant_enriched_at`. Its request is a different one (full text, maybe one
+story), so it stores only when it covered what the pass would send: no part
+failed, the job was not stopped or capped, the summary was asked for (or is
+closed), and every piece of every scene behind the pass's passages was in a part
+whose reply came back whole (a long scene is split into pieces that share its
+id, and a story muted mid-read drops the later ones without a failure). A story-scoped read of an entry also mentioned elsewhere
+stores nothing. Staged suggestions the writer has not seen are no reason to
+hold back: the pass stores its fingerprint right after staging too. A cut-off
+reply stores no `unusableReplyMark`, since it says nothing about the pass's
+shorter request and would make the pass report a cut-off it never sent.
 
 The provider on usage rows (2026-11-24, `feat/usage-provider-1373` on
 `staging/llm-issues`, #1373). `assistant_usage` gains a nullable `provider`
@@ -91,6 +110,39 @@ clears, so an older row often still shows no cost; keeping per-row prices
 was left out. The MCP endpoint sends no model requests of its own, so it
 writes no usage rows.
 
+
+
+Legacy Assistant queues removed (2026-11-24,
+`chore/remove-legacy-queues-1041` on `staging/llm-issues`, #1041). The
+`assistant-review` and `assistant-summaries` queues kept since #986 (v3.21.3)
+are no longer drained or read: the worker and web no longer create them, the
+job-state and running-jobs lookups read only the v2 queues, and the worker
+deletes the two old queues at startup (a no-op once they are gone). With them
+went the adoption of a capped run saved under the scope key from before
+categories were part of it (`legacyReviewScopeKey`, `legacyJobCategories`):
+v3.22.0 writes `full:<story>[:<chapter>]:<cats>`, so the upgrade fixture's
+capped run now carries that key and the step adopts it under the current key
+only. The #1113 test, which made adoption throw through the legacy job lookup,
+now throws through a stored review time Postgres cannot read. An install
+upgrading straight from before v3.21.3 loses any review or summary job still
+queued on the old names, and a copyedit capped under the old key before
+v3.21.3 starts over (re-reviewing its done scenes) rather than continuing; the
+writer runs it again.
+
+Web search in the spend cap (2026-11-24, `fix/web-search-cap-ceiling-1420`
+on `staging/llm-issues`, #1420). Anthropic's docs say search results "count as
+input tokens, both while Claude keeps searching within a turn and in later
+conversation turns": the server-side loop samples again after each search,
+over the prompt, the results so far and the text written so far. The old
+allowance added five searches' results once, so a capped request with a long
+prompt could cost many times what the check counted. The ceiling is now
+`searchingPromptTokens`: the server loop runs up to 10 model rounds before it
+pauses (a round can be a dynamic-filtering step or a search refused past
+`max_uses`, so it is not one per search), so the prompt is counted ten times,
+each search's results (10k tokens at most) in every round after it with all
+five searches first, and the reply in every later round. It is pessimistic on
+purpose (cache reads would make the later rounds cheaper), so a review that
+may search is held earlier near the cap.
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
 short or waiting when unsaved edits partly cancel out in one combined change)

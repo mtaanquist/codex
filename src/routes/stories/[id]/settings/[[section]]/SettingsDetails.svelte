@@ -13,11 +13,8 @@
 	// The select overrides it so the swatch previews the choice; it resets to
 	// the stored colour whenever the story's data changes.
 	let coverColor = $derived(storyCoverColor(data.story));
-	// What a story with no language of its own falls back to. A standalone
-	// story's universe is hidden, so it has none to offer.
-	let universeLanguage = $derived(
-		data.universe.standalone ? null : normaliseLanguage(data.universe.language)
-	);
+	// What a story with no language of its own falls back to.
+	let universeLanguage = $derived(normaliseLanguage(data.universe.language));
 </script>
 
 <div class="admin-block-head">
@@ -99,7 +96,7 @@
 				{#if universeLanguage}
 					Leave it on the universe's unless this story differs.
 				{:else}
-					Not set, the Assistant works it out from the text.
+					If you leave it unset, the Assistant works it out from the text.
 				{/if}
 			</p>
 		</div>
@@ -126,9 +123,10 @@
 	level="story"
 	stored={data.story.assistantPreferences}
 	notes={data.story.assistantNotes}
-	inherited={data.universe.standalone
-		? null
-		: { preferences: data.universe.assistantPreferences, notes: data.universe.assistantNotes }}
+	inherited={{
+		preferences: data.universe.assistantPreferences,
+		notes: data.universe.assistantNotes
+	}}
 	saved={form?.action === 'assistant-preferences' && form.saved === true}
 	error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
 />

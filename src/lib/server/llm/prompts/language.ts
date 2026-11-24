@@ -33,28 +33,26 @@ export function spellingCheckLine(setting: LanguageSetting): string {
 		: '- Word choice and idiom: wrong homophones, malformed idioms, regional spelling consistency (British vs American) against the convention the text uses.';
 }
 
-// The native language worth a hint: set, and not the story's language. With
-// no story language set the model is told to apply it only where the text is
-// in another language.
-function interferingNative(setting: LanguageSetting): WritingLanguage | null {
+// The native language worth a hint: set, and a different language from the
+// story's. With no story language set there is nothing to compare, so no hint.
+function interferingNative(
+	setting: LanguageSetting
+): { native: WritingLanguage; language: WritingLanguage } | null {
 	const { language, native } = setting;
-	if (!native) return null;
-	if (language && sameLanguage(language, native)) return null;
-	return native;
+	if (!native || !language || sameLanguage(language, native)) return null;
+	return { native, language };
 }
 
 // For copyedit and prose review: slips carried over from the writer's native
 // language, as a place to look rather than a reason to flag every sentence.
 export function nativeInterferenceLine(setting: LanguageSetting): string {
-	const native = interferingNative(setting);
-	if (!native) return '';
-	const from = writingLanguageName(native);
-	const target = setting.language ? writingLanguageName(setting.language) : null;
-	const slips = `for slips carried over from ${from}: idioms translated word for word, false friends, prepositions, word order, article use, comma habits, and compound words written as one.`;
+	const pair = interferingNative(setting);
+	if (!pair) return '';
+	const from = writingLanguageName(pair.native);
 	return [
 		`- Interference from ${from}: the writer's native language is ${from}.`,
-		target ? `Look ${slips}` : `Where the text is in another language, look ${slips}`,
-		`For each, say what a native writer of ${target ?? "the text's language"} would write instead.`,
+		`Look for slips carried over from ${from}: idioms translated word for word, false friends, prepositions, word order, article use, comma habits, and compound words written as one.`,
+		`For each, say what a native writer of ${writingLanguageName(pair.language)} would write instead.`,
 		'Treat this as a hint of where to look, not a reason to flag sentences that already read naturally.'
 	].join(' ');
 }
@@ -62,8 +60,8 @@ export function nativeInterferenceLine(setting: LanguageSetting): string {
 // For the pattern pass: a slip from the native language that recurs is a
 // habit like any other.
 export function nativePatternLine(setting: LanguageSetting): string {
-	const native = interferingNative(setting);
-	if (!native) return '';
-	const from = writingLanguageName(native);
+	const pair = interferingNative(setting);
+	if (!pair) return '';
+	const from = writingLanguageName(pair.native);
 	return `The writer's native language is ${from}. A slip carried over from ${from} that recurs (an idiom translated word for word, a false friend, a preposition, word order, article use, a comma habit, a compound written as one) counts as a pattern; name it as one so the writer can learn the habit.`;
 }

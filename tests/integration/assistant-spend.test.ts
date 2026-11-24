@@ -20,7 +20,7 @@ const { reviewStoryContinuity, reviewStoryScenes, SUMMARIES_CAPPED_MESSAGE } =
 const { summariseStory } = await import('../../src/lib/server/llm/summaries');
 const { CAP_NOT_APPLIED_MESSAGE } = await import('../../src/lib/server/llm/spend');
 const { estimateStoryReview } = await import('../../src/lib/server/llm/estimate');
-const { emptyReviewRun, loadReviewRun, ReviewRunLoadError, saveReviewRun } =
+const { emptyReviewRun, loadReviewRun, ReviewRunLoadError, reviewScopeKey, saveReviewRun } =
 	await import('../../src/lib/server/review-runs');
 
 let pool: pg.Pool;
@@ -779,115 +779,6 @@ describe('per-run spend cap (#549)', () => {
 	});
 });
 
-describe('a capped run saved before categories were part of its key', () => {
-	// What the release before the upgrade stored: the key had no categories.
-	async function legacyRun(
-		storyId: string,
-		jobId: string,
-		opts: {
-			capped: boolean;
-			scenes: number;
-			phase?: 'scenes' | 'done';
-			carriedForward?: boolean;
-		}
-	): Promise<void> {
-		const ids = await db
-			.select({ id: scenes.id })
-			.from(scenes)
-			.where(eq(scenes.storyId, storyId))
-			.orderBy(asc(scenes.globalPosition));
-		await saveReviewRun(db, {
-			jobId,
-			userId,
-			state: {
-				...emptyReviewRun(),
-				phase: opts.phase ?? 'done',
-				scope: `full:${storyId}`,
-				total: ids.length,
-				completed: ids.slice(0, opts.scenes).map((row) => row.id),
-				reviewed: opts.scenes,
-				capped: opts.capped,
-				...(opts.carriedForward ? { carriedForward: true } : {})
-			}
-		});
-	}
-
-	async function continueReview(
-		storyId: string,
-		categories: ReviewCategory[],
-		jobCategories: (jobId: string) => Promise<ReviewCategory[] | null>,
-		jobId = 'after-upgrade'
-	) {
-		const p = provider();
-		const result = await reviewStoryScenes(
-			db,
-			{ userId, storyId, categories, jobId, legacyJobCategories: jobCategories },
-			{ provider: p.provider }
-		);
-		return { result, sent: p.seen.length };
-	}
-
-	it('continues it when its job checked the same categories', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-1', { capped: true, scenes: 2 });
-		const asked: string[] = [];
-		const { result, sent } = await continueReview(storyId, ['prose'], async (jobId) => {
-			asked.push(jobId);
-			return ['prose'];
-		});
-
-		expect(asked).toEqual(['legacy-1']);
-		expect(sent).toBe(1);
-		expect(result.reviewed).toBe(3);
-	});
-
-	it('reviews every scene when its job checked other categories', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-2', { capped: true, scenes: 2 });
-		const { sent } = await continueReview(storyId, ['prose'], async () => ['mechanics']);
-		expect(sent).toBe(3);
-	});
-
-	it('reviews every scene when its job is no longer known', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-3', { capped: true, scenes: 2 });
-		const { sent } = await continueReview(storyId, [], async () => null);
-		expect(sent).toBe(3);
-	});
-
-	it('reviews every scene when a later run over the old key finished', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-4', { capped: true, scenes: 2 });
-		await legacyRun(storyId, 'legacy-5', { capped: false, scenes: 3 });
-		const { sent } = await continueReview(storyId, [], async () => []);
-		expect(sent).toBe(3);
-	});
-
-	it('continues from a legacy continuation that never finished', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-7', { capped: true, scenes: 1 });
-		await legacyRun(storyId, 'legacy-8', {
-			capped: false,
-			scenes: 2,
-			phase: 'scenes',
-			carriedForward: true
-		});
-		const { sent } = await continueReview(storyId, [], async () => []);
-		expect(sent).toBe(1);
-	});
-
-	it('is passed over once a run under the new key exists', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-6', { capped: true, scenes: 2 });
-		const first = await continueReview(storyId, [], async () => []);
-		expect(first.sent).toBe(1);
-
-		// That run finished, so the next one starts over.
-		const second = await continueReview(storyId, [], async () => [], 'later');
-		expect(second.sent).toBe(3);
-	});
-});
-
 describe('spend settings normalisation (#549)', () => {
 	it('keeps positive figures and drops anything else', async () => {
 		await configure({ spendCapUsd: 3.5, spendWarnUsd: 0.75 });
@@ -1170,31 +1061,30 @@ describe('a continuity continuation (#1106)', () => {
 describe('adopting a capped run fails loudly (#1113)', () => {
 	it('fails the attempt rather than reviewing every scene again', async () => {
 		const storyId = await seedStory(3);
+		const [first] = await db
+			.select({ id: scenes.id })
+			.from(scenes)
+			.where(eq(scenes.storyId, storyId))
+			.orderBy(asc(scenes.globalPosition))
+			.limit(1);
+		// A stored review time Postgres cannot read makes carrying the run forward throw.
 		await saveReviewRun(db, {
-			jobId: 'old-key',
+			jobId: 'capped',
 			userId,
 			state: {
 				...emptyReviewRun(),
 				phase: 'done',
-				scope: `full:${storyId}`,
+				scope: reviewScopeKey({ storyId }),
 				total: 3,
+				completed: [first.id],
+				reviewed: 1,
+				reviewedAt: { [first.id]: 'not a time' },
 				capped: true
 			}
 		});
 		const p = provider();
 		await expect(
-			reviewStoryScenes(
-				db,
-				{
-					userId,
-					storyId,
-					jobId: 'new-key',
-					legacyJobCategories: async () => {
-						throw new Error('queue unreachable');
-					}
-				},
-				{ provider: p.provider }
-			)
+			reviewStoryScenes(db, { userId, storyId, jobId: 'continued' }, { provider: p.provider })
 		).rejects.toBeInstanceOf(ReviewRunLoadError);
 		expect(p.seen).toHaveLength(0);
 	});

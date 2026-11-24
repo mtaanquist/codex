@@ -23,8 +23,7 @@
 		level: 'story' | 'universe';
 		stored: unknown;
 		notes: string | null;
-		// The universe's preferences, for a story in a universe; null for a
-		// universe or a standalone story.
+		// The universe's preferences, for a story; null for a universe.
 		inherited?: { preferences: unknown; notes: string | null } | null;
 		saved?: boolean;
 		error?: string | null;

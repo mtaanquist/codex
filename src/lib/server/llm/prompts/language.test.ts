@@ -20,7 +20,6 @@ import { buildSceneDraftMessage } from './scene-draft.ts';
 import { buildCoauthorMessage } from './coauthor.ts';
 import { buildContinuationMessage } from './continuation.ts';
 import { buildSceneSummaryMessage } from './summary.ts';
-import { buildArcMessage } from './arc.ts';
 import { buildRecapMessage } from './recap.ts';
 
 const UK: LanguageSetting = { language: 'en-GB', native: null };
@@ -62,10 +61,9 @@ describe('language prompt lines', () => {
 		expect(nativePatternLine(UK_DANE)).toContain('counts as a pattern');
 	});
 
-	it('hedges the hint when the story language is not set', () => {
-		const line = nativeInterferenceLine({ language: null, native: 'da' });
-		expect(line).toContain('Where the text is in another language, look for slips');
-		expect(line).toContain("a native writer of the text's language");
+	it('gives no hint when the story language is not set', () => {
+		expect(nativeInterferenceLine({ language: null, native: 'da' })).toBe('');
+		expect(nativePatternLine({ language: null, native: 'da' })).toBe('');
 	});
 });
 
@@ -123,7 +121,6 @@ describe('the prompts that state the language', () => {
 		expect(buildSceneSummaryMessage('T', 'Body.')).toContain(
 			'Write in the same language as the scene.'
 		);
-		expect(buildArcMessage('Mara', [], da)).toContain('Write in Danish.');
 		expect(buildRecapMessage(null, da)).toContain('Write in Danish.');
 		expect(buildRecapMessage(null)).toContain('Write in the same language as the story.');
 	});
