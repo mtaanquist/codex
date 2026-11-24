@@ -323,8 +323,10 @@ export async function enrichEntityFromText(
 	let failure: unknown;
 	let capped = false;
 	let summaryAsked = false;
-	// Scenes in a part whose reply came back whole.
-	const readScenes = new Set<string>();
+	// Pieces in a part whose reply came back whole. A long scene is split into
+	// pieces that share its id (stillReadable keeps the same objects), so a
+	// scene counts as read only when every piece of it is here.
+	const readPieces = new Set<ExcerptScene>();
 	for (const index of parts.keys()) {
 		if (opts.signal?.aborted) {
 			failure = opts.signal.reason ?? new Error('stopped');
@@ -376,7 +378,7 @@ export async function enrichEntityFromText(
 			if (result.cutOff) {
 				throw new ReplyCutOffError(CUT_OFF_ADVICE);
 			}
-			for (const scene of part) readScenes.add(scene.id);
+			for (const piece of part) readPieces.add(piece);
 			// A summary offered against the instruction (an earlier part, or one
 			// the writer already has or turned down) is dropped.
 			const proposals = parseEnrichResponse(result.content).filter(
@@ -427,12 +429,19 @@ export async function enrichEntityFromText(
 	// Only a whole read: the pass stores nothing for a failed one. A cut-off
 	// reply here says nothing about the pass's shorter request, so no
 	// unusableReplyMark is stored either.
+	const notRead = new Set(
+		parts
+			.flat()
+			.filter((piece) => !readPieces.has(piece))
+			.map((piece) => piece.id)
+	);
+	const readScenes = new Set([...readPieces].map((piece) => piece.id));
 	if (
 		passRequest &&
 		!failure &&
 		!capped &&
 		!skipped &&
-		passRequest.sceneIds.every((id) => readScenes.has(id))
+		passRequest.sceneIds.every((id) => readScenes.has(id) && !notRead.has(id))
 	) {
 		const table = entityTable(entity.type);
 		await db

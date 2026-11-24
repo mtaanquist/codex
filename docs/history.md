@@ -19,8 +19,9 @@ fingerprint (the universe-wide snippet request, taken before the read) and
 `assistant_enriched_at`. Its request is a different one (full text, maybe one
 story), so it stores only when it covered what the pass would send: no part
 failed, the job was not stopped or capped, the summary was asked for (or is
-closed), and every scene behind the pass's passages was in a part whose reply
-came back whole. A story-scoped read of an entry also mentioned elsewhere
+closed), and every piece of every scene behind the pass's passages was in a part
+whose reply came back whole (a long scene is split into pieces that share its
+id, and a story muted mid-read drops the later ones without a failure). A story-scoped read of an entry also mentioned elsewhere
 stores nothing. Staged suggestions the writer has not seen are no reason to
 hold back: the pass stores its fingerprint right after staging too. A cut-off
 reply stores no `unusableReplyMark`, since it says nothing about the pass's

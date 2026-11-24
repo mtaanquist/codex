@@ -1197,7 +1197,7 @@ hashes:
   details read (`enrichEntityFromText`) stores the same fingerprint, taken
   before it reads, when it ran to the end (no part failed, nothing was
   stopped, capped or skipped) and read every scene behind the pass's
-  passages, so the pass skips that entry until its input changes (#1371). A
+  passages whole (every piece of a scene split across parts), so the pass skips that entry until its input changes (#1371). A
   story-scoped read of an entry mentioned in other stories does not cover
   them and stores nothing. A cut-off Suggest details reply stores no
   `unusableReplyMark`: its request is not the one the pass sends.
