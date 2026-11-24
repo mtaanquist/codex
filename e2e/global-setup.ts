@@ -101,6 +101,18 @@ export default async function globalSetup() {
 		   preferences = '{}'`,
 		['core-flow-e2e@example.com', passwordHash]
 	);
+	// An admin and a moderator for the admin area's role checks.
+	for (const [email, name, role] of [
+		['admin-e2e@example.com', 'Admin Tester', 'admin'],
+		['moderator-e2e@example.com', 'Moderator Tester', 'moderator']
+	]) {
+		await pool.query(
+			`insert into users (email, display_name, password_hash, role, email_verified_at, approved_at)
+			 values ($1, $2, $3, $4, now(), now())
+			 on conflict (email) do update set password_hash = excluded.password_hash, role = excluded.role`,
+			[email, name, passwordHash, role]
+		);
+	}
 	// A separate account for the connected-apps journey, which starts with
 	// access for other apps off and nothing connected.
 	await pool.query(

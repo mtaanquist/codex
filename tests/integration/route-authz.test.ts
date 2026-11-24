@@ -18,7 +18,8 @@ import {
 	scenes,
 	stories,
 	universes,
-	users
+	users,
+	publications
 } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { textHash } from '../../src/lib/text-hash';
@@ -87,11 +88,13 @@ const reviewRoute = await import('../../src/routes/api/assistant/review/+server'
 const recapRoute = await import('../../src/routes/api/assistant/recap/+server');
 const enrichRoute = await import('../../src/routes/api/assistant/enrich/+server');
 const adminPage = await import('../../src/routes/admin/[[section]]/+page.server');
+const adminLayout = await import('../../src/routes/admin/+layout.server');
+const publishedPage = await import('../../src/routes/admin/published/+page.server');
 const universeSettings = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
 	await import('../../src/routes/stories/[id]/settings/[[section]]/+page.server');
 
-type TestUser = { id: string; email: string; role: 'user' | 'admin' };
+type TestUser = { id: string; email: string; role: 'user' | 'moderator' | 'admin' };
 type Seed = Awaited<ReturnType<typeof seed>>;
 
 let s: Seed;
@@ -811,8 +814,18 @@ describe('admin actions refuse a non-admin', () => {
 	});
 
 	for (const [name, action] of Object.entries(adminPage.actions)) {
-		it(`${name} refuses a signed-in non-admin and a missing user`, async () => {
-			for (const user of [B, null]) {
+		it(`${name} refuses a signed-in non-admin, a moderator and a missing user`, async () => {
+			const [mod] = await db
+				.insert(users)
+				.values({
+					email: 'mod@example.com',
+					displayName: 'M',
+					passwordHash: 'x',
+					role: 'moderator'
+				})
+				.returning();
+			const moderator: TestUser = { id: mod.id, email: mod.email, role: 'moderator' };
+			for (const user of [B, moderator, null]) {
 				await expectRefused(
 					action as Handler,
 					event(user, { path: `/admin?/${name}`, form: adminForm(A.id) })
@@ -820,4 +833,69 @@ describe('admin actions refuse a non-admin', () => {
 			}
 		});
 	}
+});
+
+describe('moderation pages', () => {
+	async function moderator(): Promise<TestUser> {
+		const [mod] = await db
+			.insert(users)
+			.values({ email: 'mod@example.com', displayName: 'M', passwordHash: 'x', role: 'moderator' })
+			.returning();
+		return { id: mod.id, email: mod.email, role: 'moderator' };
+	}
+
+	async function edition() {
+		const [row] = await db
+			.insert(publications)
+			.values({
+				storyId: s.storyA.id,
+				ownerId: A.id,
+				handle: 'a',
+				title: 'SA',
+				content: { chapters: [] }
+			})
+			.returning();
+		return row;
+	}
+
+	it('the admin layout refuses a plain user and a missing user, and lets a moderator in', async () => {
+		for (const user of [B, null]) {
+			await expect(
+				adminLayout.load(event(user, { method: 'GET', path: '/admin' }) as never)
+			).rejects.toMatchObject({ status: 404 });
+		}
+		const mod = await moderator();
+		expect(
+			await adminLayout.load(event(mod, { method: 'GET', path: '/admin/published' }) as never)
+		).toEqual({ health: null });
+	});
+
+	it('takedown refuses a plain user and a missing user', async () => {
+		const row = await edition();
+		const form = () => {
+			const f = new FormData();
+			f.set('publicationId', row.id);
+			return f;
+		};
+		for (const user of [B, null]) {
+			await expectRefused(
+				publishedPage.actions.takedown as Handler,
+				event(user, { path: '/admin/published?/takedown', form: form() })
+			);
+		}
+	});
+
+	it('a moderator can take an edition down, and is recorded as the one who did', async () => {
+		const row = await edition();
+		const mod = await moderator();
+		const f = new FormData();
+		f.set('publicationId', row.id);
+		const result = await publishedPage.actions.takedown(
+			event(mod, { path: '/admin/published?/takedown', form: f }) as never
+		);
+		expect(result).toEqual({ scope: 'published', done: true });
+		const [after] = await db.select().from(publications).where(eq(publications.id, row.id));
+		expect(after.removedAt).not.toBeNull();
+		expect(after.removedBy).toBe(mod.id);
+	});
 });

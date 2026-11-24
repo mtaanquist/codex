@@ -274,7 +274,7 @@
 					label: 'Admin: published',
 					sublabel: null,
 					kind: 'Go to',
-					run: navigate(resolve('/admin/[[section]]', { section: 'published' }))
+					run: navigate(resolve('/admin/published'))
 				},
 				{
 					label: 'Admin: usage & storage',
@@ -289,12 +289,19 @@
 					run: navigate(resolve('/admin/[[section]]', { section: 'backups' }))
 				},
 				{
-					label: 'Admin: email relay',
+					label: 'Admin: instance',
 					sublabel: null,
 					kind: 'Go to',
 					run: navigate(resolve('/admin/[[section]]', { section: 'instance' }))
 				}
 			);
+		} else if (page.data.user?.isModerator) {
+			list.push({
+				label: 'Moderation: published',
+				sublabel: null,
+				kind: 'Go to',
+				run: navigate(resolve('/admin/published'))
+			});
 		}
 		return list;
 	});

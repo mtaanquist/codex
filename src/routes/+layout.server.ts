@@ -23,7 +23,8 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
 		user: {
 			displayName: locals.user.displayName,
 			email: locals.user.email,
-			isAdmin: locals.user.role === 'admin'
+			isAdmin: locals.user.role === 'admin',
+			isModerator: locals.user.role === 'moderator'
 		},
 		timeZone
 	};

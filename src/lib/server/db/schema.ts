@@ -65,7 +65,7 @@ export const users = pgTable('users', {
 	// admits one person. Counted against the codes they have created.
 	inviteAllowance: integer('invite_allowance').notNull().default(0),
 	passwordHash: text('password_hash').notNull(),
-	role: text('role', { enum: ['admin', 'user'] }).notNull(),
+	role: text('role', { enum: ['admin', 'moderator', 'user'] }).notNull(),
 	// The Assistant's BYO endpoint, key (encrypted at rest), and per-role
 	// models; see #lib/server/llm/config.ts.
 	llmConfig: jsonb('llm_config').notNull().default({}),
@@ -977,8 +977,10 @@ export const publications = pgTable(
 			.$type<{ format: string; error: string }[]>()
 			.notNull()
 			.default([]),
-		// Set by an admin takedown; hides the edition without deleting the source.
+		// Set by a takedown (an admin or a moderator); hides the edition without
+		// deleting the source. removedBy is who took it down.
 		removedAt: timestamp('removed_at', { withTimezone: true }),
+		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
