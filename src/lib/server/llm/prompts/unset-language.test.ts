@@ -16,7 +16,21 @@ import {
 } from './review.ts';
 import { buildSceneDraftMessage } from './scene-draft.ts';
 import { buildChapterSummaryMessage, buildSceneSummaryMessage } from './summary.ts';
+import { renderFrame } from '../context/assemble.ts';
 import before from './unset-language.fixture.json';
+
+// The chat's story frame, which states the language and house style when set.
+const frameScope = {
+	storyId: 's',
+	universeId: 'u',
+	storyTitle: 'The Gate',
+	storyBrief: 'A brief.',
+	storyDescription: null,
+	storyStyleNotes: 'Literary.',
+	universeName: 'Vael',
+	universeDescription: 'A world.',
+	universeEstablished: false
+};
 
 // With no language set, every prompt is exactly what it was before the
 // language setting existed (#1343): the fixture holds these prompts as the
@@ -57,7 +71,10 @@ describe('prompts with no language set', () => {
 			continuation: buildContinuationMessage('Once.'),
 			coauthor: buildCoauthorMessage('b', null),
 			draft: buildSceneDraftMessage({ brief: 'b', targetWords: 500 }),
-			arc: buildArcMessage('Mara', [{ storyTitle: 'S', sceneTitle: 'T', text: 'x' }])
+			arc: buildArcMessage('Mara', [{ storyTitle: 'S', sceneTitle: 'T', text: 'x' }]),
+			frame: renderFrame(frameScope, {
+				writingRules: { language: NO_LANGUAGE, preferences: NO_PREFERENCES }
+			})
 		};
 		for (const name of [
 			'review',
@@ -111,7 +128,8 @@ describe('prompts with no language set', () => {
 				NO_PREFERENCES
 			),
 			coauthor: buildCoauthorMessage('b', null, none),
-			draft: buildSceneDraftMessage({ brief: 'b', targetWords: 500, ...none })
+			draft: buildSceneDraftMessage({ brief: 'b', targetWords: 500, ...none }),
+			frame: renderFrame(frameScope, { writingRules: none })
 		};
 		for (const name of ['review', 'copyedit', 'pattern-pass', 'write', 'draft', 'draft-chapter']) {
 			now[`mcp-${name}`] = buildMcpPrompt(name, ids, connection);

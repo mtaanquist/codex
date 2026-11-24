@@ -1,5 +1,5 @@
 import { storyLanguage } from '../language.ts';
-import { storyPreferences } from '../assistant-preferences.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
 import { NO_PREFERENCES, type PreferenceSetting } from '../../assistant-preferences.ts';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -185,7 +185,7 @@ export async function planBookPass(
 	const titles = await chapterTitles(db, opts.storyId);
 	const overhead = await patternSurveyOverhead(db, opts.userId, opts.storyId);
 	const language = await storyLanguage(db, opts.storyId, opts.userId);
-	const preferences = await storyPreferences(db, opts.storyId, opts.userId);
+	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
 	const whole = bookPatternUnit(opts.scenes, titles, true);
 	const wholeTokens = patternSurveyTokens(
 		[whole],
@@ -231,7 +231,7 @@ export async function checkBookFit(
 			0,
 			overhead,
 			await storyLanguage(db, opts.storyId, opts.userId),
-			await storyPreferences(db, opts.storyId, opts.userId)
+			await storyAssistantPreferences(db, opts.storyId, opts.userId)
 		) + bodies,
 		opts.contextWindow,
 		opts.replyTokens
@@ -602,7 +602,7 @@ export async function runPatternPass(
 	});
 	const system = frame ? buildSystemMessage(frame) : null;
 	const language = await storyLanguage(db, opts.storyId, opts.userId);
-	const preferences = await storyPreferences(db, opts.storyId, opts.userId);
+	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
 	const req = { ...opts, system, language, preferences };
 	const save = () => opts.save({ notes, failures });
 	const bodyChars = opts.budgetTokens * 4;

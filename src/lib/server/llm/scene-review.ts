@@ -1,5 +1,5 @@
 import { storyLanguage } from '../language.ts';
-import { storyPreferences } from '../assistant-preferences.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { IN_CONTEXT } from './prompts/format.ts';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
@@ -317,7 +317,7 @@ export async function reviewOneScene(
 				patternTool,
 				IN_CONTEXT,
 				await storyLanguage(db, opts.storyId, opts.userId),
-				await storyPreferences(db, opts.storyId, opts.userId)
+				await storyAssistantPreferences(db, opts.storyId, opts.userId)
 			)
 	};
 	const messages: ChatMessage[] = system ? [system, task] : [task];

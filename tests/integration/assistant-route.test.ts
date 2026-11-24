@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { isHttpError } from '@sveltejs/kit';
 import type pg from 'pg';
@@ -726,6 +727,48 @@ describe('chats over the endpoints', () => {
 		).text();
 		expect(roles.at(-1)).toEqual(['user']);
 		expect(contents.at(-1)![0]).toBe('First question.\n\nSecond question.');
+	});
+
+	it("states the story's language and house style to a story chat, and nothing when unset", async () => {
+		const systems: string[] = [];
+		const answer = async function* (): AsyncIterable<StreamEvent> {
+			yield { type: 'token', text: 'Answer.' };
+			yield { type: 'done' };
+		};
+		const record = (messages: { role: string; content: string }[]) =>
+			systems.push(
+				messages
+					.filter((m) => m.role === 'system')
+					.map((m) => m.content)
+					.join('\n')
+			);
+		providerSlot.current = {
+			...streamingProvider(answer),
+			chatStream: (req) => {
+				record(req.messages);
+				return answer();
+			},
+			async respond(req) {
+				record(req.messages);
+				return { content: 'Answer.', toolCalls: [] };
+			}
+		};
+		const ask = async () =>
+			(await chatPost({ storyId, chatId, messages: [{ role: 'user', content: 'Hi.' }] })).text();
+
+		await ask();
+		expect(systems.at(-1)).not.toContain('The story is written in');
+		expect(systems.at(-1)).not.toContain('House style for this story');
+
+		await db.update(universes).set({ language: 'en-GB' }).where(eq(universes.id, universeId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { quoteMarks: 'single' } })
+			.where(eq(stories.id, storyId));
+		await ask();
+		expect(systems.at(-1)).toContain('The story is written in British English.');
+		expect(systems.at(-1)).toContain('House style for this story: single quotation marks');
+		expect(systems.at(-1)).toContain('Keep to it.');
 	});
 
 	it('sends attachments with the newest message only, and stores them with it', async () => {

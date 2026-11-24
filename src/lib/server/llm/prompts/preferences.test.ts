@@ -42,6 +42,23 @@ describe('preference prompt lines', () => {
 		expect(habitNotesLine(NO_PREFERENCES, 'review')).toBe('');
 	});
 
+	it('checks tense and narration against the narration only, not dialogue or quotes', () => {
+		expect(houseStyleLine(STYLE, 'check')).toMatch(
+			/The tense and point of view apply to the narration only: do not flag dialogue, a character's quoted thoughts, or quoted text for them\.$/
+		);
+		expect(houseStyleLine(prefs({ houseStyle: { tense: 'past' } as never }), 'check')).toMatch(
+			/The tense applies to the narration only: .* quoted text for it\.$/
+		);
+		expect(
+			houseStyleLine(prefs({ houseStyle: { narration: 'first' } as never }), 'check')
+		).toContain('The point of view applies to the narration only');
+		// Without tense or narration, and in write mode, the line is as before.
+		expect(houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'check')).toBe(
+			'House style for this story: double quotation marks for dialogue ("Like this."). Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
+		);
+		expect(houseStyleLine(STYLE, 'write')).not.toContain('narration only');
+	});
+
 	it('states each house-style choice that is set', () => {
 		expect(houseStyleLine(STYLE, 'write')).toBe(
 			"House style for this story: single quotation marks for dialogue ('Like this.'); no serial comma (red, white and blue); a character's direct thoughts in italics; present tense; third-person limited narration, one viewpoint character at a time. Keep to it."

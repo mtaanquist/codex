@@ -3,10 +3,13 @@ import {
 	bodyTail,
 	buildSystemMessage,
 	estimateTokens,
+	renderFrame,
 	selectWithinBudget,
 	type AssembledContext,
 	type ContextTier
 } from './assemble';
+import { NO_LANGUAGE } from '../../../writing-languages';
+import { NO_PREFERENCES } from '../../../assistant-preferences';
 
 describe('estimateTokens', () => {
 	it('approximates four characters per token', () => {
@@ -130,5 +133,46 @@ describe('selectWithinBudget', () => {
 			1000
 		);
 		expect(result.text).toBe('one\n\ntwo');
+	});
+});
+
+describe('renderFrame', () => {
+	const scope = {
+		storyId: 's',
+		universeId: 'u',
+		storyTitle: 'The Gate',
+		storyBrief: null,
+		storyDescription: null,
+		storyStyleNotes: 'Literary.',
+		universeName: 'Vael',
+		universeDescription: null,
+		universeEstablished: false
+	};
+
+	it('reads as without writing rules when none is set', () => {
+		expect(
+			renderFrame(scope, { writingRules: { language: NO_LANGUAGE, preferences: NO_PREFERENCES } })
+		).toBe(renderFrame(scope));
+	});
+
+	it('states a set language and house style before the world', () => {
+		const text = renderFrame(scope, {
+			writingRules: {
+				language: { language: 'en-GB', native: null },
+				preferences: {
+					...NO_PREFERENCES,
+					houseStyle: { ...NO_PREFERENCES.houseStyle, quoteMarks: 'single', tense: 'past' }
+				}
+			}
+		});
+		const world = text.indexOf('## World: Vael');
+		const language = text.indexOf('The story is written in');
+		const style = text.indexOf('House style for this story:');
+		expect(language).toBeGreaterThan(text.indexOf('Literary.'));
+		expect(style).toBeGreaterThan(language);
+		expect(world).toBeGreaterThan(style);
+		expect(text).toContain('single quotation marks for dialogue');
+		expect(text).toContain('past tense');
+		expect(text).toContain('Keep to it.');
 	});
 });

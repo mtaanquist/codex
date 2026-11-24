@@ -45,6 +45,8 @@ import {
 	type ChatReference
 } from '#lib/server/llm/prompts/reference';
 import type { ChatMessage } from '#lib/server/llm/providers/types';
+import { storyLanguage } from '#lib/server/language';
+import { storyAssistantPreferences } from '#lib/server/assistant-preferences';
 
 // The chat surface: the browser POSTs its transcript and either the open story
 // (and scene) or the universe in view, the server assembles the in-scope world,
@@ -116,7 +118,18 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	if (typeof payload.storyId === 'string' && payload.storyId) {
 		const story = await requireAssistantStory(userId, payload.storyId);
 		scope = { storyId: story.id };
-		assembleOptions = { userId, storyId: story.id, sceneId };
+		// The chat can write prose (suggest_edit, drafted text), so its frame
+		// states the language and house style the other surfaces state in
+		// their own task messages.
+		assembleOptions = {
+			userId,
+			storyId: story.id,
+			sceneId,
+			writingRules: {
+				language: await storyLanguage(db, story.id, userId),
+				preferences: await storyAssistantPreferences(db, story.id, userId)
+			}
+		};
 	} else {
 		const universe = await requireAssistantUniverse(userId, payload.universeId);
 		scope = { universeId: universe.id };

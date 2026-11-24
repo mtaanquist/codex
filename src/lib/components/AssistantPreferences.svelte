@@ -1,8 +1,9 @@
 <script lang="ts">
 	// The "Assistant preferences" group of a story's or a universe's Details:
 	// the house style, the habit checks, and the writer's own notes. On a
-	// story, a blank choice uses the universe's; on a universe, the Assistant's
-	// default (infer from the text, check everything).
+	// story in a universe, a blank choice uses the universe's; on a universe or
+	// a standalone story (no inherited), the Assistant's default (infer from the
+	// text, check everything).
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import {
 		HABIT_CHECKS,
@@ -24,7 +25,8 @@
 		level: 'story' | 'universe';
 		stored: unknown;
 		notes: string | null;
-		// The universe's preferences, for a story; null for a universe.
+		// The universe's preferences, for a story in a universe; null for a
+		// universe or a standalone story.
 		inherited?: { preferences: unknown; notes: string | null } | null;
 		saved?: boolean;
 		error?: string | null;
@@ -57,10 +59,13 @@
 		How the Assistant reviews and drafts the stories in this universe. Leave a house style setting
 		on "Not set" and the Assistant works it out from your prose. A story can change any of these in
 		its own settings.
-	{:else}
+	{:else if inherited}
 		How the Assistant reviews and drafts this story. A setting on "Use the universe's" follows the
 		universe's settings; where the universe has not set it either, the Assistant works it out from
 		your prose.
+	{:else}
+		How the Assistant reviews and drafts this story. Leave a house style setting on "Not set" and
+		the Assistant works it out from your prose.
 	{/if}
 {/snippet}
 
