@@ -476,6 +476,65 @@ describe('gateway gating', () => {
 		expect(calls).toBe(1);
 	});
 
+	it('counts every round of the search loop over the prompt before a capped send', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Eberron', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		const config = {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced' as const,
+			provider: 'anthropic' as const,
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8,
+			webSearch: true
+		};
+		await saveAccountLlmConfig(db, userId, config);
+		let calls = 0;
+		const searching: Provider = {
+			...stubProvider,
+			async respond() {
+				calls += 1;
+				return {
+					content: 'checked',
+					toolCalls: [],
+					usage: { promptTokens: 1, completionTokens: 0 }
+				};
+			}
+		};
+		// A scene of about 40k tokens. Read once with every search's results, it
+		// fits under $3; read again in every round of the search loop, it does not.
+		const scene = 'x'.repeat(120_000);
+		const run = (capUsd: number) =>
+			completeDetailed(
+				db,
+				{
+					userId,
+					storyId: inCanon.id,
+					role: 'reviewer',
+					messages: [{ role: 'user', content: scene }],
+					maxTokens: 100,
+					meter: new SpendMeter({
+						pricing: { 'claude-opus-5': { prompt: 0.00001, completion: 0 } },
+						provider: 'anthropic',
+						capUsd
+					})
+				},
+				{ provider: searching, http: noHttp }
+			);
+		await expect(run(3)).rejects.toThrow(SpendCapError);
+		expect(calls).toBe(0);
+		await run(20);
+		expect(calls).toBe(1);
+	});
+
 	it('counts the provider blocks a resumed request resends before a capped send', async () => {
 		await configure(true);
 		// A paused turn's blocks (earlier search results) go back verbatim and bill
