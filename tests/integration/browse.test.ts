@@ -223,6 +223,30 @@ describe('search and filters', () => {
 	});
 });
 
+describe('paging within one millisecond', () => {
+	it('neither skips nor repeats editions published in the same millisecond', async () => {
+		for (let i = 0; i < BROWSE_PAGE_SIZE + 2; i++) await story(`M${i}`);
+		// Microseconds apart, all inside one millisecond.
+		await pool.query(`
+			update publications p set published_at = '2026-01-01 00:00:00.123'::timestamptz
+				+ (r.n * interval '1 microsecond')
+			from (select id, row_number() over (order by published_at) as n from publications) r
+			where r.id = p.id
+		`);
+		const seen: string[] = [];
+		let search = '';
+		for (let guard = 0; guard < 3; guard++) {
+			const query = parseBrowseQuery(new URLSearchParams(search));
+			const page = await browseStories(db, query, await resolveFilters(db, query));
+			seen.push(...page.books.map((book) => book.title));
+			if (!page.next) break;
+			search = `after=${page.next}`;
+		}
+		expect(seen).toHaveLength(BROWSE_PAGE_SIZE + 2);
+		expect(new Set(seen).size).toBe(BROWSE_PAGE_SIZE + 2);
+	});
+});
+
 describe('listing and moderation', () => {
 	it('lists only a public story, and keeps a removed one off until allowed', async () => {
 		const mod = await user('mod@example.com', { role: 'moderator' });

@@ -24,6 +24,9 @@ const listed = sql`
 	and u.suspended_at is null and u.deletion_scheduled_at is null and not u.hidden_from_browse
 `;
 
+// An edition's publish time in whole microseconds, for the page cursor.
+const MICROS = sql.raw('(extract(epoch from p.published_at) * 1000000)::bigint');
+
 type FilterTag = { name: string; slug: string; ids: string[] };
 
 // A filter's tag by slug, followed through merges to the entry that survives,
@@ -138,13 +141,13 @@ export async function browseStories(
 	}
 	if (query.after) {
 		conditions.push(
-			sql`(p.published_at, p.id) < (${query.after.at.toISOString()}::timestamptz, ${query.after.id}::uuid)`
+			sql`(${MICROS}, p.id) < (${query.after.micros}::bigint, ${query.after.id}::uuid)`
 		);
 	}
 
 	const result = await db.execute(sql`
 		select p.id as publication_id, p.story_id, s.slug, p.title, p.description_md, p.is_adult,
-			p.published_at, s.cover_asset_id, s.cover_color, p.handle, p.author,
+			p.published_at, ${MICROS}::text as published_micros, s.cover_asset_id, s.cover_color, p.handle, p.author,
 			u.pen_name, u.display_name, un.name as universe_name, un.slug as universe_slug,
 			un.standalone
 		from publications p
@@ -163,6 +166,7 @@ export async function browseStories(
 		description_md: string | null;
 		is_adult: boolean;
 		published_at: string | Date;
+		published_micros: string;
 		cover_asset_id: string | null;
 		cover_color: string | null;
 		handle: string;
@@ -203,7 +207,7 @@ export async function browseStories(
 		books,
 		next:
 			rows.length > BROWSE_PAGE_SIZE && last
-				? encodeCursor(new Date(last.published_at), last.publication_id)
+				? encodeCursor(last.published_micros, last.publication_id)
 				: null
 	};
 }

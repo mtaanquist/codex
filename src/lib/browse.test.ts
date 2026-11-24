@@ -28,8 +28,10 @@ describe('browse query', () => {
 	});
 
 	it('round-trips the page cursor and refuses a bad one', () => {
-		const at = new Date('2026-11-24T08:00:00.123Z');
-		expect(decodeCursor(encodeCursor(at, id))).toEqual({ at, id });
+		expect(decodeCursor(encodeCursor('1795507967123456', id))).toEqual({
+			micros: '1795507967123456',
+			id
+		});
 		expect(decodeCursor('123_not-an-id')).toBeNull();
 		expect(decodeCursor('x')).toBeNull();
 		expect(decodeCursor(null)).toBeNull();
@@ -43,6 +45,6 @@ describe('browse query', () => {
 		expect(parse('q=dragon')).toBe(false);
 		expect(parse('hide=death')).toBe(false);
 		expect(parse('adult=show')).toBe(false);
-		expect(parse(`after=${encodeCursor(new Date(), id)}`)).toBe(false);
+		expect(parse(`after=${encodeCursor('1795507967123456', id)}`)).toBe(false);
 	});
 });

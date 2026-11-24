@@ -13,7 +13,7 @@ export type BrowseQuery = {
 	// Content warning slugs; stories with any of them are left out.
 	hide: string[];
 	adult: boolean;
-	after: { at: Date; id: string } | null;
+	after: { micros: string; id: string } | null;
 };
 
 const SLUG = /^[\p{L}\p{N}\p{M}'&.,:!?()/+#_-]{1,60}$/u;
@@ -24,15 +24,17 @@ function slugParam(value: string | null): string | null {
 	return SLUG.test(trimmed) ? trimmed : null;
 }
 
-// The keyset cursor for the next page: the last story's edition date and id.
-export function encodeCursor(at: Date, id: string): string {
-	return `${at.getTime()}_${id}`;
+// The keyset cursor for the next page: the last story's edition time in
+// microseconds since 1970 (Postgres keeps microseconds, which a JS Date would
+// round away and so skip rows) and its id. The time stays a digit string.
+export function encodeCursor(micros: string, id: string): string {
+	return `${micros}_${id}`;
 }
 
-export function decodeCursor(value: string | null): { at: Date; id: string } | null {
-	const match = /^(\d{1,15})_(.+)$/.exec(value ?? '');
+export function decodeCursor(value: string | null): { micros: string; id: string } | null {
+	const match = /^(\d{1,18})_(.+)$/.exec(value ?? '');
 	if (!match || !UUID.test(match[2])) return null;
-	return { at: new Date(Number(match[1])), id: match[2] };
+	return { micros: match[1], id: match[2] };
 }
 
 export function parseBrowseQuery(params: URLSearchParams): BrowseQuery {
