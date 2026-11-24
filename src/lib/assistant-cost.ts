@@ -72,3 +72,36 @@ export function usageCostUsd(price: TokenPrice, usage: CostedUsage, provider?: s
 	const cachedUsd = cached * (price.cacheRead ?? price.prompt * cacheReadRate(provider));
 	return promptUnits * price.prompt + cachedUsd + usage.completionTokens * price.completion;
 }
+
+// A usage log row, or a sum of rows for one model and provider, as the account
+// page lists it. The counts are null where the endpoint reported none.
+export type UsageCostRow = {
+	model: string;
+	provider: string | null;
+	promptTokens: number | null;
+	completionTokens: number | null;
+	cachedPromptTokens: number | null;
+	cacheWriteTokens: number | null;
+	cacheWrite1hTokens: number | null;
+};
+
+// What a usage row cost, priced at the rates of the provider it went to. A row
+// from before the provider was recorded falls back to currentProvider. Null
+// when the model has no price or the row has no counts.
+export function usageRowCostUsd(
+	pricing: Record<string, TokenPrice>,
+	row: UsageCostRow,
+	currentProvider?: string
+): number | null {
+	const price = pricing[row.model];
+	if (!price || (row.promptTokens === null && row.completionTokens === null)) return null;
+	return usageCostUsd(
+		price,
+		{
+			...row,
+			promptTokens: row.promptTokens ?? 0,
+			completionTokens: row.completionTokens ?? 0
+		},
+		row.provider ?? currentProvider
+	);
+}
