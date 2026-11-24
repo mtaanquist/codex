@@ -10,6 +10,27 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 1
+(2026-11-24, `fix/llm-staging-review-1`, into `staging/llm-issues`). A story
+made from a saved draft now carries the language, preferences and notes, as
+it already did the style notes and the mute. The story reads behind the
+prompts use `storyIsLive()`, so a story in a trashed universe resolves to
+nothing set, and the MCP prompts (`workLanguage`, `workPreferences`) also
+treat a story with the Assistant muted as nothing set; the app's own surfaces
+check the mute before they get that far, so they keep the plain read. MCP
+ids are trimmed before the uuid check. The framing lines around the notes
+moved to `#lib/assistant-preferences` and `normaliseNotes` drops any line
+that reads as one, so a note cannot close the framing early; only a whole
+line is dropped, not the phrase inside a sentence. The review estimate counts
+the language lines per scene through `reviewLanguageText`, which a unit test
+holds to what `buildReviewMessage` sends (the native hint only on an
+exhaustive pass that reads the wording, not the sparing review). The profile
+form's native language is only written when the form sends the field. The
+preference form groups its selects in two fieldsets, with legends styled
+like the review modal's option groups. The running-jobs e2e spec sends with
+the app's own `reviewScopeKey`, so a keyless job left by an earlier run
+cannot make the send return null.
+
 Assistant preferences per story and universe, items 1 to 3 of #1344
 (2026-11-24, `feat/assistant-preferences-1344`). Built on #1343's language
 setting and in the shape Mads agreed on 2026-11-21: fixed choices plus one

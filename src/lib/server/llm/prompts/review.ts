@@ -130,6 +130,18 @@ export function readsWording(categories: ReviewCategory[]): boolean {
 	);
 }
 
+// The lines a scene's review task adds for the language, for the estimate:
+// the rule always, and the native-language hint where focusInstruction puts
+// it (an exhaustive pass that reads the wording).
+export function reviewLanguageText(
+	language: LanguageSetting,
+	categories: ReviewCategory[]
+): string {
+	const native =
+		categories.length > 0 && readsWording(categories) ? nativeInterferenceLine(language) : '';
+	return [languageRule(language), native].filter(Boolean).join('\n');
+}
+
 // One theme per comment, so each note can be replied to, resolved, and worked
 // through on its own. A model told to be sparing otherwise crams a pattern, a
 // pacing note, and an overall verdict into one whole-scene comment.

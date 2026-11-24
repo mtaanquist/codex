@@ -19,7 +19,12 @@ import {
 	resolveLlmConfig,
 	type ResolvedConfig
 } from './config.ts';
-import { buildSurveyMessage, readsWording, splitSurveyChunks } from './prompts/review.ts';
+import {
+	buildSurveyMessage,
+	readsWording,
+	reviewLanguageText,
+	splitSurveyChunks
+} from './prompts/review.ts';
 import { reviewPreferenceText } from './prompts/preferences.ts';
 import { PERSONA_TOKENS } from './context/budgets.ts';
 import {
@@ -179,10 +184,14 @@ export async function estimateStoryReview(
 	}
 	const includeTiers = reviewTiers(categories);
 	// The preference lines ride on each scene's task message when the review
-	// reads the wording.
-	const preferenceTokens = readsWording(categories)
-		? estimateTokens(reviewPreferenceText(await storyPreferences(db, opts.storyId, opts.userId)))
-		: 0;
+	// reads the wording, and the language lines always.
+	const preferenceTokens =
+		(readsWording(categories)
+			? estimateTokens(reviewPreferenceText(await storyPreferences(db, opts.storyId, opts.userId)))
+			: 0) +
+		estimateTokens(
+			reviewLanguageText(await storyLanguage(db, opts.storyId, opts.userId), categories)
+		);
 
 	// One pass over the story's scenes, shared by the per-scene reading and the
 	// cross-scene survey below. The chapter filter is applied in memory because

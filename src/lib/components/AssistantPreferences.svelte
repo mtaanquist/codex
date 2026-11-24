@@ -54,9 +54,9 @@
 
 {#snippet intro()}
 	{#if level === 'universe'}
-		How the Assistant reviews and drafts the stories in this universe. Leave a setting on "Not set"
-		and the Assistant works it out from your prose. A story can change any of these in its own
-		settings.
+		How the Assistant reviews and drafts the stories in this universe. Leave a house style setting
+		on "Not set" and the Assistant works it out from your prose. A story can change any of these in
+		its own settings.
 	{:else}
 		How the Assistant reviews and drafts this story. A setting on "Use the universe's" follows the
 		universe's settings; where the universe has not set it either, the Assistant works it out from
@@ -82,35 +82,41 @@
 
 {#snippet body()}
 	<form method="POST" action="?/saveAssistantPreferences">
-		{#each HOUSE_STYLE as item (item.key)}
-			<div class="field">
-				<label for={id(item.key)}>{item.label}</label>
-				<select id={id(item.key)} class="select" name={item.key} value={values[item.key] ?? ''}>
-					<option value="">{blankLabel(item.key, 'Not set')}</option>
-					{#each item.options as option (option.value)}
-						<option value={option.value}>{option.label}</option>
-					{/each}
-				</select>
-			</div>
-		{/each}
-		<p class="field-hint prefs-lead">
-			Review, copyedit and the pattern pass look for each of these habits. Choose "Leave alone" for
-			one you use on purpose.
-		</p>
-		{#each HABIT_CHECKS as item (item.key)}
-			<div class="field">
-				<label for={id(item.key)}>{item.label}</label>
-				<select id={id(item.key)} class="select" name={item.key} value={values[item.key] ?? ''}>
-					{#if fromUniverse}
-						<option value="">{blankLabel(item.key, 'Check')}</option>
-						<option value="check">Check</option>
-					{:else}
-						<option value="">Check</option>
-					{/if}
-					<option value="leave">Leave alone</option>
-				</select>
-			</div>
-		{/each}
+		<fieldset class="prefs-set">
+			<legend>House style</legend>
+			{#each HOUSE_STYLE as item (item.key)}
+				<div class="field">
+					<label for={id(item.key)}>{item.label}</label>
+					<select id={id(item.key)} class="select" name={item.key} value={values[item.key] ?? ''}>
+						<option value="">{blankLabel(item.key, 'Not set')}</option>
+						{#each item.options as option (option.value)}
+							<option value={option.value}>{option.label}</option>
+						{/each}
+					</select>
+				</div>
+			{/each}
+		</fieldset>
+		<fieldset class="prefs-set">
+			<legend>Habits to check</legend>
+			<p class="field-hint prefs-lead">
+				Review, copyedit and the pattern pass look for each of these habits. Choose "Leave alone"
+				for one you use on purpose.
+			</p>
+			{#each HABIT_CHECKS as item (item.key)}
+				<div class="field">
+					<label for={id(item.key)}>{item.label}</label>
+					<select id={id(item.key)} class="select" name={item.key} value={values[item.key] ?? ''}>
+						{#if fromUniverse}
+							<option value="">{blankLabel(item.key, 'Check')}</option>
+							<option value="check">Check</option>
+						{:else}
+							<option value="">Check</option>
+						{/if}
+						<option value="leave">Leave alone</option>
+					</select>
+				</div>
+			{/each}
+		</fieldset>
 		<div class="field">
 			<label for={id('notes')}>Your own habits</label>
 			<textarea
@@ -137,7 +143,24 @@
 {/snippet}
 
 <style>
+	/* The two groups of selects, headed like the option groups of the review
+	   modal: a small uppercase legend over the rows. */
+	.prefs-set {
+		border: 0;
+		margin: 0 0 var(--space-5);
+		padding: 0;
+		min-width: 0;
+	}
+	.prefs-set legend {
+		padding: 0;
+		margin-bottom: var(--space-3);
+		font-size: var(--text-micro);
+		font-weight: 600;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--text-faint);
+	}
 	.prefs-lead {
-		margin: var(--space-5) 0 var(--space-4);
+		margin: 0 0 var(--space-4);
 	}
 </style>

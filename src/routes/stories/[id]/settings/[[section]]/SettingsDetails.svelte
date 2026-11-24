@@ -19,7 +19,10 @@
 
 <div class="admin-block-head">
 	<h2 class="admin-block-title">Details</h2>
-	<p class="admin-block-sub">The title and description readers and exports use.</p>
+	<p class="admin-block-sub">
+		How the story is named and described, the language it is written in, and how the Assistant
+		reviews it.
+	</p>
 </div>
 <div class="settings-group">
 	<form method="POST" action="?/update">

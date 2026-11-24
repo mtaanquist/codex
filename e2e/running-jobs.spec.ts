@@ -5,6 +5,7 @@ import { e2eDatabaseUrl } from './database';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 import { ASSISTANT_REVIEW_QUEUE } from '../src/lib/server/queues';
+import { reviewScopeKey } from '../src/lib/server/review-runs';
 
 // A background review started before a reload still shows afterwards: the card
 // in the corner comes back, and the story's pages say it is running under the
@@ -39,8 +40,11 @@ test('a queued Assistant review shows again after a reload', async ({ page }) =>
 		jobId = await boss.send(
 			ASSISTANT_REVIEW_QUEUE,
 			{ userId: story.owner_id, storyId: story.id, categories: [] },
-			{ startAfter: 3600 }
+			// The queue holds one unfinished job per key, so a job left by an
+			// earlier run without this story's key would block the send.
+			{ startAfter: 3600, singletonKey: reviewScopeKey({ storyId: story.id, categories: [] }) }
 		);
+		expect(jobId).not.toBeNull();
 
 		await page.reload();
 		await expect(page.locator('.activity-card')).toContainText(`Reviewing "Runs ${stamp}"...`);
