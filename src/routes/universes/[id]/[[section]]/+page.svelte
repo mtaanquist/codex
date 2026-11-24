@@ -335,19 +335,21 @@
 			</form>
 		</div>
 
-		<div class="admin-block" id="assistant-preferences">
-			<AssistantPreferences
-				level="universe"
-				standalone={data.universe.standalone}
-				stored={data.universe.assistantPreferences}
-				notes={data.universe.assistantNotes}
-				saved={form?.action === 'assistant-preferences' && form.saved === true}
-				error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
-				submitted={form?.action === 'assistant-preferences' && 'submitted' in form
-					? form.submitted
-					: null}
-			/>
-		</div>
+		{#if data.assistantModels}
+			<div class="admin-block" id="assistant-preferences">
+				<AssistantPreferences
+					level="universe"
+					standalone={data.universe.standalone}
+					stored={data.universe.assistantPreferences}
+					notes={data.universe.assistantNotes}
+					saved={form?.action === 'assistant-preferences' && form.saved === true}
+					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+					submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+						? form.submitted
+						: null}
+				/>
+			</div>
+		{/if}
 
 		<div class="admin-block">
 			<div class="admin-block-head">
