@@ -39,8 +39,12 @@ const HOUSE_STYLE_PHRASES: { [K in HouseStyleKey]: Record<string, string> } = {
 };
 
 // The house style the writer set, for work that writes prose ('write': drafts,
-// /write, pattern fixes) or checks it ('check': review and copyedit).
-export function houseStyleLine(setting: PreferenceSetting, mode: 'write' | 'check'): string {
+// /write, pattern fixes), checks it ('check': review and copyedit), or both
+// ('chat': the chat's story frame, which keeps to it and comments on prose).
+export function houseStyleLine(
+	setting: PreferenceSetting,
+	mode: 'write' | 'check' | 'chat'
+): string {
 	const parts = (Object.keys(HOUSE_STYLE_PHRASES) as HouseStyleKey[])
 		.map((key) => {
 			const value = setting.houseStyle[key];
@@ -49,7 +53,7 @@ export function houseStyleLine(setting: PreferenceSetting, mode: 'write' | 'chec
 		.filter(Boolean);
 	if (parts.length === 0) return '';
 	const line = `House style for this story: ${parts.join('; ')}. ${
-		mode === 'write'
+		mode !== 'check'
 			? 'Keep to it.'
 			: 'Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
 	}`;
@@ -57,7 +61,7 @@ export function houseStyleLine(setting: PreferenceSetting, mode: 'write' | 'chec
 	// would otherwise flag every "I am" a character says in a past-tense,
 	// third-person story.
 	const { tense, narration } = setting.houseStyle;
-	if (mode === 'check' && (tense || narration)) {
+	if (mode !== 'write' && (tense || narration)) {
 		return `${line} The ${
 			tense && narration
 				? 'tense and point of view apply'

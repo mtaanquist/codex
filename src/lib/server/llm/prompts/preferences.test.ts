@@ -58,6 +58,13 @@ describe('preference prompt lines', () => {
 			'House style for this story: double quotation marks for dialogue ("Like this."). Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
 		);
 		expect(houseStyleLine(STYLE, 'write')).not.toContain('narration only');
+		// The chat keeps to the style and comments on prose, so it gets both.
+		const chat = houseStyleLine(STYLE, 'chat');
+		expect(chat).toContain('Keep to it.');
+		expect(chat).toMatch(/apply to the narration only: do not flag dialogue, .* for them\.$/);
+		expect(houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'chat')).toBe(
+			houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'write')
+		);
 	});
 
 	it('states each house-style choice that is set', () => {

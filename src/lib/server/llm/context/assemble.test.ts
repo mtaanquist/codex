@@ -174,6 +174,9 @@ describe('renderFrame', () => {
 		expect(text).toContain('single quotation marks for dialogue');
 		expect(text).toContain('past tense');
 		expect(text).toContain('Keep to it.');
+		expect(text).toContain(
+			"The tense applies to the narration only: do not flag dialogue, a character's quoted thoughts, or quoted text for it."
+		);
 	});
 
 	it('states the habits left alone and the fenced notes after the house style', () => {
