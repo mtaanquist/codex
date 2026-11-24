@@ -719,9 +719,31 @@ These cut across the surfaces and the architecture.
   notifications system (a new kind in the in-app and email matrix): "your
   review of X is ready", or a clear failure if the endpoint was unreachable.
   No new delivery machinery.
-- **Writing language.** The Assistant honours the story's `writingLanguage`
-  (the preference already driving spell-check), so it generates prose and
-  answers in the writer's language rather than defaulting to English.
+- **Language and spelling convention.** A universe has a `language` and a
+  story may override it (`universes.language`, `stories.language`, migration
+  0116), each a tag from the one list in `#lib/writing-languages` or null for
+  not set. The writer's own `users.native_language` comes from the same list.
+  `#lib/server/language` resolves the effective setting (story, else
+  universe) and `llm/prompts/language.ts` writes every line once: the prompts
+  that write or edit prose (review, the passes, scene and chapter drafts,
+  `/write`, the continuation, the pattern reread) state the language, scene
+  summaries and the recap say "Write in <language>" in place of "the
+  same language as ...", and the mechanics category checks spelling against
+  it. Not set, each prompt reads exactly as before and the model infers the
+  language from the text. A native language that is set, with a story
+  language that is set and is a different language (by primary subtag, so
+  en-US is not interference for en-GB), adds one
+  "interference" line to the mechanics and prose passes and the pattern
+  survey, as a hint of where to look. Three prompts stay on inferring on
+  purpose: the chapter summary and the character arc, whose requests are
+  their currency fingerprints (naming the language would mark every stored
+  one stale when the setting changed) and which are written from scene
+  summaries that already follow the setting, and the chat summary, which follows the conversation's language,
+  not the story's. The editor's `lang` follows the effective language and
+  falls back to the `writingLanguage` editor preference. The app interface
+  language is a separate matter. Export carries a story's title, author and
+  brief but none of its settings (style notes, models, editor preferences),
+  so the language stays out of it too.
 - **Accessibility.** The streaming chat and the ghost-text continuation follow
   the same WCAG 2.1 AA bar as the rest of the app: streamed output is
   announced to assistive tech, and the inline suggestion is operable and
@@ -1118,7 +1140,14 @@ builder for its rewrite wording, since it knows the passage is to be replaced.
 `/who` and `/find` share
 their one-line asks with the chat panel (`assistant-slash.ts`). A prompt reads
 nothing from the database: it is text around the ids and words the caller
-sent, and the tools it names do the ownership checks. The prompts that stage
+sent, and the tools it names do the ownership checks. The one exception is
+the language setting: before building, the server looks up the language of
+the story, scene or universe the arguments name (`workLanguage`), scoped to
+the connected writer, and hands it to the builder, so a prompt carries the
+same language lines as the Assistant's. Another writer's id reads the same as
+nothing set. `list_universes` and `list_stories` return the setting as
+`language` (the tag) and `languageName`, null when not set; a story's is its
+effective one. The prompts that stage
 notes are offered only to a connection that may suggest. `rewrite` stages its
 result as a suggested edit when the connection may suggest. `write`, `draft`
 and `draft-chapter` hand their result over with `stage_scene_draft` when the
@@ -1354,6 +1383,9 @@ context assembly and the cross-scene pass read them.
   with its `job_id`, which the queue is then given as the job's id, so a row
   whose job was never queued is told from one still waiting. Indexed by
   story, job and chapter.
+- Language: `universes.language`, `stories.language` and
+  `users.native_language` (migration 0116), nullable text holding a tag from
+  `#lib/writing-languages`. See "Language and spelling convention" above.
 - Persisted chats: `assistant_chats`, with `chat_id` on
   `assistant_chat_messages` and `assistant_chat_summaries` (migration 0080,
   which made each earlier conversation its scope's first chat).

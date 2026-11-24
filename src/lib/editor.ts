@@ -76,8 +76,8 @@ export function proseExtensions(opts: {
 	// descriptions use it. The text still stores (and exports) as markdown,
 	// it just is not treated as markdown while editing.
 	plain?: boolean;
-	// Browser-native spell-check; the language tag picks the dictionary,
-	// blank follows the browser. CodeMirror turns spellcheck off by
+	// Browser-native spell-check; the language tag picks the dictionary (and
+	// is the text's lang), blank follows the browser. CodeMirror turns spellcheck off by
 	// default, so this opts back in.
 	spellCheck?: { enabled: boolean; language: string };
 	// The prose-view toggles, defaulting to the stored defaults. Hosts that
@@ -115,11 +115,11 @@ export function proseExtensions(opts: {
 						: nonPrinting
 				],
 		!opts.plain && opts.editingMode === 'rich' ? richModeExtension() : [],
-		opts.spellCheck?.enabled
-			? EditorView.contentAttributes.of({
-					spellcheck: 'true',
-					...(opts.spellCheck.language ? { lang: opts.spellCheck.language } : {})
-				})
+		opts.spellCheck?.enabled ? EditorView.contentAttributes.of({ spellcheck: 'true' }) : [],
+		// The language tag also tells screen readers how to say the text, so it
+		// is set with spell-check off too.
+		opts.spellCheck?.language
+			? EditorView.contentAttributes.of({ lang: opts.spellCheck.language })
 			: [],
 		EditorView.contentAttributes.of({ 'aria-label': opts.label }),
 		placeholder(opts.placeholder),

@@ -13,7 +13,13 @@ On a large window, the sidebar lists the parts of Security and Assistant under
 ## Profile
 
 Set your display name and, if you like, a separate pen name to show on your
-public pages. The public-page block is where you claim a handle: a short name
+public pages. If you write in a language that is not the one you grew up
+speaking, set "Native language" to it: when you copyedit a story whose
+language is set to another language, or review its prose, the Assistant also
+looks for habits
+carried over from your native language, such as idioms translated word for
+word, false friends, or prepositions and word order from it. Leave it on "Not
+set" to skip this. The public-page block is where you claim a handle: a short name
 that becomes your public address at `/@yourhandle`. You can claim a handle once,
 so pick it with care. Add a short bio and, if you take requests, a note that
 your commissions are open with the details. Turn on the public profile toggle to
@@ -351,7 +357,8 @@ How the writing area works, as your personal defaults.
   can write in one font on screen and export in another.
 - **Editor behaviour**: turn entity autocomplete on or off, show or hide the
   scene marks in the continuous view, show or hide the writing streak, and set
-  spell-check and your writing language. There is also a choice between the
+  spell-check and its language. A story or universe with a language set in its
+  details uses that language instead. There is also a choice between the
   markdown editor and the softer rich editing surface.
 - **Daily word goal**: a daily word target. A universe's Insights page shows how
   close you are to it. Leave it blank for no goal.

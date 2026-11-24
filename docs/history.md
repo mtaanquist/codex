@@ -10,6 +10,36 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Language and spelling convention per universe and story (2026-11-24,
+`feat/language-setting-1343`, #1343). `universes.language` and
+`stories.language` (the story's wins; null on both keeps inferring) and
+`users.native_language`, all nullable text from migration 0116, no data
+rewrite. The choices are one list in `$lib/writing-languages`, which already
+fed the editor's spell-check language preference; it gained English
+(Australia) and (Canada) and a prompt name per entry, and its labels moved
+from native names ("Dansk") to English ones ("Danish") to match the rest of
+the UI. That existing preference overlapped: rather than drop it, the story
+page now sets the editor's `lang` from the story's effective language and
+falls back to the preference, which is relabelled "Spell-check language", and
+`lang` is set with spell-check off too. The prompt lines live in
+`llm/prompts/language.ts`, each returning '' or the old wording when nothing
+is set, so an unset story sends byte-identical prompts
+(`unset-language.test.ts` checks them against a fixture taken from the
+release before). Left on inferring on purpose: the chapter summary and the
+character arc (each request is its fingerprint, so naming the language would
+mark every stored one out of date when the setting changed, and both are
+written from scene summaries that follow the setting), the chat summary (it
+follows the conversation's language) and the continuity passes (they stage
+no prose). The native-language hint compares primary subtags, so en-US is not
+"interference" in en-GB, and with no story language set there is no hint at
+all. A standalone story inherits the Standalone universe's language like any
+other, since that universe has its own settings page. MCP prompts
+stay pure builders; the server resolves the language for the connected
+writer's own work (`workLanguage`) and passes it in, and `list_universes` and
+`list_stories` return `language` and `languageName`. Export carries no
+universe or story settings, so it was left alone. The free chat gets no
+language line (not asked for; the frame could carry it later).
+
 Suggest details stores the /enrich fingerprint (2026-11-24,
 `fix/suggest-details-fingerprint-1371` on `staging/llm-issues`, #1371). A
 Suggest details read stored nothing, so the next `/enrich` pass read the
@@ -39,6 +69,8 @@ itself still comes from the current price list, which a provider switch
 clears, so an older row often still shows no cost; keeping per-row prices
 was left out. The MCP endpoint sends no model requests of its own, so it
 writes no usage rows.
+
+
 
 Legacy Assistant queues removed (2026-11-24,
 `chore/remove-legacy-queues-1041` on `staging/llm-issues`, #1041). The
@@ -71,7 +103,6 @@ each search's results (10k tokens at most) in every round after it with all
 five searches first, and the reply in every later round. It is pessimistic on
 purpose (cache reads would make the later rounds cheaper), so a review that
 may search is held earlier near the cap.
-
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
 short or waiting when unsaved edits partly cancel out in one combined change)

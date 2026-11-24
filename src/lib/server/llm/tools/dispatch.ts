@@ -36,6 +36,7 @@ import {
 } from '../../mcp/constants.ts';
 import { GateBusyError, stagingGate, stagingKey } from '../../mcp/call-gate.ts';
 import { isUuid } from '#lib/slug';
+import { effectiveLanguage, normaliseLanguage, writingLanguageName } from '#lib/writing-languages';
 import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
 import { locateQuote } from '#lib/quote-locate';
@@ -452,6 +453,13 @@ async function loadScene(ctx: ToolContext, sceneId: string) {
 	return row ?? null;
 }
 
+// The language and spelling convention as the list tools give it: the tag
+// and its name, or null for both when not set (infer it from the text).
+function languageFields(tag: string | null) {
+	const language = normaliseLanguage(tag);
+	return { language, languageName: language ? writingLanguageName(language) : null };
+}
+
 // The writer's live universes. The one tool that needs no universe: it is how
 // an outside app finds the ids the others take.
 async function listUniverses(ctx: ToolContext): Promise<string> {
@@ -460,7 +468,8 @@ async function listUniverses(ctx: ToolContext): Promise<string> {
 			id: universes.id,
 			name: universes.name,
 			description: universes.descriptionMd,
-			establishedSetting: universes.establishedSetting
+			establishedSetting: universes.establishedSetting,
+			language: universes.language
 		})
 		.from(universes)
 		.where(and(eq(universes.ownerId, ctx.userId), isNull(universes.deletedAt)))
@@ -473,7 +482,11 @@ async function listUniverses(ctx: ToolContext): Promise<string> {
 		.groupBy(stories.universeId);
 	const storyCount = new Map(counts.map((row) => [row.universeId, row.n]));
 	return JSON.stringify({
-		universes: rows.map((row) => ({ ...row, storyCount: storyCount.get(row.id) ?? 0 }))
+		universes: rows.map((row) => ({
+			...row,
+			...languageFields(row.language),
+			storyCount: storyCount.get(row.id) ?? 0
+		}))
 	});
 }
 
@@ -485,9 +498,12 @@ async function listStories(ctx: ToolContext): Promise<string> {
 			id: stories.id,
 			title: stories.title,
 			brief: stories.brief,
-			positionInSeries: stories.positionInSeries
+			positionInSeries: stories.positionInSeries,
+			language: stories.language,
+			universeLanguage: universes.language
 		})
 		.from(stories)
+		.innerJoin(universes, eq(stories.universeId, universes.id))
 		.where(
 			and(
 				eq(stories.universeId, ctx.universeId),
@@ -514,7 +530,11 @@ async function listStories(ctx: ToolContext): Promise<string> {
 		: [];
 	const sceneCount = new Map(counts.map((row) => [row.storyId, row.n]));
 	return JSON.stringify({
-		stories: rows.map((row) => ({ ...row, sceneCount: sceneCount.get(row.id) ?? 0 }))
+		stories: rows.map(({ language, universeLanguage, ...row }) => ({
+			...row,
+			...languageFields(effectiveLanguage(language, universeLanguage)),
+			sceneCount: sceneCount.get(row.id) ?? 0
+		}))
 	});
 }
 

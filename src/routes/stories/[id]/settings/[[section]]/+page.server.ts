@@ -51,6 +51,7 @@ import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
+import { normaliseLanguage } from '#lib/writing-languages';
 import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The current edition, if the story has been published.
@@ -196,8 +197,13 @@ export const actions: Actions = {
 		const brief = formText(data, 'brief').trim() || null;
 		const descriptionMd = formText(data, 'description').trim() || null;
 		const styleNotes = formText(data, 'styleNotes').trim() || null;
+		const languageRaw = formText(data, 'language');
+		const language = normaliseLanguage(languageRaw);
 		if (!title) {
 			return fail(400, { action: 'update', message: 'The story needs a title.' });
+		}
+		if (languageRaw && !language) {
+			return fail(400, { action: 'update', message: 'Pick a language from the list.' });
 		}
 		// The colour field only shows while the story has no artwork; a form
 		// without it leaves the stored colour alone.
@@ -211,7 +217,8 @@ export const actions: Actions = {
 			brief,
 			descriptionMd,
 			styleNotes,
-			coverColor
+			coverColor,
+			language
 		});
 		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.

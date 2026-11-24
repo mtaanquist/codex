@@ -98,7 +98,11 @@ export const users = pgTable('users', {
 	// The account's own switch for access by outside apps (the MCP endpoint
 	// and its OAuth sign-in). Off until the writer turns it on; separate from
 	// the Assistant toggle in llm_config.
-	mcpEnabled: boolean('mcp_enabled').notNull().default(false)
+	mcpEnabled: boolean('mcp_enabled').notNull().default(false),
+	// The writer's native language, a tag from #lib/writing-languages; null
+	// is not set. Copyedit and prose review look for slips carried over from
+	// it when it differs from the story's language.
+	nativeLanguage: text('native_language')
 });
 
 // A named bundle of entitlements. Every account is on one: its own plan_id,
@@ -186,6 +190,10 @@ export const universes = pgTable(
 		// setting's canon, with the author's material overriding where they
 		// differ.
 		establishedSetting: boolean('established_setting').notNull().default(false),
+		// The language and spelling convention its stories are written in, a
+		// tag from #lib/writing-languages; null is not set, and the Assistant
+		// then infers it from the text. A story's own language wins.
+		language: text('language'),
 		// The Assistant models chosen for this universe, laid over the account's
 		// and under a story's own: { models }. Normalised in
 		// #lib/server/llm/config.ts.
@@ -244,6 +252,9 @@ export const stories = pgTable(
 		// omniscient narrator, formal prose"). Fed to the Assistant so its
 		// feedback calibrates to what the prose is aiming at; never public.
 		styleNotes: text('style_notes'),
+		// The story's language and spelling convention, over the universe's;
+		// null uses the universe's. See effectiveLanguage.
+		language: text('language'),
 		// Null if standalone or unordered.
 		positionInSeries: integer('position_in_series'),
 		visibility: text('visibility', { enum: ['private', 'unlisted', 'public'] })

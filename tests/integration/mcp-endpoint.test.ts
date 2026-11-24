@@ -650,6 +650,30 @@ describe('the protocol', () => {
 		expect(await stagedRows()).toBe(0);
 	});
 
+	it("states the language of the writer's own work, and nothing for another writer's", async () => {
+		const get = async (args: Record<string, unknown>, name = 'copyedit') => {
+			const answered = await rpc(alice.token, 'prompts/get', { name, arguments: args });
+			return (answered.result!.messages as { content: { text: string } }[])[0].content.text;
+		};
+		await db.update(universes).set({ language: 'en-GB' }).where(eq(universes.id, alice.universeId));
+		await db.update(users).set({ nativeLanguage: 'da' }).where(eq(users.id, alice.userId));
+		await db.update(universes).set({ language: 'fr' }).where(eq(universes.id, bob.universeId));
+
+		const own = await get({ universeId: alice.universeId, sceneId: alice.sceneId });
+		expect(own).toContain('The story is written in British English.');
+		expect(own).toContain('Interference from Danish');
+		// The story's own language wins over the universe's.
+		await db.update(stories).set({ language: 'en-US' }).where(eq(stories.id, alice.storyId));
+		expect(
+			await get({ universeId: alice.universeId, storyId: alice.storyId }, 'pattern-pass')
+		).toContain('The story is written in American English.');
+
+		// Bob's ids read as nothing set: the prompt says nothing of his work.
+		const others = await get({ universeId: bob.universeId, sceneId: bob.sceneId });
+		expect(others).not.toContain('The story is written in');
+		expect(others).not.toContain('French');
+	});
+
 	it('refuses a tool it does not offer, and stages nothing', async () => {
 		const readOnly = await connect(alice.userId, 'Reader', ['read']);
 		const attempts: [string, string][] = [
@@ -741,6 +765,26 @@ describe('list_stories', () => {
 		const { text } = await call(alice, 'list_stories', { universeId: alice.universeId });
 		const listed = JSON.parse(text).stories as { id: string; title: string; sceneCount: number }[];
 		expect(listed).toMatchObject([{ id: alice.storyId, title: 'Alice Open Book', sceneCount: 1 }]);
+	});
+
+	it("gives each story's language: its own, else the universe's, else null", async () => {
+		const listed = async () =>
+			JSON.parse((await call(alice, 'list_stories', { universeId: alice.universeId })).text)
+				.stories as { language: string | null; languageName: string | null }[];
+		expect((await listed())[0]).toMatchObject({ language: null, languageName: null });
+		await db.update(universes).set({ language: 'en-GB' }).where(eq(universes.id, alice.universeId));
+		expect((await listed())[0]).toMatchObject({
+			language: 'en-GB',
+			languageName: 'British English'
+		});
+		await db.update(stories).set({ language: 'da' }).where(eq(stories.id, alice.storyId));
+		expect((await listed())[0]).toMatchObject({ language: 'da', languageName: 'Danish' });
+		const universesListed = JSON.parse((await call(alice, 'list_universes')).text).universes as {
+			id: string;
+			language: string | null;
+		}[];
+		expect(universesListed.find((row) => row.id === alice.universeId)!.language).toBe('en-GB');
+		expect(universesListed.find((row) => row.id === alice.otherUniverseId)!.language).toBeNull();
 	});
 });
 

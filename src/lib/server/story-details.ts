@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { stories } from './db/schema.ts';
 import { saveWithSlug } from './slugs.ts';
+import type { WritingLanguage } from '../writing-languages.ts';
 
 export type StoryDetails = {
 	title: string;
@@ -10,6 +11,9 @@ export type StoryDetails = {
 	descriptionMd: string | null;
 	styleNotes: string | null;
 	coverColor: string | null;
+	// A tag from #lib/writing-languages, or null to use the universe's; left
+	// out, unchanged.
+	language?: WritingLanguage | null;
 };
 
 // Saves the story settings' details form and returns the story's slug, or

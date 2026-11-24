@@ -3,7 +3,9 @@
 // gateway places after the persona). The result is offered for insert / edit /
 // reject; it is never written to the prose on its own.
 
+import { type LanguageSetting } from '../../../writing-languages.ts';
 import { IN_CONTEXT, PROSE_FORMAT, type WorldSource } from './format.ts';
+import { languageRule } from './language.ts';
 
 // Where the writer is in the prose when they ask: a selected passage, or the
 // text leading up to the cursor. Lets a brief like "continue from here" land.
@@ -26,7 +28,7 @@ export function readCoauthorReference(raw: unknown): CoauthorReference | null {
 export function buildCoauthorMessage(
 	instruction: string,
 	reference?: CoauthorReference | null,
-	options: { source?: WorldSource; rewrite?: boolean } = {}
+	options: { source?: WorldSource; rewrite?: boolean; language?: LanguageSetting } = {}
 ): string {
 	const source = options.source ?? IN_CONTEXT;
 	const rewrite = options.rewrite === true && reference?.kind === 'selection';
@@ -53,5 +55,9 @@ export function buildCoauthorMessage(
 		`Write it as finished prose ready to ${rewrite ? 'take the place of the passage in' : 'drop into'} the manuscript, in the established voice, tense, and point of view, and consistent with the world and characters ${source.where}. Reply with only the ${rewrite ? 'rewritten passage' : 'passage'}: no preamble, no commentary, and no surrounding quotation marks.`,
 		PROSE_FORMAT
 	);
+	if (options.language) {
+		const rule = languageRule(options.language);
+		if (rule) parts.push(rule);
+	}
 	return parts.join('\n');
 }

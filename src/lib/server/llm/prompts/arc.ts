@@ -3,6 +3,11 @@
 // account of what happens to them. Each scene is given as its summary where it
 // has one, otherwise the passage around the mention. The gateway prepends the
 // persona message; this is the task turn. No tools. Shipped-fixed in v1.
+//
+// The arc states no language: its request is the fingerprint that says
+// whether a stored arc is current, so naming the language would mark every
+// arc out of date when the setting changed. It is written from scene
+// summaries, which already follow the story's language.
 
 export type ArcScene = {
 	storyTitle: string;
