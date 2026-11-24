@@ -1,3 +1,5 @@
+import { storyLanguage } from '../language.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { and, asc, eq } from 'drizzle-orm';
 import type { Database } from '../auth';
 import { reviewComments, reviewSuggestions, reviewThreads } from '../db/schema';
@@ -74,7 +76,9 @@ export async function rereadPatternEdit(
 			sceneTitle: edit.sceneTitle,
 			passage: edit.bodyMd.slice(window.start, window.end),
 			changed: edit.replacement,
-			note: note.body
+			note: note.body,
+			language: await storyLanguage(db, edit.storyId, input.userId),
+			preferences: await storyAssistantPreferences(db, edit.storyId, input.userId)
 		})
 	};
 	// The slim review-reply frame: the style notes the pattern was judged

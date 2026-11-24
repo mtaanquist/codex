@@ -169,6 +169,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		.select({
 			handle: users.handle,
 			penName: users.penName,
+			nativeLanguage: users.nativeLanguage,
 			bioMd: users.bioMd,
 			links: users.links,
 			commissionsOpen: users.commissionsOpen,
@@ -440,7 +441,9 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const result = await saveIdentity(db, locals.user!.id, {
 			displayName: formText(data, 'displayName'),
-			penName: formText(data, 'penName')
+			penName: formText(data, 'penName'),
+			// A form without the field leaves the native language as it is.
+			nativeLanguage: data.has('nativeLanguage') ? formText(data, 'nativeLanguage') : undefined
 		});
 		if (!result.ok) return fail(400, { scope: 'name', message: result.reason });
 		return { scope: 'name', saved: true };

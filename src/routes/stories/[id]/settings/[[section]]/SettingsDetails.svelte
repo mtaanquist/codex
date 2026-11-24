@@ -1,5 +1,12 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
+	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
+	import { inheritedChoiceLabel } from '#lib/assistant-preferences';
+	import {
+		normaliseLanguage,
+		WRITING_LANGUAGES,
+		writingLanguageLabel
+	} from '#lib/writing-languages';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -7,11 +14,17 @@
 	// The select overrides it so the swatch previews the choice; it resets to
 	// the stored colour whenever the story's data changes.
 	let coverColor = $derived(storyCoverColor(data.story));
+	// What a story with no language of its own falls back to.
+	let universeLanguage = $derived(normaliseLanguage(data.universe.language));
+	let useInherited = $derived(inheritedChoiceLabel(data.universe.standalone));
 </script>
 
 <div class="admin-block-head">
 	<h2 class="admin-block-title">Details</h2>
-	<p class="admin-block-sub">The title and description readers and exports use.</p>
+	<p class="admin-block-sub">
+		How the story is named and described, the language it is written in, and how the Assistant
+		reviews it.
+	</p>
 </div>
 <div class="settings-group">
 	<form method="POST" action="?/update">
@@ -71,15 +84,38 @@
 			</div>
 		{/if}
 		<div class="field">
+			<label for="st-language">Language</label>
+			<select id="st-language" class="select" name="language" value={data.story.language ?? ''}>
+				<option value="">
+					{universeLanguage
+						? `${useInherited}: ${writingLanguageLabel(universeLanguage)}`
+						: 'Not set'}
+				</option>
+				{#each WRITING_LANGUAGES as language (language.tag)}
+					<option value={language.tag}>{language.label}</option>
+				{/each}
+			</select>
+			<p class="field-hint">
+				The language and spelling this story is written in. The Assistant writes and checks spelling
+				in it, and the editor's spell-check uses it.
+				{#if universeLanguage && data.universe.standalone}
+					Leave it on the standalone default unless this story differs.
+				{:else if universeLanguage}
+					Leave it on the universe's unless this story differs.
+				{:else}
+					If you leave it unset, the Assistant works it out from the text.
+				{/if}
+			</p>
+		</div>
+		<div class="field">
 			<label for="st-style-notes">Genre and style</label>
 			<textarea id="st-style-notes" class="input" name="styleNotes" rows="2"
 				>{data.story.styleNotes ?? ''}</textarea
 			>
 			<p class="field-hint">
 				A sentence on the genre and the style you are writing in, for example "epic fantasy serial,
-				omniscient narrator, formal prose". The intended audience, the spelling you write in
-				(British or American), and a comparison title or two also help. The Assistant reads this and
-				judges the prose against it. Readers never see it.
+				omniscient narrator, formal prose". The intended audience and a comparison title or two also
+				help. The Assistant reads this and judges the prose against it. Readers never see it.
 			</p>
 		</div>
 		<div class="settings-actions">
@@ -90,6 +126,23 @@
 		</div>
 	</form>
 </div>
+{#if data.assistantPreferencesShown}
+	<AssistantPreferences
+		level="story"
+		stored={data.story.assistantPreferences}
+		notes={data.story.assistantNotes}
+		inherited={{
+			preferences: data.universe.assistantPreferences,
+			notes: data.universe.assistantNotes
+		}}
+		standalone={data.universe.standalone}
+		saved={form?.action === 'assistant-preferences' && form.saved === true}
+		error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+		submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+			? form.submitted
+			: null}
+	/>
+{/if}
 
 <style>
 	.cover-color-row {

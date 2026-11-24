@@ -53,6 +53,9 @@ import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
+import { normaliseLanguage } from '#lib/writing-languages';
+import { readPreferencesForm } from '#lib/assistant-preferences';
+import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
 import {
 	checkTagNames,
 	findFandoms,
@@ -153,6 +156,12 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		assistantModels: assistant.tabEnabled
 			? await scopeModelSettings(db, locals.user!.id, { storyId: story.id })
 			: null,
+		// The Assistant preferences form, shown wherever the preferences apply.
+		assistantPreferencesShown: await assistantPreferencesShown(
+			db,
+			locals.user!.id,
+			assistant.tabEnabled
+		),
 		story,
 		universe,
 		timeline,
@@ -232,8 +241,14 @@ export const actions: Actions = {
 		const brief = formText(data, 'brief').trim() || null;
 		const descriptionMd = formText(data, 'description').trim() || null;
 		const styleNotes = formText(data, 'styleNotes').trim() || null;
+		const languageRaw = formText(data, 'language');
+		// A post without the field leaves the stored language alone.
+		const language = data.has('language') ? normaliseLanguage(languageRaw) : undefined;
 		if (!title) {
 			return fail(400, { action: 'update', message: 'The story needs a title.' });
+		}
+		if (languageRaw && !language) {
+			return fail(400, { action: 'update', message: 'Pick a language from the list.' });
 		}
 		// The colour field only shows while the story has no artwork; a form
 		// without it leaves the stored colour alone.
@@ -247,12 +262,28 @@ export const actions: Actions = {
 			brief,
 			descriptionMd,
 			styleNotes,
-			coverColor
+			coverColor,
+			language
 		});
 		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.
 		if (slug !== story.slug) redirect(303, `/stories/${slug}/settings`);
 		return { action: 'update', saved: true };
+	},
+	saveAssistantPreferences: async ({ request, params, locals }) => {
+		const { story } = await ownedStory(params.id, locals.user!.id);
+		const read = readPreferencesForm(await request.formData());
+		if (!read.ok) {
+			return fail(400, {
+				action: 'assistant-preferences',
+				message: read.reason,
+				submitted: read.submitted
+			});
+		}
+		if (!(await savePreferences(db, locals.user!.id, { storyId: story.id }, read))) {
+			error(404, 'Not found');
+		}
+		return { action: 'assistant-preferences', saved: true };
 	},
 	saveGoals: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);

@@ -2,7 +2,7 @@
 	import { NO_PRICE_NOTE, capNotAppliedNote, money, overWarnNote } from '#lib/cost-notes';
 	import { resolve } from '$app/paths';
 	import { modal } from '#lib/modal';
-	import { capStopPhrase, formatNumber } from '#lib/format';
+	import { capContinueAdvice, capStopPhrase, formatNumber } from '#lib/format';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import { reviewModal, closeReviewModal } from '#lib/review-modal.svelte';
 	import {
@@ -87,6 +87,7 @@
 		capped?: boolean;
 		spentUsd?: number | null;
 		spentEstimated?: boolean;
+		overCap?: boolean;
 	};
 
 	// What the pre-flight estimate reports, and the confirm step built on it. A
@@ -105,6 +106,20 @@
 		capUsd?: number;
 		capEnforceable: boolean;
 		wholeBook?: 'fits' | 'chapters' | 'unavailable';
+		webSearch?: true;
+		// Web search is on and the room the cap keeps for one request is already
+		// more than the cap: the review stops at that request. overCapAt names
+		// the part of the review it is in.
+		overCap?: true;
+		overCapAt?: 'scene' | 'continuity' | 'habits';
+	};
+
+	// Where a review held at the cap stops, in the names the options carry.
+	const OVER_CAP_STOP: Record<'scene' | 'continuity' | 'habits', string> = {
+		scene: 'at its first scene',
+		continuity:
+			'when it starts comparing the scenes to each other (the cross-scene consistency pass)',
+		habits: 'when it starts to look for habits that repeat in the prose'
 	};
 
 	// The estimate is advisory: anything that does not carry the two figures the
@@ -386,7 +401,11 @@
 								)}.
 							</p>
 							<p class="rm-note">
-								Raise the cap in settings or run the review again to continue.
+								{capContinueAdvice(
+									progress.spentUsd ?? 0,
+									'run the review again',
+									progress.overCap
+								)}
 								<HelpLink topic="account" label="usage and cost" />
 							</p>
 						{:else if progress.state === 'done' || progress.phase === 'done'}
@@ -470,6 +489,21 @@
 						{/if}
 						{#if estimate.capUsd !== undefined && !estimate.capEnforceable}
 							<p class="rm-note">{capNotAppliedNote(estimate.capUsd)}</p>
+						{/if}
+						{#if estimate.webSearch && estimate.overCap && estimate.capUsd !== undefined}
+							<p class="rm-note">
+								Web search is on for this story, and these figures do not include it. Your spend cap
+								of ${money(estimate.capUsd)} is too low to leave room for searches, so the review will
+								stop {OVER_CAP_STOP[estimate.overCapAt ?? 'scene']}. Raise the cap under Account,
+								Assistant to review more.
+							</p>
+						{:else if estimate.webSearch}
+							<p class="rm-note">
+								Web search is on for this story, and these figures do not include it.{estimate.capUsd !==
+									undefined && estimate.capEnforceable
+									? ' Your spend cap keeps extra room for searches, so the review can stop at the cap before it has spent it all. If it does, raise the cap.'
+									: ''}
+							</p>
 						{/if}
 						{#if warned}
 							<p class="rm-note">

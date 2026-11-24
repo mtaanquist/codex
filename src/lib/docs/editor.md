@@ -149,7 +149,7 @@ The row at the bottom of the chat box holds the + for adding context, the comman
 - `/find <text>` searches this universe and lists what it finds.
 - `/catchup` writes a recap of the story so far.
 - `/summaries` refreshes scene and chapter summaries.
-- `/enrich` suggests aliases, quick details, and summaries for every character, place, and lore entry in the universe that appears in your scenes. It runs in the background and notifies you when it is done; the suggestions wait on each entry's page in Plan for you to accept or reject. Run it again later and it only reads entries whose passages in your scenes have changed since, and skips an entry when the passages it would send are the same as last time. If an entry's suggestions were cut off at the reply limit, `/enrich` does not read it again until its passages change, or you raise Longest reply for Background work or choose another model; until then the notice keeps counting it as not read.
+- `/enrich` suggests aliases, quick details, and summaries for every character, place, and lore entry in the universe that appears in your scenes. It runs in the background and notifies you when it is done; the suggestions wait on each entry's page in Plan for you to accept or reject. Run it again later and it only reads entries whose passages in your scenes have changed since, and skips an entry when the passages it would send are the same as last time. It also skips an entry you read with "Suggest details with the Assistant" since its passages last changed, as long as that read finished and covered every story that mentions the entry. If an entry's suggestions were cut off at the reply limit, `/enrich` does not read it again until its passages change, or you raise Longest reply for Background work or choose another model; until then the notice keeps counting it as not read.
 - `/context` adds a scene, chapter, character, note or story to your next message.
 - `/new` starts a new chat. The current one stays in your list.
 - `/history` opens the list of your chats.
@@ -180,7 +180,7 @@ To turn the Assistant off for just this book, choose "Mute for this story" from 
 
 ## Spelling
 
-The browser's spell-checker underlines possible misspellings as you write. Set the language your prose is written in on your account page, under Display, so the right dictionary is used; "Follow my browser" uses whatever your browser is set to. Turn spell-check off there if the underlines distract you. Both settings can be overridden per story in the story's settings.
+The browser's spell-checker underlines possible misspellings as you write. It uses the story's language when one is set: choose it under "Language" in the story's settings, or in the universe's settings for every story in it. For a story with no language set, the spell-check language on your account page, under Display, picks the dictionary; "Follow my browser" uses whatever your browser is set to. Turn spell-check off there if the underlines distract you. Both settings can be overridden per story in the story's settings, under Editor. The spell-check language there is used only while no language is set for the story or its universe.
 
 ## How it looks
 

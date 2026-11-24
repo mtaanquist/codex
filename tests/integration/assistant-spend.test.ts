@@ -20,7 +20,7 @@ const { reviewStoryContinuity, reviewStoryScenes, SUMMARIES_CAPPED_MESSAGE } =
 const { summariseStory } = await import('../../src/lib/server/llm/summaries');
 const { CAP_NOT_APPLIED_MESSAGE } = await import('../../src/lib/server/llm/spend');
 const { estimateStoryReview } = await import('../../src/lib/server/llm/estimate');
-const { emptyReviewRun, loadReviewRun, ReviewRunLoadError, saveReviewRun } =
+const { emptyReviewRun, loadReviewRun, ReviewRunLoadError, reviewScopeKey, saveReviewRun } =
 	await import('../../src/lib/server/review-runs');
 
 let pool: pg.Pool;
@@ -157,6 +157,171 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(estimate.scenes).toBe(3);
 		expect(estimate.estTokens).toBeGreaterThan(0);
 		expect(estimate.model).toBe(MODEL);
+	});
+
+	it("counts the story's Assistant preferences on each scene", async () => {
+		const storyId = await seedStory(2);
+		const bare = await estimateStoryReview(db, { userId, storyId });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { tense: 'past' }, assistantNotes: 'x'.repeat(800) })
+			.where(eq(stories.id, storyId));
+		const withPreferences = await estimateStoryReview(db, { userId, storyId });
+		expect(withPreferences.estTokens).toBeGreaterThan(bare.estTokens);
+	});
+
+	it("counts the story's language lines on each scene", async () => {
+		const storyId = await seedStory(2);
+		const bare = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		await db.update(stories).set({ language: 'en-GB' }).where(eq(stories.id, storyId));
+		const withRule = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(withRule.estTokens).toBeGreaterThan(bare.estTokens);
+		await db.update(users).set({ nativeLanguage: 'da' }).where(eq(users.id, userId));
+		const withNative = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(withNative.estTokens).toBeGreaterThan(withRule.estTokens);
+	});
+
+	it('says when the run may search the web', async () => {
+		const storyId = await seedStory(2);
+		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBeUndefined();
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: MODEL },
+			toolCallBudget: 8,
+			webSearch: true
+		});
+		// Search is only offered on an established setting.
+		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBeUndefined();
+		await db
+			.update(universes)
+			.set({ establishedSetting: true })
+			.where(eq(universes.id, universeId));
+		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBe(true);
+	});
+
+	it('says a review with web search stops at its first scene when the cap cannot hold one', async () => {
+		const storyId = await seedStory(2);
+		await db
+			.update(universes)
+			.set({ establishedSetting: true })
+			.where(eq(universes.id, universeId));
+		const searching = async (spendCapUsd: number, webSearch: boolean) => {
+			await saveAccountLlmConfig(db, userId, {
+				enabled: true,
+				assistantName: '',
+				persona: 'balanced',
+				provider: 'anthropic',
+				endpoint: 'https://api.anthropic.com',
+				apiKey: 'sk-ant',
+				models: { reviewer: MODEL },
+				toolCallBudget: 8,
+				webSearch,
+				spendCapUsd
+			});
+			// The Anthropic preset may pick its own reviewer model; price that one.
+			const { model } = await estimateStoryReview(db, { userId, storyId });
+			await saveModelPricing(db, userId, { [model]: { prompt: PRICE_PER_TOKEN, completion: 0 } });
+		};
+
+		// Every round of the search loop for one scene is far more than $1.
+		await searching(1, true);
+		const low = await estimateStoryReview(db, { userId, storyId });
+		expect(low.webSearch).toBe(true);
+		expect(low.capEnforceable).toBe(true);
+		expect(low.overCap).toBe(true);
+		expect(low.overCapAt).toBe('scene');
+
+		await searching(10_000, true);
+		expect((await estimateStoryReview(db, { userId, storyId })).overCap).toBeUndefined();
+
+		// Without search a scene's own request is a few cents, well under $1.
+		await searching(1, false);
+		expect((await estimateStoryReview(db, { userId, storyId })).overCap).toBeUndefined();
+	});
+
+	// Search on, a 1M window so the whole book is read in one request, and the
+	// reviewer priced. Every round of the search loop is held for each request,
+	// so the room kept for one request runs to several dollars.
+	async function searchingWithPatterns(storyId: string, spendCapUsd: number) {
+		await db
+			.update(universes)
+			.set({ establishedSetting: true })
+			.where(eq(universes.id, universeId));
+		const save = () =>
+			saveAccountLlmConfig(db, userId, {
+				enabled: true,
+				assistantName: '',
+				persona: 'balanced',
+				provider: 'anthropic',
+				endpoint: 'https://api.anthropic.com',
+				apiKey: 'sk-ant',
+				models: { reviewer: MODEL },
+				modelContextManual: { [MODEL]: 1_000_000 },
+				toolCallBudget: 8,
+				webSearch: true,
+				spendCapUsd
+			});
+		// The first save switches provider, which resets the model picks to the
+		// preset's; the second puts this test's model back.
+		await save();
+		await save();
+		const { model } = await estimateStoryReview(db, { userId, storyId });
+		expect(model).toBe(MODEL);
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: PRICE_PER_TOKEN, completion: 0 } });
+	}
+
+	async function seedBodies(bodies: string[]): Promise<string> {
+		const [story] = await db
+			.insert(stories)
+			.values({ universeId, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		for (const [i, bodyMd] of bodies.entries()) {
+			await db
+				.insert(scenes)
+				.values({ storyId: story.id, globalPosition: i + 1, title: `Scene ${i + 1}`, bodyMd });
+		}
+		return story.id;
+	}
+
+	it('warns when the whole-book habits pass would be held, though every scene fits', async () => {
+		// Each scene's own request stays small (the context leaves a long scene
+		// out), but the habits pass sends the whole book in one request.
+		const storyId = await seedBodies(Array.from({ length: 30 }, () => 'word '.repeat(2400)));
+		await searchingWithPatterns(storyId, 16);
+		const scenesOnly = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(scenesOnly.webSearch).toBe(true);
+		expect(scenesOnly.overCap).toBeUndefined();
+
+		const withHabits = await estimateStoryReview(db, {
+			userId,
+			storyId,
+			categories: ['prose'],
+			patterns: 'book'
+		});
+		expect(withHabits.wholeBook).toBe('fits');
+		expect(withHabits.overCap).toBe(true);
+		expect(withHabits.overCapAt).toBe('habits');
+	});
+
+	it('counts text outside plain English the way the cap does, not at four characters a token', async () => {
+		// The same number of characters: three bytes each in CJK, one in ASCII.
+		// chars/4 counts both the same and under the cap; the cap's own count
+		// (bytes/3) puts the CJK book over it.
+		const cjk = await seedBodies(['\u6587'.repeat(40_000), '\u5b57'.repeat(40_000)]);
+		const ascii = await seedBodies(['a'.repeat(40_000), 'b'.repeat(40_000)]);
+		await searchingWithPatterns(cjk, 14);
+		const opts = { userId, categories: ['prose'] as ReviewCategory[], patterns: 'book' as const };
+		const overCjk = await estimateStoryReview(db, { ...opts, storyId: cjk });
+		const overAscii = await estimateStoryReview(db, { ...opts, storyId: ascii });
+		expect(overCjk.estTokens).toBe(overAscii.estTokens);
+		expect(overAscii.overCap).toBeUndefined();
+		expect(overCjk.overCap).toBe(true);
+		expect(overCjk.overCapAt).toBe('habits');
 	});
 
 	it('omits the cost when the model has no known price', async () => {
@@ -779,115 +944,6 @@ describe('per-run spend cap (#549)', () => {
 	});
 });
 
-describe('a capped run saved before categories were part of its key', () => {
-	// What the release before the upgrade stored: the key had no categories.
-	async function legacyRun(
-		storyId: string,
-		jobId: string,
-		opts: {
-			capped: boolean;
-			scenes: number;
-			phase?: 'scenes' | 'done';
-			carriedForward?: boolean;
-		}
-	): Promise<void> {
-		const ids = await db
-			.select({ id: scenes.id })
-			.from(scenes)
-			.where(eq(scenes.storyId, storyId))
-			.orderBy(asc(scenes.globalPosition));
-		await saveReviewRun(db, {
-			jobId,
-			userId,
-			state: {
-				...emptyReviewRun(),
-				phase: opts.phase ?? 'done',
-				scope: `full:${storyId}`,
-				total: ids.length,
-				completed: ids.slice(0, opts.scenes).map((row) => row.id),
-				reviewed: opts.scenes,
-				capped: opts.capped,
-				...(opts.carriedForward ? { carriedForward: true } : {})
-			}
-		});
-	}
-
-	async function continueReview(
-		storyId: string,
-		categories: ReviewCategory[],
-		jobCategories: (jobId: string) => Promise<ReviewCategory[] | null>,
-		jobId = 'after-upgrade'
-	) {
-		const p = provider();
-		const result = await reviewStoryScenes(
-			db,
-			{ userId, storyId, categories, jobId, legacyJobCategories: jobCategories },
-			{ provider: p.provider }
-		);
-		return { result, sent: p.seen.length };
-	}
-
-	it('continues it when its job checked the same categories', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-1', { capped: true, scenes: 2 });
-		const asked: string[] = [];
-		const { result, sent } = await continueReview(storyId, ['prose'], async (jobId) => {
-			asked.push(jobId);
-			return ['prose'];
-		});
-
-		expect(asked).toEqual(['legacy-1']);
-		expect(sent).toBe(1);
-		expect(result.reviewed).toBe(3);
-	});
-
-	it('reviews every scene when its job checked other categories', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-2', { capped: true, scenes: 2 });
-		const { sent } = await continueReview(storyId, ['prose'], async () => ['mechanics']);
-		expect(sent).toBe(3);
-	});
-
-	it('reviews every scene when its job is no longer known', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-3', { capped: true, scenes: 2 });
-		const { sent } = await continueReview(storyId, [], async () => null);
-		expect(sent).toBe(3);
-	});
-
-	it('reviews every scene when a later run over the old key finished', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-4', { capped: true, scenes: 2 });
-		await legacyRun(storyId, 'legacy-5', { capped: false, scenes: 3 });
-		const { sent } = await continueReview(storyId, [], async () => []);
-		expect(sent).toBe(3);
-	});
-
-	it('continues from a legacy continuation that never finished', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-7', { capped: true, scenes: 1 });
-		await legacyRun(storyId, 'legacy-8', {
-			capped: false,
-			scenes: 2,
-			phase: 'scenes',
-			carriedForward: true
-		});
-		const { sent } = await continueReview(storyId, [], async () => []);
-		expect(sent).toBe(1);
-	});
-
-	it('is passed over once a run under the new key exists', async () => {
-		const storyId = await seedStory(3);
-		await legacyRun(storyId, 'legacy-6', { capped: true, scenes: 2 });
-		const first = await continueReview(storyId, [], async () => []);
-		expect(first.sent).toBe(1);
-
-		// That run finished, so the next one starts over.
-		const second = await continueReview(storyId, [], async () => [], 'later');
-		expect(second.sent).toBe(3);
-	});
-});
-
 describe('spend settings normalisation (#549)', () => {
 	it('keeps positive figures and drops anything else', async () => {
 		await configure({ spendCapUsd: 3.5, spendWarnUsd: 0.75 });
@@ -1170,31 +1226,30 @@ describe('a continuity continuation (#1106)', () => {
 describe('adopting a capped run fails loudly (#1113)', () => {
 	it('fails the attempt rather than reviewing every scene again', async () => {
 		const storyId = await seedStory(3);
+		const [first] = await db
+			.select({ id: scenes.id })
+			.from(scenes)
+			.where(eq(scenes.storyId, storyId))
+			.orderBy(asc(scenes.globalPosition))
+			.limit(1);
+		// A stored review time Postgres cannot read makes carrying the run forward throw.
 		await saveReviewRun(db, {
-			jobId: 'old-key',
+			jobId: 'capped',
 			userId,
 			state: {
 				...emptyReviewRun(),
 				phase: 'done',
-				scope: `full:${storyId}`,
+				scope: reviewScopeKey({ storyId }),
 				total: 3,
+				completed: [first.id],
+				reviewed: 1,
+				reviewedAt: { [first.id]: 'not a time' },
 				capped: true
 			}
 		});
 		const p = provider();
 		await expect(
-			reviewStoryScenes(
-				db,
-				{
-					userId,
-					storyId,
-					jobId: 'new-key',
-					legacyJobCategories: async () => {
-						throw new Error('queue unreachable');
-					}
-				},
-				{ provider: p.provider }
-			)
+			reviewStoryScenes(db, { userId, storyId, jobId: 'continued' }, { provider: p.provider })
 		).rejects.toBeInstanceOf(ReviewRunLoadError);
 		expect(p.seen).toHaveLength(0);
 	});

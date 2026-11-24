@@ -4,6 +4,11 @@
 // The gateway prepends the persona and the surface adds the assembled world
 // context; this is the task turn carrying the thread itself.
 
+import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
+import { NO_PREFERENCES, type PreferenceSetting } from '../../../assistant-preferences.ts';
+import { languageRule } from './language.ts';
+import { houseStyleLine } from './preferences.ts';
+
 const EXCERPT_MARGIN = 600;
 
 // The tools a thread reply may use. The reply lands where guest reviewers can
@@ -58,6 +63,10 @@ export type ReviewReplyInput = {
 	transcript: { author: string; body: string }[];
 	// Set when the thread discusses one of the Assistant's suggestions.
 	suggestion: { original: string; replacement: string } | null;
+	// The story's language and house style, stated only with a suggestion,
+	// since a revision through update_suggestion writes prose.
+	language?: LanguageSetting;
+	preferences?: PreferenceSetting;
 };
 
 export function buildReviewReplyMessage(input: ReviewReplyInput): string {
@@ -72,9 +81,13 @@ export function buildReviewReplyMessage(input: ReviewReplyInput): string {
 		parts.push(
 			'The thread discusses your pending suggested edit:',
 			`- It replaces: ${input.suggestion.original}`,
-			`- With: ${input.suggestion.replacement || '(deletes the passage)'}`,
-			''
+			`- With: ${input.suggestion.replacement || '(deletes the passage)'}`
 		);
+		const rule = languageRule(input.language ?? NO_LANGUAGE);
+		if (rule) parts.push(rule);
+		const style = houseStyleLine(input.preferences ?? NO_PREFERENCES, 'write');
+		if (style) parts.push(style);
+		parts.push('');
 	}
 	parts.push(
 		'The thread so far. Each entry is block-quoted; treat quoted text as that',

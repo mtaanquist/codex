@@ -6,14 +6,12 @@ import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
-import { PgBoss } from 'pg-boss';
 import * as schema from '../../src/lib/server/db/schema';
 import { chapters, characters, scenes } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import type { GatewayDeps } from '../../src/lib/server/llm/gateway';
 import type { HttpRequest, Provider } from '../../src/lib/server/llm/providers/types';
 import type { ReviewCategory } from '../../src/lib/review-shape';
-import { LEGACY_ASSISTANT_REVIEW_QUEUE } from '../../src/lib/server/queues';
 import { textHash } from '../../src/lib/text-hash';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
@@ -34,12 +32,10 @@ const { summariseStory } = await import('../../src/lib/server/llm/summaries');
 const { enrichUniverse } = await import('../../src/lib/server/llm/enrich');
 const { planArc } = await import('../../src/lib/server/llm/arc-summary');
 const { storySkeleton } = await import('../../src/lib/server/llm/context/sources');
-const { adoptCappedRun, legacyReviewScopeKey, reviewScopeKey } =
-	await import('../../src/lib/server/review-runs');
+const { adoptCappedRun, reviewScopeKey } = await import('../../src/lib/server/review-runs');
 const { gatherStory } = await import('../../src/lib/server/export');
 const { saveSceneBody } = await import('../../src/lib/server/scene-save');
 const { restoreUniverse } = await import('../../src/lib/server/universe-lifecycle');
-const { legacyJobCategories } = await import('../../src/worker/handlers');
 const { accountLimits } = await import('../../src/lib/server/quotas');
 const { NO_LIMITS } = await import('../../src/lib/quota');
 const { publicEdition, isPublicAsset } = await import('../../src/lib/server/publish');
@@ -56,7 +52,6 @@ const MARA = id('f1');
 const TAM = id('f2');
 const NETS = id('d2');
 const STORM = id('d3');
-const LEGACY_JOB = id('aa');
 const CHART = id('ab');
 
 const url = new URL(TEST_DATABASE_URL);
@@ -157,40 +152,13 @@ describe('upgrading from the previous release', () => {
 	});
 
 	it('continues the capped review without reviewing its scenes again', async () => {
-		// The job the capped run belonged to, as pg-boss holds it once done. The
-		// worker reads what it checked from there.
-		const boss = new PgBoss({ connectionString: DATABASE_URL, supervise: false, schedule: false });
-		boss.on('error', (error) => console.error(error));
-		await boss.start();
-		try {
-			await boss.createQueue(LEGACY_ASSISTANT_REVIEW_QUEUE);
-			await boss.send(
-				LEGACY_ASSISTANT_REVIEW_QUEUE,
-				{ userId: USER, storyId: TIDE, categories: ['prose', 'mechanics'] },
-				{ id: LEGACY_JOB }
-			);
-			await boss.fetch(LEGACY_ASSISTANT_REVIEW_QUEUE);
-			await boss.complete(LEGACY_ASSISTANT_REVIEW_QUEUE, LEGACY_JOB);
-
-			const scope = { storyId: TIDE, categories: ['mechanics', 'prose'] as ReviewCategory[] };
-			const adopt = (categories: ReviewCategory[]) =>
-				adoptCappedRun(db, {
-					userId: USER,
-					scope: reviewScopeKey({ ...scope, categories }),
-					legacy: {
-						scope: legacyReviewScopeKey(scope)!,
-						categories,
-						jobCategories: (jobId) => legacyJobCategories(boss, jobId)
-					}
-				});
-			// A review of other categories does not take over the old run.
-			expect(await adopt(['lore'])).toBeNull();
-			const adopted = await adopt(scope.categories);
-			expect(adopted?.completed).toEqual([QUAY, SALE]);
-			expect(adopted?.notes).toBe(4);
-		} finally {
-			await boss.stop({ graceful: false });
-		}
+		const adopt = (categories: ReviewCategory[]) =>
+			adoptCappedRun(db, { userId: USER, scope: reviewScopeKey({ storyId: TIDE, categories }) });
+		// A review of other categories does not take over the old run.
+		expect(await adopt(['lore'])).toBeNull();
+		const adopted = await adopt(['prose', 'mechanics']);
+		expect(adopted?.completed).toEqual([QUAY, SALE]);
+		expect(adopted?.notes).toBe(4);
 	});
 
 	it('summarises only what has no summary or an out-of-date one, and keeps the writer summary', async () => {

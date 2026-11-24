@@ -1,3 +1,5 @@
+import { storyLanguage } from '../language.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { and, asc, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantDrafts, scenes, stories } from '../db/schema.ts';
@@ -301,7 +303,9 @@ async function sceneDraftRequest(
 			existingProse: hasProse && !context ? bodyTail(scene.bodyMd) : null,
 			following: await followingScene(db, scene, chapter?.plans),
 			chapterBrief: chapter?.chapterBrief,
-			previousDraft: previousDraft ? draftTail(previousDraft) : null
+			previousDraft: previousDraft ? draftTail(previousDraft) : null,
+			language: await storyLanguage(db, input.storyId, input.userId),
+			preferences: await storyAssistantPreferences(db, input.storyId, input.userId)
 		})
 	};
 	const messages: ChatMessage[] = context ? [buildSystemMessage(context), task] : [task];

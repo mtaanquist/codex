@@ -1,3 +1,6 @@
+import { storyLanguage } from '../language.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
+import { IN_CONTEXT } from './prompts/format.ts';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { dbNowText } from '../db-clock.ts';
@@ -14,7 +17,6 @@ import {
 import {
 	adoptCappedRun,
 	emptyReviewRun,
-	legacyReviewScopeKey,
 	loadReviewRun,
 	ReviewRunLoadError,
 	reviewScopeKey,
@@ -307,7 +309,16 @@ export async function reviewOneScene(
 		role: 'user',
 		content:
 			scenePrefix +
-			buildReviewMessage(opts.scene, prior, categories, sceneTextIncluded, patternTool)
+			buildReviewMessage(
+				opts.scene,
+				prior,
+				categories,
+				sceneTextIncluded,
+				patternTool,
+				IN_CONTEXT,
+				await storyLanguage(db, opts.storyId, opts.userId),
+				await storyAssistantPreferences(db, opts.storyId, opts.userId)
+			)
 	};
 	const messages: ChatMessage[] = system ? [system, task] : [task];
 	const result = await completeDetailed(
@@ -726,6 +737,8 @@ export type ContinuityReviewResult = {
 	capped?: boolean;
 	spentUsd?: number;
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 };
 
 // The run state a review writes as it advances, when it was queued with a job
@@ -742,7 +755,6 @@ async function openRun(
 		jobId?: string;
 		userId: string;
 		scope: string;
-		legacy?: Parameters<typeof adoptCappedRun>[1]['legacy'];
 	}
 ): Promise<RunWriter> {
 	let state: ReviewRunState | null = null;
@@ -753,11 +765,7 @@ async function openRun(
 			// to continue" arrives as a new job with no row of its own. The capped
 			// run over the same scope is adopted under the new id, so the scenes it
 			// already reviewed are not reviewed (and billed) a second time.
-			state ??= await adoptCappedRun(db, {
-				userId: opts.userId,
-				scope: opts.scope,
-				legacy: opts.legacy
-			});
+			state ??= await adoptCappedRun(db, { userId: opts.userId, scope: opts.scope });
 		} catch (err) {
 			logEvent('error', 'review_run.load_failed', { jobId: opts.jobId, ...errorFields(err) });
 			throw new ReviewRunLoadError(err);
@@ -773,6 +781,7 @@ async function openRun(
 	current.aborted = false;
 	current.spentUsd = 0;
 	delete current.spentEstimated;
+	delete current.overCap;
 	return {
 		state: current,
 		async save() {
@@ -1011,6 +1020,8 @@ export type StoryReviewResult = {
 	capped?: boolean;
 	spentUsd?: number;
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 };
 
 // A whole-story or single-chapter review: every non-deleted scene in scope,
@@ -1033,9 +1044,6 @@ export async function reviewStoryScenes(
 		patterns?: PatternScope;
 		jobId?: string;
 		signal?: AbortSignal;
-		// LEGACY (#1041): the categories a job queued before the upgrade
-		// checked, or null once the queue has forgotten it (see adoptCappedRun).
-		legacyJobCategories?: (jobId: string) => Promise<ReviewCategory[] | null>;
 	},
 	deps: GatewayDeps = {}
 ): Promise<StoryReviewResult> {
@@ -1046,19 +1054,10 @@ export async function reviewStoryScenes(
 		categories: opts.categories,
 		patterns
 	};
-	const legacyScope = legacyReviewScopeKey(scope);
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
-		scope: reviewScopeKey(scope),
-		legacy:
-			legacyScope && opts.legacyJobCategories
-				? {
-						scope: legacyScope,
-						categories: opts.categories ?? [],
-						jobCategories: opts.legacyJobCategories
-					}
-				: undefined
+		scope: reviewScopeKey(scope)
 	});
 	const done = new Set(run.state.completed);
 	// Only the scene failures carry over from an earlier attempt, alongside the

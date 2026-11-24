@@ -44,8 +44,6 @@ import {
 	ASSISTANT_ENRICH_QUEUE,
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_QUEUE_OPTIONS,
-	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	LEGACY_ASSISTANT_SUMMARIES_QUEUE,
 	ASSISTANT_JOB_EXPIRY_SECONDS,
 	JOB_HEARTBEAT_SECONDS
 } from './queues.ts';
@@ -79,9 +77,6 @@ function getBoss(): Promise<PgBoss> {
 		await boss.createQueue(ASSISTANT_SUMMARIES_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 		await boss.createQueue(ASSISTANT_ENRICH_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 		await boss.createQueue(ASSISTANT_DRAFT_QUEUE, ASSISTANT_QUEUE_OPTIONS);
-		// LEGACY (#1041): so getAssistantJobState can look in them on any install.
-		await boss.createQueue(LEGACY_ASSISTANT_REVIEW_QUEUE);
-		await boss.createQueue(LEGACY_ASSISTANT_SUMMARIES_QUEUE);
 		return boss;
 	})();
 	return starting;
@@ -519,29 +514,24 @@ export function reviewJobState(
 	return state === 'done' && phase !== 'done' ? 'stale' : state;
 }
 
-// The queues a job of each kind can be on, searched in order. LEGACY (#1041):
-// a job queued before the upgrade is on the old review or summaries queue.
+// The queue a job of each kind is on.
 const JOB_QUEUES = {
-	review: [ASSISTANT_REVIEW_QUEUE, LEGACY_ASSISTANT_REVIEW_QUEUE],
-	summaries: [ASSISTANT_SUMMARIES_QUEUE, LEGACY_ASSISTANT_SUMMARIES_QUEUE],
-	enrich: [ASSISTANT_ENRICH_QUEUE],
-	arc: [ASSISTANT_ENRICH_QUEUE],
-	details: [ASSISTANT_ENRICH_QUEUE],
-	draft: [ASSISTANT_DRAFT_QUEUE]
+	review: ASSISTANT_REVIEW_QUEUE,
+	summaries: ASSISTANT_SUMMARIES_QUEUE,
+	enrich: ASSISTANT_ENRICH_QUEUE,
+	arc: ASSISTANT_ENRICH_QUEUE,
+	details: ASSISTANT_ENRICH_QUEUE,
+	draft: ASSISTANT_DRAFT_QUEUE
 } as const;
 
 export async function getAssistantJobState(
 	kind: keyof typeof JOB_QUEUES,
 	id: string
 ): Promise<AssistantJobState> {
-	const queues = JOB_QUEUES[kind];
+	const queue = JOB_QUEUES[kind];
 	try {
 		const boss = await getBoss();
-		let job = null;
-		for (const queue of queues) {
-			job = await boss.getJobById(queue, id);
-			if (job) break;
-		}
+		const job = await boss.getJobById(queue, id);
 		if (!job) return 'done';
 		if (job.state === 'failed' || job.state === 'cancelled') return 'failed';
 		// A run that settled itself as failed (see the worker's arc handler).
@@ -550,7 +540,7 @@ export async function getAssistantJobState(
 		}
 		return 'running';
 	} catch (error) {
-		logEvent('error', 'job.state_failed', { queue: queues[0], jobId: id, ...errorFields(error) });
+		logEvent('error', 'job.state_failed', { queue, jobId: id, ...errorFields(error) });
 		return 'done';
 	}
 }

@@ -6,6 +6,8 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
+	import { WRITING_LANGUAGES } from '#lib/writing-languages';
+	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
 	import { letterFill } from '#lib/entity-badge';
 	import Icon from '#lib/components/Icon.svelte';
 	import FandomSuggest from '#lib/components/FandomSuggest.svelte';
@@ -262,6 +264,27 @@
 					<span class="field-hint">Markdown is fine. Shown on the library card.</span>
 				</div>
 				<div class="field">
+					<label for="u-language">Language</label>
+					<select
+						id="u-language"
+						class="select"
+						name="language"
+						value={data.universe.language ?? ''}
+					>
+						<option value="">Not set</option>
+						{#each WRITING_LANGUAGES as language (language.tag)}
+							<option value={language.tag}>{language.label}</option>
+						{/each}
+					</select>
+					<span class="field-hint">
+						The language and spelling {data.universe.standalone
+							? 'your standalone stories are'
+							: 'your stories here are'} written in. The Assistant writes and checks spelling in it, and
+						the editor's spell-check uses it. A story can choose its own in its settings. If you leave
+						it unset, the Assistant works it out from the text.
+					</span>
+				</div>
+				<div class="field">
 					<label for="u-fandom">Known setting</label>
 					<input type="hidden" name="fandomId" value={fandomId ?? ''} />
 					{#if fandomName}
@@ -311,6 +334,22 @@
 				</div>
 			</form>
 		</div>
+
+		{#if data.assistantPreferencesShown}
+			<div class="admin-block" id="assistant-preferences">
+				<AssistantPreferences
+					level="universe"
+					standalone={data.universe.standalone}
+					stored={data.universe.assistantPreferences}
+					notes={data.universe.assistantNotes}
+					saved={form?.action === 'assistant-preferences' && form.saved === true}
+					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+					submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+						? form.submitted
+						: null}
+				/>
+			</div>
+		{/if}
 
 		<div class="admin-block">
 			<div class="admin-block-head">

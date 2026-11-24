@@ -18,6 +18,8 @@ import {
 	CHAPTER_PATTERN_CAP
 } from '../llm/prompts/review.ts';
 import { buildSceneDraftMessage, CONTINUE_RULE } from '../llm/prompts/scene-draft.ts';
+import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
+import { NO_PREFERENCES, type PreferenceSetting } from '../../assistant-preferences.ts';
 
 // The Assistant's flow commands as MCP prompts: one per command that starts a
 // piece of work in the chat panel (/review, /copyedit, ...). A prompt is the
@@ -27,7 +29,11 @@ import { buildSceneDraftMessage, CONTINUE_RULE } from '../llm/prompts/scene-draf
 //
 // A prompt reads nothing from the database. It is text built from the
 // arguments the caller sent, so it can say nothing about anyone's work; the
-// tools it points at check every id against the connected writer.
+// tools it points at check every id against the connected writer. The one
+// exception is the language setting and the Assistant preferences, which the
+// server looks up for the connected writer's own work before building
+// (workLanguage, workPreferences) and hands in on the connection; an id that
+// is not theirs reads the same as nothing set.
 
 export type PromptArgument = { name: string; description: string; required: boolean };
 
@@ -43,7 +49,13 @@ type PromptDef = {
 };
 
 export type McpPrompt = Pick<PromptDef, 'name' | 'title' | 'description' | 'arguments'>;
-export type PromptConnection = { permissions: readonly McpPermission[] };
+export type PromptConnection = {
+	permissions: readonly McpPermission[];
+	// The language of the work the arguments name; left out, none is stated.
+	language?: LanguageSetting;
+	// The Assistant preferences of that work; left out, none are stated.
+	preferences?: PreferenceSetting;
+};
 
 // How a drafting prompt ends: staged where the connection may suggest, else
 // in the reply.
@@ -150,12 +162,21 @@ function words(args: Args): number {
 	return clampDraftWords(Number(asked));
 }
 
-const review = (args: Args, picked: ReviewCategory[]) =>
+const review = (args: Args, picked: ReviewCategory[], connection: PromptConnection) =>
 	framed(
 		universe(args),
 		// With leave_pattern_note on offer, and the scene's text still to be read.
 		[
-			buildReviewMessage({ id: scene(args), title: null }, [], picked, false, true, READ_WITH_TOOLS)
+			buildReviewMessage(
+				{ id: scene(args), title: null },
+				[],
+				picked,
+				false,
+				true,
+				READ_WITH_TOOLS,
+				connection.language ?? NO_LANGUAGE,
+				connection.preferences ?? NO_PREFERENCES
+			)
 		],
 		STAGES_ONLY
 	);
@@ -177,7 +198,7 @@ const PROMPTS: PromptDef[] = [
 				required: false
 			}
 		],
-		build: (args) => review(args, categories(args))
+		build: (args, connection) => review(args, categories(args), connection)
 	},
 	{
 		name: 'copyedit',
@@ -186,7 +207,7 @@ const PROMPTS: PromptDef[] = [
 			'A full copyedit of one scene: every spelling, grammar, prose and continuity issue, staged for the writer to decide on. For a chapter or a story, run it for each scene in order.',
 		needs: 'suggest',
 		arguments: [UNIVERSE, SCENE],
-		build: (args) => review(args, [...REVIEW_CATEGORIES])
+		build: (args, connection) => review(args, [...REVIEW_CATEGORIES], connection)
 	},
 	{
 		name: 'continuity-review',
@@ -228,14 +249,16 @@ const PROMPTS: PromptDef[] = [
 				required: false
 			}
 		],
-		build: (args) =>
+		build: (args, connection) =>
 			framed(
 				universe(args),
 				[
 					buildPatternBrief({
 						storyId: story(args),
 						chapter: text(args, 'chapter', MAX_SHORT_TEXT, false),
-						cap: CHAPTER_PATTERN_CAP
+						cap: CHAPTER_PATTERN_CAP,
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				`${STAGES_ONLY} Give the writer the link each pattern note returned; it opens the note in Codex and takes them through its edits one at a time.`
@@ -257,7 +280,9 @@ const PROMPTS: PromptDef[] = [
 				[
 					currentScene(scene(args)),
 					buildCoauthorMessage(text(args, 'brief', MAX_DRAFT_BRIEF_CHARS), null, {
-						source: READ_WITH_TOOLS
+						source: READ_WITH_TOOLS,
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				draftClose(connection, false, 'passage')
@@ -288,7 +313,12 @@ const PROMPTS: PromptDef[] = [
 					buildCoauthorMessage(
 						text(args, 'instruction', MAX_DRAFT_BRIEF_CHARS),
 						{ kind: 'selection', text: text(args, 'passage', MAX_COAUTHOR_REFERENCE_CHARS) },
-						{ source: READ_WITH_TOOLS, rewrite: true }
+						{
+							source: READ_WITH_TOOLS,
+							rewrite: true,
+							language: connection.language,
+							preferences: connection.preferences
+						}
 					)
 				],
 				connection.permissions.includes('suggest')
@@ -327,7 +357,9 @@ const PROMPTS: PromptDef[] = [
 						source: READ_WITH_TOOLS,
 						brief: text(args, 'brief', MAX_DRAFT_BRIEF_CHARS),
 						targetWords: words(args),
-						pov: text(args, 'pov', MAX_DRAFT_POV_CHARS, false)
+						pov: text(args, 'pov', MAX_DRAFT_POV_CHARS, false),
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				draftClose(connection, false)
@@ -363,7 +395,9 @@ const PROMPTS: PromptDef[] = [
 						source: READ_WITH_TOOLS,
 						brief: '',
 						chapterBrief: text(args, 'brief', MAX_DRAFT_BRIEF_CHARS),
-						targetWords: words(args)
+						targetWords: words(args),
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				draftClose(connection, true)
@@ -385,12 +419,15 @@ const PROMPTS: PromptDef[] = [
 				required: false
 			}
 		],
-		build: (args) =>
+		build: (args, connection) =>
 			framed(
 				universe(args),
 				[
 					`The story is the one with id ${story(args)}. "The material provided" below is what list_scenes gives for it: each scene's summary, in order. Read a scene with get_scene where its summary is missing.`,
-					buildRecapMessage(text(args, 'throughScene', MAX_SHORT_TEXT, false) || null)
+					buildRecapMessage(
+						text(args, 'throughScene', MAX_SHORT_TEXT, false) || null,
+						connection.language
+					)
 				],
 				REPLY_ONLY
 			)

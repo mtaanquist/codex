@@ -10,6 +10,332 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 8
+(2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's
+over-cap warning looked only at the largest scene, but every reviewer request
+may search, the continuity survey and the habits survey included, and a
+whole-book habits request is far larger than any scene. The estimate now
+takes the largest request of each part (scene, survey chunk, habits survey,
+via the new `patternSurveyMessages`), counts it the way the gateway does
+before sending (`ceilingPromptTokens`, UTF-8 bytes / 3, with the persona and
+tool specs), and returns `overCapAt` for the first part in run order (habits,
+scenes, continuity) whose request alone would pass the cap; the modal names
+that part. The displayed token figure still uses chars/4. A text read now
+stores the /enrich fingerprint only when the pass would read at least one
+scene, so a whole-book read of an entity with no mentions no longer marks it
+unchanged. Each legacy queue deletion has its own try/catch. Narration
+"Other" is left out of the check-mode house-style line, since flagging text
+that strays from "narration other than first or third person" flagged every
+chapter of a story that alternates; writing and the chat keep it. User-facing
+text says "Look for habits that repeat in the prose" instead of "pattern
+pass" (the connected-app prompt keeps its "Pattern pass" title), and the
+reviewing help links Connected apps to its own page.
+
+Staging review of the language setting and Assistant preferences, round 7
+(2026-11-24, `fix/llm-staging-review-7`, into `staging/llm-issues`). The
+story chat's frame used the prose language rule ("Write in X"), so a writer
+who typed in Danish about a British English story got English answers,
+where before the setting the chat answered in the writer's language. The
+frame now carries `chatLanguageRule`: prose, passages and suggested edits in
+the story's language, answers in the language the writer uses. The notes
+fence no longer cuts a hyphen run to one ("scene breaks are written as
+---" read as "-"); it spaces each run out ("- - -"), keeping its length
+with no two hyphens adjacent, so the "---" markers stay unforgeable. With
+every pattern kind left alone, the survey's fallback line no longer gives
+the left-alone habits as examples; it asks for any habit not listed to
+leave alone (the unset prompt never reaches that line). The review estimate
+returns `overCap` when web search is on and the cap's room for the largest
+scene's first request (`capCeilingUsage`, now shared with the gateway) is
+already over the cap, and the review modal says the run will stop at its
+first scene until the cap is raised. The worker logs, rather than dies on,
+a failure deleting the legacy queues. Connecting-apps help now says apps
+see each story's language, preferences and notes, and the House style
+group has a one-line hint.
+
+Staging review of the language setting and Assistant preferences, round 6
+(2026-11-24, `fix/llm-staging-review-6`, into `staging/llm-issues`). Round 5
+hid the preference forms unless the Assistant tab was on, but connected apps
+(a separate account switch) still get the preferences through the MCP prompts
+and `list_stories`/`list_universes`, so a writer with only apps on could not
+see settings that applied. The loads now pass `assistantPreferencesShown`
+(`#lib/server/assistant-preferences`): the tab on, or external access on for
+both the instance and the account. A save now changes only the keys the post
+carries, merged in one jsonb statement (`||` then `-` the cleared keys), and
+keeps the notes when their field is missing; a blank select still clears its
+key. Saving no longer drops note lines that read as a framing line (which
+also missed a marker with more text on its line), so the stored notes are
+what the writer typed apart from line ends and null characters. Instead
+`habitNotesLine`, the one place that fences the notes for review, the
+pattern pass and the chat, cuts every run of three or more hyphens to one,
+so nothing in them can match a marker in any case, spacing or position. The
+MCP list tools still return the stored notes as data. A trashed scene's id reads as nothing set in `sceneLanguage` and
+`workPreferences`. The round 4 note on the search bound was corrected to say
+the code prices the whole bound at the cache-write rate.
+
+Staging review of the language setting and Assistant preferences, round 5
+(2026-11-24, `fix/llm-staging-review-5`, into `staging/llm-issues`). Merged
+`main` (#1545, migrations 0115 to 0120) into the branch: staging's three
+migrations were dropped and regenerated after main's, with the same additive
+DDL, as `0121_assistant-usage-provider`, `0122_language-setting` and
+`0123_assistant-preferences`; local databases that ran the old numbering need
+a reset. The search loop's cache-write bound from round 3
+(`searchingCacheWriteTokens`) assumed a token is written to the cache at most
+once, but the cache markers sit on the system block and the last user block,
+so every round resends the prefix and a missed lookup writes it again. The
+whole multi-round input is priced at the write rate again: for a 20k prompt
+and a 4k reply, 686k tokens written, where round 4 had 106k written plus 580k
+plain. A job held at the cap now asks for a higher cap first (rather than
+offering a plain rerun) when the held request alone could cost more than the
+whole cap (`SpendMeter.hold(overCap)`, `spentFields().overCap`), since a rerun
+would stop at it again; the help says so for a run that stopped before it
+spent anything, too. The Assistant preferences forms are hidden where the
+Assistant is not available, like its models section, and their hints say the
+chat in a story uses the habits left alone and the notes. The chat's story
+frame adds the narration-only clause for tense and narration that check mode
+has. A lore-only review's pattern tool line no longer drops the habits left
+alone from its examples. The notes' framing lines are matched ignoring case
+and runs of whitespace. A review capped under the old scope key
+`full:<story>` (written before v3.21.3) is no longer adopted after this
+release, so running it again starts over and reviews its done scenes again.
+
+Staging review of the language setting and Assistant preferences, round 4
+(2026-11-24, `fix/llm-staging-review-4`, into `staging/llm-issues`). The
+search loop's bound (`searchingPromptTokens`) counted each search's results
+only in the rounds after it, which assumed one search per round; nothing
+holds the model to that, and five searches run together in the first round
+put all their results in all nine later rounds. It now counts every search
+in every round after the first: for a 20k prompt and a 4k reply, 686k tokens
+of input rather than 586k. (Round 4 priced that as 106k written plus 580k
+plain; round 5 found a missed cache lookup writes the prefix again, and the
+code now prices the whole 686k at the cache-write rate.) The 10k per-search ceiling assumes what dynamic filtering adds (the
+filtering code and its output) stays within it, and the comment says so. A
+review-thread reply that may revise its pending suggestion now carries the
+language and the house style in write mode, and the unset-language fixture
+holds the reply with and without a suggestion (generated from `origin/main`
+in a worktree). The chat's story frame also carries the habits to leave
+alone and the writer's notes, fenced as in review, so the chat gets what a
+connected app gets from `list_stories`. On a story's preference form the
+blank choice of a house style the universe leaves unset reads "Use the
+universe's: Not set" (or "Use the standalone default: Not set"). The help
+says what to set "Native language" to without the ambiguous "it". The
+review modal's legend style and the preference form's differ (spacing and
+weight), so they were left as two rules.
+
+Staging review of the language setting and Assistant preferences, round 3
+(2026-11-24, `fix/llm-staging-review-3`, into `staging/llm-issues`). The
+spend cap's bound for a request that may search no longer prices the whole
+multi-round input as cache writes: across the server loop a token is written
+to the cache at most once, so only the final conversation (the prompt, five
+searches at 10k tokens, and nine replies) is priced at the write rate, and
+the rest of the ten rounds at the plain prompt rate, not the cache-read rate,
+since a read is not guaranteed (`searchingCacheWriteTokens`). For a 20k
+prompt and a 4k reply that is 106k written plus 480k plain, against 586k
+written before (580k plain since round 4 counts every search in every later
+round). Claude's per-search fee is still left out, as the help says.
+The review estimate leaves searches out and now says so, with the cap's
+extra room, when the gateway would search (`webSearchAllowed`, now
+exported). A capped job that spent nothing tells the writer to raise the
+cap before running it again (`capContinueAdvice`), since a rerun stops at
+the same request. Round 2 had hidden a standalone story's inherited
+preferences while the prompts still used the standalone universe's; the
+form shows them again, worded as "Use the standalone default", the
+standalone universe's settings page calls its form the defaults for all
+standalone stories, and the language select uses the same wording. The
+inherited choice now reads "Use the universe's: Past" rather than nesting
+parentheses, and plain "Use the universe's" when the universe has not set
+it. The details forms leave the stored language alone when a post lacks the
+field. The MCP pattern brief and the pattern re-read (which stages a
+follow-up edit) carry the house style in write mode. The unset-language
+fixture gained the MCP `rewrite` and `continuity-review` prompts, generated
+by running `buildMcpPrompt` in a worktree of `origin/main`.
+
+Staging review of the language setting and Assistant preferences, round 2
+(2026-11-24, `fix/llm-staging-review-2`, into `staging/llm-issues`). The
+chat in a story now gets the story's language and house style (write mode),
+as a connected app already did through `list_stories`: the help told writers
+to move "British or American" out of style notes into Language, which took
+the convention away from the chat. The lines sit in the story frame, but only
+when the caller passes `writingRules` (only the chat does), since the
+review, draft, `/write`, pattern and recap surfaces that share the frame
+state them in their own task message, and a review needs the house style in
+check mode, not write mode. No output whose staleness is its request hash
+(arcs, chapter summaries, enrich) uses the frame, so no hash changed. With
+nothing set the frame is byte-identical; the unset-language fixture now holds
+it. In check mode a set tense or narration applies to the narration only, not
+dialogue or quoted thoughts. `storyPreferences` in
+`#lib/server/assistant-preferences` became `storyAssistantPreferences`, so it
+no longer shares a name with the editor's `storyPreferences` (whose
+arguments run the other way). A standalone story's preference form no longer
+offers the universe's settings, and the unused `review` and `pattern` flags
+on `HABIT_CHECKS` are gone. Help: the editor spell-check override applies
+only with no story or universe language, the native-language hint names the
+passes that use it, and the spend cap's web-search allowance is said to be
+several times a request's size.
+
+Staging review of the language setting and Assistant preferences, round 1
+(2026-11-24, `fix/llm-staging-review-1`, into `staging/llm-issues`). A story
+made from a saved draft now carries the language, preferences and notes, as
+it already did the style notes and the mute. The story reads behind the
+prompts use `storyIsLive()`, so a story in a trashed universe resolves to
+nothing set, and the MCP prompts (`workLanguage`, `workPreferences`) also
+treat a story with the Assistant muted as nothing set; the app's own surfaces
+check the mute before they get that far, so they keep the plain read. MCP
+ids are trimmed before the uuid check. The framing lines around the notes
+moved to `#lib/assistant-preferences` and `normaliseNotes` drops any line
+that reads as one, so a note cannot close the framing early; only a whole
+line is dropped, not the phrase inside a sentence. The review estimate counts
+the language lines per scene through `reviewLanguageText`, which a unit test
+holds to what `buildReviewMessage` sends (the native hint only on an
+exhaustive pass that reads the wording, not the sparing review). The profile
+form's native language is only written when the form sends the field. The
+preference form groups its selects in two fieldsets, with legends styled
+like the review modal's option groups. The running-jobs e2e spec sends with
+the app's own `reviewScopeKey`, so a keyless job left by an earlier run
+cannot make the send return null.
+
+Assistant preferences per story and universe, items 1 to 3 of #1344
+(2026-11-24, `feat/assistant-preferences-1344`). Built on #1343's language
+setting and in the shape Mads agreed on 2026-11-21: fixed choices plus one
+capped free-text field, "Not set" keeping today's behaviour, no free-form
+system prompt. Storage is one jsonb object of known keys per story and per
+universe (`assistant_preferences`, not null, default `{}`) and an
+`assistant_notes` text beside each (migration 0123, additive, no row
+rewrite). Columns per key were the other option; twelve nullable columns on
+two tables for settings that are always read together, and only ever by the
+app, read worse than one validated object, and the object is what
+`list_stories` hands back anyway. `#lib/assistant-preferences` holds the
+lists, the normaliser (an unknown key or a value since dropped reads as not
+set) and the form reader (which refuses an off-list value instead of quietly
+clearing it). The story wins key by key, so a story can check filter verbs
+again in a universe that leaves them alone; its notes replace the universe's
+rather than adding to them, which is simpler to predict.
+
+The habit switches are seven, not the issue's four plus four: the review's
+filter verbs, epithets, dangling modifiers, close repetition and comma
+splices, and the pattern survey's pet phrases and repeated sentence shapes,
+with filter verbs and epithets shared by both. Spelling, grammar at large,
+pacing and the lore checks stay fixed: no one leaves typos alone on purpose.
+A habit left alone is taken out of the line that names it (the prose line is
+now built from its parts, joined exactly as the old string read) and also
+named in a "leave them alone" line, since a model still flags filter verbs
+from habit when they are merely not listed. The sparing review and passes
+with mechanics or prose carry the house style, that line and the notes; a
+lore-only pass carries none of it, like the native-language hint. Drafts,
+`/write` and the pattern fix stage get the house style only (the pattern
+reread gained it in staging review round 3). The continuation is left out
+(it copies the prose around it), and so is the summary family, so no summary
+or arc fingerprint moves.
+
+Every prompt builder was checked byte for byte against #1343's output with
+nothing set, across every review category mix, both world sources, with and
+without prior notes, and all the MCP prompts, besides the unit tests that
+pin it. Review of the PR then had the pattern examples follow the switches,
+the survey fall back to "any other habit" when every kind is left alone
+(rather than refusing the run, since that still looks for something), the
+notes fenced, CRLF counted as one character (the browser's own count, so a
+note at the cap saves) with null characters dropped, a refused save show the
+typed values again, and the estimate count the lines. The export does not
+carry the preferences, the same as style notes
+and the language; adding settings to the export is its own change. Items 4
+to 8 (feedback amount, reasons on edits, summary lengths, draft length,
+content limits) remain open on #1344.
+
+Language and spelling convention per universe and story (2026-11-24,
+`feat/language-setting-1343`, #1343). `universes.language` and
+`stories.language` (the story's wins; null on both keeps inferring) and
+`users.native_language`, all nullable text from migration 0122, no data
+rewrite. The choices are one list in `$lib/writing-languages`, which already
+fed the editor's spell-check language preference; it gained English
+(Australia) and (Canada) and a prompt name per entry, and its labels moved
+from native names ("Dansk") to English ones ("Danish") to match the rest of
+the UI. That existing preference overlapped: rather than drop it, the story
+page now sets the editor's `lang` from the story's effective language and
+falls back to the preference, which is relabelled "Spell-check language", and
+`lang` is set with spell-check off too. The prompt lines live in
+`llm/prompts/language.ts`, each returning '' or the old wording when nothing
+is set, so an unset story sends byte-identical prompts
+(`unset-language.test.ts` checks them against a fixture taken from the
+release before). Left on inferring on purpose: the chapter summary and the
+character arc (each request is its fingerprint, so naming the language would
+mark every stored one out of date when the setting changed, and both are
+written from scene summaries that follow the setting), the chat summary (it
+follows the conversation's language) and the continuity passes (they stage
+no prose). The native-language hint compares primary subtags, so en-US is not
+"interference" in en-GB, and with no story language set there is no hint at
+all. A standalone story inherits the Standalone universe's language like any
+other, since that universe has its own settings page. MCP prompts
+stay pure builders; the server resolves the language for the connected
+writer's own work (`workLanguage`) and passes it in, and `list_universes` and
+`list_stories` return `language` and `languageName`. Export carries no
+universe or story settings, so it was left alone. The free chat gets no
+language line (not asked for; the frame could carry it later).
+
+Suggest details stores the /enrich fingerprint (2026-11-24,
+`fix/suggest-details-fingerprint-1371` on `staging/llm-issues`, #1371). A
+Suggest details read stored nothing, so the next `/enrich` pass read the
+entry again with nothing changed. Mads chose to keep the fingerprint rule
+rather than document an exception, so the read now stores the pass's own
+fingerprint (the universe-wide snippet request, taken before the read) and
+`assistant_enriched_at`. Its request is a different one (full text, maybe one
+story), so it stores only when it covered what the pass would send: no part
+failed, the job was not stopped or capped, the summary was asked for (or is
+closed), and every piece of every scene behind the pass's passages was in a part
+whose reply came back whole (a long scene is split into pieces that share its
+id, and a story muted mid-read drops the later ones without a failure). A story-scoped read of an entry also mentioned elsewhere
+stores nothing. Staged suggestions the writer has not seen are no reason to
+hold back: the pass stores its fingerprint right after staging too. A cut-off
+reply stores no `unusableReplyMark`, since it says nothing about the pass's
+shorter request and would make the pass report a cut-off it never sent.
+
+The provider on usage rows (2026-11-24, `feat/usage-provider-1373` on
+`staging/llm-issues`, #1373). `assistant_usage` gains a nullable `provider`
+column (migration 0121), written by the gateway's `recordUsage` from the
+resolved config, so the usage list prices each row's cache reads at the rate
+of the provider it went to rather than the one saved now. Existing rows stay
+null and fall back to the saved provider, as before. The thirty-day sums now
+group by model and provider, so the total prices each provider apart. The
+pricing moved into `usageRowCostUsd` in `$lib/assistant-cost.ts`. The price
+itself still comes from the current price list, which a provider switch
+clears, so an older row often still shows no cost; keeping per-row prices
+was left out. The MCP endpoint sends no model requests of its own, so it
+writes no usage rows.
+
+
+
+Legacy Assistant queues removed (2026-11-24,
+`chore/remove-legacy-queues-1041` on `staging/llm-issues`, #1041). The
+`assistant-review` and `assistant-summaries` queues kept since #986 (v3.21.3)
+are no longer drained or read: the worker and web no longer create them, the
+job-state and running-jobs lookups read only the v2 queues, and the worker
+deletes the two old queues at startup (a no-op once they are gone). With them
+went the adoption of a capped run saved under the scope key from before
+categories were part of it (`legacyReviewScopeKey`, `legacyJobCategories`):
+v3.22.0 writes `full:<story>[:<chapter>]:<cats>`, so the upgrade fixture's
+capped run now carries that key and the step adopts it under the current key
+only. The #1113 test, which made adoption throw through the legacy job lookup,
+now throws through a stored review time Postgres cannot read. An install
+upgrading straight from before v3.21.3 loses any review or summary job still
+queued on the old names, and a copyedit capped under the old key before
+v3.21.3 starts over (re-reviewing its done scenes) rather than continuing; the
+writer runs it again.
+
+Web search in the spend cap (2026-11-24, `fix/web-search-cap-ceiling-1420`
+on `staging/llm-issues`, #1420). Anthropic's docs say search results "count as
+input tokens, both while Claude keeps searching within a turn and in later
+conversation turns": the server-side loop samples again after each search,
+over the prompt, the results so far and the text written so far. The old
+allowance added five searches' results once, so a capped request with a long
+prompt could cost many times what the check counted. The ceiling is now
+`searchingPromptTokens`: the server loop runs up to 10 model rounds before it
+pauses (a round can be a dynamic-filtering step or a search refused past
+`max_uses`, so it is not one per search), so the prompt is counted ten times,
+each search's results (10k tokens at most) in every round after it with all
+five searches first, and the reply in every later round. (Staging review
+round 4 counts all five searches in all nine later rounds instead, since
+nothing holds the model to one search per round.) It is pessimistic on
+purpose (cache reads would make the later rounds cheaper), so a review that
+may search is held earlier near the cap.
+
 Remaining Phase 10 features (2026-11-24, `staging/public-browse`, lanes
 #1506 to #1512, review rounds #1513, #1514, #1516, #1521). Built in the order
 #857, #1439, #1440, #856, #855, plus #1460 and #1510.

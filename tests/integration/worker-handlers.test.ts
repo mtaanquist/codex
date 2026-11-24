@@ -36,10 +36,7 @@ import { reserveToken, revokeTokens } from '../../src/lib/server/tokens';
 import type { EmailMessage } from '../../src/lib/server/email';
 import type { StoryReviewResult } from '../../src/lib/server/llm/scene-review';
 import type { Database } from '../../src/lib/server/auth';
-import {
-	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	NOTIFICATION_DIGEST_QUEUE
-} from '../../src/lib/server/queues';
+import { NOTIFICATION_DIGEST_QUEUE } from '../../src/lib/server/queues';
 import { createHandlers, type WorkerDeps, type WorkerServices } from '../../src/worker/handlers';
 import {
 	AssistantDisabledError,
@@ -1234,6 +1231,15 @@ describe('assistant review notices', () => {
 		);
 	});
 
+	it('asks for a higher cap when a capped run spent nothing', async () => {
+		const title = await reviewTitle(async () =>
+			reviewResult({ reviewed: 0, total: 5, capped: true, spentUsd: 0 })
+		);
+		expect(title).toBe(
+			'The review of "Halden" stopped after 0 of 5 scenes, before the next request could take it past your spend cap, having spent about $0.00. Raise the cap in settings, then run the review again.'
+		);
+	});
+
 	it('says an aborted run was stopped', async () => {
 		const title = await reviewTitle(async () => reviewResult({ reviewed: 1, aborted: true }));
 		expect(title).toBe('The review of "Halden" was stopped before it finished.');
@@ -1687,44 +1693,5 @@ describe('worker logs', () => {
 		expect(lines).toContainEqual(
 			expect.objectContaining({ level: 'info', event: 'purge.story', storyId: story.id })
 		);
-	});
-});
-
-describe('continuing a review capped before the upgrade', () => {
-	it('reads what the old job checked from the legacy queue', async () => {
-		const { owner, story } = await seedStory();
-		const asked: { queue: string; id: string }[] = [];
-		let lookup: ((jobId: string) => Promise<unknown>) | undefined;
-		const boss = {
-			async complete() {
-				return null;
-			},
-			async send() {
-				return null;
-			},
-			async getJobById(queue: string, id: string) {
-				asked.push({ queue, id });
-				return id === 'old-job' ? { data: { categories: ['prose', 'mechanics'] } } : null;
-			}
-		} as unknown as WorkerDeps['boss'];
-		const handlers = createHandlers({
-			db,
-			boss,
-			origin: 'https://codex.test',
-			services: {
-				reviewStoryScenes: async (_db, opts) => {
-					lookup = opts.legacyJobCategories;
-					return reviewResult({});
-				}
-			}
-		});
-
-		await handlers.assistantReview([job({ userId: owner.id, storyId: story.id })]);
-
-		expect(await lookup?.('old-job')).toEqual(['mechanics', 'prose']);
-		expect(await lookup?.('forgotten')).toBeNull();
-		expect(asked.filter((a) => a.id === 'old-job')).toEqual([
-			{ queue: LEGACY_ASSISTANT_REVIEW_QUEUE, id: 'old-job' }
-		]);
 	});
 });

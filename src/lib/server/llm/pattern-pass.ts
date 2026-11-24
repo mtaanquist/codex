@@ -1,3 +1,7 @@
+import { storyLanguage } from '../language.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
+import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
+import { NO_PREFERENCES, type PreferenceSetting } from '../../assistant-preferences.ts';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import {
@@ -106,32 +110,58 @@ export function bookPatternUnit(
 	return { key: 'book', scope: 'book', scenes: listed, chapters, ...(fits ? { whole: true } : {}) };
 }
 
-// The tokens the survey of these units sends: each request's text plus the
-// overhead every request carries (the frame and the persona).
-export function patternSurveyTokens(
+// The task message of each survey request these units send, in order.
+export function patternSurveyMessages(
 	units: PatternUnit[],
 	budgetTokens: number,
-	overheadTokens: number
-): number {
-	let total = 0;
+	language: LanguageSetting = NO_LANGUAGE,
+	preferences: PreferenceSetting = NO_PREFERENCES
+): string[] {
+	const messages: string[] = [];
 	for (const unit of units) {
 		const cap = unit.scope === 'book' ? BOOK_PATTERN_CAP : CHAPTER_PATTERN_CAP;
 		for (const part of unit.whole ? [unit.scenes] : (unit.chapters ?? [unit.scenes])) {
 			const chunks = unit.whole ? [part] : splitPatternChunks(part, budgetTokens);
 			chunks.forEach((chunk, i) => {
-				total +=
-					overheadTokens +
-					estimateTokens(
-						buildPatternSurveyMessage(chunk, {
-							scope: unit.scope,
-							cap,
-							...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
-						})
-					);
+				messages.push(
+					buildPatternSurveyMessage(chunk, {
+						scope: unit.scope,
+						cap,
+						language,
+						preferences,
+						...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
+					})
+				);
 			});
 		}
 	}
-	return total;
+	return messages;
+}
+
+// The tokens the survey of these units sends: each request's text plus the
+// overhead every request carries (the frame and the persona).
+export function patternSurveyTokens(
+	units: PatternUnit[],
+	budgetTokens: number,
+	overheadTokens: number,
+	language: LanguageSetting = NO_LANGUAGE,
+	preferences: PreferenceSetting = NO_PREFERENCES
+): number {
+	return patternSurveyMessages(units, budgetTokens, language, preferences).reduce(
+		(total, message) => total + overheadTokens + estimateTokens(message),
+		0
+	);
+}
+
+// The system message each survey request carries: the story frame alone, the
+// style notes the prose is judged against.
+export async function patternSurveySystem(
+	db: Database,
+	userId: string,
+	storyId: string
+): Promise<ChatMessage | null> {
+	const frame = await assembleStoryFrame(db, { userId, storyId, includeTiers: ['frame'] });
+	return frame ? buildSystemMessage(frame) : null;
 }
 
 // The overhead each survey request carries: the story frame the pass ships and
@@ -141,8 +171,8 @@ export async function patternSurveyOverhead(
 	userId: string,
 	storyId: string
 ): Promise<number> {
-	const frame = await assembleStoryFrame(db, { userId, storyId, includeTiers: ['frame'] });
-	return (frame ? estimateTokens(buildSystemMessage(frame).content) : 0) + PERSONA_TOKENS;
+	const system = await patternSurveySystem(db, userId, storyId);
+	return (system ? estimateTokens(system.content) : 0) + PERSONA_TOKENS;
 }
 
 // The reply room a reviewer request reserves: the writer's own figure, or the
@@ -176,12 +206,24 @@ export async function planBookPass(
 ): Promise<{ unit: PatternUnit; fit: WholeBookFit; tokens: number }> {
 	const titles = await chapterTitles(db, opts.storyId);
 	const overhead = await patternSurveyOverhead(db, opts.userId, opts.storyId);
+	const language = await storyLanguage(db, opts.storyId, opts.userId);
+	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
 	const whole = bookPatternUnit(opts.scenes, titles, true);
-	const wholeTokens = patternSurveyTokens([whole], opts.budgetTokens, overhead);
+	const wholeTokens = patternSurveyTokens(
+		[whole],
+		opts.budgetTokens,
+		overhead,
+		language,
+		preferences
+	);
 	const fit = wholeBookFit(wholeTokens, opts.contextWindow, opts.replyTokens);
 	if (fit === 'fits') return { unit: whole, fit, tokens: wholeTokens };
 	const unit = bookPatternUnit(opts.scenes, titles, false);
-	return { unit, fit, tokens: patternSurveyTokens([unit], opts.budgetTokens, overhead) };
+	return {
+		unit,
+		fit,
+		tokens: patternSurveyTokens([unit], opts.budgetTokens, overhead, language, preferences)
+	};
 }
 
 // The fit alone, from the length of each scene rather than its text, for the
@@ -206,7 +248,13 @@ export async function checkBookFit(
 	);
 	const bodies = opts.scenes.reduce((sum, s) => sum + tokensForChars(s.bodyChars), 0);
 	return wholeBookFit(
-		patternSurveyTokens([skeleton], 0, overhead) + bodies,
+		patternSurveyTokens(
+			[skeleton],
+			0,
+			overhead,
+			await storyLanguage(db, opts.storyId, opts.userId),
+			await storyAssistantPreferences(db, opts.storyId, opts.userId)
+		) + bodies,
 		opts.contextWindow,
 		opts.replyTokens
 	);
@@ -251,6 +299,8 @@ type Request = {
 	userId: string;
 	storyId: string;
 	system: ChatMessage | null;
+	language: LanguageSetting;
+	preferences: PreferenceSetting;
 	meter?: SpendMeter;
 	signal?: AbortSignal;
 };
@@ -329,6 +379,8 @@ async function surveyPart(
 			scope: unit.scope,
 			cap,
 			open,
+			language: req.language,
+			preferences: req.preferences,
 			...(known.length ? { known } : {}),
 			...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
 		});
@@ -563,15 +615,11 @@ export async function runPatternPass(
 	const failures: ReviewFailure[] = [];
 	let notes = 0;
 	let capped = false;
-	// The story frame alone: the style notes the prose is judged against. The
-	// text itself rides in each message.
-	const frame = await assembleStoryFrame(db, {
-		userId: opts.userId,
-		storyId: opts.storyId,
-		includeTiers: ['frame']
-	});
-	const system = frame ? buildSystemMessage(frame) : null;
-	const req = { ...opts, system };
+	// The text itself rides in each message.
+	const system = await patternSurveySystem(db, opts.userId, opts.storyId);
+	const language = await storyLanguage(db, opts.storyId, opts.userId);
+	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
+	const req = { ...opts, system, language, preferences };
 	const save = () => opts.save({ notes, failures });
 	const bodyChars = opts.budgetTokens * 4;
 
@@ -669,7 +717,7 @@ export async function runPatternPass(
 				const scene = { ...byId.get(sceneId)!, ...current };
 				const task: ChatMessage = {
 					role: 'user',
-					content: buildPatternApplyMessage(pattern, scene, bodyChars)
+					content: buildPatternApplyMessage(pattern, scene, bodyChars, language, preferences)
 				};
 				try {
 					const result = await completeDetailed(

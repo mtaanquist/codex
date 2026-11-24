@@ -27,7 +27,7 @@ The app is now connected. You are sent back to it, and it appears under "Apps wi
 
 You choose this on the page where you allow the app:
 
-- **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash.
+- **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. The app also sees each story's language, its Assistant preferences, and your notes for the Assistant. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash.
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
 
 No app can change your text, delete anything, publish a story, or see another person's writing.

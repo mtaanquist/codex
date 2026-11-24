@@ -32,7 +32,7 @@ const { listSuggestions, decideSuggestion } = await import('../../src/lib/server
 const { complete, completeDetailed, stream, AssistantDisabledError } =
 	await import('../../src/lib/server/llm/gateway');
 const { anthropicProvider } = await import('../../src/lib/server/llm/providers/anthropic');
-const { SpendMeter, SpendCapError } = await import('../../src/lib/server/llm/spend');
+const { SpendMeter, SpendCapError, spentFields } = await import('../../src/lib/server/llm/spend');
 
 let pool: pg.Pool;
 let db: Database;
@@ -473,6 +473,75 @@ describe('gateway gating', () => {
 		// Without search the same request fits, so only the allowance held it.
 		await saveAccountLlmConfig(db, userId, { ...config, webSearch: false });
 		await run().done;
+		expect(calls).toBe(1);
+	});
+
+	it('counts every round of the search loop over the prompt before a capped send', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Eberron', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		const config = {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced' as const,
+			provider: 'anthropic' as const,
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8,
+			webSearch: true
+		};
+		await saveAccountLlmConfig(db, userId, config);
+		let calls = 0;
+		const searching: Provider = {
+			...stubProvider,
+			async respond() {
+				calls += 1;
+				return {
+					content: 'checked',
+					toolCalls: [],
+					usage: { promptTokens: 1, completionTokens: 0 }
+				};
+			}
+		};
+		// A scene of about 40k tokens, with the reviewer's 16k reply limit. Read
+		// once with every search's results, it fits under $1; every round of the
+		// search loop, with all five searches in every round after the first,
+		// comes to about 1M tokens of input. Each round resends the cached
+		// prefix and a missed lookup writes it again, so all of it is priced at
+		// the cache-write rate: about $12.48, over $12 and under $13.
+		const scene = 'x'.repeat(120_000);
+		const meterFor = (capUsd: number) =>
+			new SpendMeter({
+				pricing: { 'claude-opus-5': { prompt: 0.00001, completion: 0 } },
+				provider: 'anthropic',
+				capUsd
+			});
+		const run = (meter: InstanceType<typeof SpendMeter>) =>
+			completeDetailed(
+				db,
+				{
+					userId,
+					storyId: inCanon.id,
+					role: 'reviewer',
+					messages: [{ role: 'user', content: scene }],
+					maxTokens: 100,
+					meter
+				},
+				{ provider: searching, http: noHttp }
+			);
+		const held = meterFor(12);
+		await expect(run(held)).rejects.toThrow(SpendCapError);
+		expect(calls).toBe(0);
+		// The request alone could cost more than the whole cap, so a rerun would
+		// stop at it again.
+		expect(spentFields(held)).toEqual({ spentUsd: 0, overCap: true });
+		await run(meterFor(13));
 		expect(calls).toBe(1);
 	});
 

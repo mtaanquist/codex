@@ -15,7 +15,8 @@ import {
 	type Provider
 } from '../../src/lib/server/llm/providers/types';
 
-const { saveAccountLlmConfig } = await import('../../src/lib/server/llm/config');
+const { accountLlmView, saveAccountLlmConfig } = await import('../../src/lib/server/llm/config');
+const { cacheReadRate, usageRowCostUsd } = await import('../../src/lib/assistant-cost');
 const { complete, completeDetailed, stream } = await import('../../src/lib/server/llm/gateway');
 const { recentAssistantUsage, recordAssistantUsage } =
 	await import('../../src/lib/server/llm/usage');
@@ -422,6 +423,7 @@ describe('recentAssistantUsage', () => {
 		});
 		expect(summary.byModel.sort((x, y) => x.model.localeCompare(y.model))).toEqual([
 			{
+				provider: null,
 				model: 'a',
 				promptTokens: 40,
 				completionTokens: 10,
@@ -430,6 +432,7 @@ describe('recentAssistantUsage', () => {
 				cacheWrite1hTokens: 12
 			},
 			{
+				provider: null,
 				model: 'b',
 				promptTokens: 5,
 				completionTokens: 1,
@@ -512,5 +515,89 @@ describe('recentAssistantUsage', () => {
 		const summary = await recentAssistantUsage(db, userId);
 		expect(summary.totals.requests).toBe(0);
 		expect(summary.recent).toHaveLength(0);
+	});
+});
+
+describe('usage provider (#1373)', () => {
+	const cachedProvider: Provider = {
+		async *chatStream() {
+			yield { type: 'done' };
+		},
+		async respond() {
+			return {
+				content: 'ok',
+				toolCalls: [],
+				usage: { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 1000 }
+			};
+		},
+		async listModels() {
+			return [];
+		}
+	};
+	const pricing = { 'chat-model': { prompt: 0.001, completion: 0.002 } };
+
+	async function configureProvider(provider: 'deepseek' | 'custom') {
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider,
+			endpoint: 'https://api.example.com/v1',
+			apiKey: 'sk',
+			models: { chat: 'chat-model' },
+			toolCallBudget: 8
+		});
+	}
+
+	it('records the provider the request went to', async () => {
+		await configureProvider('deepseek');
+		await complete(
+			db,
+			{ userId, role: 'chat', messages: [] },
+			{ provider: cachedProvider, http: noHttp }
+		);
+		const { recent, byModel } = await recentAssistantUsage(db, userId);
+		expect(recent[0]).toMatchObject({ provider: 'deepseek', model: 'chat-model' });
+		expect(byModel).toEqual([expect.objectContaining({ provider: 'deepseek' })]);
+	});
+
+	it('prices a row by its recorded provider after the saved one changes', async () => {
+		await configureProvider('deepseek');
+		await complete(
+			db,
+			{ userId, role: 'chat', messages: [] },
+			{ provider: cachedProvider, http: noHttp }
+		);
+		await configureProvider('custom');
+		const view = await accountLlmView(db, userId);
+		expect(view.provider).toBe('custom');
+		const { recent, byModel } = await recentAssistantUsage(db, userId);
+		const deepseekCost = 1000 * 0.001 * cacheReadRate('deepseek');
+		expect(usageRowCostUsd(pricing, recent[0], view.provider)).toBeCloseTo(deepseekCost, 10);
+		expect(usageRowCostUsd(pricing, byModel[0], view.provider)).toBeCloseTo(deepseekCost, 10);
+	});
+
+	it('prices a row with no recorded provider by the saved one', async () => {
+		await recordAssistantUsage(db, {
+			userId,
+			role: 'chat',
+			model: 'chat-model',
+			usage: { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 1000 }
+		});
+		await recordAssistantUsage(db, {
+			userId,
+			role: 'chat',
+			provider: 'anthropic',
+			model: 'chat-model',
+			usage: { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 1000 }
+		});
+		const { recent, byModel } = await recentAssistantUsage(db, userId);
+		const legacy = recent.find((row) => row.provider === null)!;
+		expect(usageRowCostUsd(pricing, legacy, 'openai')).toBeCloseTo(
+			1000 * 0.001 * cacheReadRate('openai'),
+			10
+		);
+		// The sums keep the two providers apart, so each is priced at its own rate.
+		expect(byModel).toHaveLength(2);
 	});
 });

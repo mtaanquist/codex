@@ -101,7 +101,11 @@ export const users = pgTable('users', {
 	// The account's own switch for access by outside apps (the MCP endpoint
 	// and its OAuth sign-in). Off until the writer turns it on; separate from
 	// the Assistant toggle in llm_config.
-	mcpEnabled: boolean('mcp_enabled').notNull().default(false)
+	mcpEnabled: boolean('mcp_enabled').notNull().default(false),
+	// The writer's native language, a tag from #lib/writing-languages; null
+	// is not set. Copyedit and prose review look for slips carried over from
+	// it when it differs from the story's language.
+	nativeLanguage: text('native_language')
 });
 
 // A named bundle of entitlements. Every account is on one: its own plan_id,
@@ -189,6 +193,17 @@ export const universes = pgTable(
 		// setting's canon, with the author's material overriding where they
 		// differ.
 		establishedSetting: boolean('established_setting').notNull().default(false),
+		// The language and spelling convention its stories are written in, a
+		// tag from #lib/writing-languages; null is not set, and the Assistant
+		// then infers it from the text. A story's own language wins.
+		language: text('language'),
+		// The Assistant preferences its stories default to: house style and
+		// the habit checks to leave alone, as known keys from
+		// #lib/assistant-preferences (absent is not set). A story's own keys win.
+		assistantPreferences: jsonb('assistant_preferences').notNull().default({}),
+		// The writer's own notes for review and the pattern pass (habits to look
+		// for or leave alone), markdown, capped at MAX_ASSISTANT_NOTES.
+		assistantNotes: text('assistant_notes'),
 		// The known setting from the curated fandom list this universe is set in.
 		// Every story in it carries the fandom on its public pages and in Browse.
 		fandomId: uuid('fandom_id').references((): AnyPgColumn => tags.id, {
@@ -252,6 +267,14 @@ export const stories = pgTable(
 		// omniscient narrator, formal prose"). Fed to the Assistant so its
 		// feedback calibrates to what the prose is aiming at; never public.
 		styleNotes: text('style_notes'),
+		// The story's language and spelling convention, over the universe's;
+		// null uses the universe's. See effectiveLanguage.
+		language: text('language'),
+		// The story's Assistant preferences, key by key over the universe's,
+		// and its own notes, which replace the universe's when set. See
+		// effectivePreferences.
+		assistantPreferences: jsonb('assistant_preferences').notNull().default({}),
+		assistantNotes: text('assistant_notes'),
 		// Null if standalone or unordered.
 		positionInSeries: integer('position_in_series'),
 		visibility: text('visibility', { enum: ['private', 'unlisted', 'public'] })
@@ -1714,8 +1737,8 @@ export const assistantChatSummaries = pgTable(
 );
 
 // One row per request the gateway sent to the writer's LLM endpoint: which
-// surface asked, which model answered, and the token counts the endpoint
-// reported (null when it reported none). Metadata only; the prompt text itself
+// surface asked, which provider and model answered, and the token counts the
+// endpoint reported (null when it reported none). Metadata only; the prompt text itself
 // is never stored. Feeds the usage log on the account Assistant page.
 export const assistantUsage = pgTable(
 	'assistant_usage',
@@ -1727,6 +1750,10 @@ export const assistantUsage = pgTable(
 		storyId: uuid('story_id').references(() => stories.id, { onDelete: 'set null' }),
 		role: text('role').notNull(),
 		model: text('model').notNull(),
+		// The provider id the request went to (see PROVIDER_IDS), which sets the
+		// rate its cached tokens are priced at. Null on every row from before it
+		// was stored; such a row is priced with the account's current provider.
+		provider: text('provider'),
 		promptTokens: integer('prompt_tokens'),
 		completionTokens: integer('completion_tokens'),
 		// The cache shares of promptTokens, where the endpoint reported them (see
@@ -1812,6 +1839,8 @@ export type ReviewRunState = {
 	spentUsd?: number;
 	// Set when spentUsd includes estimated counts, so it is approximate.
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 	// Set when the run started from an earlier capped run's progress, so its
 	// completed list includes that run's scenes (see adoptCappedRun).
 	carriedForward?: boolean;

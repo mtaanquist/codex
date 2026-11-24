@@ -9,6 +9,7 @@ import {
 	type GatewayDeps
 } from './gateway.ts';
 import { buildSceneSummaryMessage } from './prompts/summary.ts';
+import { storyLanguage } from '../language.ts';
 import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import type { ChatMessage } from './providers/types.ts';
@@ -52,6 +53,8 @@ export type SummaryResult = {
 	spentUsd?: number;
 	// Set when spentUsd includes estimated counts, not only reported ones.
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 	// Why a cap that was set could not be enforced. Only reported when the run
 	// metered itself; a caller that passed its own meter reads it from that.
 	capNotApplied?: string;
@@ -148,6 +151,7 @@ export async function summariseStory(
 		else return false;
 		return true;
 	};
+	const language = await storyLanguage(db, storyId, userId);
 	const sceneRows = await db
 		.select({
 			id: scenes.id,
@@ -215,7 +219,10 @@ export async function summariseStory(
 					userId,
 					storyId,
 					messages: [
-						{ role: 'user', content: buildSceneSummaryMessage(scene.title, scene.bodyMd) }
+						{
+							role: 'user',
+							content: buildSceneSummaryMessage(scene.title, scene.bodyMd, language)
+						}
 					],
 					meter,
 					signal

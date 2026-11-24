@@ -114,6 +114,19 @@ export function capStopPhrase(usd: number, estimated?: boolean): string {
 	return `before the next request could take it past your spend cap, having spent ${spentPhrase(usd, estimated)}`;
 }
 
+/**
+ * What to do about a job stopped at the spend cap. Running it again only helps
+ * when the job got somewhere: one held before it spent anything would stop at
+ * the same request, and so would one whose held request alone could cost more
+ * than the whole cap (overCap), so the cap has to go up first. again names the
+ * rerun ("run the review again").
+ */
+export function capContinueAdvice(usd: number, again = 'run it again', overCap = false): string {
+	return usd > 0 && !overCap
+		? `Raise the cap in settings or ${again} to continue.`
+		: `Raise the cap in settings, then ${again}.`;
+}
+
 /** "950", "1.2k": compact counts for tight rows. Empty for non-positive. */
 export function compactCount(n: number): string {
 	if (n <= 0) return '';

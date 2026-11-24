@@ -30,6 +30,10 @@ import {
 import { reviewMentionData } from '../../mention-entities.ts';
 import { OUT_OF_DATE_SCENE_SUMMARY_NOTE } from '../../summary-currency.ts';
 import type { MentionEntity } from '#lib/editor-mentions';
+import type { LanguageSetting } from '../../../writing-languages.ts';
+import type { PreferenceSetting } from '../../../assistant-preferences.ts';
+import { chatLanguageRule } from '../prompts/language.ts';
+import { habitNotesLine, houseStyleLine, leaveAloneLine } from '../prompts/preferences.ts';
 
 // Assemble the world context for a request, in tiers, against a token budget.
 // The gathering (sources.ts) is settled design; the budget and the order tiers
@@ -118,7 +122,14 @@ export type AssembleOptions = {
 	// story, for the same user and tiers (a chapter draft's estimate): the
 	// scope and the scene-independent tiers are read once for all of them.
 	cache?: StoryContextCache;
+	// The story's language, house style, the habits to leave alone and the
+	// writer's notes, stated in the frame. Only the chat passes them: every
+	// other surface states them in its own task message, in the mode it needs
+	// (a review checks against the house style, a draft keeps to it).
+	writingRules?: WritingRules;
 };
+
+export type WritingRules = { language: LanguageSetting; preferences: PreferenceSetting };
 
 // See AssembleOptions.cache. Made empty with {} and filled by the first
 // assembly that uses it.
@@ -158,7 +169,8 @@ async function gatherStableTiers(
 	db: Database,
 	userId: string,
 	scope: StoryScope,
-	includeTiers?: readonly string[]
+	includeTiers?: readonly string[],
+	writingRules?: WritingRules
 ) {
 	const skeleton = tierWanted(includeTiers, 'summaries')
 		? await storySkeleton(db, scope.storyId)
@@ -175,7 +187,7 @@ async function gatherStableTiers(
 		: [];
 	return {
 		entities,
-		frame: { name: 'frame', text: renderFrame(scope) },
+		frame: { name: 'frame', text: renderFrame(scope, { writingRules }) },
 		summaries: { name: 'summaries', text: renderSkeleton(skeleton) },
 		entityTier: { name: 'entities', text: renderEntities(entities) },
 		notes: { name: 'notes', text: renderNotes(notes) },
@@ -247,7 +259,8 @@ async function assembleStoryContext(
 		db,
 		options.userId,
 		scope,
-		options.includeTiers
+		options.includeTiers,
+		options.writingRules
 	));
 	const scene = await gatherSceneTiers(
 		db,
@@ -604,7 +617,12 @@ export async function assembleRecapContext(
 	return parts.join('\n\n');
 }
 
-function renderFrame(scope: StoryScope, options?: { world?: boolean }): string {
+// Exported for the unit tests: with no writing rules set, the frame must stay
+// byte-identical, so a prompt prefix cache keeps hitting.
+export function renderFrame(
+	scope: StoryScope,
+	options?: { world?: boolean; writingRules?: WritingRules }
+): string {
 	const lines = [`# Story: ${scope.storyTitle}`];
 	if (scope.storyBrief) lines.push(scope.storyBrief);
 	if (scope.storyDescription) lines.push(scope.storyDescription);
@@ -612,6 +630,17 @@ function renderFrame(scope: StoryScope, options?: { world?: boolean }): string {
 		lines.push(
 			`Genre and style the author is aiming for (judge the prose against this, not against general taste): ${scope.storyStyleNotes}`
 		);
+	}
+	if (options?.writingRules) {
+		const { language, preferences } = options.writingRules;
+		const rule = chatLanguageRule(language);
+		if (rule) lines.push(rule);
+		const style = houseStyleLine(preferences, 'chat');
+		if (style) lines.push(style);
+		const leaveAlone = leaveAloneLine(preferences);
+		if (leaveAlone) lines.push(leaveAlone);
+		const notes = habitNotesLine(preferences, 'chat');
+		if (notes) lines.push(notes);
 	}
 	if (options?.world === false) return lines.join('\n');
 	lines.push('', `## World: ${scope.universeName}`);

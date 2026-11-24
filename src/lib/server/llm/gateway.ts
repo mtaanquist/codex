@@ -14,7 +14,7 @@ import {
 	type RoleTuning
 } from './config.ts';
 import { loadStoryScope, loadUniverseScope } from './context/sources.ts';
-import { adapterKind } from './providers/presets.ts';
+import { adapterKind, type ProviderId } from './providers/presets.ts';
 import { estimateTokens } from './context/assemble.ts';
 import { ceilingTokens } from './context/budgets.ts';
 import {
@@ -179,14 +179,30 @@ export function ceilingPromptTokens(
 	);
 }
 
-// What one web search's results may add to a request's input, for the spend
-// cap. Results come back inside the reply but bill as input tokens, so a capped
-// request that may search is counted as if it ran every search it is allowed
-// (WEB_SEARCH_MAX_USES), each returning this much.
+// What a request that may search can bill as input, for the spend cap. The
+// search loop runs on Anthropic's side, up to SERVER_LOOP_MAX_ROUNDS model
+// rounds before it pauses the turn (a round can also be a filtering step or a
+// search refused past max_uses), and every round bills as input: the whole
+// prompt, the results so far, and what it wrote so far. Nothing holds the
+// model to one search per round (it can run several in the first), so every
+// search's results are counted in every round after the first, and so is the
+// reply; the prompt is counted once per round. All of it is priced at the
+// cache-write rate: the cache markers sit on the system block and the last user
+// block, so each round resends the cached prefix, and a missed lookup writes it
+// again rather than reading it.
+//
+// The 10k ceiling is per search, and with the dated 2026 tool it assumes what
+// dynamic filtering adds to the context (the filtering code and its output, on
+// top of or in place of the raw results) stays within it. Nothing in the
+// request can enforce that, so a search whose filtered output adds more than
+// 10k is under-counted.
 const WEB_SEARCH_RESULT_CEILING_TOKENS = 10_000;
+const SERVER_LOOP_MAX_ROUNDS = 10;
 
-function webSearchCeilingTokens(webSearch: boolean | undefined): number {
-	return webSearch ? WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS : 0;
+export function searchingPromptTokens(promptTokens: number, maxTokens: number): number {
+	const later = SERVER_LOOP_MAX_ROUNDS - 1;
+	const results = WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS * later;
+	return SERVER_LOOP_MAX_ROUNDS * promptTokens + results + later * maxTokens;
 }
 
 // The persona system message the gateway puts at the front of every turn.
@@ -289,7 +305,7 @@ async function respondWithRetry(
 ): Promise<ProviderResponse & { failedUsage?: TokenUsage }> {
 	let failedUsage: TokenUsage | undefined;
 	for (let attempt = 0; ; attempt += 1) {
-		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(req);
+		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(p, req, request);
 		try {
 			const response = await p.provider.respond(request, p.conn, p.http, req.signal);
 			return failedUsage ? { ...response, failedUsage } : response;
@@ -303,7 +319,7 @@ async function respondWithRetry(
 				throw err;
 			}
 			if (req.mayResend && !req.mayResend()) throw err;
-			if (wouldPassCap(p, req, request)) throw heldAtCap(req);
+			if (wouldPassCap(p, req, request)) throw heldAtCap(p, req, request);
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -320,29 +336,45 @@ async function respondWithRetry(
 // before every send (a first send, a resend after a failure the endpoint may
 // have billed, a resume, a tool round), so the rule lives here and not in each
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
-// Claude's cache, the dearest way it can be billed, with the results of every
-// web search the request may run (webSearchCeilingTokens). A caller with its own mayResend
-// hook holds its own ceiling (drafting, against the cap in force at each
-// request).
-function wouldPassCap(
-	p: Prepared,
-	req: GatewayRequest,
-	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
-): boolean {
-	if (!req.meter || req.mayResend) return false;
-	const promptTokens =
-		ceilingPromptTokens(request.messages, request.tools) + webSearchCeilingTokens(p.webSearch);
-	const written = p.claude ? promptTokens : 0;
-	return req.meter.wouldPassCap(p.model, {
-		promptTokens,
-		completionTokens: request.maxTokens,
-		cacheWriteTokens: written,
-		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
-	});
+// Claude's cache, the dearest way it can be billed. A request that may search
+// is counted as every round of the search loop (searchingPromptTokens), all at
+// the write rate. A caller with its own mayResend hook holds its
+// own ceiling (drafting, against the cap in force at each request).
+type CappedRequest = Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>;
+
+function ceilingUsage(p: Prepared, request: CappedRequest): TokenUsage {
+	return capCeilingUsage(
+		ceilingPromptTokens(request.messages, request.tools),
+		request.maxTokens,
+		p
+	);
 }
 
-function heldAtCap(req: GatewayRequest): SpendCapError {
-	req.meter?.hold();
+// The usage one request is held against the cap at, from its prompt and reply
+// limit. Exported so the review estimate can tell when a single request would
+// already pass the cap.
+export function capCeilingUsage(
+	prompt: number,
+	maxTokens: number,
+	p: { webSearch?: boolean; claude: boolean; cacheTtl?: '5m' | '1h' }
+): TokenUsage {
+	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, maxTokens) : prompt;
+	const written = p.claude ? promptTokens : 0;
+	return {
+		promptTokens,
+		completionTokens: maxTokens,
+		cacheWriteTokens: written,
+		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
+	};
+}
+
+function wouldPassCap(p: Prepared, req: GatewayRequest, request: CappedRequest): boolean {
+	if (!req.meter || req.mayResend) return false;
+	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request));
+}
+
+function heldAtCap(p: Prepared, req: GatewayRequest, request: CappedRequest): SpendCapError {
+	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request)));
 	return new SpendCapError();
 }
 
@@ -468,6 +500,8 @@ type Prepared = {
 	messages: ChatMessage[];
 	http: HttpRequest;
 	provider: Provider;
+	// The account's provider id, recorded on each usage row.
+	providerId: ProviderId;
 	// Set only when tools are active this turn (enabled, story owned, endpoint
 	// capable); the agent loop runs when present.
 	tools?: ToolSpec[];
@@ -530,10 +564,10 @@ const WEB_SEARCH_ROLES: readonly AssistantRole[] = ['reviewer', 'chat'];
 // keeps a search off every turn about a world the writer invented, where there
 // is nothing to look up. The scope loaders check ownership, so a universe the
 // user does not own answers false.
-async function webSearchAllowed(
+export async function webSearchAllowed(
 	db: Database,
 	config: ResolvedConfig,
-	req: GatewayRequest
+	req: Pick<GatewayRequest, 'userId' | 'storyId' | 'universeId' | 'role'>
 ): Promise<boolean> {
 	if (!config.webSearch || adapterKind(config.provider) !== 'anthropic') return false;
 	if (!WEB_SEARCH_ROLES.includes(req.role)) return false;
@@ -616,6 +650,7 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 		messages: [persona, ...req.messages],
 		http: deps.http ?? egressHttpRequest(policy),
 		provider: deps.provider ?? providerFor(resolved.config.provider),
+		providerId: resolved.config.provider,
 		tools,
 		toolContext,
 		toolBudget:
@@ -665,6 +700,7 @@ function recordUsage(
 		userId: req.userId,
 		storyId: req.storyId,
 		role: req.role,
+		provider: p.providerId,
 		model: p.model,
 		usage,
 		// Only worth the pass over the messages when there is a reported count to

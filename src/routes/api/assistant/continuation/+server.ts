@@ -8,6 +8,7 @@ import {
 } from '#lib/server/llm/assistant-route';
 import { buildContinuationMessage } from '#lib/server/llm/prompts/continuation';
 import { complete } from '#lib/server/llm/gateway';
+import { storyLanguage } from '#lib/server/language';
 
 // Inline continuation: the editor sends the prose before the cursor and gets a
 // short continuation back, shown as ghost-text the writer accepts with Tab.
@@ -36,6 +37,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			: 220;
 	const story = await requireAssistantStory(userId, payload.storyId);
 
+	const language = await storyLanguage(db, story.id, userId);
 	let text: string;
 	try {
 		text = await complete(db, {
@@ -43,7 +45,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			storyId: story.id,
 			role: 'continuation',
 			enableTools: false,
-			messages: [{ role: 'user', content: buildContinuationMessage(textBefore) }],
+			messages: [{ role: 'user', content: buildContinuationMessage(textBefore, language) }],
 			maxTokens,
 			signal: requestSignal(request)
 		});

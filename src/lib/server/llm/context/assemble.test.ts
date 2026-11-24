@@ -3,10 +3,13 @@ import {
 	bodyTail,
 	buildSystemMessage,
 	estimateTokens,
+	renderFrame,
 	selectWithinBudget,
 	type AssembledContext,
 	type ContextTier
 } from './assemble';
+import { NO_LANGUAGE } from '../../../writing-languages';
+import { NO_PREFERENCES, NOTES_BEGIN, NOTES_END } from '../../../assistant-preferences';
 
 describe('estimateTokens', () => {
 	it('approximates four characters per token', () => {
@@ -130,5 +133,92 @@ describe('selectWithinBudget', () => {
 			1000
 		);
 		expect(result.text).toBe('one\n\ntwo');
+	});
+});
+
+describe('renderFrame', () => {
+	const scope = {
+		storyId: 's',
+		universeId: 'u',
+		storyTitle: 'The Gate',
+		storyBrief: null,
+		storyDescription: null,
+		storyStyleNotes: 'Literary.',
+		universeName: 'Vael',
+		universeDescription: null,
+		universeEstablished: false
+	};
+
+	it('reads as without writing rules when none is set', () => {
+		expect(
+			renderFrame(scope, { writingRules: { language: NO_LANGUAGE, preferences: NO_PREFERENCES } })
+		).toBe(renderFrame(scope));
+	});
+
+	it('states a set language and house style before the world', () => {
+		const text = renderFrame(scope, {
+			writingRules: {
+				language: { language: 'en-GB', native: null },
+				preferences: {
+					...NO_PREFERENCES,
+					houseStyle: { ...NO_PREFERENCES.houseStyle, quoteMarks: 'single', tense: 'past' }
+				}
+			}
+		});
+		const world = text.indexOf('## World: Vael');
+		const language = text.indexOf('The story is written in');
+		const style = text.indexOf('House style for this story:');
+		expect(language).toBeGreaterThan(text.indexOf('Literary.'));
+		expect(style).toBeGreaterThan(language);
+		expect(world).toBeGreaterThan(style);
+		// The chat answers the writer in their own language; only prose it
+		// writes keeps to the story's.
+		expect(text).toContain(
+			'Write prose, passages and suggested edits in British English, keeping to British English spelling and usage. Answer the writer in the language they write to you in.'
+		);
+		expect(text).not.toContain('Write in British English,');
+		expect(text).toContain('single quotation marks for dialogue');
+		expect(text).toContain('past tense');
+		expect(text).toContain('Keep to it.');
+		expect(text).toContain(
+			"The tense applies to the narration only: do not flag dialogue, a character's quoted thoughts, or quoted text for it."
+		);
+	});
+
+	it('states the habits left alone and the fenced notes after the house style', () => {
+		const text = renderFrame(scope, {
+			writingRules: {
+				language: NO_LANGUAGE,
+				preferences: {
+					...NO_PREFERENCES,
+					houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' },
+					leaveAlone: ['filterVerbs'],
+					notes: 'I like long sentences.'
+				}
+			}
+		});
+		const style = text.indexOf('House style for this story:');
+		const leave = text.indexOf('Leave them alone');
+		const begin = text.indexOf(NOTES_BEGIN);
+		const note = text.indexOf('I like long sentences.');
+		const end = text.indexOf(NOTES_END);
+		expect(leave).toBeGreaterThan(style);
+		expect(text).toContain('filter verbs');
+		expect(begin).toBeGreaterThan(leave);
+		expect(note).toBeGreaterThan(begin);
+		expect(end).toBeGreaterThan(note);
+		expect(text.indexOf('## World: Vael')).toBeGreaterThan(end);
+	});
+
+	it('states the notes and habits left alone with no house style set', () => {
+		const text = renderFrame(scope, {
+			writingRules: {
+				language: NO_LANGUAGE,
+				preferences: { ...NO_PREFERENCES, leaveAlone: ['epithets'], notes: 'Keep it terse.' }
+			}
+		});
+		expect(text).not.toContain('House style');
+		expect(text).toContain('Leave them alone');
+		expect(text).toContain('Keep it terse.');
 	});
 });

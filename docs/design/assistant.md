@@ -304,7 +304,10 @@ endpoint, or OpenRouter with a typed price, gets the full price for cached
 tokens, since what it charges for them is not known. Those rates live in one place, `$lib/assistant-cost.ts`, shared by
 the meter, the estimate, and the usage list on the account page; each
 `assistant_usage` row stores its cache shares (null on rows from before
-they were kept, which price at the plain rate). A cost figure is only ever shown or enforced when
+they were kept, which price at the plain rate) and the provider it went to,
+so the list prices a row's cache reads at that provider's rate after a
+switch (null on rows from before #1373, which price at the saved provider's
+rate). A cost figure is only ever shown or enforced when
 the resolved model actually has a price there: with no price the pre-flight
 estimate reports tokens alone, and a set cap is reported as not applied
 rather than guessed at or skipped in silence. The estimate itself
@@ -716,9 +719,86 @@ These cut across the surfaces and the architecture.
   notifications system (a new kind in the in-app and email matrix): "your
   review of X is ready", or a clear failure if the endpoint was unreachable.
   No new delivery machinery.
-- **Writing language.** The Assistant honours the story's `writingLanguage`
-  (the preference already driving spell-check), so it generates prose and
-  answers in the writer's language rather than defaulting to English.
+- **Language and spelling convention.** A universe has a `language` and a
+  story may override it (`universes.language`, `stories.language`, migration
+  0122), each a tag from the one list in `#lib/writing-languages` or null for
+  not set. The writer's own `users.native_language` comes from the same list.
+  `#lib/server/language` resolves the effective setting (story, else
+  universe) and `llm/prompts/language.ts` writes every line once: the prompts
+  that write or edit prose (review, the passes, scene and chapter drafts,
+  `/write`, the continuation, the pattern reread, and the chat in a story,
+  whose story frame carries it) state the language, scene
+  summaries and the recap say "Write in <language>" in place of "the
+  same language as ...", and the mechanics category checks spelling against
+  it. Not set, each prompt reads exactly as before and the model infers the
+  language from the text. A native language that is set, with a story
+  language that is set and is a different language (by primary subtag, so
+  en-US is not interference for en-GB), adds one
+  "interference" line to the mechanics and prose passes and the pattern
+  survey, as a hint of where to look. A scene summary is current by its
+  scene's `updated_at`, so setting or changing the language does not rewrite
+  the summaries already stored; each follows the setting once its scene is
+  next summarised. These prompts carry no language line: the chapter summary
+  and the character arc, whose requests are their currency fingerprints
+  (naming the language would mark every stored one stale when the setting
+  changed) and which follow it through the scene summaries they are written
+  from once those are next summarised; the chat summary, which follows the
+  conversation's language, not the story's; the enrich prompts
+  (`prompts/enrich.ts`); the reply to a comment thread
+  (`prompts/review-reply.ts`), unless it may revise a pending suggestion,
+  which writes prose; and the cross-scene continuity pass (the
+  survey, `buildSurveyMessage`, its confirm stage and the MCP continuity
+  brief), which checks facts rather than wording; and the universe chat,
+  which has no one story (its frame names the world, not a story). The
+  chat's language, house-style, leave-alone and notes lines sit in the story
+  frame only for the chat (its language line, `chatLanguageRule`, keeps prose,
+  passages and suggested edits in the story's language but answers the writer
+  in the language they write in, so a Danish question about an English story
+  gets a Danish answer) (`writingRules` in `AssembleOptions`): the other surfaces that share
+  the frame state them in their own task message, and no output whose
+  staleness is its request hash (arcs, chapter summaries, enrich) is built
+  from the frame. The editor's `lang` follows the effective language and
+  falls back to the `writingLanguage` editor preference. The app interface
+  language is a separate matter. Export carries a story's title, author and
+  brief but none of its settings (style notes, models, editor preferences),
+  so the language stays out of it too.
+- **Assistant preferences (#1344, items 1 to 3).** A universe and a story each
+  carry `assistant_preferences`, a jsonb object of known keys from
+  `#lib/assistant-preferences` (absent is not set), and `assistant_notes`, one
+  markdown field capped at 1,000 characters (migration 0123). The keys are a
+  house style (quote marks, serial comma, thoughts, tense, narration, each a
+  fixed choice) and seven habit checks (filter verbs, point-of-view epithets,
+  dangling modifiers, close repetition, comma splices, pet phrases, repeated
+  sentence shapes), each "check" or "leave". A story's own key wins over the
+  universe's, key by key; its notes replace the universe's when set.
+  `#lib/server/assistant-preferences` reads the effective setting and
+  `llm/prompts/preferences.ts` writes every line once. Review and copyedit
+  state the house style (judge against it rather than infer it) and, with
+  the pattern survey and the MCP pattern brief, the habits to leave alone and
+  the writer's notes; a habit left alone also drops out of the category lines,
+  the survey's list of kinds and the pattern examples (with every kind left
+  alone the survey looks for any other recurring habit). The notes sit
+  between begin and end markers, after a line saying they describe habits and
+  change no other instruction; the fence (`habitNotesLine`) spaces out any
+  run of three or more hyphens in the notes ("---" becomes "- - -"), keeping
+  its length but leaving no two hyphens adjacent, so no part of them can read
+  as a marker, while the stored notes keep what the writer typed. A lore-only pass reads no wording and carries
+  none of it; the review estimate counts the lines on each scene. Scene and
+  chapter drafts, `/write`, the pattern fix stage and the pattern reread
+  (which stages a follow-up edit) keep to the house style, and so does a
+  review-thread reply that may revise its pending suggestion
+  (`update_suggestion`), with the language line. The chat in a story gets
+  what a connected app gets from `list_stories`: its story frame carries the
+  language, the house style, the habits to leave alone and the fenced notes.
+  Not set, every prompt reads byte for byte as before. The continuation is
+  left out on purpose (short follow-on text that copies the prose around
+  it). There is no free-form
+  system prompt, and the rest of #1344 (feedback amount, reasons on edits,
+  summary and draft lengths, content limits) is not built. Like style notes,
+  the preferences are not in the export. The settings pages show the form
+  with the Assistant tab on or with connected apps on for the account
+  (`assistantPreferencesShown`), since both read the preferences, and a save
+  changes only the keys the form posts.
 - **Accessibility.** The streaming chat and the ghost-text continuation follow
   the same WCAG 2.1 AA bar as the rest of the app: streamed output is
   announced to assistive tech, and the inline suggestion is operable and
@@ -1115,7 +1195,18 @@ builder for its rewrite wording, since it knows the passage is to be replaced.
 `/who` and `/find` share
 their one-line asks with the chat panel (`assistant-slash.ts`). A prompt reads
 nothing from the database: it is text around the ids and words the caller
-sent, and the tools it names do the ownership checks. The prompts that stage
+sent, and the tools it names do the ownership checks. The one exception is
+the language setting: before building, the server looks up the language of
+the story, scene or universe the arguments name (`workLanguage`), scoped to
+the connected writer, and hands it to the builder, so a prompt carries the
+same language lines as the Assistant's. Another writer's id reads the same as
+nothing set. `list_universes` and `list_stories` return the setting as
+`language` (the tag) and `languageName`, null when not set; a story's is its
+effective one. The Assistant preferences are looked up the same way
+(`workPreferences`), and both list tools return them as `preferences`: the
+five house-style keys (null when not set), `leaveAlone` (the habit keys) and
+`notes`; a story's is its effective one, a universe's is the default for its
+stories. The prompts that stage
 notes are offered only to a connection that may suggest. `rewrite` stages its
 result as a suggested edit when the connection may suggest. `write`, `draft`
 and `draft-chapter` hand their result over with `stage_scene_draft` when the
@@ -1150,8 +1241,8 @@ SSOT): `assistant-review-v2` (scene/chapter/story passes), `assistant-enrich`
 maintenance). All three are created with pg-boss's `exclusive` policy, which is
 what makes a `singletonKey` hold one queued or running job per key; review and
 summaries moved off their original default-policy names (`assistant-review`,
-`assistant-summaries`) for that, and the worker drains the old names for one
-release (#1041). Expensive derived artifacts (a character's arc summary) cache on
+`assistant-summaries`) for that, and the worker deletes the old queues at
+startup (#1041). Expensive derived artifacts (a character's arc summary) cache on
 the entity with a fingerprint of the request they were written from.
 
 #### Out of date by fingerprint
@@ -1193,7 +1284,14 @@ hashes:
   (aliases, details, whether a summary is asked for), so accepting what a
   read suggested does not buy another read of the same passages. The pass
   builds only the fingerprint (entry row and passages); the summary check
-  that shapes the messages runs only for an entry it sends.
+  that shapes the messages runs only for an entry it sends. A Suggest
+  details read (`enrichEntityFromText`) stores the same fingerprint, taken
+  before it reads, when it ran to the end (no part failed, nothing was
+  stopped, capped or skipped) and read every scene behind the pass's
+  passages whole (every piece of a scene split across parts), so the pass skips that entry until its input changes (#1371). A
+  story-scoped read of an entry mentioned in other stories does not cover
+  them and stores nothing. A cut-off Suggest details reply stores no
+  `unusableReplyMark`: its request is not the one the pass sends.
 - A reply that cannot be used (an enrich read cut off at the reply limit, a
   chapter summary that comes back empty) stores an `unusableReplyMark` in
   place of the fingerprint: the request's hash with the role's model, tuning
@@ -1264,9 +1362,9 @@ newest run over the scope is looked at, it is adopted only if it was capped
 before it finished), and it starts again with the whole ceiling, minus the
 scenes whose pass failed and those edited since their pass read them, which
 are reviewed again. A failure to read or adopt the earlier run fails the
-attempt for pg-boss to retry rather than starting over. A copyedit capped before the
-categories joined the key is continued only when its job (still on the legacy
-queue) shows it checked the same categories; otherwise it starts over. The rows are
+attempt for pg-boss to retry rather than starting over. A copyedit capped
+under the key from before v3.21.3 (no categories in it) is not continued; it
+starts over. The rows are
 disposable, and a daily worker sweep drops those older than 30 days. The
 review enqueue holds one unfinished job per scope (and the summaries enqueue one
 per story), so a duplicate request cannot start a second pass over the same
@@ -1344,6 +1442,13 @@ context assembly and the cross-scene pass read them.
   with its `job_id`, which the queue is then given as the job's id, so a row
   whose job was never queued is told from one still waiting. Indexed by
   story, job and chapter.
+- Language: `universes.language`, `stories.language` and
+  `users.native_language` (migration 0122), nullable text holding a tag from
+  `#lib/writing-languages`. See "Language and spelling convention" above.
+- Assistant preferences: `universes.assistant_preferences` and
+  `stories.assistant_preferences` (jsonb, not null, default `{}`) with
+  `assistant_notes` text beside each (migration 0123). See "Assistant
+  preferences" above.
 - Persisted chats: `assistant_chats`, with `chat_id` on
   `assistant_chat_messages` and `assistant_chat_summaries` (migration 0080,
   which made each earlier conversation its scope's first chat).

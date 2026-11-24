@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cacheReadRate, cacheWriteRate, usageCostUsd } from './assistant-cost';
+import { cacheReadRate, cacheWriteRate, usageCostUsd, usageRowCostUsd } from './assistant-cost';
 
 const price = { prompt: 0.001, completion: 0.002 };
 
@@ -68,5 +68,37 @@ describe('usageCostUsd', () => {
 		expect(usageCostUsd(reported, usage, 'openrouter')).toBeCloseTo(cost, 10);
 		expect(usageCostUsd(reported, usage, 'openai')).toBeCloseTo(cost, 10);
 		expect(usageCostUsd({ ...price, cacheRead: 0 }, usage)).toBeCloseTo(600 * 0.001, 10);
+	});
+});
+
+describe('usageRowCostUsd', () => {
+	const pricing = { m: price };
+	const row = {
+		model: 'm',
+		provider: null,
+		promptTokens: 1000,
+		completionTokens: 0,
+		cachedPromptTokens: 1000,
+		cacheWriteTokens: null,
+		cacheWrite1hTokens: null
+	};
+
+	it("prices a row at its own provider's cache rate, not the current one", () => {
+		expect(usageRowCostUsd(pricing, { ...row, provider: 'anthropic' }, 'custom')).toBeCloseTo(
+			cacheReadRate('anthropic'),
+			10
+		);
+	});
+
+	it('falls back to the current provider for a row with none recorded', () => {
+		expect(usageRowCostUsd(pricing, row, 'gemini')).toBeCloseTo(cacheReadRate('gemini'), 10);
+		expect(usageRowCostUsd(pricing, row)).toBeCloseTo(cacheReadRate(), 10);
+	});
+
+	it('is null for an unpriced model or a row with no counts', () => {
+		expect(usageRowCostUsd(pricing, { ...row, model: 'other' }, 'openai')).toBeNull();
+		expect(
+			usageRowCostUsd(pricing, { ...row, promptTokens: null, completionTokens: null }, 'openai')
+		).toBeNull();
 	});
 });

@@ -623,6 +623,9 @@ export async function newStoryFromDraft(
 					brief: content.story.brief,
 					descriptionMd: content.story.descriptionMd,
 					styleNotes: story.styleNotes,
+					language: story.language,
+					assistantPreferences: story.assistantPreferences,
+					assistantNotes: story.assistantNotes,
 					isAdult: story.isAdult,
 					coverColor: story.coverColor,
 					// The copy holds the same text, so a mute carries over. Only

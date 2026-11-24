@@ -20,6 +20,9 @@ import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models
 import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/server/proposals';
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
+import { normaliseLanguage } from '#lib/writing-languages';
+import { readPreferencesForm } from '#lib/assistant-preferences';
+import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
 import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/tags';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
@@ -65,6 +68,12 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		assistantModels: assistant.tabEnabled
 			? await scopeModelSettings(db, locals.user!.id, { universeId: universe.id })
 			: null,
+		// The Assistant preferences form, shown wherever the preferences apply.
+		assistantPreferencesShown: await assistantPreferencesShown(
+			db,
+			locals.user!.id,
+			assistant.tabEnabled
+		),
 		universe,
 		contents,
 		categories,
@@ -104,14 +113,35 @@ export const actions: Actions = {
 		}
 		return { action: 'export', queued: true };
 	},
+	saveAssistantPreferences: async ({ request, params, locals }) => {
+		const universe = await ownedUniverse(params.id, locals.user!.id);
+		const read = readPreferencesForm(await request.formData());
+		if (!read.ok) {
+			return fail(400, {
+				action: 'assistant-preferences',
+				message: read.reason,
+				submitted: read.submitted
+			});
+		}
+		if (!(await savePreferences(db, locals.user!.id, { universeId: universe.id }, read))) {
+			error(404, 'Not found');
+		}
+		return { action: 'assistant-preferences', saved: true };
+	},
 	update: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
 		const data = await request.formData();
 		const name = formText(data, 'name').trim();
 		const descriptionMd = formText(data, 'description').trim() || null;
 		const establishedSetting = data.get('establishedSetting') === 'on';
+		const languageRaw = formText(data, 'language');
+		// A post without the field leaves the stored language alone.
+		const language = data.has('language') ? normaliseLanguage(languageRaw) : undefined;
 		if (!name) {
 			return fail(400, { action: 'update', message: 'The universe needs a name.' });
+		}
+		if (languageRaw && !language) {
+			return fail(400, { action: 'update', message: 'Pick a language from the list.' });
 		}
 		// The known setting: an empty field unlinks it. Linking ticks
 		// Established setting. Checked first, so a fandom no longer on the list
@@ -127,7 +157,8 @@ export const actions: Actions = {
 		const slug = await saveUniverseDetails(db, locals.user!.id, universe, {
 			name,
 			descriptionMd,
-			establishedSetting
+			establishedSetting,
+			language
 		});
 		if (!slug) error(404, 'Not found');
 		if (fandomChanged) await setUniverseFandom(db, universe.id, fandomId);

@@ -2,11 +2,14 @@ import { and, eq } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { universes } from './db/schema.ts';
 import { saveWithSlug } from './slugs.ts';
+import type { WritingLanguage } from '../writing-languages.ts';
 
 export type UniverseDetails = {
 	name: string;
 	descriptionMd: string | null;
 	establishedSetting: boolean;
+	// A tag from #lib/writing-languages, or null for not set; left out, unchanged.
+	language?: WritingLanguage | null;
 };
 
 // Saves the universe settings' details form and returns the universe's slug,

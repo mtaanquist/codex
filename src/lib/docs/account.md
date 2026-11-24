@@ -13,7 +13,15 @@ On a large window, the sidebar lists the parts of Security and Assistant under
 ## Profile
 
 Set your display name and, if you like, a separate pen name to show on your
-public pages. The public-page block is where you claim a handle: a short name
+public pages. If you write in a language that is not the one you grew up
+speaking, set "Native language" to the language you grew up speaking. For a story whose language is set to
+another language, the Assistant then also looks for habits carried over from
+your native language, such as idioms translated word for word, false friends,
+or prepositions and word order from it. It does this when a review checks
+"Spelling and grammar" or "Prose and style", or has "Look for habits that
+repeat in the prose" ticked, but not otherwise in a review with only "General
+notes" or "Entities and lore". Leave it on "Not
+set" to skip this. The public-page block is where you claim a handle: a short name
 that becomes your public address at `/@yourhandle`. You can claim a handle once,
 so pick it with care. Add a short bio and, if you take requests, a note that
 your commissions are open with the details. Turn on the public profile toggle to
@@ -89,7 +97,10 @@ contacts a model on its own.
   update, pass suggesting details for the entries, or character arc may spend. Before
   each request to the model it works out what that request could cost with its
   reply at the longest allowed, and stops without sending it if that could take
-  the run over the cap. It tells you how far it got and what it spent. A stopped summary update picks up where it left off when you run it
+  the run over the cap. It tells you how far it got and what it spent. If it
+  stopped before it spent anything, or at a request that could cost more than
+  the whole cap, raise the cap and then run it again: running it again as it is
+  stops at the same place. A stopped summary update picks up where it left off when you run it
   again. To carry on with a review, either raise the cap and run it again, or run the same review again as it is: a run over the same
   scope (the same chapter, or the same whole story) skips the scenes the stopped
   run already read and starts from a fresh budget. Leave the box empty for no cap.
@@ -246,13 +257,22 @@ Your words are sent only to the endpoint you set here.
   stop well before the figure you set. First-time text is counted at Claude's
   higher rate. Requests made before
   Codex kept those counts are priced with every token sent at the plain price.
+  Reused text in each request is counted at the rate of the provider it was
+  sent to (requests made before Codex kept the provider use your current
+  provider's rate). The price per model comes from your current price list, so
+  after you switch provider, earlier requests may show no cost or a different
+  one.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
   searches a request ran. The search results count as tokens like the rest of
   the request, and the spend cap allows for the most a request's searches could
-  add before it sends one. Claude also charges a fee for each search on top of
-  tokens; that fee is not in the cost shown here or counted by the spend cap.
+  add before it sends one. That allowance is several times the size of the
+  request itself, so with a low cap a review can stop before it reads its
+  first scene; raise the cap or turn web search off if that happens. The
+  estimate shown before a review leaves searches out, and says so when web
+  search is on. Claude also charges a fee for each search on top of tokens;
+  that fee is not in the cost shown here or counted by the spend cap.
 
 ### Which model to pick for each role
 
@@ -346,7 +366,8 @@ How the writing area works, as your personal defaults.
   can write in one font on screen and export in another.
 - **Editor behaviour**: turn entity autocomplete on or off, show or hide the
   scene marks in the continuous view, show or hide the writing streak, and set
-  spell-check and your writing language. There is also a choice between the
+  spell-check and its language. A story or universe with a language set in its
+  details uses that language instead. There is also a choice between the
   markdown editor and the softer rich editing surface.
 - **Daily word goal**: a daily word target. A universe's Insights page shows how
   close you are to it. Leave it blank for no goal.

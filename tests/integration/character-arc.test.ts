@@ -417,6 +417,16 @@ describe('summariseCharacterArc', () => {
 		expect(await arcStale(bram.id)).toBe(false);
 	});
 
+	it('keeps an arc current when a language is set (#1343)', async () => {
+		const bram = await makeCharacter();
+		await sceneMentioning(firstStoryId, bram.id, { position: 1, snippet: 'Bram at the quay' });
+		await summariseCharacterArc(db, { userId: ownerId, characterId: bram.id }, deps);
+		await db.update(universes).set({ language: 'en-GB' }).where(eq(universes.id, universeId));
+		await db.update(stories).set({ language: 'da' }).where(eq(stories.id, firstStoryId));
+		await db.update(users).set({ nativeLanguage: 'de' }).where(eq(users.id, ownerId));
+		expect(await arcStale(bram.id)).toBe(false);
+	});
+
 	it('asks nothing for a character no scene mentions', async () => {
 		const bram = await makeCharacter();
 		const result = await summariseCharacterArc(db, { userId: ownerId, characterId: bram.id }, deps);

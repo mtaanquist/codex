@@ -1,0 +1,1 @@
+ALTER TABLE "assistant_usage" ADD COLUMN "provider" text;

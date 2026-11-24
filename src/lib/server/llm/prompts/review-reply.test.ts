@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildReviewReplyMessage, excerptAround } from './review-reply';
+import { NO_PREFERENCES } from '../../../assistant-preferences.ts';
 
 describe('excerptAround', () => {
 	const body = 'a'.repeat(1000) + 'THE ANCHOR' + 'b'.repeat(1000);
@@ -88,5 +89,33 @@ describe('buildReviewReplyMessage', () => {
 			suggestion: { original: 'cut me', replacement: '' }
 		});
 		expect(message).toContain('(deletes the passage)');
+	});
+
+	it('states a set language and house style only when it may revise a suggestion', () => {
+		const rules = {
+			language: { language: 'en-GB' as const, native: null },
+			preferences: {
+				...NO_PREFERENCES,
+				houseStyle: { ...NO_PREFERENCES.houseStyle, quoteMarks: 'single' as const }
+			}
+		};
+		const base = {
+			sceneTitle: 'The Gate',
+			excerpt: 'the passage',
+			transcript: [{ author: 'Author', body: 'Shorter?' }],
+			...rules
+		};
+		const revising = buildReviewReplyMessage({
+			...base,
+			suggestion: { original: 'a', replacement: 'b' }
+		});
+		expect(revising).toContain('The story is written in British English.');
+		expect(revising).toContain('House style for this story: single quotation marks');
+		expect(revising).toContain('Keep to it.');
+		expect(revising.indexOf('House style')).toBeLessThan(revising.indexOf('The thread so far'));
+
+		const plain = buildReviewReplyMessage({ ...base, suggestion: null });
+		expect(plain).not.toContain('The story is written in');
+		expect(plain).not.toContain('House style');
 	});
 });
