@@ -737,6 +737,8 @@ export type ContinuityReviewResult = {
 	capped?: boolean;
 	spentUsd?: number;
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 };
 
 // The run state a review writes as it advances, when it was queued with a job
@@ -779,6 +781,7 @@ async function openRun(
 	current.aborted = false;
 	current.spentUsd = 0;
 	delete current.spentEstimated;
+	delete current.overCap;
 	return {
 		state: current,
 		async save() {
@@ -1017,6 +1020,8 @@ export type StoryReviewResult = {
 	capped?: boolean;
 	spentUsd?: number;
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 };
 
 // A whole-story or single-chapter review: every non-deleted scene in scope,

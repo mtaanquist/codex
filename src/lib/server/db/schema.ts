@@ -1839,6 +1839,8 @@ export type ReviewRunState = {
 	spentUsd?: number;
 	// Set when spentUsd includes estimated counts, so it is approximate.
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 	// Set when the run started from an earlier capped run's progress, so its
 	// completed list includes that run's scenes (see adoptCappedRun).
 	carriedForward?: boolean;

@@ -723,6 +723,8 @@ export type UniverseEnrichResult = {
 	spentUsd?: number;
 	// Set when spentUsd includes estimated counts, not only reported ones.
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 	// Why a cap that was set could not be enforced.
 	capNotApplied?: string;
 };

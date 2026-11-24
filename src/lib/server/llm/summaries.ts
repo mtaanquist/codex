@@ -53,6 +53,8 @@ export type SummaryResult = {
 	spentUsd?: number;
 	// Set when spentUsd includes estimated counts, not only reported ones.
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 	// Why a cap that was set could not be enforced. Only reported when the run
 	// metered itself; a caller that passed its own meter reads it from that.
 	capNotApplied?: string;

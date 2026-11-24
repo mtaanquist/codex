@@ -140,6 +140,12 @@ describe('capContinueAdvice', () => {
 		);
 		expect(capContinueAdvice(0)).toBe('Raise the cap in settings, then run it again.');
 	});
+
+	it('asks for a higher cap first when the held request alone could cost more than the cap', () => {
+		expect(capContinueAdvice(1.5, 'run the review again', true)).toBe(
+			'Raise the cap in settings, then run the review again.'
+		);
+	});
 });
 
 describe('capStopPhrase', () => {

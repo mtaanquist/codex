@@ -783,7 +783,7 @@ export function createHandlers(deps: WorkerDeps) {
 							title = `The Assistant left ${result.notes} continuity note${result.notes === 1 ? '' : 's'} across "${universe.name}".`;
 						}
 						if (result.capped) {
-							title = `The continuity pass on "${universe.name}" stopped ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. ${capContinueAdvice(result.spentUsd ?? 0, 'run the review again')}`;
+							title = `The continuity pass on "${universe.name}" stopped ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. ${capContinueAdvice(result.spentUsd ?? 0, 'run the review again', result.overCap)}`;
 						}
 						const problem = firstFailure(result.failures);
 						if (problem) title += ` ${problem}`;
@@ -838,7 +838,7 @@ export function createHandlers(deps: WorkerDeps) {
 						// The capped wording replaces the outcome line, so it is built
 						// before the suffixes rather than over the top of them.
 						if (result.capped) {
-							title = `The continuity pass on "${story.title}" stopped ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. ${capContinueAdvice(result.spentUsd ?? 0, 'run the review again')}`;
+							title = `The continuity pass on "${story.title}" stopped ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}${staged(result.notes)}. ${capContinueAdvice(result.spentUsd ?? 0, 'run the review again', result.overCap)}`;
 						} else if (!result.ran) {
 							title = `"${story.title}" needs at least two scenes for a continuity pass.`;
 						} else if (result.notes === 0) {
@@ -879,7 +879,7 @@ export function createHandlers(deps: WorkerDeps) {
 					);
 					const problem = firstFailure(result.failures);
 					if (result.capped) {
-						title = `The review of "${story.title}" stopped after ${result.reviewed} of ${result.total} scenes, ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}. ${capContinueAdvice(result.spentUsd ?? 0, 'run the review again')}`;
+						title = `The review of "${story.title}" stopped after ${result.reviewed} of ${result.total} scenes, ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}. ${capContinueAdvice(result.spentUsd ?? 0, 'run the review again', result.overCap)}`;
 					} else if (result.aborted) {
 						title = `The review of "${story.title}" was stopped before it finished.`;
 					} else if (result.reviewed === 0 && result.failed > 0) {
@@ -961,7 +961,7 @@ export function createHandlers(deps: WorkerDeps) {
 					title = `The Assistant stopped summarising "${story.title}" before it finished, after ${written} ${written === 1 ? 'summary' : 'summaries'}.`;
 				}
 				if (result.capped) {
-					title = `The Assistant stopped summarising "${story.title}" after ${written} ${written === 1 ? 'summary' : 'summaries'}, ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}. ${capContinueAdvice(result.spentUsd ?? 0)}`;
+					title = `The Assistant stopped summarising "${story.title}" after ${written} ${written === 1 ? 'summary' : 'summaries'}, ${capStopPhrase(result.spentUsd ?? 0, result.spentEstimated)}. ${capContinueAdvice(result.spentUsd ?? 0, undefined, result.overCap)}`;
 				}
 				if (result.capNotApplied) title += ` ${result.capNotApplied}`;
 				await notifyWriter(job.name, job, userId, 'assistant_summaries', {
@@ -1060,7 +1060,7 @@ export function createHandlers(deps: WorkerDeps) {
 				}
 				if (result.capped) {
 					const stop = capStopPhrase(result.spentUsd ?? 0, result.spentEstimated);
-					title = `The Assistant stopped reading the entries in "${name}" ${stop}${left}. ${capContinueAdvice(result.spentUsd ?? 0)}`;
+					title = `The Assistant stopped reading the entries in "${name}" ${stop}${left}. ${capContinueAdvice(result.spentUsd ?? 0, undefined, result.overCap)}`;
 				}
 				if (result.capNotApplied) title += ` ${result.capNotApplied}`;
 				await notifyWriter(ASSISTANT_ENRICH_QUEUE, job, userId, 'assistant_enrich', {

@@ -148,6 +148,20 @@ describe('SpendMeter', () => {
 		expect(meter.spentUsd).toBeCloseTo(0.12, 10);
 	});
 
+	it('says when a held request alone could cost more than the whole cap', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 0.5 });
+		meter.record('priced', { promptTokens: 100, completionTokens: 10 });
+		// $0.40 fits the cap alone; $0.60 does not.
+		expect(meter.exceedsCap('priced', { promptTokens: 400, completionTokens: 0 })).toBe(false);
+		expect(meter.exceedsCap('priced', { promptTokens: 600, completionTokens: 0 })).toBe(true);
+		expect(meter.exceedsCap('other', { promptTokens: 1e6, completionTokens: 0 })).toBe(false);
+		meter.hold();
+		expect(spentFields(meter).overCap).toBeUndefined();
+		meter.hold(true);
+		expect(meter.heldOverCap).toBe(true);
+		expect(spentFields(meter)).toMatchObject({ overCap: true });
+	});
+
 	it('does nothing at all without a cap', () => {
 		const meter = new SpendMeter({ pricing });
 		meter.record('other');

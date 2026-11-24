@@ -46,10 +46,17 @@ export function requestCostUsd(
 
 // What a stopped run reports it spent: the figure, and whether it includes
 // estimates (see SpendMeter.spentEstimated).
-export function spentFields(meter: SpendMeter): { spentUsd: number; spentEstimated?: true } {
+// overCap is set when the request held back could alone cost more than the
+// whole cap, so a rerun would stop at it again (see SpendMeter.hold).
+export function spentFields(meter: SpendMeter): {
+	spentUsd: number;
+	spentEstimated?: true;
+	overCap?: true;
+} {
 	return {
 		spentUsd: meter.spentUsd,
-		...(meter.spentEstimated ? { spentEstimated: true as const } : {})
+		...(meter.spentEstimated ? { spentEstimated: true as const } : {}),
+		...(meter.heldOverCap ? { overCap: true as const } : {})
 	};
 }
 
@@ -62,6 +69,7 @@ export class SpendMeter {
 	private unreported = false;
 	private estimated = false;
 	private held = false;
+	private overCap = false;
 	private readonly persist: ((spentUsd: number) => Promise<void>) | undefined;
 	private readonly uncapped: boolean;
 	private saving: Promise<void> = Promise.resolve();
@@ -140,9 +148,25 @@ export class SpendMeter {
 	}
 
 	// A request was not sent because it could have passed the ceiling: the run
-	// stops at its next boundary, as it would at the ceiling itself.
-	hold(): void {
+	// stops at its next boundary, as it would at the ceiling itself. overCap
+	// says the request alone could cost more than the whole ceiling.
+	hold(overCap = false): void {
 		this.held = true;
+		if (overCap) this.overCap = true;
+	}
+
+	// True when a held request could alone have cost more than the ceiling, so
+	// running the job again would stop at it again until the cap goes up.
+	get heldOverCap(): boolean {
+		return this.overCap;
+	}
+
+	// Whether one request, at the usage it could bill at most, could cost more
+	// than the whole ceiling on its own. False when it cannot be priced.
+	exceedsCap(model: string, usage: TokenUsage): boolean {
+		if (this.capUsd === undefined) return false;
+		const cost = requestCostUsd(this.pricing, model, usage, this.provider);
+		return cost !== undefined && cost > this.capUsd + 1e-9;
 	}
 
 	// Whether one more request, at the usage it could bill at most, could take

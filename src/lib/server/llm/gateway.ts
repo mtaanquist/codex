@@ -305,7 +305,7 @@ async function respondWithRetry(
 ): Promise<ProviderResponse & { failedUsage?: TokenUsage }> {
 	let failedUsage: TokenUsage | undefined;
 	for (let attempt = 0; ; attempt += 1) {
-		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(req);
+		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(p, req, request);
 		try {
 			const response = await p.provider.respond(request, p.conn, p.http, req.signal);
 			return failedUsage ? { ...response, failedUsage } : response;
@@ -319,7 +319,7 @@ async function respondWithRetry(
 				throw err;
 			}
 			if (req.mayResend && !req.mayResend()) throw err;
-			if (wouldPassCap(p, req, request)) throw heldAtCap(req);
+			if (wouldPassCap(p, req, request)) throw heldAtCap(p, req, request);
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -340,25 +340,27 @@ async function respondWithRetry(
 // is counted as every round of the search loop (searchingPromptTokens), all at
 // the write rate. A caller with its own mayResend hook holds its
 // own ceiling (drafting, against the cap in force at each request).
-function wouldPassCap(
-	p: Prepared,
-	req: GatewayRequest,
-	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
-): boolean {
-	if (!req.meter || req.mayResend) return false;
+type CappedRequest = Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>;
+
+function ceilingUsage(p: Prepared, request: CappedRequest): TokenUsage {
 	const prompt = ceilingPromptTokens(request.messages, request.tools);
 	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, request.maxTokens) : prompt;
 	const written = p.claude ? promptTokens : 0;
-	return req.meter.wouldPassCap(p.model, {
+	return {
 		promptTokens,
 		completionTokens: request.maxTokens,
 		cacheWriteTokens: written,
 		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
-	});
+	};
 }
 
-function heldAtCap(req: GatewayRequest): SpendCapError {
-	req.meter?.hold();
+function wouldPassCap(p: Prepared, req: GatewayRequest, request: CappedRequest): boolean {
+	if (!req.meter || req.mayResend) return false;
+	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request));
+}
+
+function heldAtCap(p: Prepared, req: GatewayRequest, request: CappedRequest): SpendCapError {
+	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request)));
 	return new SpendCapError();
 }
 

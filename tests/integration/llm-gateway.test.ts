@@ -32,7 +32,7 @@ const { listSuggestions, decideSuggestion } = await import('../../src/lib/server
 const { complete, completeDetailed, stream, AssistantDisabledError } =
 	await import('../../src/lib/server/llm/gateway');
 const { anthropicProvider } = await import('../../src/lib/server/llm/providers/anthropic');
-const { SpendMeter, SpendCapError } = await import('../../src/lib/server/llm/spend');
+const { SpendMeter, SpendCapError, spentFields } = await import('../../src/lib/server/llm/spend');
 
 let pool: pg.Pool;
 let db: Database;
@@ -516,7 +516,13 @@ describe('gateway gating', () => {
 		// prefix and a missed lookup writes it again, so all of it is priced at
 		// the cache-write rate: about $12.48, over $12 and under $13.
 		const scene = 'x'.repeat(120_000);
-		const run = (capUsd: number) =>
+		const meterFor = (capUsd: number) =>
+			new SpendMeter({
+				pricing: { 'claude-opus-5': { prompt: 0.00001, completion: 0 } },
+				provider: 'anthropic',
+				capUsd
+			});
+		const run = (meter: InstanceType<typeof SpendMeter>) =>
 			completeDetailed(
 				db,
 				{
@@ -525,17 +531,17 @@ describe('gateway gating', () => {
 					role: 'reviewer',
 					messages: [{ role: 'user', content: scene }],
 					maxTokens: 100,
-					meter: new SpendMeter({
-						pricing: { 'claude-opus-5': { prompt: 0.00001, completion: 0 } },
-						provider: 'anthropic',
-						capUsd
-					})
+					meter
 				},
 				{ provider: searching, http: noHttp }
 			);
-		await expect(run(12)).rejects.toThrow(SpendCapError);
+		const held = meterFor(12);
+		await expect(run(held)).rejects.toThrow(SpendCapError);
 		expect(calls).toBe(0);
-		await run(13);
+		// The request alone could cost more than the whole cap, so a rerun would
+		// stop at it again.
+		expect(spentFields(held)).toEqual({ spentUsd: 0, overCap: true });
+		await run(meterFor(13));
 		expect(calls).toBe(1);
 	});
 
