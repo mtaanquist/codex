@@ -4,7 +4,6 @@ import {
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_ENRICH_QUEUE,
 	DIGEST_DELAY_SECONDS,
-	LEGACY_ASSISTANT_REVIEW_QUEUE,
 	NOTIFICATION_DIGEST_QUEUE
 } from '../lib/server/queues.ts';
 import * as schema from '../lib/server/db/schema.ts';
@@ -52,7 +51,7 @@ import {
 	reviewUniverseContinuity
 } from '../lib/server/llm/scene-review.ts';
 import type { ReviewFailure } from '../lib/server/db/schema.ts';
-import { parseCategories, type PatternScope, type ReviewCategory } from '../lib/review-shape.ts';
+import type { PatternScope, ReviewCategory } from '../lib/review-shape.ts';
 import { summariseStory } from '../lib/server/llm/summaries.ts';
 import {
 	enrichEntityFromText,
@@ -182,18 +181,6 @@ function sceneCount(n: number): string {
 // "1 entry", "3 other entries", for an enrich notice.
 function entries(n: number, other = false): string {
 	return `${n} ${other ? 'other ' : ''}${n === 1 ? 'entry' : 'entries'}`;
-}
-
-// LEGACY (#1041): what a review queued before the upgrade checked, read from
-// its job, for continuing a run it capped (see adoptCappedRun). Null when
-// pg-boss no longer has the job, or it does not say.
-export async function legacyJobCategories(
-	boss: Pick<PgBoss, 'getJobById'>,
-	jobId: string
-): Promise<ReviewCategory[] | null> {
-	const found = await boss.getJobById(LEGACY_ASSISTANT_REVIEW_QUEUE, jobId);
-	const categories = (found?.data as { categories?: unknown } | undefined)?.categories;
-	return Array.isArray(categories) ? parseCategories(categories) : null;
 }
 
 export function createHandlers(deps: WorkerDeps) {
@@ -887,8 +874,7 @@ export function createHandlers(deps: WorkerDeps) {
 							categories,
 							patterns,
 							jobId: job.id,
-							signal,
-							legacyJobCategories: (jobId) => legacyJobCategories(boss, jobId)
+							signal
 						})
 					);
 					const problem = firstFailure(result.failures);

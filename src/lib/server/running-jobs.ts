@@ -7,16 +7,13 @@ import {
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_ENRICH_QUEUE,
 	ASSISTANT_REVIEW_QUEUE,
-	ASSISTANT_SUMMARIES_QUEUE,
-	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	LEGACY_ASSISTANT_SUMMARIES_QUEUE
+	ASSISTANT_SUMMARIES_QUEUE
 } from './queues.ts';
 
 // The writer's Assistant jobs that have not settled yet, so a page that loads
 // mid-run can pick them up again: the activity center resumes their cards and
 // the story's mode strip shows the run. The browser only remembers a job it
-// started itself, and forgets it on reload. LEGACY (#1041): the old review and
-// summaries queues are read too, for jobs queued before the upgrade.
+// started itself, and forgets it on reload.
 
 export type RunningAssistantJob = {
 	id: string;
@@ -67,8 +64,7 @@ export async function findRunningAssistantJobs(
 		select id, name, data, created_on from pgboss.job
 		where name in (
 			${ASSISTANT_REVIEW_QUEUE}, ${ASSISTANT_SUMMARIES_QUEUE}, ${ASSISTANT_ENRICH_QUEUE},
-			${ASSISTANT_DRAFT_QUEUE},
-			${LEGACY_ASSISTANT_REVIEW_QUEUE}, ${LEGACY_ASSISTANT_SUMMARIES_QUEUE}
+			${ASSISTANT_DRAFT_QUEUE}
 		)
 			and state in ('created', 'retry', 'active')
 			and data @> ${JSON.stringify({ userId })}::jsonb
@@ -78,7 +74,7 @@ export async function findRunningAssistantJobs(
 	const found = rows.map((row) => ({
 		id: row.id,
 		kind:
-			row.name === ASSISTANT_SUMMARIES_QUEUE || row.name === LEGACY_ASSISTANT_SUMMARIES_QUEUE
+			row.name === ASSISTANT_SUMMARIES_QUEUE
 				? ('summaries' as const)
 				: row.name === ASSISTANT_ENRICH_QUEUE
 					? row.data.characterId
@@ -236,8 +232,7 @@ export async function stopAssistantJob(
 		where id = ${jobId}::uuid
 			and name in (
 				${ASSISTANT_REVIEW_QUEUE}, ${ASSISTANT_SUMMARIES_QUEUE}, ${ASSISTANT_ENRICH_QUEUE},
-				${ASSISTANT_DRAFT_QUEUE},
-				${LEGACY_ASSISTANT_REVIEW_QUEUE}, ${LEGACY_ASSISTANT_SUMMARIES_QUEUE}
+				${ASSISTANT_DRAFT_QUEUE}
 			)
 			and state in ('created', 'retry', 'active')
 			and data @> ${JSON.stringify({ userId })}::jsonb

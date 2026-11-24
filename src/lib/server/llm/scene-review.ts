@@ -16,7 +16,6 @@ import {
 import {
 	adoptCappedRun,
 	emptyReviewRun,
-	legacyReviewScopeKey,
 	loadReviewRun,
 	ReviewRunLoadError,
 	reviewScopeKey,
@@ -752,7 +751,6 @@ async function openRun(
 		jobId?: string;
 		userId: string;
 		scope: string;
-		legacy?: Parameters<typeof adoptCappedRun>[1]['legacy'];
 	}
 ): Promise<RunWriter> {
 	let state: ReviewRunState | null = null;
@@ -763,11 +761,7 @@ async function openRun(
 			// to continue" arrives as a new job with no row of its own. The capped
 			// run over the same scope is adopted under the new id, so the scenes it
 			// already reviewed are not reviewed (and billed) a second time.
-			state ??= await adoptCappedRun(db, {
-				userId: opts.userId,
-				scope: opts.scope,
-				legacy: opts.legacy
-			});
+			state ??= await adoptCappedRun(db, { userId: opts.userId, scope: opts.scope });
 		} catch (err) {
 			logEvent('error', 'review_run.load_failed', { jobId: opts.jobId, ...errorFields(err) });
 			throw new ReviewRunLoadError(err);
@@ -1043,9 +1037,6 @@ export async function reviewStoryScenes(
 		patterns?: PatternScope;
 		jobId?: string;
 		signal?: AbortSignal;
-		// LEGACY (#1041): the categories a job queued before the upgrade
-		// checked, or null once the queue has forgotten it (see adoptCappedRun).
-		legacyJobCategories?: (jobId: string) => Promise<ReviewCategory[] | null>;
 	},
 	deps: GatewayDeps = {}
 ): Promise<StoryReviewResult> {
@@ -1056,19 +1047,10 @@ export async function reviewStoryScenes(
 		categories: opts.categories,
 		patterns
 	};
-	const legacyScope = legacyReviewScopeKey(scope);
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
-		scope: reviewScopeKey(scope),
-		legacy:
-			legacyScope && opts.legacyJobCategories
-				? {
-						scope: legacyScope,
-						categories: opts.categories ?? [],
-						jobCategories: opts.legacyJobCategories
-					}
-				: undefined
+		scope: reviewScopeKey(scope)
 	});
 	const done = new Set(run.state.completed);
 	// Only the scene failures carry over from an earlier attempt, alongside the
