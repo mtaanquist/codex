@@ -617,6 +617,9 @@ describe('a text too long for one request', () => {
 				return false;
 			},
 			hold() {},
+			exceedsCap() {
+				return false;
+			},
 			async flush() {},
 			spentUsd: 1.5,
 			spentEstimated: false
@@ -652,6 +655,9 @@ describe('a text too long for one request', () => {
 				return calls >= 2;
 			},
 			hold() {},
+			exceedsCap() {
+				return false;
+			},
 			record() {
 				calls += 1;
 			},
@@ -917,6 +923,9 @@ describe('the /enrich pass after a read', () => {
 				return false;
 			},
 			hold() {},
+			exceedsCap() {
+				return false;
+			},
 			async flush() {},
 			spentUsd: 1.5,
 			spentEstimated: false
