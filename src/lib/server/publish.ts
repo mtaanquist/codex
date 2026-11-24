@@ -124,13 +124,19 @@ export async function publishStory(
 		.map((tag) => tag.name);
 	try {
 		const publicationId = await db.transaction(async (tx) => {
+			// Locked so a takedown running at the same moment waits for this
+			// publish (see takedownPublication).
+			await tx
+				.select({ id: stories.id })
+				.from(stories)
+				.where(eq(stories.id, story.id))
+				.for('update');
 			// A takedown holds until a moderator restores the edition, so a new
 			// publish cannot bring the story back on its own.
 			const [current] = await tx
 				.select({ removedAt: publications.removedAt })
 				.from(publications)
-				.where(and(eq(publications.storyId, story.id), eq(publications.isCurrent, true)))
-				.for('update');
+				.where(and(eq(publications.storyId, story.id), eq(publications.isCurrent, true)));
 			if (current?.removedAt) return null;
 			await tx
 				.update(publications)
@@ -566,6 +572,14 @@ export async function takedownPublication(
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		if (!target) return false;
+		// The same lock publishStory takes, so a publish running at the same
+		// moment either finishes first (and its edition is taken down here)
+		// or waits and then sees the takedown.
+		await tx
+			.select({ id: stories.id })
+			.from(stories)
+			.where(eq(stories.id, target.storyId))
+			.for('update');
 		const updated = await tx
 			.update(publications)
 			.set({ removedAt: sql`now()`, removedBy, removedReason: reason })
@@ -583,9 +597,13 @@ export async function takedownPublication(
 			.set({ resolvedAt: sql`now()`, resolvedBy: removedBy, resolution: 'taken_down' })
 			.where(
 				and(
+					// Every edition of the story, so a report on an older one closes too.
 					inArray(
 						publicationReports.publicationId,
-						updated.map((row) => row.id)
+						tx
+							.select({ id: publications.id })
+							.from(publications)
+							.where(eq(publications.storyId, target.storyId))
 					),
 					isNull(publicationReports.resolvedAt)
 				)

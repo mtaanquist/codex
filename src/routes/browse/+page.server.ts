@@ -8,13 +8,17 @@ import { rateLimit } from '#lib/server/rate-limit';
 import { browseIndexable, parseBrowseQuery } from '#lib/browse';
 
 const SEARCHES_PER_MINUTE = 30;
+// Filter and paging requests run several queries too, so they have a looser
+// limit of their own.
+const PAGES_PER_MINUTE = 120;
 
 export const load: PageServerLoad = async ({ url, getClientAddress }) => {
 	if (!(await browseEnabled(db))) error(404, 'Not found');
 	const query = parseBrowseQuery(url.searchParams);
+	const ip = getClientAddress();
 	if (
-		query.q &&
-		!rateLimit(`browse:ip:${getClientAddress()}`, SEARCHES_PER_MINUTE, 60_000).allowed
+		!rateLimit(`browse:pages:${ip}`, PAGES_PER_MINUTE, 60_000).allowed ||
+		(query.q && !rateLimit(`browse:ip:${ip}`, SEARCHES_PER_MINUTE, 60_000).allowed)
 	) {
 		error(429, 'Too many searches just now. Wait a minute and try again.');
 	}
@@ -41,6 +45,12 @@ export const load: PageServerLoad = async ({ url, getClientAddress }) => {
 			fandoms: fandoms.map(({ name, slug }) => ({ name, slug })),
 			warnings: warnings.map(({ name, slug }) => ({ name, slug }))
 		},
-		indexable: browseIndexable(query)
+		// A filter naming nothing that exists is an empty page; keep it out of
+		// search engines.
+		indexable:
+			browseIndexable(query) &&
+			Boolean(query.genre) === Boolean(filters.genre) &&
+			Boolean(query.fandom) === Boolean(filters.fandom) &&
+			Boolean(query.tag) === Boolean(filters.tag)
 	};
 };

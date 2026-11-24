@@ -47,7 +47,7 @@ import {
 	TEXT_ALIGNS
 } from '#lib/page-setup';
 import { ownedStory } from '#lib/server/story-access';
-import { browseTagSuggestions } from '#lib/server/browse';
+import { browseTagSuggestions, saveStoryVisibility } from '#lib/server/browse';
 import { browseEnabled } from '#lib/server/settings';
 import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
@@ -367,33 +367,32 @@ export const actions: Actions = {
 			return fail(400, { action: 'publish', message: 'Pick a visibility.' });
 		}
 		const isAdult = data.get('isAdult') === 'on';
-		// The Browse box only shows while Browse is on, so with it off the
-		// listing is kept as it was; leaving public always clears it.
-		const listedInBrowse =
-			visibility !== 'public'
-				? false
-				: (await browseEnabled(db))
-					? data.get('listedInBrowse') === 'on' && !story.browseBlockedAt
-					: story.listedInBrowse;
-		await db
-			.update(stories)
-			.set({ visibility, isAdult, listedInBrowse })
-			.where(eq(stories.id, story.id));
+		await saveStoryVisibility(
+			db,
+			story.id,
+			visibility,
+			isAdult,
+			(await browseEnabled(db)) ? data.get('listedInBrowse') === 'on' : null
+		);
 		return { action: 'publish', saved: true };
 	},
 	saveTags: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);
 		const data = await request.formData();
-		const genres = (await pickListed(db, 'genre', data.getAll('genres'))).slice(0, MAX_GENRES);
+		const genres = await pickListed(db, 'genre', data.getAll('genres'));
+		if (genres.length > MAX_GENRES) {
+			return fail(400, { action: 'tags', message: `Pick up to ${MAX_GENRES} genres.` });
+		}
 		const warnings = await pickListed(db, 'warning', data.getAll('contentWarnings'));
 		// Checked before anything is written, so a refused name saves nothing.
 		const checked = checkTagNames(chipValues(data, 'tags'));
 		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
-		const inherited = (await storyTagView(db, story.id)).fandoms.filter((tag) => tag.inherited);
+		const shown = (await storyTagView(db, story.id)).fandoms;
 		const fandoms = await findFandoms(
 			db,
 			chipValues(data, 'fandoms'),
-			inherited.map((tag) => tag.slug)
+			shown.filter((tag) => tag.inherited).map((tag) => tag.slug),
+			shown.length
 		);
 		if (!fandoms.ok) return fail(400, { action: 'tags', message: fandoms.message });
 		const { skipped } = await db.transaction(async (tx) => {

@@ -62,7 +62,11 @@
 							{:else if edition.isCurrent && edition.browseBlockedAt}
 								<form method="POST" action="?/allowInBrowse">
 									<input type="hidden" name="storyId" value={edition.storyId} />
-									<button type="submit" class="btn btn-ghost btn-sm">Allow in Browse again</button>
+									<button
+										type="submit"
+										class="btn btn-ghost btn-sm"
+										aria-label="Allow {edition.title} in Browse again">Allow in Browse again</button
+									>
 								</form>
 							{/if}
 						</div>

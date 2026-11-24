@@ -45,7 +45,7 @@ const {
 	browseStories,
 	removeFromBrowse,
 	resolveFilters,
-	setListedInBrowse
+	saveStoryVisibility
 } = await import('../../src/lib/server/browse');
 const { parseBrowseQuery, BROWSE_PAGE_SIZE } = await import('../../src/lib/browse');
 const browsePage = await import('../../src/routes/browse/+page.server');
@@ -279,10 +279,15 @@ describe('listing and moderation', () => {
 	it('lists only a public story, and keeps a removed one off until allowed', async () => {
 		const mod = await user('mod@example.com', { role: 'moderator' });
 		const s = await story('Toll', { listed: false });
-		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, s.id));
-		expect((await setListedInBrowse(db, s.id, true)).ok).toBe(false);
-		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, s.id));
-		expect(await setListedInBrowse(db, s.id, true)).toEqual({ ok: true });
+		const listed = async () =>
+			(await db.select().from(stories).where(eq(stories.id, s.id)))[0].listedInBrowse;
+		await saveStoryVisibility(db, s.id, 'unlisted', false, true);
+		expect(await listed()).toBe(false);
+		await saveStoryVisibility(db, s.id, 'public', false, true);
+		expect(await listed()).toBe(true);
+		// With Browse off the box is hidden, so the stored choice is kept.
+		await saveStoryVisibility(db, s.id, 'public', false, null);
+		expect(await listed()).toBe(true);
 
 		await createReport(db, s.publicationId, 'spam', '');
 		expect(await removeFromBrowse(db, s.id, mod.id, 'spam')).toBe(true);
@@ -298,9 +303,16 @@ describe('listing and moderation', () => {
 			.where(eq(publications.id, s.publicationId));
 		expect(edition.removedAt).toBeNull();
 
-		expect((await setListedInBrowse(db, s.id, true)).ok).toBe(false);
+		await saveStoryVisibility(db, s.id, 'public', false, true);
+		expect(await listed()).toBe(false);
 		expect(await allowInBrowse(db, s.id)).toBe(true);
-		expect(await setListedInBrowse(db, s.id, true)).toEqual({ ok: true });
+		// Allowing it again does not list it for the author.
+		expect(await listed()).toBe(false);
+		await saveStoryVisibility(db, s.id, 'public', false, true);
+		expect(await listed()).toBe(true);
+		// Leaving public clears the listing.
+		await saveStoryVisibility(db, s.id, 'private', false, null);
+		expect(await listed()).toBe(false);
 	});
 });
 
@@ -328,5 +340,13 @@ describe('the page', () => {
 		expect(plain.books.map((book) => book.title)).toEqual(['Shown']);
 		expect(plain.indexable).toBe(true);
 		expect(((await load('?q=shown')) as { indexable: boolean }).indexable).toBe(false);
+		// A filter naming nothing that exists is an empty page, kept out of search engines.
+		expect(((await load('?tag=no-such-tag')) as { indexable: boolean }).indexable).toBe(false);
+	});
+
+	it('limits how many pages one address can load', async () => {
+		await saveBrowseEnabled(db, true);
+		for (let i = 0; i < 120; i++) await load('?genre=none');
+		await expect(load('?genre=none')).rejects.toMatchObject({ status: 429 });
 	});
 });

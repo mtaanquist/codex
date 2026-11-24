@@ -286,7 +286,7 @@
 					<span class="k">Email relay</span>
 					<span class="v">{data.health.emailReady ? 'Configured' : 'Console'}</span>
 				</div>
-				<div class="admin-health-meta">codex v{data.health.version} · up {data.health.uptime}</div>
+				<div class="admin-health-meta">codex v{data.health.version} - up {data.health.uptime}</div>
 			</div>
 		{/if}
 	{/snippet}
