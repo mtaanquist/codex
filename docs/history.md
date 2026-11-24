@@ -10,6 +10,21 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Legacy Assistant queues removed (2026-11-24,
+`chore/remove-legacy-queues-1041` on `staging/llm-issues`, #1041). The
+`assistant-review` and `assistant-summaries` queues kept since #986 (v3.21.3)
+are no longer drained or read: the worker and web no longer create them, the
+job-state and running-jobs lookups read only the v2 queues, and the worker
+deletes the two old queues at startup (a no-op once they are gone). With them
+went the adoption of a capped run saved under the scope key from before
+categories were part of it (`legacyReviewScopeKey`, `legacyJobCategories`):
+v3.22.0 writes `full:<story>[:<chapter>]:<cats>`, so the upgrade fixture's
+capped run now carries that key and the step adopts it under the current key
+only. The #1113 test, which made adoption throw through the legacy job lookup,
+now throws through a stored review time Postgres cannot read. An install
+upgrading straight from before v3.21.3 loses any review or summary job still
+queued on the old names; the writer runs it again.
+
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
 short or waiting when unsaved edits partly cancel out in one combined change)

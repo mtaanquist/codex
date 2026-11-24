@@ -1150,8 +1150,8 @@ SSOT): `assistant-review-v2` (scene/chapter/story passes), `assistant-enrich`
 maintenance). All three are created with pg-boss's `exclusive` policy, which is
 what makes a `singletonKey` hold one queued or running job per key; review and
 summaries moved off their original default-policy names (`assistant-review`,
-`assistant-summaries`) for that, and the worker drains the old names for one
-release (#1041). Expensive derived artifacts (a character's arc summary) cache on
+`assistant-summaries`) for that, and the worker deletes the old queues at
+startup (#1041). Expensive derived artifacts (a character's arc summary) cache on
 the entity with a fingerprint of the request they were written from.
 
 #### Out of date by fingerprint
