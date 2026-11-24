@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
+	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
 	import {
 		normaliseLanguage,
 		WRITING_LANGUAGES,
@@ -121,6 +122,16 @@
 		</div>
 	</form>
 </div>
+<AssistantPreferences
+	level="story"
+	stored={data.story.assistantPreferences}
+	notes={data.story.assistantNotes}
+	inherited={data.universe.standalone
+		? null
+		: { preferences: data.universe.assistantPreferences, notes: data.universe.assistantNotes }}
+	saved={form?.action === 'assistant-preferences' && form.saved === true}
+	error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+/>
 
 <style>
 	.cover-color-row {

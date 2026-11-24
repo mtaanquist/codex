@@ -19,6 +19,12 @@ import {
 	nativePatternLine,
 	spellingCheckLine
 } from './language.ts';
+import {
+	NO_PREFERENCES,
+	type HabitCheck,
+	type PreferenceSetting
+} from '../../../assistant-preferences.ts';
+import { checks, habitNotesLine, houseStyleLine, leaveAloneLine } from './preferences.ts';
 
 // An open note the Assistant left on an earlier pass, carried into the next
 // run so it does not repeat itself.
@@ -51,18 +57,30 @@ function priorLine(note: PriorNote): string {
 // full copyedit. The exhaustive passes are told not to filter, because a model
 // told to be sparing still finds the small mechanical errors and then declines
 // to report them.
+// A habit the writer left alone drops out of its line.
 const categoryLines = (
 	source: WorldSource,
-	language: LanguageSetting
+	language: LanguageSetting,
+	preferences: PreferenceSetting
 ): Record<ReviewCategory, string[]> => ({
 	mechanics: [
 		'- Spelling and typos, including doubled or missing words.',
-		'- Grammar and punctuation: comma splices, missing question marks on questions, possessives, missing commas around direct address and appositives.',
+		`- Grammar and punctuation: ${checks(preferences, 'commaSplices') ? 'comma splices, ' : ''}missing question marks on questions, possessives, missing commas around direct address and appositives.`,
 		spellingCheckLine(language)
 	],
 	prose: [
-		'- Prose and flow: filter verbs that hold the reader at a distance, point-of-view epithets where a name or pronoun would read more naturally, dangling modifiers, sentences that trip on a re-read.',
-		'- Repetition: words or constructions repeated closely enough to register as a tic.',
+		`- Prose and flow: ${[
+			checks(preferences, 'filterVerbs') && 'filter verbs that hold the reader at a distance',
+			checks(preferences, 'epithets') &&
+				'point-of-view epithets where a name or pronoun would read more naturally',
+			checks(preferences, 'danglingModifiers') && 'dangling modifiers',
+			'sentences that trip on a re-read'
+		]
+			.filter(Boolean)
+			.join(', ')}.`,
+		checks(preferences, 'repetition')
+			? '- Repetition: words or constructions repeated closely enough to register as a tic.'
+			: '',
 		'- Pacing and clarity within the scene.'
 	],
 	lore: [
@@ -89,20 +107,27 @@ function passIntro(categories: ReviewCategory[]): string {
 function focusInstruction(
 	categories: ReviewCategory[],
 	source: WorldSource,
-	language: LanguageSetting
+	language: LanguageSetting,
+	preferences: PreferenceSetting
 ): string {
-	const all = categoryLines(source, language);
+	const all = categoryLines(source, language, preferences);
 	const lines = REVIEW_CATEGORIES.filter((c) => categories.includes(c)).flatMap((c) => all[c]);
 	// Slips from the writer's native language are a matter of wording, so the
 	// passes that read the wording look for them.
-	if (categories.includes('mechanics') || categories.includes('prose')) {
-		lines.push(nativeInterferenceLine(language));
-	}
+	if (readsWording(categories)) lines.push(nativeInterferenceLine(language));
 	return [
 		`${passIntro(categories)} Work through the scene and report every issue you find in the categories below, including small mechanical ones and ones you are uncertain about; do not filter for importance - the writer accepts or rejects each note and would rather discard a nitpick than miss an error. Stay inside these categories:`,
 		...lines.filter(Boolean),
 		'Prefer suggest_edit with the corrected text for mechanical fixes, and leave_comment for patterns and observations. Do not rewrite the scene wholesale or change the meaning of the prose.'
 	].join('\n');
+}
+
+// Whether a review reads the wording (the sparing review, or a pass with
+// mechanics or prose), so the lines about how the prose is written apply.
+function readsWording(categories: ReviewCategory[]): boolean {
+	return (
+		categories.length === 0 || categories.includes('mechanics') || categories.includes('prose')
+	);
 }
 
 // One theme per comment, so each note can be replied to, resolved, and worked
@@ -131,15 +156,18 @@ export function buildReviewMessage(
 	sceneTextIncluded = false,
 	patternTool = false,
 	source: WorldSource = IN_CONTEXT,
-	language: LanguageSetting = NO_LANGUAGE
+	language: LanguageSetting = NO_LANGUAGE,
+	preferences: PreferenceSetting = NO_PREFERENCES
 ): string {
 	const title = (scene.title ?? '').trim();
 	const sparing = categories.length === 0;
+	const wording = readsWording(categories);
 	const lines = [
 		title
 			? `Review the scene "${title}" (id: ${scene.id}).`
 			: `Review the scene with id ${scene.id}.`,
 		languageRule(language),
+		wording ? houseStyleLine(preferences, 'check') : '',
 		sceneTextIncluded
 			? "The scene's full text is already in this message. Do not call get_scene for it. Leave your feedback through your tools, anchored to the scene:"
 			: 'Read it in full with get_scene, then leave your feedback through your tools, anchored to the scene:',
@@ -149,7 +177,9 @@ export function buildReviewMessage(
 		patternTool ? PATTERN_WITH_TOOL : PATTERN_WITHOUT_TOOL,
 		sparing
 			? `Be specific and sparing; a few high-value notes beat many shallow ones. Splitting your observations into one comment per theme does not count against being sparing. Check the scene against the established world and entity details ${source.where}. Do not rewrite the scene wholesale or change the meaning of the prose.`
-			: focusInstruction(categories, source, language)
+			: focusInstruction(categories, source, language, preferences),
+		wording ? leaveAloneLine(preferences) : '',
+		wording ? habitNotesLine(preferences, 'review') : ''
 	].filter(Boolean);
 	if (prior.length === 0) {
 		lines.push(
@@ -544,12 +574,25 @@ export function splitPatternChunks(scenes: PatternScene[], budgetTokens: number)
 }
 
 // What the survey looks for. Kept to habits that repeat; a one-off fix is the
-// scene review's job.
-const PATTERN_LOOKS_FOR = [
-	'- Point-of-view epithets: a character called by a descriptor ("the elf", "the older man") where the name or a pronoun would read more naturally.',
-	'- A pet word or phrase that recurs often enough to register.',
-	'- Filter verbs (saw, heard, felt, noticed) that keep the reader at a distance.',
-	'- A sentence shape or opening repeated as a tic, or a character gesture used again and again.'
+// scene review's job. A kind the writer left alone drops out, and the writer's
+// own notes on their habits follow the list.
+const PATTERN_KINDS: [HabitCheck, string][] = [
+	[
+		'epithets',
+		'- Point-of-view epithets: a character called by a descriptor ("the elf", "the older man") where the name or a pronoun would read more naturally.'
+	],
+	['petPhrases', '- A pet word or phrase that recurs often enough to register.'],
+	['filterVerbs', '- Filter verbs (saw, heard, felt, noticed) that keep the reader at a distance.'],
+	[
+		'sentenceShapes',
+		'- A sentence shape or opening repeated as a tic, or a character gesture used again and again.'
+	]
+];
+
+const patternLooksFor = (preferences: PreferenceSetting) => [
+	...PATTERN_KINDS.filter(([habit]) => checks(preferences, habit)).map(([, line]) => line),
+	leaveAloneLine(preferences),
+	habitNotesLine(preferences, 'pattern')
 ];
 
 export const PATTERN_FORMAT = [
@@ -575,15 +618,17 @@ export function buildPatternSurveyMessage(
 		// Patterns that already have an open note, not to be reported again.
 		open?: string[];
 		language?: LanguageSetting;
+		preferences?: PreferenceSetting;
 	}
 ): string {
 	const book = options.scope === 'book';
 	const language = options.language ?? NO_LANGUAGE;
+	const preferences = options.preferences ?? NO_PREFERENCES;
 	const lines = [
 		book
 			? 'This is the survey stage of a whole-book pattern pass. Below is the full text of the book, chapter by chapter. Find the habits in the prose that recur across it:'
 			: 'This is the survey stage of a chapter pattern pass. Below is the full text of the chapter, scene by scene. Find the habits in the prose that recur across it:',
-		...PATTERN_LOOKS_FOR,
+		...patternLooksFor(preferences),
 		nativePatternLine(language),
 		patternReportRule(options.cap),
 		...PATTERN_FORMAT
@@ -617,16 +662,18 @@ export function buildPatternBrief(options: {
 	chapter?: string;
 	cap: number;
 	language?: LanguageSetting;
+	preferences?: PreferenceSetting;
 }): string {
 	const chapter = options.chapter?.trim();
 	const language = options.language ?? NO_LANGUAGE;
+	const preferences = options.preferences ?? NO_PREFERENCES;
 	return [
 		chapter
 			? `Run a pattern pass over the chapter "${chapter}" of the story with id ${options.storyId}.`
 			: `Run a pattern pass over the story with id ${options.storyId}, one chapter at a time.`,
 		languageRule(language),
 		'Find the scenes with list_scenes and read each one in full with get_scene. Find the habits in the prose that recur across the chapter:',
-		...PATTERN_LOOKS_FOR,
+		...patternLooksFor(preferences),
 		nativePatternLine(language),
 		patternReportRule(options.cap),
 		PATTERN_WITH_TOOL,
@@ -732,7 +779,8 @@ export function buildPatternApplyMessage(
 	pattern: FoundPattern,
 	scene: PatternScene,
 	bodyChars: number,
-	language: LanguageSetting = NO_LANGUAGE
+	language: LanguageSetting = NO_LANGUAGE,
+	preferences: PreferenceSetting = NO_PREFERENCES
 ): string {
 	const body = scene.bodyMd.trim();
 	const text =
@@ -745,6 +793,8 @@ export function buildPatternApplyMessage(
 	];
 	const rule = languageRule(language);
 	if (rule) lines.push(rule);
+	const style = houseStyleLine(preferences, 'write');
+	if (style) lines.push(style);
 	if (pattern.examples.length) {
 		lines.push(`Instances it noted: ${pattern.examples.map((e) => `"${e}"`).join(', ')}.`);
 	}

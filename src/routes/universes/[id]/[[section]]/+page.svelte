@@ -7,6 +7,7 @@
 	import { page } from '$app/state';
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
 	import { WRITING_LANGUAGES } from '#lib/writing-languages';
+	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
 	import { letterFill } from '#lib/entity-badge';
 	import Icon from '#lib/components/Icon.svelte';
 	import ImportStoryModal from '#lib/components/ImportStoryModal.svelte';
@@ -294,6 +295,16 @@
 					<button class="btn btn-primary" type="submit">Save changes</button>
 				</div>
 			</form>
+		</div>
+
+		<div class="admin-block" id="assistant-preferences">
+			<AssistantPreferences
+				level="universe"
+				stored={data.universe.assistantPreferences}
+				notes={data.universe.assistantNotes}
+				saved={form?.action === 'assistant-preferences' && form.saved === true}
+				error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+			/>
 		</div>
 
 		<div class="admin-block">

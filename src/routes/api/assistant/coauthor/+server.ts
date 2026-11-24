@@ -13,6 +13,7 @@ import { buildCoauthorMessage, readCoauthorReference } from '#lib/server/llm/pro
 import { complete } from '#lib/server/llm/gateway';
 import type { ChatMessage } from '#lib/server/llm/providers/types';
 import { storyLanguage } from '#lib/server/language';
+import { storyPreferences } from '#lib/server/assistant-preferences';
 
 // Co-author: the writer gives a brief and the Assistant drafts a passage,
 // grounded in the assembled world and the current scene. The result is returned
@@ -49,7 +50,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	const task: ChatMessage = {
 		role: 'user',
 		content: buildCoauthorMessage(instruction, reference, {
-			language: await storyLanguage(db, story.id, userId)
+			language: await storyLanguage(db, story.id, userId),
+			preferences: await storyPreferences(db, story.id, userId)
 		})
 	};
 	const messages: ChatMessage[] = context ? [buildSystemMessage(context), task] : [task];

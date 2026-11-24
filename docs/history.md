@@ -10,6 +10,46 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Assistant preferences per story and universe, items 1 to 3 of #1344
+(2026-11-24, `feat/assistant-preferences-1344`). Built on #1343's language
+setting and in the shape Mads agreed on 2026-11-21: fixed choices plus one
+capped free-text field, "Not set" keeping today's behaviour, no free-form
+system prompt. Storage is one jsonb object of known keys per story and per
+universe (`assistant_preferences`, not null, default `{}`) and an
+`assistant_notes` text beside each (migration 0117, additive, no row
+rewrite). Columns per key were the other option; twelve nullable columns on
+two tables for settings that are always read together, and only ever by the
+app, read worse than one validated object, and the object is what
+`list_stories` hands back anyway. `#lib/assistant-preferences` holds the
+lists, the normaliser (an unknown key or a value since dropped reads as not
+set) and the form reader (which refuses an off-list value instead of quietly
+clearing it). The story wins key by key, so a story can check filter verbs
+again in a universe that leaves them alone; its notes replace the universe's
+rather than adding to them, which is simpler to predict.
+
+The habit switches are seven, not the issue's four plus four: the review's
+filter verbs, epithets, dangling modifiers, close repetition and comma
+splices, and the pattern survey's pet phrases and repeated sentence shapes,
+with filter verbs and epithets shared by both. Spelling, grammar at large,
+pacing and the lore checks stay fixed: no one leaves typos alone on purpose.
+A habit left alone is taken out of the line that names it (the prose line is
+now built from its parts, joined exactly as the old string read) and also
+named in a "leave them alone" line, since a model still flags filter verbs
+from habit when they are merely not listed. The sparing review and passes
+with mechanics or prose carry the house style, that line and the notes; a
+lore-only pass carries none of it, like the native-language hint. Drafts,
+`/write` and the pattern fix stage get the house style only. The continuation
+and the pattern reread are left out (they copy the prose around them), and
+so is the summary family, so no summary or arc fingerprint moves.
+
+Every prompt builder was checked byte for byte against #1343's output with
+nothing set, across every review category mix, both world sources, with and
+without prior notes, and all the MCP prompts, besides the unit tests that
+pin it. The export does not carry the preferences, the same as style notes
+and the language; adding settings to the export is its own change. Items 4
+to 8 (feedback amount, reasons on edits, summary lengths, draft length,
+content limits) remain open on #1344.
+
 Language and spelling convention per universe and story (2026-11-24,
 `feat/language-setting-1343`, #1343). `universes.language` and
 `stories.language` (the story's wins; null on both keeps inferring) and

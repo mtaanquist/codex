@@ -674,6 +674,38 @@ describe('the protocol', () => {
 		expect(others).not.toContain('French');
 	});
 
+	it("states the Assistant preferences of the writer's own work only", async () => {
+		const get = async (args: Record<string, unknown>, name = 'copyedit') => {
+			const answered = await rpc(alice.token, 'prompts/get', { name, arguments: args });
+			return (answered.result!.messages as { content: { text: string } }[])[0].content.text;
+		};
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { quoteMarks: 'single', filterVerbs: 'leave' } })
+			.where(eq(universes.id, alice.universeId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { tense: 'present' }, assistantNotes: 'I overuse "just".' })
+			.where(eq(stories.id, alice.storyId));
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { quoteMarks: 'double' }, assistantNotes: 'Bob notes.' })
+			.where(eq(universes.id, bob.universeId));
+
+		const own = await get({ universeId: alice.universeId, sceneId: alice.sceneId });
+		expect(own).toContain('House style for this story: single quotation marks');
+		expect(own).toContain('present tense');
+		expect(own).toContain('Leave them alone');
+		expect(own).toContain('I overuse "just".');
+		expect(
+			await get({ universeId: alice.universeId, sceneId: alice.sceneId, brief: 'b' }, 'draft')
+		).toContain('present tense. Keep to it.');
+
+		const others = await get({ universeId: bob.universeId, sceneId: bob.sceneId });
+		expect(others).not.toContain('House style');
+		expect(others).not.toContain('Bob notes.');
+	});
+
 	it('refuses a tool it does not offer, and stages nothing', async () => {
 		const readOnly = await connect(alice.userId, 'Reader', ['read']);
 		const attempts: [string, string][] = [
@@ -785,6 +817,51 @@ describe('list_stories', () => {
 		}[];
 		expect(universesListed.find((row) => row.id === alice.universeId)!.language).toBe('en-GB');
 		expect(universesListed.find((row) => row.id === alice.otherUniverseId)!.language).toBeNull();
+	});
+});
+
+describe('the Assistant preferences on the list tools', () => {
+	it('gives the effective preferences of each story, and the universe default', async () => {
+		const listed = async () =>
+			JSON.parse((await call(alice, 'list_stories', { universeId: alice.universeId })).text)
+				.stories[0].preferences;
+		expect(await listed()).toEqual({
+			quoteMarks: null,
+			serialComma: null,
+			thoughts: null,
+			tense: null,
+			narration: null,
+			leaveAlone: [],
+			notes: null
+		});
+		await db
+			.update(universes)
+			.set({
+				assistantPreferences: { quoteMarks: 'single', epithets: 'leave' },
+				assistantNotes: 'U'
+			})
+			.where(eq(universes.id, alice.universeId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { narration: 'first', epithets: 'check' } })
+			.where(eq(stories.id, alice.storyId));
+		expect(await listed()).toMatchObject({
+			quoteMarks: 'single',
+			narration: 'first',
+			leaveAlone: [],
+			notes: 'U'
+		});
+		const universesListed = JSON.parse((await call(alice, 'list_universes')).text).universes as {
+			id: string;
+			preferences: { quoteMarks: string | null; leaveAlone: string[] };
+		}[];
+		expect(universesListed.find((row) => row.id === alice.universeId)!.preferences).toMatchObject({
+			quoteMarks: 'single',
+			leaveAlone: ['epithets']
+		});
+		expect(
+			universesListed.find((row) => row.id === alice.otherUniverseId)!.preferences.quoteMarks
+		).toBeNull();
 	});
 });
 

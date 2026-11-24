@@ -21,6 +21,8 @@ import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/s
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
+import { readPreferencesForm } from '#lib/assistant-preferences';
+import { savePreferences } from '#lib/server/assistant-preferences';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
@@ -101,6 +103,15 @@ export const actions: Actions = {
 			return fail(503, { action: 'export', message: 'Could not start the export. Try again.' });
 		}
 		return { action: 'export', queued: true };
+	},
+	saveAssistantPreferences: async ({ request, params, locals }) => {
+		const universe = await ownedUniverse(params.id, locals.user!.id);
+		const read = readPreferencesForm(await request.formData());
+		if (!read.ok) return fail(400, { action: 'assistant-preferences', message: read.reason });
+		if (!(await savePreferences(db, locals.user!.id, { universeId: universe.id }, read))) {
+			error(404, 'Not found');
+		}
+		return { action: 'assistant-preferences', saved: true };
 	},
 	update: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);

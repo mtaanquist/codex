@@ -52,6 +52,8 @@ import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
 import { normaliseLanguage } from '#lib/writing-languages';
+import { readPreferencesForm } from '#lib/assistant-preferences';
+import { savePreferences } from '#lib/server/assistant-preferences';
 import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The current edition, if the story has been published.
@@ -224,6 +226,15 @@ export const actions: Actions = {
 		// A changed slug moves this page's own URL.
 		if (slug !== story.slug) redirect(303, `/stories/${slug}/settings`);
 		return { action: 'update', saved: true };
+	},
+	saveAssistantPreferences: async ({ request, params, locals }) => {
+		const { story } = await ownedStory(params.id, locals.user!.id);
+		const read = readPreferencesForm(await request.formData());
+		if (!read.ok) return fail(400, { action: 'assistant-preferences', message: read.reason });
+		if (!(await savePreferences(db, locals.user!.id, { storyId: story.id }, read))) {
+			error(404, 'Not found');
+		}
+		return { action: 'assistant-preferences', saved: true };
 	},
 	saveGoals: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);

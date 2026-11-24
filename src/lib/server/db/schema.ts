@@ -194,6 +194,13 @@ export const universes = pgTable(
 		// tag from #lib/writing-languages; null is not set, and the Assistant
 		// then infers it from the text. A story's own language wins.
 		language: text('language'),
+		// The Assistant preferences its stories default to: house style and
+		// the habit checks to leave alone, as known keys from
+		// #lib/assistant-preferences (absent is not set). A story's own keys win.
+		assistantPreferences: jsonb('assistant_preferences').notNull().default({}),
+		// The writer's own notes for review and the pattern pass (habits to look
+		// for or leave alone), markdown, capped at MAX_ASSISTANT_NOTES.
+		assistantNotes: text('assistant_notes'),
 		// The Assistant models chosen for this universe, laid over the account's
 		// and under a story's own: { models }. Normalised in
 		// #lib/server/llm/config.ts.
@@ -255,6 +262,11 @@ export const stories = pgTable(
 		// The story's language and spelling convention, over the universe's;
 		// null uses the universe's. See effectiveLanguage.
 		language: text('language'),
+		// The story's Assistant preferences, key by key over the universe's,
+		// and its own notes, which replace the universe's when set. See
+		// effectivePreferences.
+		assistantPreferences: jsonb('assistant_preferences').notNull().default({}),
+		assistantNotes: text('assistant_notes'),
 		// Null if standalone or unordered.
 		positionInSeries: integer('position_in_series'),
 		visibility: text('visibility', { enum: ['private', 'unlisted', 'public'] })

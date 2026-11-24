@@ -6,6 +6,8 @@
 import { type LanguageSetting } from '../../../writing-languages.ts';
 import { IN_CONTEXT, PROSE_FORMAT, type WorldSource } from './format.ts';
 import { languageRule } from './language.ts';
+import type { PreferenceSetting } from '../../../assistant-preferences.ts';
+import { houseStyleLine } from './preferences.ts';
 
 // Where the writer is in the prose when they ask: a selected passage, or the
 // text leading up to the cursor. Lets a brief like "continue from here" land.
@@ -28,7 +30,12 @@ export function readCoauthorReference(raw: unknown): CoauthorReference | null {
 export function buildCoauthorMessage(
 	instruction: string,
 	reference?: CoauthorReference | null,
-	options: { source?: WorldSource; rewrite?: boolean; language?: LanguageSetting } = {}
+	options: {
+		source?: WorldSource;
+		rewrite?: boolean;
+		language?: LanguageSetting;
+		preferences?: PreferenceSetting;
+	} = {}
 ): string {
 	const source = options.source ?? IN_CONTEXT;
 	const rewrite = options.rewrite === true && reference?.kind === 'selection';
@@ -58,6 +65,10 @@ export function buildCoauthorMessage(
 	if (options.language) {
 		const rule = languageRule(options.language);
 		if (rule) parts.push(rule);
+	}
+	if (options.preferences) {
+		const style = houseStyleLine(options.preferences, 'write');
+		if (style) parts.push(style);
 	}
 	return parts.join('\n');
 }
