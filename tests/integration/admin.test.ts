@@ -5,7 +5,12 @@ import { and, eq, isNull } from 'drizzle-orm';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import { sessions, users } from '../../src/lib/server/db/schema';
-import { createFirstAdmin, instanceStats, setUserSuspended } from '../../src/lib/server/admin';
+import {
+	createFirstAdmin,
+	instanceStats,
+	setUserRole,
+	setUserSuspended
+} from '../../src/lib/server/admin';
 import { universes, stories } from '../../src/lib/server/db/schema';
 import { verifyPassword } from '../../src/lib/server/password';
 import type { Database } from '../../src/lib/server/auth';
@@ -163,5 +168,29 @@ describe('setUserSuspended', () => {
 			.values({ email: 'adm@example.com', displayName: 'A', passwordHash: 'x', role: 'admin' })
 			.returning({ id: users.id });
 		expect(await setUserSuspended(db, admin.id, true)).toBe(false);
+	});
+});
+
+describe('setUserRole', () => {
+	it('makes a user a moderator and back, and never touches an admin', async () => {
+		const [user] = await db
+			.insert(users)
+			.values({ email: 'mod@example.com', displayName: 'Mod', passwordHash: 'x', role: 'user' })
+			.returning({ id: users.id });
+		const [admin] = await db
+			.insert(users)
+			.values({ email: 'adm2@example.com', displayName: 'A', passwordHash: 'x', role: 'admin' })
+			.returning({ id: users.id });
+
+		expect(await setUserRole(db, user.id, 'moderator')).toBe(true);
+		const [mod] = await db.select().from(users).where(eq(users.id, user.id));
+		expect(mod.role).toBe('moderator');
+		expect(await setUserRole(db, user.id, 'user')).toBe(true);
+		const [back] = await db.select().from(users).where(eq(users.id, user.id));
+		expect(back.role).toBe('user');
+
+		expect(await setUserRole(db, admin.id, 'moderator')).toBe(false);
+		const [still] = await db.select().from(users).where(eq(users.id, admin.id));
+		expect(still.role).toBe('admin');
 	});
 });

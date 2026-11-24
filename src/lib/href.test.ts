@@ -17,6 +17,12 @@ describe('withQuery', () => {
 		);
 	});
 
+	it('repeats a key for each item of a list', () => {
+		expect(withQuery(path('/browse'), { hide: ['death', 'abuse'], q: 'x' })).toBe(
+			'/browse?hide=death&hide=abuse&q=x'
+		);
+	});
+
 	it('returns the path unchanged when nothing is added', () => {
 		expect(withQuery(path('/stories/a'), {})).toBe('/stories/a');
 	});

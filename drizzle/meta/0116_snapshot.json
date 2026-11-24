@@ -1,6 +1,6 @@
 {
-	"id": "f6cf8f2d-3f08-47bd-a619-7949574c0da8",
-	"prevId": "45fbd3d6-c965-4e48-b584-884d025db7ea",
+	"id": "069aa1b5-3ba6-4655-b500-b169bec0eba6",
+	"prevId": "15e83c19-e353-49a6-91d4-6ce3e85f15e4",
 	"version": "7",
 	"dialect": "postgresql",
 	"tables": {
@@ -1212,12 +1212,6 @@
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true
-				},
-				"provider": {
-					"name": "provider",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				},
 				"prompt_tokens": {
 					"name": "prompt_tokens",
@@ -4484,6 +4478,120 @@
 			"checkConstraints": {},
 			"isRLSEnabled": false
 		},
+		"public.publication_reports": {
+			"name": "publication_reports",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "uuid",
+					"primaryKey": true,
+					"notNull": true,
+					"default": "gen_random_uuid()"
+				},
+				"publication_id": {
+					"name": "publication_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"reason": {
+					"name": "reason",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"comment": {
+					"name": "comment",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "now()"
+				},
+				"resolved_at": {
+					"name": "resolved_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"resolved_by": {
+					"name": "resolved_by",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"resolution": {
+					"name": "resolution",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {
+				"publication_reports_open": {
+					"name": "publication_reports_open",
+					"columns": [
+						{
+							"expression": "created_at",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"where": "\"publication_reports\".\"resolved_at\" is null",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				},
+				"publication_reports_publication": {
+					"name": "publication_reports_publication",
+					"columns": [
+						{
+							"expression": "publication_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
+			"foreignKeys": {
+				"publication_reports_publication_id_publications_id_fk": {
+					"name": "publication_reports_publication_id_publications_id_fk",
+					"tableFrom": "publication_reports",
+					"tableTo": "publications",
+					"columnsFrom": ["publication_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"publication_reports_resolved_by_users_id_fk": {
+					"name": "publication_reports_resolved_by_users_id_fk",
+					"tableFrom": "publication_reports",
+					"tableTo": "users",
+					"columnsFrom": ["resolved_by"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
 		"public.publications": {
 			"name": "publications",
 			"schema": "",
@@ -4583,6 +4691,18 @@
 					"primaryKey": false,
 					"notNull": false
 				},
+				"removed_by": {
+					"name": "removed_by",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"removed_reason": {
+					"name": "removed_reason",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
 				"published_at": {
 					"name": "published_at",
 					"type": "timestamp with time zone",
@@ -4633,6 +4753,15 @@
 					"tableFrom": "publications",
 					"tableTo": "story_drafts",
 					"columnsFrom": ["source_draft_id"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"publications_removed_by_users_id_fk": {
+					"name": "publications_removed_by_users_id_fk",
+					"tableFrom": "publications",
+					"tableTo": "users",
+					"columnsFrom": ["removed_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"
@@ -6610,12 +6739,6 @@
 					"primaryKey": false,
 					"notNull": false
 				},
-				"language": {
-					"name": "language",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"position_in_series": {
 					"name": "position_in_series",
 					"type": "integer",
@@ -6985,12 +7108,6 @@
 					"primaryKey": false,
 					"notNull": true,
 					"default": false
-				},
-				"language": {
-					"name": "language",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				},
 				"llm_config": {
 					"name": "llm_config",
@@ -7471,12 +7588,6 @@
 					"primaryKey": false,
 					"notNull": true,
 					"default": false
-				},
-				"native_language": {
-					"name": "native_language",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				}
 			},
 			"indexes": {},

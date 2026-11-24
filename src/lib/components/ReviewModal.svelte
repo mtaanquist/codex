@@ -87,6 +87,7 @@
 		capped?: boolean;
 		spentUsd?: number | null;
 		spentEstimated?: boolean;
+		overCap?: boolean;
 	};
 
 	// What the pre-flight estimate reports, and the confirm step built on it. A
@@ -387,7 +388,11 @@
 								)}.
 							</p>
 							<p class="rm-note">
-								{capContinueAdvice(progress.spentUsd ?? 0, 'run the review again')}
+								{capContinueAdvice(
+									progress.spentUsd ?? 0,
+									'run the review again',
+									progress.overCap
+								)}
 								<HelpLink topic="account" label="usage and cost" />
 							</p>
 						{:else if progress.state === 'done' || progress.phase === 'done'}

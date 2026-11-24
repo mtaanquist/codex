@@ -50,8 +50,15 @@ export type ImportPlan = {
 		author: string | null;
 		brief: string | null;
 		descriptionMd: string;
-		// Absent unless the source carries a rating (AO3).
+		// Absent unless the source carries a rating (AO3) or a Codex export
+		// says so.
 		isAdult?: boolean;
+		// From a Codex export's story.md; keys and names as written there,
+		// checked against the lists when the story is created.
+		genres?: string[];
+		contentWarnings?: string[];
+		tags?: string[];
+		fandoms?: string[];
 	};
 	chapters: ImportedChapter[];
 	unfiled: ImportedScene[];
@@ -120,6 +127,22 @@ function parseScalar(value: string): string {
 function scalar(fields: FrontMatter, key: string): string | null {
 	const value = fields[key];
 	return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function list(fields: FrontMatter, key: string): string[] {
+	const value = fields[key];
+	return Array.isArray(value) ? value.filter((item) => item.trim() !== '') : [];
+}
+
+// The reader labels story.md carries, leaving out the ones it does not.
+function labelLists(fields: FrontMatter) {
+	const lists = {
+		genres: list(fields, 'genres'),
+		contentWarnings: list(fields, 'content-warnings'),
+		tags: list(fields, 'tags'),
+		fandoms: list(fields, 'fandoms')
+	};
+	return Object.fromEntries(Object.entries(lists).filter(([, value]) => value.length > 0));
 }
 
 // "01-the-toll-road" -> "The toll road"; the readable fallback when a title
@@ -209,7 +232,9 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		title: scalar(storyDoc.fields, 'title') ?? deslug(root.replace(/\/$/, '')) ?? 'Imported story',
 		author: scalar(storyDoc.fields, 'author'),
 		brief: scalar(storyDoc.fields, 'brief'),
-		descriptionMd: storyDoc.body.trim()
+		descriptionMd: storyDoc.body.trim(),
+		...(scalar(storyDoc.fields, 'adult') === 'true' && { isAdult: true }),
+		...labelLists(storyDoc.fields)
 	};
 	if (!scalar(storyDoc.fields, 'title')) {
 		problems.push(`story.md has no title; the story will be named "${story.title}".`);

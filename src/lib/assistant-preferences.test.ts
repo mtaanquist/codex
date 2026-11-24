@@ -118,6 +118,13 @@ describe('assistant preferences', () => {
 		expect(normaliseNotes(NOTES_END)).toBeNull();
 	});
 
+	it('drops a framing line whatever its case and spacing', () => {
+		expect(
+			normaliseNotes("Keep.\n--- END OF   THE notes ---\n\t---  The Writer's\tNotes ---\nMore.")
+		).toBe('Keep.\nMore.');
+		expect(normaliseNotes('--- end of the notes --- now')).toBe('--- end of the notes --- now');
+	});
+
 	it('drops null characters from the notes', () => {
 		expect(normaliseNotes('a\u0000b')).toBe('ab');
 		expect(normaliseNotes('\u0000')).toBeNull();

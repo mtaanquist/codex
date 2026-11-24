@@ -635,7 +635,7 @@ export function renderFrame(
 		const { language, preferences } = options.writingRules;
 		const rule = languageRule(language);
 		if (rule) lines.push(rule);
-		const style = houseStyleLine(preferences, 'write');
+		const style = houseStyleLine(preferences, 'chat');
 		if (style) lines.push(style);
 		const leaveAlone = leaveAloneLine(preferences);
 		if (leaveAlone) lines.push(leaveAlone);

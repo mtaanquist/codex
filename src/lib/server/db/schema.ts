@@ -61,11 +61,14 @@ export const users = pgTable('users', {
 	profilePublic: boolean('profile_public').notNull().default(false),
 	// Admin grants this before a user may publish public pages.
 	publicArchiveEnabled: boolean('public_archive_enabled').notNull().default(false),
+	// Keeps all of this author's stories and their name off Browse, whatever
+	// each story's own setting says.
+	hiddenFromBrowse: boolean('hidden_from_browse').notNull().default(false),
 	// How many invite codes the user may generate for friends; each code
 	// admits one person. Counted against the codes they have created.
 	inviteAllowance: integer('invite_allowance').notNull().default(0),
 	passwordHash: text('password_hash').notNull(),
-	role: text('role', { enum: ['admin', 'user'] }).notNull(),
+	role: text('role', { enum: ['admin', 'moderator', 'user'] }).notNull(),
 	// The Assistant's BYO endpoint, key (encrypted at rest), and per-role
 	// models; see #lib/server/llm/config.ts.
 	llmConfig: jsonb('llm_config').notNull().default({}),
@@ -201,6 +204,11 @@ export const universes = pgTable(
 		// The writer's own notes for review and the pattern pass (habits to look
 		// for or leave alone), markdown, capped at MAX_ASSISTANT_NOTES.
 		assistantNotes: text('assistant_notes'),
+		// The known setting from the curated fandom list this universe is set in.
+		// Every story in it carries the fandom on its public pages and in Browse.
+		fandomId: uuid('fandom_id').references((): AnyPgColumn => tags.id, {
+			onDelete: 'set null'
+		}),
 		// The Assistant models chosen for this universe, laid over the account's
 		// and under a story's own: { models }. Normalised in
 		// #lib/server/llm/config.ts.
@@ -274,6 +282,17 @@ export const stories = pgTable(
 			.default('private'),
 		// Author-flagged adult content; readers avoid it by default.
 		isAdult: boolean('is_adult').notNull().default(false),
+		// The author's choice to show the story on Browse. Only meaningful while
+		// the story is public; leaving public clears it.
+		listedInBrowse: boolean('listed_in_browse').notNull().default(false),
+		// Set when a moderator removes the story from Browse; the author cannot
+		// list it again until a moderator allows it. The reason is a report
+		// reason key (#lib/report-reasons).
+		browseBlockedAt: timestamp('browse_blocked_at', { withTimezone: true }),
+		browseBlockedReason: text('browse_blocked_reason'),
+		browseBlockedBy: uuid('browse_blocked_by').references((): AnyPgColumn => users.id, {
+			onDelete: 'set null'
+		}),
 		// References assets(id); null renders a generated default cover on the
 		// public shelf.
 		coverAssetId: uuid('cover_asset_id'),
@@ -309,6 +328,47 @@ export const stories = pgTable(
 			.on(table.ownerId, table.slug)
 			.where(sql`${table.deletedAt} is null`),
 		index('stories_universe_idx').on(table.universeId)
+	]
+);
+
+// Free-form tags authors put on their stories, and the lists an admin or
+// moderator curates for authors to pick from: fandoms (known settings),
+// genres and content warnings. One row
+// per (kind, slug); the name is shown as first typed. A merge only sets
+// merged_into_id, so it can be undone, and reads follow it to the surviving
+// tag. A removed tag is hidden everywhere and cannot be typed again.
+export const tags = pgTable(
+	'tags',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		kind: text('kind', { enum: ['tag', 'fandom', 'genre', 'warning'] }).notNull(),
+		name: text('name').notNull(),
+		slug: text('slug').notNull(),
+		mergedIntoId: uuid('merged_into_id').references((): AnyPgColumn => tags.id, {
+			onDelete: 'set null'
+		}),
+		removedAt: timestamp('removed_at', { withTimezone: true }),
+		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [uniqueIndex('tags_kind_slug').on(table.kind, table.slug)]
+);
+
+// The tags, fandoms, genres and warnings on a story: the author's live
+// choice. Only the warnings' names are frozen, onto each edition at publish.
+export const storyTags = pgTable(
+	'story_tags',
+	{
+		storyId: uuid('story_id')
+			.references(() => stories.id, { onDelete: 'cascade' })
+			.notNull(),
+		tagId: uuid('tag_id')
+			.references(() => tags.id, { onDelete: 'cascade' })
+			.notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.storyId, table.tagId] }),
+		index('story_tags_tag').on(table.tagId)
 	]
 );
 
@@ -980,6 +1040,12 @@ export const publications = pgTable(
 		descriptionMd: text('description_md'),
 		// Carried from stories.is_adult; the reader pages confirm before showing.
 		isAdult: boolean('is_adult').notNull().default(false),
+		// The names of the story's content warnings at publish, frozen like
+		// is_adult so a later edit or rename does not change a published edition.
+		contentWarnings: text('content_warnings')
+			.array()
+			.notNull()
+			.default(sql`'{}'::text[]`),
 		// Frozen chapters and scenes for this edition, as markdown.
 		content: jsonb('content').notNull(),
 		// Optional, e.g. 'Edition 2'.
@@ -1000,8 +1066,12 @@ export const publications = pgTable(
 			.$type<{ format: string; error: string }[]>()
 			.notNull()
 			.default([]),
-		// Set by an admin takedown; hides the edition without deleting the source.
+		// Set by a takedown (an admin or a moderator); hides the edition without
+		// deleting the source. removedBy is who took it down.
 		removedAt: timestamp('removed_at', { withTimezone: true }),
+		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
+		// A key from REPORT_REASONS (#lib/report-reasons), shown to the author.
+		removedReason: text('removed_reason'),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
@@ -1010,6 +1080,33 @@ export const publications = pgTable(
 		uniqueIndex('publications_one_current_per_story')
 			.on(table.storyId)
 			.where(sql`${table.isCurrent}`)
+	]
+);
+
+// A reader's report about a published edition. Not authored content, so not
+// exported; it goes with the edition. Neither the reporter's address nor an
+// email is kept.
+export const publicationReports = pgTable(
+	'publication_reports',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		publicationId: uuid('publication_id')
+			.references(() => publications.id, { onDelete: 'cascade' })
+			.notNull(),
+		// A key from REPORT_REASONS.
+		reason: text('reason').notNull(),
+		comment: text('comment'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+		// 'taken_down', 'removed_from_browse' or 'dismissed'.
+		resolution: text('resolution')
+	},
+	(table) => [
+		index('publication_reports_open')
+			.on(table.createdAt)
+			.where(sql`${table.resolvedAt} is null`),
+		index('publication_reports_publication').on(table.publicationId)
 	]
 );
 
@@ -1742,6 +1839,8 @@ export type ReviewRunState = {
 	spentUsd?: number;
 	// Set when spentUsd includes estimated counts, so it is approximate.
 	spentEstimated?: boolean;
+	// Set when the request held back could alone cost more than the whole cap.
+	overCap?: boolean;
 	// Set when the run started from an earlier capped run's progress, so its
 	// completed list includes that run's scenes (see adoptCappedRun).
 	carriedForward?: boolean;

@@ -43,8 +43,9 @@ users (
   bio_md              text,                 -- short bio shown on the public profile shelf
   profile_public      boolean not null default false,  -- whether the '@handle' shelf is listed publicly
   public_archive_enabled boolean not null default false,  -- admin grants this before a user may publish public pages
+  hidden_from_browse  boolean not null default false,  -- keeps all their stories and their name off Browse
   password_hash       text not null,
-  role                text not null,        -- 'admin' | 'user'
+  role                text not null,        -- 'admin' | 'moderator' | 'user'
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
   preferences         jsonb not null default '{}',  -- theme, content width, autocomplete mode, entity underline toggle, library view, etc.
   plan_id             uuid references plans(id),    -- null falls back to the default plan; see Plans and entitlements
@@ -205,6 +206,7 @@ universes (
   owner_id        uuid references users(id) not null,
   name            text not null,
   description_md  text,
+  fandom_id       uuid references tags on delete set null, -- a fandom from the curated list; its stories carry it
   deleted_at      timestamptz,      -- set while in the trash; null means live
   created_at      timestamptz not null,
   updated_at      timestamptz not null
@@ -221,6 +223,10 @@ stories (
   position_in_series  int,              -- null if standalone or unordered
   visibility          text not null default 'private',  -- 'private' | 'unlisted' | 'public'
   is_adult            boolean not null default false,   -- author-flagged adult content; readers avoid it by default
+  listed_in_browse    boolean not null default false,   -- the author's choice to show it on Browse; cleared when it leaves public
+  browse_blocked_at   timestamptz,                      -- a moderator removed it from Browse; the author cannot list it again until cleared
+  browse_blocked_reason text,                           -- a report reason key (#lib/report-reasons)
+  browse_blocked_by   uuid references users on delete set null,
   cover_asset_id      uuid references assets(id),       -- null renders a default cover from title and author
   cover_color         text,                             -- palette token tinting the default cover; random on insert, null on rows from before it
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
@@ -779,16 +785,49 @@ publications (
   author          text,
   description_md  text,
   is_adult        boolean not null default false,  -- carried from stories.is_adult; lets the reader site filter
+  content_warnings text[] not null default '{}', -- names of the story's warning tags at publish, frozen
   content         jsonb not null,        -- frozen chapters and scenes for this edition
   version_label   text,                  -- optional, e.g. 'Edition 2'
   source_draft_id uuid references story_drafts(id) on delete set null,  -- the saved draft it came from, if any
   is_current      boolean not null default true,
-  removed_at      timestamptz,           -- set by an admin takedown; hides the edition without deleting the source
+  removed_at      timestamptz,           -- set by a takedown (admin or moderator); hides the edition without deleting the source
+  removed_by      uuid references users on delete set null, -- who took it down
+  removed_reason  text,                  -- a REPORT_REASONS key (#lib/report-reasons), shown to the author
   published_at    timestamptz not null
 )
 
 -- index on (handle) for profile lookups
 -- index on (story_id, is_current) for the current edition of a story
+
+tags (
+  id              uuid primary key,
+  kind            text not null,         -- 'tag' (typed by authors) | 'fandom' | 'genre' | 'warning' (curated lists)
+  name            text not null,         -- shown as first typed; admins and moderators can rename
+  slug            text not null,         -- lowercase, spaces/hyphens/underscores as one separator; unique per kind
+  merged_into_id  uuid references tags on delete set null, -- reads follow it to the surviving tag
+  removed_at      timestamptz,           -- hidden everywhere, and cannot be typed again
+  removed_by      uuid references users on delete set null,
+  created_at      timestamptz not null
+)
+
+story_tags (
+  story_id        uuid references stories on delete cascade,
+  tag_id          uuid references tags on delete cascade,
+  primary key (story_id, tag_id)
+)
+
+publication_reports (
+  id              uuid primary key,
+  publication_id  uuid references publications on delete cascade not null,
+  reason          text not null,         -- a REPORT_REASONS key
+  comment         text,                  -- optional, up to 500 characters
+  created_at      timestamptz not null,
+  resolved_at     timestamptz,           -- null while open
+  resolved_by     uuid references users on delete set null,
+  resolution      text                   -- 'taken_down' | 'removed_from_browse' | 'dismissed'
+)
+
+-- partial index on (created_at) where resolved_at is null, for the queue
 ```
 
 Key points:
@@ -799,7 +838,7 @@ Key points:
 - **Adult content.** `is_adult` is carried from the story so the reader site can keep adult work out of default listings and behind a confirmation. It marks content, it does not ban it.
 - **Addresses.** A public story is read at `/@handle/<stories.slug>`, any readable one at `/@handle/<story id>`, and a universe with a listed story at `/@handle/universes/<universes.slug>`.
 - **Old slugs.** `slug_history (owner_id, kind 'story' | 'universe', slug, story_id, universe_id, created_at)`, unique on `(owner_id, kind, slug)`, with a check that `kind` is one of the two (migration 0114), records each slug a rename moved off: always for a universe, and for a story once it has been published. The public pages redirect an old slug (308) to the current one while the target is readable at its slug, and `uniqueSlug` treats the rows as taken, so no other story (or universe) of the account picks one up; a rename (or a restore) back to its own old slug removes that row. A save locks the row first and compares the name it holds now, so a form that read an older name cannot leave the slug behind; a rename or a restore then takes a per-account advisory lock (`slugs:<owner id>`), so two at once cannot lose a slug. A trashed story's current slug is not reserved: the trash frees it, as before. Purging the target sets its id to null and keeps the reservation; deleting the account deletes the rows. Not authored content: left out of exports and imports.
-- **Hosted vs self-host.** On a self-hosted instance these rows are read directly. On the hosted service the worker syncs them to a central reader site keyed by `handle`. Either way the rows have the same shape.
+- **Reports.** `publication_reports` holds readers' reports about an edition. Nothing about the reporter is stored. Not authored content: not exported, and deleted with the edition.
 
 ---
 

@@ -186,7 +186,10 @@ export function ceilingPromptTokens(
 // prompt, the results so far, and what it wrote so far. Nothing holds the
 // model to one search per round (it can run several in the first), so every
 // search's results are counted in every round after the first, and so is the
-// reply; the prompt is counted once per round.
+// reply; the prompt is counted once per round. All of it is priced at the
+// cache-write rate: the cache markers sit on the system block and the last user
+// block, so each round resends the cached prefix, and a missed lookup writes it
+// again rather than reading it.
 //
 // The 10k ceiling is per search, and with the dated 2026 tool it assumes what
 // dynamic filtering adds to the context (the filtering code and its output, on
@@ -200,20 +203,6 @@ export function searchingPromptTokens(promptTokens: number, maxTokens: number): 
 	const later = SERVER_LOOP_MAX_ROUNDS - 1;
 	const results = WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS * later;
 	return SERVER_LOOP_MAX_ROUNDS * promptTokens + results + later * maxTokens;
-}
-
-// Of that input, the most the loop can write to Claude's cache. Each round only
-// adds to the conversation, so across the loop a token is written at most once
-// and the writes come to at most its final length: the prompt, every search's
-// results, and the reply of each round before the last. The rest of the
-// rounds' input is counted at the plain prompt rate, not the cache-read rate,
-// since a read is not guaranteed.
-export function searchingCacheWriteTokens(promptTokens: number, maxTokens: number): number {
-	return (
-		promptTokens +
-		WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS +
-		(SERVER_LOOP_MAX_ROUNDS - 1) * maxTokens
-	);
 }
 
 // The persona system message the gateway puts at the front of every turn.
@@ -316,7 +305,7 @@ async function respondWithRetry(
 ): Promise<ProviderResponse & { failedUsage?: TokenUsage }> {
 	let failedUsage: TokenUsage | undefined;
 	for (let attempt = 0; ; attempt += 1) {
-		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(req);
+		if (attempt === 0 && wouldPassCap(p, req, request)) throw heldAtCap(p, req, request);
 		try {
 			const response = await p.provider.respond(request, p.conn, p.http, req.signal);
 			return failedUsage ? { ...response, failedUsage } : response;
@@ -330,7 +319,7 @@ async function respondWithRetry(
 				throw err;
 			}
 			if (req.mayResend && !req.mayResend()) throw err;
-			if (wouldPassCap(p, req, request)) throw heldAtCap(req);
+			if (wouldPassCap(p, req, request)) throw heldAtCap(p, req, request);
 			logEvent('warn', 'assistant.retry', {
 				userId: req.userId,
 				model: p.model,
@@ -348,30 +337,30 @@ async function respondWithRetry(
 // have billed, a resume, a tool round), so the rule lives here and not in each
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
 // Claude's cache, the dearest way it can be billed. A request that may search
-// is counted as every round of the search loop (searchingPromptTokens), with
-// only what the loop can write to the cache at the write rate
-// (searchingCacheWriteTokens). A caller with its own mayResend hook holds its
+// is counted as every round of the search loop (searchingPromptTokens), all at
+// the write rate. A caller with its own mayResend hook holds its
 // own ceiling (drafting, against the cap in force at each request).
-function wouldPassCap(
-	p: Prepared,
-	req: GatewayRequest,
-	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
-): boolean {
-	if (!req.meter || req.mayResend) return false;
+type CappedRequest = Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>;
+
+function ceilingUsage(p: Prepared, request: CappedRequest): TokenUsage {
 	const prompt = ceilingPromptTokens(request.messages, request.tools);
 	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, request.maxTokens) : prompt;
-	const writable = p.webSearch ? searchingCacheWriteTokens(prompt, request.maxTokens) : prompt;
-	const written = p.claude ? writable : 0;
-	return req.meter.wouldPassCap(p.model, {
+	const written = p.claude ? promptTokens : 0;
+	return {
 		promptTokens,
 		completionTokens: request.maxTokens,
 		cacheWriteTokens: written,
 		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
-	});
+	};
 }
 
-function heldAtCap(req: GatewayRequest): SpendCapError {
-	req.meter?.hold();
+function wouldPassCap(p: Prepared, req: GatewayRequest, request: CappedRequest): boolean {
+	if (!req.meter || req.mayResend) return false;
+	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request));
+}
+
+function heldAtCap(p: Prepared, req: GatewayRequest, request: CappedRequest): SpendCapError {
+	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request)));
 	return new SpendCapError();
 }
 

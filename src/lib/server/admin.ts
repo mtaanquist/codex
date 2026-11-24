@@ -4,6 +4,7 @@ import { authTokens, sessions, stories, universes, users, userTotp } from './db/
 import { hashPassword } from './password.ts';
 import { isUniqueViolation } from './db-errors.ts';
 import { revokeTokens } from './tokens.ts';
+import type { Role } from '../roles.ts';
 import { revokeAllGrants } from './mcp/oauth.ts';
 
 export type CreateAdminResult = { ok: true; id: string } | { ok: false; reason: string };
@@ -108,7 +109,7 @@ export type AdminUser = {
 	id: string;
 	email: string;
 	displayName: string;
-	role: 'admin' | 'user';
+	role: Role;
 	emailVerifiedAt: Date | null;
 	approvedAt: Date | null;
 	// What they wrote when asking for the account, if anything.
@@ -203,6 +204,21 @@ export async function setUserArchive(
 // Suspends or unsuspends an account. Suspending blocks sign-in and revokes the
 // account's live sessions, unused sign-in links and connected apps then and there, so
 // unsuspending later cannot bring old access back to life; it never touches an admin.
+// Makes an account a moderator or a plain user again. Admins are left alone:
+// this is not a way to grant or take away admin.
+export async function setUserRole(
+	db: Database,
+	userId: string,
+	role: 'moderator' | 'user'
+): Promise<boolean> {
+	const [row] = await db
+		.update(users)
+		.set({ role })
+		.where(and(eq(users.id, userId), ne(users.role, 'admin')))
+		.returning({ id: users.id });
+	return !!row;
+}
+
 export async function setUserSuspended(
 	db: Database,
 	userId: string,

@@ -144,7 +144,7 @@ Every page uses exactly one of these five wrappers. Do not build a sixth.
 | Page | `.page-shell` + `AppBar.svelte` | Library, print preview, a saved draft, the error page when signed in |
 | Settings | `SettingsShell.svelte` + `AppBar.svelte` | Account, admin, story settings, universe settings |
 | Reader | `.reader-shell` + `AppBar.svelte` (`shell="reader"`) | The public shelf, the public universe page, and the public story page |
-| Public | `.public-surface` + `AppBar.svelte` (`shell="public"`) + `ReaderFooter.svelte` (`shell="public"`) | The landing page, and `AuthShell.svelte` over it for sign-in, sign-up, every email-flow page, and the error page when signed out |
+| Public | `.public-surface` + `AppBar.svelte` (`shell="public"`) + `ReaderFooter.svelte` (`shell="public"`) | The landing page, and `AuthShell.svelte` over it for sign-in, sign-up, every email-flow page, a story's report form, and the error page when signed out |
 
 **Narrow windows.** At 960px wide and narrower the story editor and the review shell (owner
 and guest) show one pane at a time: a `<nav class="seg full pane-tabs">` sits between
@@ -204,13 +204,22 @@ width on a wide screen sits to the right. A section that holds a wide table
 or a stat grid passes `wide` for an 860px column (`.admin-main-inner.wide`):
 admin Overview and Users, and universe Details.
 
+**The admin area's shell** lives in `src/routes/admin/+layout.svelte`, so the
+admin-only sections (`/admin/[[section]]`) and the moderation pages (their own
+routes, such as `/admin/published`) share one sidebar. A moderator sees only
+the Moderation group. A new moderation page is a route under `/admin` with its
+own `requireModerator` load and actions, and a link in that group.
+
 **Setting rows.** When the column is at least 600px wide (a container query
 on `.admin-main-inner`), every `.field` in it lays out as a row: the label on
 the left (13rem), the controls and their `.field-hint` on the right, and a
 `.field-grid` pair as two rows. Narrower, fields stack. This comes from the
 shared `.field` rules in `pages.css`, so a settings page gets it by using
 `.field` with a real `<label for>`; do not build a separate row markup. A
-`label.check-row` is a control and stays on the right.
+`label.check-row` is a control and stays on the right. A group of checkboxes
+with no single control to label (a `role="group"` field) takes a
+`span.field-label` with an id for `aria-labelledby`; it sits where a label
+would.
 
 **"On this page".** A settings section too long for one screen (account
 Security and Assistant) lists its groups as `.contents-nav` anchors in the
@@ -686,8 +695,10 @@ The outward face of the work, built from the same tokens as everything else.
   spine in the full colour, the page mixed 30% into `--bg-card`, the title in
   `--text`. The library card, the public shelf and the story settings preview
   all draw the same blank, so a book looks the same everywhere. The public
-  shelf and the public universe page draw their covers with `ShelfGrid.svelte`;
-  do not copy its markup into a third page.
+  shelf, the public universe page and Browse draw their covers with
+  `ShelfGrid.svelte`; do not copy its markup into another page. Browse passes
+  books that carry their own `handle` and `byline` (and `universe`), and the
+  grid adds `.shelf-item-by` under each card, outside the card's link.
 - **One footer, on both pages:** the mark and "Written in Codex", who
   published it, and three links (Reading in Codex, About Codex, Write your
   own). "Write your own" targets the app root - the library for a signed-in
@@ -708,16 +719,26 @@ The outward face of the work, built from the same tokens as everything else.
 Everything a signed-out visitor sees, in `public.css`, loaded last.
 `.public-surface` wraps `AppBar` (`shell="public"`), the page's own main, and
 `ReaderFooter` (`shell="public"`). The landing page fills it with `.public-in`;
-`AuthShell.svelte` fills it with `.auth-main` and one `.auth-card`.
+`AuthShell.svelte` fills it with `.auth-main` and one `.auth-card`. Browse
+(`/browse`) fills `.public-in` with a heading, a GET filter form (search,
+genre and fandom selects, a fieldset of warnings to hide, the adult box) and
+a `ShelfGrid`.
 
 - **The public bar is the fourth reduction of the one bar**, not a second
   header: brand linking home, then theme and help, and no path, because a
-  visitor is not anywhere in the library. `AppBar` takes `crumbs` optional for
+  visitor is not anywhere in the library. While Browse is on
+  (`page.data.browse`), the public and reader bars add a plain `.appbar-link`
+  to it before the tools, and both footers add "Browse stories". `AppBar` takes `crumbs` optional for
   this shell and leaves out the rule and the path nav entirely.
 - **One footer serves both public faces.** `ReaderFooter` takes
   `shell="reader" | "public"`. The public reduction says "Codex" rather than
   "Written in Codex", names no author, and links to the handbook and Reading in
   Codex. Every link on these pages points at an article that exists.
+- **The landing page has a short face.** On a private instance (the default
+  instance type, set in Admin > Instance) it shows only the hero: title, one
+  line, the sign-in and sign-up buttons, and `.hero-note` saying who can get
+  an account. The figure and the model grid below belong to the public
+  service face.
 - **The landing page shows the workspace rather than describing it.** `.ws-*`
   is a stylised rendering of the three-pane shell drawn from the same tokens as
   the product, so it is correct in dark, light and warm and stays crisp at any
@@ -1005,13 +1026,15 @@ once the drag handlers stop swallowing keyboard events.
 
 ## Component index
 
-Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `TagInput`,
+Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `FandomSuggest` (a text box with
+fandom-list suggestions as a combobox; new universe and universe settings), `TagInput` (chips; optional
+`suggestions` for the browser's completion list, used by story fandoms),
 `ModeSwitcher`, `PanelStrip`, `NewMenu`, `ThemePicker`, `CrumbMenu`,
 `SidebarSearch`, `HelpLink`, `FormStatus`, `ReviewAvatar`, `ReviewReplyForm`,
 `ReviewReplyRow`, `ReviewMarginRail`, `ReviewSelectionToolbar`.
 
 Shared composites: `AppBar`, `SettingsShell`, `DocsShell`, `AuthShell`,
-`ReaderFooter`, `ShelfGrid`,
+`ReaderFooter`, `ShelfGrid`, `StoryLabels`,
 `UserMenu`, `NotificationBell`, `BackgroundJobs`, `ActivityCenter`, `ViewMenu`,
 `EditorToolbar`, `SelectionMenu`, `NotesWorkspace`, `NotesSidebar`, `PlanSidebar`,
 `StoryOutline`, `StoryRowMenu`, `StoryDraftsMenu`, `RevisionHistory`, `EntityBadgePicker`,

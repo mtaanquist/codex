@@ -42,6 +42,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 		aborted: run.aborted ?? false,
 		capped: run.capped ?? false,
 		spentUsd: run.spentUsd ?? null,
-		spentEstimated: run.spentEstimated ?? false
+		spentEstimated: run.spentEstimated ?? false,
+		overCap: run.overCap ?? false
 	});
 };

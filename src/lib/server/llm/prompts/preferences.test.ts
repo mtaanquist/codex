@@ -58,6 +58,13 @@ describe('preference prompt lines', () => {
 			'House style for this story: double quotation marks for dialogue ("Like this."). Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
 		);
 		expect(houseStyleLine(STYLE, 'write')).not.toContain('narration only');
+		// The chat keeps to the style and comments on prose, so it gets both.
+		const chat = houseStyleLine(STYLE, 'chat');
+		expect(chat).toContain('Keep to it.');
+		expect(chat).toMatch(/apply to the narration only: do not flag dialogue, .* for them\.$/);
+		expect(houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'chat')).toBe(
+			houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'write')
+		);
 	});
 
 	it('states each house-style choice that is set', () => {
@@ -159,6 +166,11 @@ describe('the prompts that carry the preferences', () => {
 		expect(lore).not.toContain('House style');
 		expect(lore).not.toContain('Leave them alone');
 		expect(lore).not.toContain('suddenly');
+		// The pattern tool line drops a habit left alone only where wording is read.
+		const withTool = (categories: Parameters<typeof buildReviewMessage>[2]) =>
+			buildReviewMessage(scene, [], categories, false, true, IN_CONTEXT, NO_LANGUAGE, p);
+		expect(withTool(['prose'])).toContain('(an epithet habit, a pet phrase)');
+		expect(withTool(['lore'])).toContain('(an epithet habit, a pet phrase, filter verbs)');
 	});
 
 	it('the pattern survey and brief follow the switches and the notes', () => {
