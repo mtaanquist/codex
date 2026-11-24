@@ -17,6 +17,7 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import { tagsForStories } from './tags.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
@@ -105,6 +106,10 @@ export async function publishStory(
 			...content.unfiled.flatMap((scene) => findAssetReferences(scene.bodyMd))
 		])
 	];
+	const shownLabels = (await tagsForStories(db, [story.id])).get(story.id) ?? [];
+	const contentWarnings = shownLabels
+		.filter((tag) => tag.kind === 'warning')
+		.map((tag) => tag.name);
 	try {
 		const publicationId = await db.transaction(async (tx) => {
 			await tx
@@ -119,6 +124,8 @@ export async function publishStory(
 					handle: user.handle!,
 					...frontMatter,
 					isAdult: story.isAdult,
+					// Like the adult flag, the author's current choice, by name.
+					contentWarnings,
 					content,
 					versionLabel: versionLabel?.trim() || null,
 					sourceDraftId: draftId || null
@@ -225,8 +232,15 @@ export async function publicShelf(db: Database, handle: string, universeId?: str
 			)
 		)
 		.orderBy(desc(publications.publishedAt));
+	const labels = await tagsForStories(
+		db,
+		rows.map((row) => row.storyId)
+	);
 	return rows.map((row) => ({
 		...row,
+		genres: (labels.get(row.storyId) ?? [])
+			.filter((tag) => tag.kind === 'genre')
+			.map((tag) => tag.name),
 		coverColor: storyCoverColor({ id: row.storyId, coverColor: row.coverColor })
 	}));
 }
@@ -316,6 +330,7 @@ export async function publicEdition(db: Database, handle: string, ref: string) {
 			author: publications.author,
 			descriptionMd: publications.descriptionMd,
 			isAdult: publications.isAdult,
+			contentWarnings: publications.contentWarnings,
 			content: publications.content,
 			versionLabel: publications.versionLabel,
 			downloadsPublic: publications.downloadsPublic,

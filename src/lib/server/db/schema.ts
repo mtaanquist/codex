@@ -289,6 +289,47 @@ export const stories = pgTable(
 	]
 );
 
+// Free-form tags authors put on their stories, and the lists an admin or
+// moderator curates for authors to pick from: fandoms (known settings),
+// genres and content warnings. One row
+// per (kind, slug); the name is shown as first typed. A merge only sets
+// merged_into_id, so it can be undone, and reads follow it to the surviving
+// tag. A removed tag is hidden everywhere and cannot be typed again.
+export const tags = pgTable(
+	'tags',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		kind: text('kind', { enum: ['tag', 'fandom', 'genre', 'warning'] }).notNull(),
+		name: text('name').notNull(),
+		slug: text('slug').notNull(),
+		mergedIntoId: uuid('merged_into_id').references((): AnyPgColumn => tags.id, {
+			onDelete: 'set null'
+		}),
+		removedAt: timestamp('removed_at', { withTimezone: true }),
+		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [uniqueIndex('tags_kind_slug').on(table.kind, table.slug)]
+);
+
+// The tags, fandoms, genres and warnings on a story: the author's live
+// choice. Only the warnings' names are frozen, onto each edition at publish.
+export const storyTags = pgTable(
+	'story_tags',
+	{
+		storyId: uuid('story_id')
+			.references(() => stories.id, { onDelete: 'cascade' })
+			.notNull(),
+		tagId: uuid('tag_id')
+			.references(() => tags.id, { onDelete: 'cascade' })
+			.notNull()
+	},
+	(table) => [
+		primaryKey({ columns: [table.storyId, table.tagId] }),
+		index('story_tags_tag').on(table.tagId)
+	]
+);
+
 // Slugs a story or universe has moved off by a rename: always for a
 // universe, and for a story once it has been published. Two jobs: a public link made
 // before the rename redirects to the current address, and no other story (or
@@ -957,6 +998,12 @@ export const publications = pgTable(
 		descriptionMd: text('description_md'),
 		// Carried from stories.is_adult; the reader pages confirm before showing.
 		isAdult: boolean('is_adult').notNull().default(false),
+		// The names of the story's content warnings at publish, frozen like
+		// is_adult so a later edit or rename does not change a published edition.
+		contentWarnings: text('content_warnings')
+			.array()
+			.notNull()
+			.default(sql`'{}'::text[]`),
 		// Frozen chapters and scenes for this edition, as markdown.
 		content: jsonb('content').notNull(),
 		// Optional, e.g. 'Edition 2'.

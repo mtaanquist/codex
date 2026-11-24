@@ -216,7 +216,10 @@ the left (13rem), the controls and their `.field-hint` on the right, and a
 `.field-grid` pair as two rows. Narrower, fields stack. This comes from the
 shared `.field` rules in `pages.css`, so a settings page gets it by using
 `.field` with a real `<label for>`; do not build a separate row markup. A
-`label.check-row` is a control and stays on the right.
+`label.check-row` is a control and stays on the right. A group of checkboxes
+with no single control to label (a `role="group"` field) takes a
+`span.field-label` with an id for `aria-labelledby`; it sits where a label
+would.
 
 **"On this page".** A settings section too long for one screen (account
 Security and Assistant) lists its groups as `.contents-nav` anchors in the
@@ -1016,13 +1019,14 @@ once the drag handlers stop swallowing keyboard events.
 
 ## Component index
 
-Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `TagInput`,
+Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `TagInput` (chips; optional
+`suggestions` for the browser's completion list, used by story fandoms),
 `ModeSwitcher`, `PanelStrip`, `NewMenu`, `ThemePicker`, `CrumbMenu`,
 `SidebarSearch`, `HelpLink`, `FormStatus`, `ReviewAvatar`, `ReviewReplyForm`,
 `ReviewReplyRow`, `ReviewMarginRail`, `ReviewSelectionToolbar`.
 
 Shared composites: `AppBar`, `SettingsShell`, `DocsShell`, `AuthShell`,
-`ReaderFooter`, `ShelfGrid`,
+`ReaderFooter`, `ShelfGrid`, `StoryLabels`,
 `UserMenu`, `NotificationBell`, `BackgroundJobs`, `ActivityCenter`, `ViewMenu`,
 `EditorToolbar`, `SelectionMenu`, `NotesWorkspace`, `NotesSidebar`, `PlanSidebar`,
 `StoryOutline`, `StoryRowMenu`, `StoryDraftsMenu`, `RevisionHistory`, `EntityBadgePicker`,

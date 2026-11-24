@@ -2,6 +2,7 @@ import { slugify } from '../slug.ts';
 import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { logEvent } from './log.ts';
+import { tagsForStories } from './tags.ts';
 import {
 	assistantDrafts,
 	assets,
@@ -173,6 +174,8 @@ export type ExportStory = {
 	author: string | null;
 	brief: string | null;
 	descriptionMd: string | null;
+	// Present for a live story; a frozen edition's export leaves it out.
+	isAdult?: boolean;
 };
 
 // The content the builders consume: a live story gathered from the database,
@@ -211,7 +214,25 @@ export type StoryContent = {
 	freeformNotes?: ExportFreeformNote[];
 	// Saved drafts, for the working archive only.
 	drafts?: ExportDraft[];
+	// The story's genres, warnings, fandoms and tags, for a live story.
+	labels?: { kind: string; name: string }[];
 };
+
+// The story.md front matter: what the story is, and how it is labelled for
+// readers, so an export round-trips the labels too.
+function storyFront(story: ExportStory, labels: { kind: string; name: string }[] = []) {
+	const names = (kind: string) => labels.filter((tag) => tag.kind === kind).map((tag) => tag.name);
+	return {
+		title: story.title,
+		author: story.author,
+		brief: story.brief,
+		adult: story.isAdult ? 'true' : null,
+		genres: names('genre'),
+		'content-warnings': names('warning'),
+		fandoms: names('fandom'),
+		tags: names('tag')
+	};
+}
 
 // A saved draft as the archives carry it: a folder under drafts/ holding the
 // story as it was, worldbuilding included.
@@ -258,7 +279,8 @@ export async function gatherStory(db: Database, story: ExportStory): Promise<Sto
 		chapters: chapterList,
 		scenes: sceneList,
 		notes: await gatherStoryNotes(db, story.id),
-		freeformNotes: await gatherStoryFreeformNotes(db, story.id)
+		freeformNotes: await gatherStoryFreeformNotes(db, story.id),
+		labels: (await tagsForStories(db, [story.id])).get(story.id) ?? []
 	};
 }
 
@@ -363,8 +385,7 @@ export async function buildStoryZip(
 	entries.push(
 		textEntry(
 			`${root}/story.md`,
-			frontMatter({ title: story.title, author: story.author, brief: story.brief }) +
-				(story.descriptionMd ?? '')
+			frontMatter(storyFront(story, content.labels)) + (story.descriptionMd ?? '')
 		)
 	);
 
@@ -625,12 +646,16 @@ async function gatherUniverseDocs(
 			.where(and(eq(stories.universeId, universe.id), isNull(stories.deletedAt)))
 			.orderBy(asc(stories.positionInSeries), asc(stories.createdAt));
 		const storyFolder = uniqueNamer();
+		const storyTagNames = await tagsForStories(
+			db,
+			storyList.map((story) => story.id)
+		);
 		for (const story of storyList) {
 			const sDir = `${uDir}/stories/${storyFolder(slugify(story.title, story.id))}`;
 			docs.push({
 				dir: sDir,
 				name: 'story.md',
-				front: { title: story.title, author: story.author, brief: story.brief },
+				front: storyFront(story, storyTagNames.get(story.id)),
 				body: story.descriptionMd ?? '',
 				coverId: story.coverAssetId
 			});

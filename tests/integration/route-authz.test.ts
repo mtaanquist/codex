@@ -20,10 +20,12 @@ import {
 	universes,
 	users,
 	publications,
-	publicationReports
+	publicationReports,
+	tags
 } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { textHash } from '../../src/lib/text-hash';
+import { storyTagView } from '../../src/lib/server/tags';
 import { ensureBuiltInRelationTypes, ensureTestDatabase } from './test-db';
 
 // Authorization lives in the route handlers, so these tests call the real
@@ -92,6 +94,10 @@ const adminPage = await import('../../src/routes/admin/[[section]]/+page.server'
 const adminLayout = await import('../../src/routes/admin/+layout.server');
 const publishedPage = await import('../../src/routes/admin/published/+page.server');
 const reportsPage = await import('../../src/routes/admin/reports/+page.server');
+const tagsPage = await import('../../src/routes/admin/tags/+page.server');
+const fandomsPage = await import('../../src/routes/admin/fandoms/+page.server');
+const genresPage = await import('../../src/routes/admin/genres/+page.server');
+const warningsPage = await import('../../src/routes/admin/warnings/+page.server');
 const universeSettings = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
 	await import('../../src/routes/stories/[id]/settings/[[section]]/+page.server');
@@ -923,4 +929,58 @@ describe('moderation pages', () => {
 		expect(after.removedBy).toBe(mod.id);
 		expect(after.removedReason).toBe('spam');
 	});
+});
+
+describe('story tags and their moderation', () => {
+	function tagForm(genreId: string) {
+		const form = new FormData();
+		form.append('genres', genreId);
+		form.set('tags', 'Found Family');
+		form.set('fandoms', '');
+		return form;
+	}
+
+	it("a story's tags are saved by its owner and by no one else", async () => {
+		const [genre] = await db
+			.insert(tags)
+			.values({ kind: 'genre', name: 'Fantasy', slug: 'fantasy-authz' })
+			.returning();
+		await expectRefused(
+			storySettings.actions.saveTags as Handler,
+			event(B, { params: { id: s.storyA.id }, form: tagForm(genre.id) })
+		);
+		const result = await storySettings.actions.saveTags(
+			event(A, { params: { id: s.storyA.id }, form: tagForm(genre.id) }) as never
+		);
+		expect(result).toMatchObject({ saved: true });
+		const view = await storyTagView(db, s.storyA.id);
+		expect(view.genres.map((tag) => tag.id)).toEqual([genre.id]);
+	});
+
+	for (const [page, kind, actions] of [
+		['tags', 'tag', tagsPage.actions],
+		['fandoms', 'fandom', fandomsPage.actions],
+		['genres', 'genre', genresPage.actions],
+		['warnings', 'warning', warningsPage.actions]
+	] as const) {
+		it(`the ${page} page's actions refuse a plain user and a missing user`, async () => {
+			const [tag] = await db
+				.insert(tags)
+				.values({ kind, name: 'X', slug: `x-${kind}` })
+				.returning();
+			for (const [name, action] of Object.entries(actions)) {
+				for (const user of [B, null]) {
+					const form = new FormData();
+					form.set('id', tag.id);
+					form.set('name', 'Y');
+					form.set('target', 'Z');
+					form.set('names', 'New');
+					await expectRefused(
+						action as Handler,
+						event(user, { path: `/admin/${page}?/${name}`, form })
+					);
+				}
+			}
+		});
+	}
 });

@@ -51,6 +51,16 @@ import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
+import {
+	checkTagNames,
+	findFandoms,
+	listEntries,
+	pickListed,
+	setStoryList,
+	setStoryTags,
+	storyTagView
+} from '#lib/server/tags';
+import { MAX_GENRES, splitTags } from '#lib/story-tags';
 import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The current edition, if the story has been published.
@@ -161,7 +171,17 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		accountPageSetup,
 		// Whether to offer "Review this story" in the Review section.
 		assistant,
-		drafts
+		drafts,
+		// The Publish section's labels and the curated lists to pick from.
+		storyTags: params.section === 'publish' ? await storyTagView(db, story.id) : null,
+		lists:
+			params.section === 'publish'
+				? {
+						genres: await listEntries(db, 'genre'),
+						warnings: await listEntries(db, 'warning'),
+						fandoms: (await listEntries(db, 'fandom')).map((entry) => entry.name)
+					}
+				: { genres: [], warnings: [], fandoms: [] }
 	};
 };
 
@@ -336,6 +356,24 @@ export const actions: Actions = {
 		const isAdult = data.get('isAdult') === 'on';
 		await db.update(stories).set({ visibility, isAdult }).where(eq(stories.id, story.id));
 		return { action: 'publish', saved: true };
+	},
+	saveTags: async ({ request, params, locals }) => {
+		const { story } = await ownedStory(params.id, locals.user!.id);
+		const data = await request.formData();
+		const genres = (await pickListed(db, 'genre', data.getAll('genres'))).slice(0, MAX_GENRES);
+		const warnings = await pickListed(db, 'warning', data.getAll('contentWarnings'));
+		// Checked before anything is written, so a refused name saves nothing.
+		const checked = checkTagNames(splitTags(formText(data, 'tags')));
+		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
+		const fandoms = await findFandoms(db, splitTags(formText(data, 'fandoms')));
+		if (!fandoms.ok) return fail(400, { action: 'tags', message: fandoms.message });
+		const { skipped } = await db.transaction(async (tx) => {
+			await setStoryList(tx, story.id, 'fandom', fandoms.ids);
+			await setStoryList(tx, story.id, 'genre', genres);
+			await setStoryList(tx, story.id, 'warning', warnings);
+			return await setStoryTags(tx, story.id, checked.tags);
+		});
+		return { action: 'tags', saved: true, skipped };
 	},
 	publish: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);

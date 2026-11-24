@@ -28,6 +28,8 @@ import { accountLimits, holdCountQuota, holdStoryQuota, quotaFailure } from './q
 import { imageLimit } from '../quota';
 import { formatBytes } from '../format';
 import { errorFields, logEvent } from './log';
+import { checkTagNames, listedByName, setStoryList, setStoryTags, type ListKind } from './tags';
+import { cleanTagName, MAX_FANDOMS, MAX_GENRES, MAX_TAGS } from '../story-tags';
 
 // Turns a parsed story zip into a new story in the chosen universe. The
 // preview names every collision and how it will resolve; the commit follows
@@ -239,6 +241,32 @@ export async function runImport(
 		// placeholder slug (the column default) and takes the picked one after the
 		// quota lock, the order a create takes them in, since a create holding the
 		// quota lock may be waiting on the same slug.
+		// Labels from a Codex export: genres, warnings and fandoms this site's
+		// lists do not have are left off and reported.
+		const listed = async (kind: ListKind, names: string[], noun: string) => {
+			const { ids, missing } = await listedByName(db, kind, names);
+			for (const name of missing) {
+				problems.push(`The ${noun} "${name}" is not on this site's list, so it was left off.`);
+			}
+			return ids;
+		};
+		const genreIds = (await listed('genre', plan.story.genres ?? [], 'genre')).slice(0, MAX_GENRES);
+		const warningIds = await listed('warning', plan.story.contentWarnings ?? [], 'content warning');
+		const tagNames = (plan.story.tags ?? []).filter((name) => {
+			const cleaned = cleanTagName(name);
+			if (!cleaned.ok && !cleaned.empty) problems.push(`The tag was left off: ${cleaned.reason}`);
+			return cleaned.ok;
+		});
+		const checkedTags = checkTagNames(tagNames.slice(0, MAX_TAGS));
+		if ((plan.story.tags?.length ?? 0) > MAX_TAGS) {
+			problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
+		}
+		const fandomIds = await listed(
+			'fandom',
+			(plan.story.fandoms ?? []).slice(0, MAX_FANDOMS),
+			'fandom'
+		);
+
 		const problemsBefore = problems.length;
 		const write = (slug: string) =>
 			db.transaction(async (tx) => {
@@ -262,6 +290,10 @@ export async function runImport(
 						isAdult: plan.story.isAdult ?? false
 					})
 					.returning({ id: stories.id });
+				if (checkedTags.ok) await setStoryTags(tx, story.id, checkedTags.tags);
+				await setStoryList(tx, story.id, 'fandom', fandomIds);
+				await setStoryList(tx, story.id, 'genre', genreIds);
+				await setStoryList(tx, story.id, 'warning', warningIds);
 				let globalPosition = 0;
 				const insertScene = async (
 					scene: ImportPlan['unfiled'][number],
