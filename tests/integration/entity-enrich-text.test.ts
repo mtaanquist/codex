@@ -22,7 +22,7 @@ import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 process.env.APP_SECRET = process.env.APP_SECRET || 'entity-enrich-text-test-secret';
 
 const { listPendingForEntity } = await import('../../src/lib/server/entity-suggestions');
-const { enrichEntityFromText, estimateEntityEnrich } =
+const { enrichEntityFromText, enrichUniverse, estimateEntityEnrich } =
 	await import('../../src/lib/server/llm/enrich');
 const { ReplyCutOffError } = await import('../../src/lib/server/llm/gateway');
 const {
@@ -802,5 +802,138 @@ describe('the estimate', () => {
 		expect(
 			await estimateEntityEnrich(db, { userId: strangerId, scope: { storyId }, entityId: bram })
 		).toBeNull();
+	});
+});
+
+// Suggest details stores the fingerprint the /enrich pass compares, so the pass
+// skips an entity the read already covered (#1371).
+describe('the /enrich pass after a read', () => {
+	const pass = () => enrichUniverse(db, { userId: ownerId, universeId }, deps);
+
+	it('skips the entity until its input changes', async () => {
+		await writeScenes(storyId, ['Bram counted the boats.']);
+		await read('scenes', { universeId });
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 0, unchanged: 1 });
+		expect(prompts).toHaveLength(0);
+
+		await writeScenes(await makeStory('The Second Book'), ['Bram sailed north.']);
+		expect(await pass()).toMatchObject({ entities: 1 });
+		expect(prompts).toHaveLength(1);
+	});
+
+	it('skips the entity after a story-scoped read that covered every mention', async () => {
+		await writeScenes(storyId, ['Bram counted the boats.']);
+		await read('scenes');
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 0, unchanged: 1 });
+	});
+
+	it('reads the entity when a story-scoped read left out its other stories', async () => {
+		await writeScenes(storyId, ['Bram counted the boats.']);
+		await writeScenes(await makeStory('The Second Book'), ['Bram sailed north.']);
+		await read('scenes');
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 1 });
+		expect(prompts).toHaveLength(1);
+	});
+
+	it('reads the entity when the read was cut off, and does not report it as cut off', async () => {
+		await writeScenes(storyId, ['Bram counted the boats.']);
+		cutOffCalls = [1];
+		await expect(read('scenes', { universeId })).rejects.toBeInstanceOf(ReplyCutOffError);
+		prompts = [];
+		cutOffCalls = [];
+		const result = await pass();
+		expect(result).toMatchObject({ entities: 1, failed: 0 });
+		expect(prompts).toHaveLength(1);
+	});
+
+	it('reads the entity when a later part of the read failed', async () => {
+		const long = (tag: string) => `Bram ${tag}. ${'word '.repeat(1800)}`;
+		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
+		replies = ['{"aliases":["The Grey"],"details":[],"summary":null}', new Error('endpoint down')];
+		expect((await read('scenes')).partial).toBe(true);
+		replies = ['{"aliases":[],"details":[],"summary":null}'];
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 1 });
+	});
+
+	// Reads the universe, muting the story while the first part is read.
+	const readMutingFirst = () =>
+		enrichEntityFromText(
+			db,
+			{ userId: ownerId, scope: { universeId }, entityId: bram, mode: 'scenes' },
+			{
+				...deps,
+				provider: {
+					...stubProvider,
+					async respond(...args) {
+						if (prompts.length === 0) await saveStoryLlmOverride(db, storyId, { enabled: false });
+						return stubProvider.respond(...args);
+					}
+				}
+			}
+		);
+
+	it('reads the entity when only part of a long scene was read', async () => {
+		// Six paragraphs of about 9,000 characters: three pieces of one scene.
+		const paragraphs = Array.from({ length: 6 }, (_, i) => `P${i} ${'word '.repeat(1800)}`);
+		await writeScenes(storyId, [`Bram ${paragraphs.join('\n\n')}`]);
+		// A summary of its own, so the read asks for none and is not skipped.
+		await db
+			.update(characters)
+			.set({ summaryMd: 'A harbourmaster.' })
+			.where(eq(characters.id, bram));
+		const result = await readMutingFirst();
+		expect(prompts).toHaveLength(1);
+		expect(result).not.toHaveProperty('skipped');
+		await saveStoryLlmOverride(db, storyId, { enabled: null });
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 1 });
+	});
+
+	it('reads the entity when the summary part of the read was skipped', async () => {
+		const long = (tag: string) => `Bram ${tag}. ${'word '.repeat(1800)}`;
+		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
+		expect((await readMutingFirst()).skipped).toBe('summary');
+		await saveStoryLlmOverride(db, storyId, { enabled: null });
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 1 });
+	});
+
+	it('reads the entity when the read stopped at the spend cap', async () => {
+		const long = (tag: string) => `Bram ${tag}. ${'word '.repeat(1800)}`;
+		await writeScenes(storyId, [long('ONE'), long('TWO'), long('THREE')]);
+		let calls = 0;
+		const meter = {
+			get capReached() {
+				return calls >= 1;
+			},
+			record() {
+				calls += 1;
+			},
+			wouldPassCap() {
+				return false;
+			},
+			hold() {},
+			async flush() {},
+			spentUsd: 1.5,
+			spentEstimated: false
+		};
+		const result = await enrichEntityFromText(
+			db,
+			{
+				userId: ownerId,
+				scope: { storyId },
+				entityId: bram,
+				mode: 'scenes',
+				meter: meter as never
+			},
+			deps
+		);
+		expect(result.capped).toBe(true);
+		prompts = [];
+		expect(await pass()).toMatchObject({ entities: 1 });
 	});
 });
