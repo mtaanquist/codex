@@ -38,7 +38,8 @@ const { createStoryInUniverse } = await import('../../src/lib/server/story-creat
 const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
 const { createReport } = await import('../../src/lib/server/reports');
 const { saveBrowseEnabled } = await import('../../src/lib/server/settings');
-const { addListEntries, mergeTag, setStoryList } = await import('../../src/lib/server/tags');
+const { addListEntries, checkTagNames, mergeTag, setStoryList, setStoryTags } =
+	await import('../../src/lib/server/tags');
 const {
 	allowInBrowse,
 	browseAuthors,
@@ -357,12 +358,29 @@ describe('the page', () => {
 		await addListEntries(db, 'genre', 'Sci-fi\nScience fiction');
 		const [{ id }] = (await pool.query("select id from tags where slug = 'sci-fi'")).rows;
 		await mergeTag(db, id, 'Science fiction');
+		const shown = await story('Far Off');
+		await setStoryList(db, shown.id, 'genre', [id]);
 		const result = (await load('?genre=sci-fi')) as {
 			resolved: { genre: string | null };
 			indexable: boolean;
 		};
 		expect(result.resolved.genre).toBe('science-fiction');
 		expect(result.indexable).toBe(true);
+	});
+
+	it('does not reveal a tag that only private stories carry', async () => {
+		await saveBrowseEnabled(db, true);
+		const hidden = await story('Draft', { listed: false });
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, hidden.id));
+		const checked = checkTagNames(['Project Nightjar']);
+		if (!checked.ok) throw new Error(checked.message);
+		await setStoryTags(db, hidden.id, checked.tags);
+		const result = (await load('?tag=project-nightjar')) as {
+			filters: { tag: unknown };
+			indexable: boolean;
+		};
+		expect(result.filters.tag).toBeNull();
+		expect(result.indexable).toBe(false);
 	});
 
 	it('limits how many pages one address can load', async () => {

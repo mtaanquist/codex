@@ -55,11 +55,24 @@ export async function resolveFilterTag(
 		)
 		select distinct id from closure
 	`);
-	return {
-		name: tag.name,
-		slug: tag.slug,
-		ids: (closure.rows as { id: string }[]).map((row) => row.id)
-	};
+	const ids = (closure.rows as { id: string }[]).map((row) => row.id);
+	// A free-form tag only counts once a listed story carries it, so a tag
+	// that lives on private stories alone is not revealed by its name.
+	if (kind === 'tag') {
+		const used = await db.execute(sql`
+			select 1 from story_tags st
+			join stories s on s.id = st.story_id
+			join publications p on p.story_id = s.id
+			join users u on u.id = p.owner_id
+			where st.tag_id in (${sql.join(
+				ids.map((id) => sql`${id}::uuid`),
+				sql`, `
+			)}) and ${listed}
+			limit 1
+		`);
+		if (used.rows.length === 0) return null;
+	}
+	return { name: tag.name, slug: tag.slug, ids };
 }
 
 function hasAny(ids: string[]): SQL {

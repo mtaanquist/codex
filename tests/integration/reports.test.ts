@@ -208,6 +208,21 @@ describe('the queue', () => {
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
 
+	it('a takedown holds an edition hidden by account deletion, and restore waits for the deletion', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(false);
+
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect((await publishStory(db, author.id, storyId)).ok).toBe(false);
+		expect(await restorePublication(db, publicationId)).toBe(true);
+	});
+
 	it('dismissing closes one report, once', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await createReport(db, publicationId, 'spam', '');

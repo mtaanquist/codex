@@ -165,6 +165,13 @@ describe('story tags', () => {
 		expect((await storyTagView(db, storyId)).genres.map((tag) => tag.name)).toEqual(['Grimdark']);
 	});
 
+	it('lets a story over 20 tags after an unmerge keep them but not add more', () => {
+		const names = Array.from({ length: 21 }, (_, i) => `t${i}`);
+		expect(checkTagNames(names).ok).toBe(false);
+		expect(checkTagNames(names, 21).ok).toBe(true);
+		expect(checkTagNames([...names, 'extra'], 21).ok).toBe(false);
+	});
+
 	it('follows a chain of merges and refuses one that would loop', async () => {
 		await tagStory(storyId, ['A']);
 		await db.insert(tags).values([

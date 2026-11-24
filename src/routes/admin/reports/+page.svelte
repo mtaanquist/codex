@@ -52,7 +52,10 @@
 										story: report.storyId
 									})}>@{report.handle}/{report.title}</a
 								>
-								{#if report.editionRemovedAt}<span class="pill">taken down</span>{/if}
+								{#if report.editionRemovedReason}<span class="pill">taken down</span
+									>{:else if report.editionRemovedAt}<span class="pill"
+										>hidden: account deletion pending</span
+									>{/if}
 							</div>
 							<div class="list-sub">
 								{reportReasonLabel(report.reason)} - reported {formatDate(
@@ -65,7 +68,7 @@
 							{/if}
 						</div>
 						<div class="list-actions">
-							{#if !report.editionRemovedAt}
+							{#if !report.editionRemovedReason}
 								<TakedownForm
 									id={report.publicationId}
 									title={report.title}

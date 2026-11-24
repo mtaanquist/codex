@@ -23,7 +23,13 @@ export async function createReport(
 	const moderators = await db
 		.select({ id: users.id })
 		.from(users)
-		.where(and(inArray(users.role, ['admin', 'moderator']), isNull(users.suspendedAt)));
+		.where(
+			and(
+				inArray(users.role, ['admin', 'moderator']),
+				isNull(users.suspendedAt),
+				isNull(users.deletionScheduledAt)
+			)
+		);
 	await notifyUsers(
 		db,
 		moderators.map((row) => row.id),
@@ -49,6 +55,8 @@ export async function listOpenReports(db: Database, limit = 100) {
 			title: publications.title,
 			storyId: publications.storyId,
 			editionRemovedAt: publications.removedAt,
+			// Set only by a moderator's takedown, not by account deletion.
+			editionRemovedReason: publications.removedReason,
 			listedInBrowse: stories.listedInBrowse,
 			browseBlockedAt: stories.browseBlockedAt
 		})

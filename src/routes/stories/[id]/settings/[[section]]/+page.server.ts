@@ -380,6 +380,8 @@ export const actions: Actions = {
 		const { story } = await ownedStory(params.id, locals.user!.id);
 		const data = await request.formData();
 		const view = await storyTagView(db, story.id);
+		// Checked before anything is written, so a refused name saves nothing.
+		const checked = checkTagNames(chipValues(data, 'tags'), view.tags.length);
 		const genres = await pickListed(db, 'genre', data.getAll('genres'));
 		// Like fandoms, a story already over the limit (after an unmerge) may
 		// keep what it has but not add more.
@@ -387,8 +389,6 @@ export const actions: Actions = {
 			return fail(400, { action: 'tags', message: `Pick up to ${MAX_GENRES} genres.` });
 		}
 		const warnings = await pickListed(db, 'warning', data.getAll('contentWarnings'));
-		// Checked before anything is written, so a refused name saves nothing.
-		const checked = checkTagNames(chipValues(data, 'tags'));
 		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
 		const shown = view.fandoms;
 		const fandoms = await findFandoms(
