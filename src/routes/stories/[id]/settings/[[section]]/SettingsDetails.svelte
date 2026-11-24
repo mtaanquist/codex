@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
 	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
+	import { inheritedChoiceLabel } from '#lib/assistant-preferences';
 	import {
 		normaliseLanguage,
 		WRITING_LANGUAGES,
@@ -15,6 +16,7 @@
 	let coverColor = $derived(storyCoverColor(data.story));
 	// What a story with no language of its own falls back to.
 	let universeLanguage = $derived(normaliseLanguage(data.universe.language));
+	let useInherited = $derived(inheritedChoiceLabel(data.universe.standalone));
 </script>
 
 <div class="admin-block-head">
@@ -86,7 +88,7 @@
 			<select id="st-language" class="select" name="language" value={data.story.language ?? ''}>
 				<option value="">
 					{universeLanguage
-						? `Use the universe's (${writingLanguageLabel(universeLanguage)})`
+						? `${useInherited}: ${writingLanguageLabel(universeLanguage)}`
 						: 'Not set'}
 				</option>
 				{#each WRITING_LANGUAGES as language (language.tag)}
@@ -96,7 +98,9 @@
 			<p class="field-hint">
 				The language and spelling this story is written in. The Assistant writes and checks spelling
 				in it, and the editor's spell-check uses it.
-				{#if universeLanguage}
+				{#if universeLanguage && data.universe.standalone}
+					Leave it on the standalone default unless this story differs.
+				{:else if universeLanguage}
 					Leave it on the universe's unless this story differs.
 				{:else}
 					If you leave it unset, the Assistant works it out from the text.
@@ -126,12 +130,11 @@
 	level="story"
 	stored={data.story.assistantPreferences}
 	notes={data.story.assistantNotes}
-	inherited={data.universe.standalone
-		? null
-		: {
-				preferences: data.universe.assistantPreferences,
-				notes: data.universe.assistantNotes
-			}}
+	inherited={{
+		preferences: data.universe.assistantPreferences,
+		notes: data.universe.assistantNotes
+	}}
+	standalone={data.universe.standalone}
 	saved={form?.action === 'assistant-preferences' && form.saved === true}
 	error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
 	submitted={form?.action === 'assistant-preferences' && 'submitted' in form

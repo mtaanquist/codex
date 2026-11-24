@@ -54,10 +54,10 @@ export const HOUSE_STYLE = [
 // The habits review and the pattern pass look for, each one a switch.
 export const HABIT_CHECKS = [
 	{ key: 'filterVerbs', label: 'Filter verbs (saw, heard, felt)' },
-	{ key: 'epithets', label: 'Point-of-view epithets ("the elf")' },
-	{ key: 'danglingModifiers', label: 'Dangling modifiers' },
+	{ key: 'epithets', label: 'Point-of-view epithets (the elf, the old man)' },
+	{ key: 'danglingModifiers', label: 'Dangling modifiers (running late, the bus left)' },
 	{ key: 'repetition', label: 'Close repetition' },
-	{ key: 'commaSplices', label: 'Comma splices' },
+	{ key: 'commaSplices', label: 'Comma splices (it rained, we stayed in)' },
 	{ key: 'petPhrases', label: 'Pet words and phrases' },
 	{ key: 'sentenceShapes', label: 'Repeated sentence shapes and gestures' }
 ] as const;
@@ -88,6 +88,13 @@ export const NO_PREFERENCES: PreferenceSetting = {
 	leaveAlone: [],
 	notes: null
 };
+
+// The blank choice of a story setting that follows its universe's, for the
+// preference and language selects alike. Standalone stories share a hidden
+// universe the writer knows as the settings for standalone stories.
+export function inheritedChoiceLabel(standalone: boolean): string {
+	return standalone ? 'Use the standalone default' : "Use the universe's";
+}
 
 // The cap on the free-text field, in characters.
 export const MAX_ASSISTANT_NOTES = 1000;

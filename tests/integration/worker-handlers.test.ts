@@ -1231,6 +1231,15 @@ describe('assistant review notices', () => {
 		);
 	});
 
+	it('asks for a higher cap when a capped run spent nothing', async () => {
+		const title = await reviewTitle(async () =>
+			reviewResult({ reviewed: 0, total: 5, capped: true, spentUsd: 0 })
+		);
+		expect(title).toBe(
+			'The review of "Halden" stopped after 0 of 5 scenes, before the next request could take it past your spend cap, having spent about $0.00. Raise the cap in settings, then run the review again.'
+		);
+	});
+
 	it('says an aborted run was stopped', async () => {
 		const title = await reviewTitle(async () => reviewResult({ reviewed: 1, aborted: true }));
 		expect(title).toBe('The review of "Halden" was stopped before it finished.');

@@ -23,7 +23,8 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	db: Database;
 	pool: pg.Pool;
 };
-const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
+const { createStoryInUniverse, standaloneUniverse } =
+	await import('../../src/lib/server/story-create');
 const { storyAssistantPreferences, universePreferences, workPreferences } =
 	await import('../../src/lib/server/assistant-preferences');
 const universePage = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
@@ -126,6 +127,38 @@ describe('the assistant preferences', () => {
 		await saveStory({ assistantNotes: '  ' });
 		expect(await stored()).toEqual({ preferences: {}, notes: null });
 		expect((await storyAssistantPreferences(db, storyId)).houseStyle.tense).toBe('past');
+	});
+
+	it('gives a standalone story the standalone defaults, and shows them in Details', async () => {
+		const standalone = await standaloneUniverse(db, user.id);
+		const loose = await createStoryInUniverse(db, user.id, standalone.id, 'Loose Leaf');
+		expect(
+			await universePage.actions.saveAssistantPreferences(
+				post(
+					{ tense: 'present', commaSplices: 'leave', assistantNotes: 'Short.' },
+					{
+						id: standalone.id
+					}
+				)
+			)
+		).toMatchObject({ saved: true });
+		const setting = await storyAssistantPreferences(db, loose.id);
+		expect(setting.houseStyle.tense).toBe('present');
+		expect(setting.leaveAlone).toEqual(['commaSplices']);
+		expect(setting.notes).toBe('Short.');
+		// Details gets what the story inherits, as it does for a story in a universe.
+		const data = (await storySettings.load({
+			params: { id: loose.id },
+			locals: { user, session: null }
+		} as never)) as {
+			universe: { standalone: boolean; assistantPreferences: unknown; assistantNotes: string };
+		};
+		expect(data.universe.standalone).toBe(true);
+		expect(data.universe.assistantPreferences).toMatchObject({
+			tense: 'present',
+			commaSplices: 'leave'
+		});
+		expect(data.universe.assistantNotes).toBe('Short.');
 	});
 
 	it('refuses a value off its list or notes over the cap, and keeps what was there', async () => {

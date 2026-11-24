@@ -10,6 +10,33 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 3
+(2026-11-24, `fix/llm-staging-review-3`, into `staging/llm-issues`). The
+spend cap's bound for a request that may search no longer prices the whole
+multi-round input as cache writes: across the server loop a token is written
+to the cache at most once, so only the final conversation (the prompt, five
+searches at 10k tokens, and nine replies) is priced at the write rate, and
+the rest of the ten rounds at the plain prompt rate, not the cache-read rate,
+since a read is not guaranteed (`searchingCacheWriteTokens`). For a 20k
+prompt and a 4k reply that is 106k written plus 480k plain, against 586k
+written before. Claude's per-search fee is still left out, as the help says.
+The review estimate leaves searches out and now says so, with the cap's
+extra room, when the gateway would search (`webSearchAllowed`, now
+exported). A capped job that spent nothing tells the writer to raise the
+cap before running it again (`capContinueAdvice`), since a rerun stops at
+the same request. Round 2 had hidden a standalone story's inherited
+preferences while the prompts still used the standalone universe's; the
+form shows them again, worded as "Use the standalone default", the
+standalone universe's settings page calls its form the defaults for all
+standalone stories, and the language select uses the same wording. The
+inherited choice now reads "Use the universe's: Past" rather than nesting
+parentheses, and plain "Use the universe's" when the universe has not set
+it. The details forms leave the stored language alone when a post lacks the
+field. The MCP pattern brief and the pattern re-read (which stages a
+follow-up edit) carry the house style in write mode. The unset-language
+fixture gained the MCP `rewrite` and `continuity-review` prompts, generated
+by running `buildMcpPrompt` in a worktree of `origin/main`.
+
 Staging review of the language setting and Assistant preferences, round 2
 (2026-11-24, `fix/llm-staging-review-2`, into `staging/llm-issues`). The
 chat in a story now gets the story's language and house style (write mode),

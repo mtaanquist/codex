@@ -265,9 +265,10 @@ Your words are sent only to the endpoint you set here.
   the request, and the spend cap allows for the most a request's searches could
   add before it sends one. That allowance is several times the size of the
   request itself, so with a low cap a review can stop before it reads its
-  first scene; raise the cap or turn web search off if that happens. Claude
-  also charges a fee for each search on top of tokens; that fee is not in the
-  cost shown here or counted by the spend cap.
+  first scene; raise the cap or turn web search off if that happens. The
+  estimate shown before a review leaves searches out, and says so when web
+  search is on. Claude also charges a fee for each search on top of tokens;
+  that fee is not in the cost shown here or counted by the spend cap.
 
 ### Which model to pick for each role
 

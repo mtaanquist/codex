@@ -10,7 +10,7 @@ import {
 	estimateTokens
 } from './context/assemble.ts';
 import { cacheWriteRate } from '../../assistant-cost.ts';
-import { AssistantDisabledError } from './gateway.ts';
+import { AssistantDisabledError, webSearchAllowed } from './gateway.ts';
 import { adapterKind } from './providers/presets.ts';
 import {
 	DEFAULT_SPEND_WARN_USD,
@@ -120,6 +120,11 @@ export type ReviewEstimate = {
 	// Whether a whole-book pattern pass reads the book in one request; only on
 	// an estimate for one.
 	wholeBook?: WholeBookFit;
+	// The run's requests may search the web. The figures leave searches out,
+	// and the spend cap holds back room for every round of the search loop
+	// before each request (see searchingPromptTokens), so a capped run can stop
+	// well short of the figure.
+	webSearch?: true;
 };
 
 // How much bigger the actual prompt of a reviewer request has been than the
@@ -372,6 +377,11 @@ export async function estimateStoryReview(
 	const promptUnits =
 		sceneTokens * (multiplier - 1 + firstReadRate) + (surveyTokens + patternTokens) * firstReadRate;
 	const estCompletionCostUsd = price ? estCompletionTokens * price.completion : undefined;
+	const webSearch = await webSearchAllowed(db, resolved.config, {
+		userId: opts.userId,
+		storyId: opts.storyId,
+		role: 'reviewer'
+	});
 
 	return {
 		scenes: targets.length,
@@ -390,7 +400,8 @@ export async function estimateStoryReview(
 		warnUsd: resolved.config.spendWarnUsd ?? DEFAULT_SPEND_WARN_USD,
 		...(resolved.config.spendCapUsd ? { capUsd: resolved.config.spendCapUsd } : {}),
 		capEnforceable: Boolean(price),
-		...(wholeBook ? { wholeBook } : {})
+		...(wholeBook ? { wholeBook } : {}),
+		...(webSearch ? { webSearch: true as const } : {})
 	};
 }
 

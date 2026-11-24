@@ -181,6 +181,29 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(withNative.estTokens).toBeGreaterThan(withRule.estTokens);
 	});
 
+	it('says when the run may search the web', async () => {
+		const storyId = await seedStory(2);
+		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBeUndefined();
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: MODEL },
+			toolCallBudget: 8,
+			webSearch: true
+		});
+		// Search is only offered on an established setting.
+		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBeUndefined();
+		await db
+			.update(universes)
+			.set({ establishedSetting: true })
+			.where(eq(universes.id, universeId));
+		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBe(true);
+	});
+
 	it('omits the cost when the model has no known price', async () => {
 		const storyId = await seedStory(2);
 		const estimate = await estimateStoryReview(db, { userId, storyId });

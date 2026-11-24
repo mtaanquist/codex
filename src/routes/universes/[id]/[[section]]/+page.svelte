@@ -270,9 +270,11 @@
 						{/each}
 					</select>
 					<span class="field-hint">
-						The language and spelling your stories here are written in. The Assistant writes and
-						checks spelling in it, and the editor's spell-check uses it. A story can choose its own
-						in its settings. If you leave it unset, the Assistant works it out from the text.
+						The language and spelling {data.universe.standalone
+							? 'your standalone stories are'
+							: 'your stories here are'} written in. The Assistant writes and checks spelling in it, and
+						the editor's spell-check uses it. A story can choose its own in its settings. If you leave
+						it unset, the Assistant works it out from the text.
 					</span>
 				</div>
 				<div class="field">
@@ -300,6 +302,7 @@
 		<div class="admin-block" id="assistant-preferences">
 			<AssistantPreferences
 				level="universe"
+				standalone={data.universe.standalone}
 				stored={data.universe.assistantPreferences}
 				notes={data.universe.assistantNotes}
 				saved={form?.action === 'assistant-preferences' && form.saved === true}
