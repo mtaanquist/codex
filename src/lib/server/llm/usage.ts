@@ -16,6 +16,8 @@ export type UsageEntry = {
 	userId: string;
 	storyId?: string;
 	role: string;
+	// The provider id the request went to (see PROVIDER_IDS).
+	provider?: string;
 	model: string;
 	usage?: TokenUsage;
 	// The gateway's own chars/4 estimate for the request it just sent, when it
@@ -50,6 +52,7 @@ export async function recordAssistantUsage(db: Database, entry: UsageEntry): Pro
 			userId: entry.userId,
 			storyId: entry.storyId ?? null,
 			role: entry.role,
+			provider: entry.provider ?? null,
 			model: entry.model,
 			promptTokens: entry.usage?.promptTokens ?? null,
 			completionTokens: entry.usage?.completionTokens ?? null,
@@ -70,6 +73,8 @@ export async function recordAssistantUsage(db: Database, entry: UsageEntry): Pro
 export type UsageRow = {
 	id: string;
 	role: string;
+	// Null on a row from before the provider was recorded.
+	provider: string | null;
 	model: string;
 	promptTokens: number | null;
 	completionTokens: number | null;
@@ -97,9 +102,10 @@ export type UsageSummary = {
 		estimatedRequests: number;
 		webSearchRequests: number;
 	};
-	// Thirty-day token sums per model, so a caller holding per-model prices can
-	// estimate the period's cost.
+	// Thirty-day token sums per model and provider, so a caller holding
+	// per-model prices can estimate the period's cost at each provider's rates.
 	byModel: {
+		provider: string | null;
 		model: string;
 		promptTokens: number;
 		completionTokens: number;
@@ -123,6 +129,7 @@ export async function recentAssistantUsage(
 		.select({
 			id: assistantUsage.id,
 			role: assistantUsage.role,
+			provider: assistantUsage.provider,
 			model: assistantUsage.model,
 			promptTokens: assistantUsage.promptTokens,
 			completionTokens: assistantUsage.completionTokens,
@@ -154,6 +161,7 @@ export async function recentAssistantUsage(
 
 	const byModel = await db
 		.select({
+			provider: assistantUsage.provider,
 			model: assistantUsage.model,
 			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::int`,
 			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::int`,
@@ -163,7 +171,7 @@ export async function recentAssistantUsage(
 		})
 		.from(assistantUsage)
 		.where(and(eq(assistantUsage.userId, userId), gte(assistantUsage.createdAt, since)))
-		.groupBy(assistantUsage.model);
+		.groupBy(assistantUsage.model, assistantUsage.provider);
 
 	return {
 		recent,

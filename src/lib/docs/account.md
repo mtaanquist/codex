@@ -246,6 +246,11 @@ Your words are sent only to the endpoint you set here.
   stop well before the figure you set. First-time text is counted at Claude's
   higher rate. Requests made before
   Codex kept those counts are priced with every token sent at the plain price.
+  Reused text in each request is counted at the rate of the provider it was
+  sent to (requests made before Codex kept the provider use your current
+  provider's rate). The price per model comes from your current price list, so
+  after you switch provider, earlier requests may show no cost or a different
+  one.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
