@@ -7,6 +7,7 @@ import { takedownPublication } from '#lib/server/publish';
 import { dismissReport, listOpenReports, listRecentlyResolved } from '#lib/server/reports';
 import { formText } from '#lib/server/validation';
 import { isReportReason } from '#lib/report-reasons';
+import { browseModerationActions } from '#lib/server/browse-moderation-actions';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	requireModerator(locals);
@@ -17,6 +18,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
+	...browseModerationActions('reports'),
 	takedown: async ({ request, locals }) => {
 		requireModerator(locals);
 		const data = await request.formData();

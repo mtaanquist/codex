@@ -33,6 +33,8 @@ import { listPublications } from '#lib/server/publish';
 import {
 	instanceType,
 	saveInstanceType,
+	browseEnabled,
+	saveBrowseEnabled,
 	saveSignupMode,
 	saveSmtp,
 	SIGNUP_MODES,
@@ -94,6 +96,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		stats: await instanceStats(db),
 		signup: await signupMode(db),
 		instanceType: await instanceType(db),
+		browse: await browseEnabled(db),
 		users: await listAllUsers(db),
 		inviteCodes: await listInviteCodes(db),
 		published: await listPublications(db, 50),
@@ -235,6 +238,11 @@ export const actions: Actions = {
 		}
 		await saveInstanceType(db, type as InstanceType);
 		return { scope: 'instance-type', saved: true };
+	},
+	saveBrowse: async ({ request, locals }) => {
+		requireAdmin(locals);
+		await saveBrowseEnabled(db, (await request.formData()).get('enabled') === 'on');
+		return { scope: 'browse', saved: true };
 	},
 	createInvite: async ({ request, locals }) => {
 		requireAdmin(locals);

@@ -216,9 +216,9 @@ async function replaceStoryTags(tx: Database, storyId: string, kind: TagKind, ta
 export async function listEntries(
 	db: Database,
 	kind: ListKind
-): Promise<{ id: string; name: string }[]> {
+): Promise<{ id: string; name: string; slug: string }[]> {
 	return await db
-		.select({ id: tags.id, name: tags.name })
+		.select({ id: tags.id, name: tags.name, slug: tags.slug })
 		.from(tags)
 		.where(and(eq(tags.kind, kind), isNull(tags.removedAt), isNull(tags.mergedIntoId)))
 		.orderBy(asc(tags.name));

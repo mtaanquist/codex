@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
-import { publicationReports, publications, users } from './db/schema';
+import { publicationReports, publications, stories, users } from './db/schema';
 import { notifyUsers } from './notify';
 import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/report-reasons';
 
@@ -48,10 +48,13 @@ export async function listOpenReports(db: Database, limit = 100) {
 			handle: publications.handle,
 			title: publications.title,
 			storyId: publications.storyId,
-			editionRemovedAt: publications.removedAt
+			editionRemovedAt: publications.removedAt,
+			listedInBrowse: stories.listedInBrowse,
+			browseBlockedAt: stories.browseBlockedAt
 		})
 		.from(publicationReports)
 		.innerJoin(publications, eq(publications.id, publicationReports.publicationId))
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.where(isNull(publicationReports.resolvedAt))
 		.orderBy(publicationReports.createdAt)
 		.limit(limit);

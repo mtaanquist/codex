@@ -47,6 +47,8 @@ import {
 	TEXT_ALIGNS
 } from '#lib/page-setup';
 import { ownedStory } from '#lib/server/story-access';
+import { browseTagSuggestions } from '#lib/server/browse';
+import { browseEnabled } from '#lib/server/settings';
 import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
@@ -118,7 +120,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			.select({
 				handle: users.handle,
 				enabled: users.publicArchiveEnabled,
-				penName: users.penName
+				penName: users.penName,
+				hiddenFromBrowse: users.hiddenFromBrowse
 			})
 			.from(users)
 			.where(eq(users.id, locals.user!.id)),
@@ -179,9 +182,11 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 				? {
 						genres: await listEntries(db, 'genre'),
 						warnings: await listEntries(db, 'warning'),
-						fandoms: (await listEntries(db, 'fandom')).map((entry) => entry.name)
+						fandoms: (await listEntries(db, 'fandom')).map((entry) => entry.name),
+						// Only tags readers can already find on Browse.
+						tags: (await browseEnabled(db)) ? await browseTagSuggestions(db) : []
 					}
-				: { genres: [], warnings: [], fandoms: [] }
+				: { genres: [], warnings: [], fandoms: [], tags: [] }
 	};
 };
 
@@ -354,7 +359,18 @@ export const actions: Actions = {
 			return fail(400, { action: 'publish', message: 'Pick a visibility.' });
 		}
 		const isAdult = data.get('isAdult') === 'on';
-		await db.update(stories).set({ visibility, isAdult }).where(eq(stories.id, story.id));
+		// The Browse box only shows while Browse is on, so with it off the
+		// listing is kept as it was; leaving public always clears it.
+		const listedInBrowse =
+			visibility !== 'public'
+				? false
+				: (await browseEnabled(db))
+					? data.get('listedInBrowse') === 'on' && !story.browseBlockedAt
+					: story.listedInBrowse;
+		await db
+			.update(stories)
+			.set({ visibility, isAdult, listedInBrowse })
+			.where(eq(stories.id, story.id));
 		return { action: 'publish', saved: true };
 	},
 	saveTags: async ({ request, params, locals }) => {

@@ -175,7 +175,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 			commissionsMd: users.commissionsMd,
 			avatarAssetId: users.avatarAssetId,
 			profilePublic: users.profilePublic,
-			publicArchiveEnabled: users.publicArchiveEnabled
+			publicArchiveEnabled: users.publicArchiveEnabled,
+			hiddenFromBrowse: users.hiddenFromBrowse
 		})
 		.from(users)
 		.where(eq(users.id, user.id));
@@ -455,6 +456,14 @@ export const actions: Actions = {
 		});
 		if (!result.ok) return fail(400, { scope: 'profile', message: result.reason });
 		return { scope: 'profile', saved: true };
+	},
+	saveBrowseOptOut: async ({ request, locals }) => {
+		const data = await request.formData();
+		await db
+			.update(users)
+			.set({ hiddenFromBrowse: data.get('hiddenFromBrowse') === 'on' })
+			.where(eq(users.id, locals.user!.id));
+		return { scope: 'browse', saved: true };
 	},
 	uploadAvatar: async ({ request, locals }) => {
 		if (!uploadLimit(locals.user!.id).allowed) {

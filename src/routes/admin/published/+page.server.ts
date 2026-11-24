@@ -6,6 +6,7 @@ import { requireModerator } from '#lib/server/roles';
 import { listPublications, takedownPublication } from '#lib/server/publish';
 import { formText } from '#lib/server/validation';
 import { isReportReason } from '#lib/report-reasons';
+import { browseModerationActions } from '#lib/server/browse-moderation-actions';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	requireModerator(locals);
@@ -13,6 +14,7 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
+	...browseModerationActions('published'),
 	takedown: async ({ request, locals }) => {
 		requireModerator(locals);
 		const data = await request.formData();
