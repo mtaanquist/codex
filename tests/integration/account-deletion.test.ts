@@ -14,6 +14,7 @@ import {
 	entityRelationships,
 	loreEntries,
 	notifications,
+	pendingObjectDeletions,
 	places,
 	publicationAssets,
 	publications,
@@ -27,7 +28,12 @@ import {
 	userExports,
 	users
 } from '../../src/lib/server/db/schema';
-import type { AssetObjectStore } from '../../src/lib/server/assets';
+import { deleteAsset, type AssetObjectStore } from '../../src/lib/server/assets';
+import {
+	sweepUnusedAssets,
+	UNREFERENCED_DAYS,
+	UNUSED_ASSET_GRACE_DAYS
+} from '../../src/lib/server/unused-assets';
 import {
 	adminCancelDeletion,
 	cancelAccountDeletion,
@@ -178,7 +184,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	await pool.query(
-		'truncate table publication_assets, publications, scene_markers, revisions, entity_mentions, entity_relationships, character_story_memberships, place_story_memberships, character_story_notes, place_story_notes, lore_story_notes, scenes, chapters, characters, places, lore_entries, entity_categories, assets, stories, universes, auth_tokens, sessions, notifications, users cascade'
+		'truncate table publication_assets, publications, scene_markers, revisions, entity_mentions, entity_relationships, character_story_memberships, place_story_memberships, character_story_notes, place_story_notes, lore_story_notes, scenes, chapters, characters, places, lore_entries, entity_categories, assets, pending_object_deletions, stories, universes, auth_tokens, sessions, notifications, users cascade'
 	);
 	await ensureBuiltInRelationTypes(pool);
 	removedKeys.length = 0;
@@ -249,6 +255,157 @@ describe('purgeAccount', () => {
 			.where(eq(users.id, rescued));
 		await purgeAccount(db, rescued, stubStore, { requireSchedule: true });
 		expect(await db.select().from(users).where(eq(users.id, rescued))).toHaveLength(0);
+	});
+});
+
+describe('purgeAccount and files already waiting to be removed', () => {
+	// An image row, long unused and uploaded long ago, so the sweep frees it.
+	async function oldImage(ownerId: string, key: string) {
+		const longAgo = new Date(
+			Date.now() - (Math.max(UNREFERENCED_DAYS, UNUSED_ASSET_GRACE_DAYS) + 1) * 86_400_000
+		);
+		const [row] = await db
+			.insert(assets)
+			.values({
+				ownerId,
+				kind: 'inline',
+				filename: 'passport-scan.jpg',
+				contentType: 'image/jpeg',
+				byteSize: 1,
+				storageKey: key,
+				createdAt: longAgo,
+				unreferencedSince: longAgo
+			})
+			.returning({ id: assets.id });
+		return row.id;
+	}
+
+	it('removes the files of the images it had already deleted, at once', async () => {
+		const victim = await makeUser('victim@example.com');
+		const bystander = await makeUser('bystander@example.com');
+		await oldImage(victim, 'freed-victim');
+		await oldImage(bystander, 'freed-bystander');
+		const deleted = await oldImage(victim, 'deleted-victim');
+		await db.update(assets).set({ unreferencedSince: null }).where(eq(assets.id, deleted));
+		expect(await sweepUnusedAssets(db)).toMatchObject({ count: 2 });
+		expect(await deleteAsset(db, victim, deleted)).toBe(true);
+		const queued = await db.select().from(pendingObjectDeletions);
+		expect(
+			new Map(queued.map((row) => [row.storageKey, row.ownerId === victim ? 'victim' : 'other']))
+		).toEqual(
+			new Map([
+				['freed-victim', 'victim'],
+				['deleted-victim', 'victim'],
+				['freed-bystander', 'other']
+			])
+		);
+
+		await purgeAccount(db, victim, stubStore);
+
+		expect(removedKeys.sort()).toEqual(['deleted-victim', 'freed-victim']);
+		const left = await db.select().from(pendingObjectDeletions);
+		expect(left.map((row) => [row.storageKey, row.ownerId])).toEqual([
+			['freed-bystander', bystander]
+		]);
+	});
+
+	it('leaves them queued when there is no store to remove them from', async () => {
+		const victim = await makeUser('victim@example.com');
+		const id = await oldImage(victim, 'deleted-victim');
+		expect(await deleteAsset(db, victim, id)).toBe(true);
+		await purgeAccount(db, victim, null);
+		expect(await db.select().from(pendingObjectDeletions)).toHaveLength(1);
+	});
+});
+
+describe('purgeAccount lock order', () => {
+	// Every storage path locks the account row before asset rows (see
+	// lockStorageOwners). While another transaction holds the account row, as
+	// an image delete or upload does, the purge must wait on it before it
+	// touches any of the account's images, or the two deadlock.
+	it('waits on the account row before it locks any of its images', async () => {
+		const owner = await makeUser('purged@example.com');
+		const [avatar] = await db
+			.insert(assets)
+			.values({
+				ownerId: owner,
+				universeId: null,
+				kind: 'avatar',
+				filename: 'a.png',
+				contentType: 'image/png',
+				byteSize: 10,
+				storageKey: `avatar-${owner}`
+			})
+			.returning({ id: assets.id });
+		const holder = await pool.connect();
+		const probe = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from users where id = $1 for no key update', [owner]);
+			const purge = purgeAccount(db, owner, stubStore);
+			// Until the purge is stuck waiting on the account row.
+			for (let i = 0; i < 200; i++) {
+				const { rows } = await probe.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n > 0) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await probe.query('begin');
+			const free = await probe
+				.query('select id from assets where id = $1 for update nowait', [avatar.id])
+				.then(
+					() => true,
+					() => false
+				);
+			await probe.query('rollback');
+			await holder.query('rollback');
+			await purge;
+			expect(free).toBe(true);
+			expect(await db.select().from(assets).where(eq(assets.ownerId, owner))).toHaveLength(0);
+			expect(await db.select().from(users).where(eq(users.id, owner))).toHaveLength(0);
+		} finally {
+			holder.release();
+			probe.release();
+		}
+	});
+});
+
+describe('purgeAccount and an upload it waited for', () => {
+	// The upload's image lands while the purge waits on the account row; its
+	// stored file must be removed with the rest, not left in the bucket.
+	it('removes the stored file of an image uploaded while it waited', async () => {
+		const owner = await makeUser('late-upload@example.com');
+		removedKeys.length = 0;
+		const holder = await pool.connect();
+		const probe = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from users where id = $1 for no key update', [owner]);
+			await holder.query(
+				`insert into assets (owner_id, kind, filename, content_type, byte_size, storage_key)
+				 values ($1, 'inline', 'late.png', 'image/png', 10, $2)`,
+				[owner, `late-${owner}`]
+			);
+			const purge = purgeAccount(db, owner, stubStore);
+			for (let i = 0; i < 200; i++) {
+				const { rows } = await probe.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n > 0) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await holder.query('commit');
+			await purge;
+			expect(removedKeys).toContain(`late-${owner}`);
+			expect(await db.select().from(users).where(eq(users.id, owner))).toHaveLength(0);
+		} finally {
+			await holder.query('rollback').catch(() => {});
+			holder.release();
+			probe.release();
+		}
 	});
 });
 

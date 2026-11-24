@@ -324,19 +324,34 @@ The dump excludes the job-queue tables, so any jobs that were pending at dump
 time are not restored; the worker simply carries on with new ones.
 
 Uploaded images live in the asset bucket, not the database, and **the backups
-do not copy them**. Deleting or replacing an image removes its database row at
-once, but the worker only removes the stored file once it is older than the
-oldest kept backup: one day longer than `BACKUP_KEEP_DAYS` or
+do not copy them**. Replacing or clearing a cover, avatar or badge, taking an
+image out of the text, and deleting a story or universe for good delete no
+image at once. A worker job at 03:00 UTC each night deletes the images that
+nothing has used for 30 days and that were uploaded more than 30 days ago.
+Each deletion is logged as `assets.unused_deleted` with the image row, except
+its original filename. The worker removes a stored file only once it is older
+than the oldest kept backup: one day longer than `BACKUP_KEEP_DAYS` or
 `BACKUP_KEEP_RECENT_HOURS`, whichever reaches further back, or one day when
 backups are off. Restoring any kept dump therefore still finds every image it
-points at. If you switch backups off later, the dumps already in the bucket
-stay there but the wait drops to one day, so images deleted after that are
-missing if you restore one of those older dumps.
+points at. Files freed by the nightly job wait 30 days more on top of that, so
+an image deleted by mistake can be put back by inserting its logged row again
+with any filename; run **Admin > Usage & storage > Recount images** afterwards
+so the account's storage total counts it. If you switch backups off later, the
+dumps already in the bucket stay there but the wait drops to one day, so
+images deleted after that are missing if you restore one of those older dumps.
 If the asset bucket itself is lost, though, the images are gone: turn on
 versioning or replication for that bucket at your storage provider, or copy it
 somewhere else on a schedule. The bundled RustFS bucket lives in a Docker
 volume on the same host, so back that volume up too. Deleting an account
-removes its images straight away, without the wait.
+removes its images straight away, without the wait, including the files of
+images and editions it had already deleted that are still waiting; their log
+lines keep the image ids and the account id, so keep log retention short if
+that matters to you.
+
+Images count toward the storage limit of the account's plan until they are
+deleted. Plans and their limits (universes, stories, image storage, and the
+size of one image) are set in **Admin > Plans** and assigned per account in
+**Admin > Usage & storage**; the default plan has no limits.
 
 ## Health checks and monitoring
 
@@ -371,6 +386,21 @@ forward-only, so take a backup before updating if you are not running the
 scheduled ones; with
 `BACKUP_S3_*` set the worker already keeps hourly dumps, and
 `node scripts/restore-backup.ts latest` brings the newest one back.
+
+After updating to the release that adds plans and storage limits, run
+**Admin > Usage & storage > Recount images** once if anyone uploaded images
+while the update was rolling out, so each account's storage total includes
+them. The same release builds new indexes on the image table and on the badge
+columns of characters, places and lore entries (migrations 0110 and 0111) with
+a plain `CREATE INDEX`, so writes to those tables wait while the indexes are
+built; on a large database, update at a quiet time.
+
+The nightly unused-image job (03:00 UTC) reads every table in the database,
+one table at a time. On a large database a single table's read can take a
+while (it is cut off after 2 hours 24 minutes), and while it runs Postgres
+cannot clean out rows deleted since it began, so tables can grow a little
+until the next vacuum. An update that changes the database cancels the job if
+it is running, and the job runs again the next night.
 
 If you used the bundled `minio` profile: it is now `rustfs`, with
 `RUSTFS_ACCESS_KEY` and `RUSTFS_SECRET_KEY` in place of `MINIO_ROOT_USER` and
@@ -445,3 +475,8 @@ in place yet.
   `APP_SECRET` is unset. Set a long random value and keep it stable.
 - **A worker feature (email, backups, exports, mentions) does nothing.** The
   worker may be down. Check `docker compose ps` and the worker log.
+- **The unused-image job fails with "could not resize shared memory
+  segment".** Docker gives the Postgres container 64 MB of shared memory by
+  default, too little for the job's large reads on a big database. The bundled
+  `compose.yaml` sets `shm_size: 1g` on the `db` service; if you use your own
+  compose file, add the same line there.

@@ -5,13 +5,20 @@ import { db } from '#lib/server/db';
 import { effectiveAssetConfig, createAsset, s3AssetStore } from '#lib/server/assets';
 import { rateLimitUploads } from '#lib/server/write-guard';
 import { formText } from '#lib/server/validation';
+import { logEvent } from '#lib/server/log';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // Accepts an image upload (multipart form: file, kind, universeId) and
 // returns the app-served path for it.
 export const POST: RequestHandler = async ({ request, locals }) => {
 	rateLimitUploads(locals.user!.id);
 	const config = await effectiveAssetConfig(db);
-	if (!config) error(503, 'assets are not configured; set the ASSET_S3_* variables');
+	if (!config) {
+		logEvent('warn', 'assets.not_configured', {
+			detail: 'set the asset bucket in Admin > Usage & storage or the ASSET_S3_* variables'
+		});
+		error(503, ASSETS_OFF_MESSAGE);
+	}
 
 	const form = await request.formData();
 	const file = form.get('file');

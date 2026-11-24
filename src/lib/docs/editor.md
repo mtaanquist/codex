@@ -6,7 +6,7 @@ If a save fails (for example, your connection drops), the status says so and the
 
 If the same scene changed in another tab or on another device since you opened it, the editor stops saving and shows a notice above the text. Select "Load newer version" to switch to the other text; your unsaved edits in this window are dropped, and Undo cannot go back past the switch. Select "Keep mine" to save what you see here; the other version stays in History.
 
-To add a picture, paste or drop an image file into the text when image storage is set up. An "Uploading" line holds its place until it is stored. Copies of that line are not saved, and they go away once the image is stored. If the image cannot be added, a notice above the text says why and what to do; select "Dismiss" to close it.
+To add a picture, paste or drop an image file into the text when image storage is set up. An "Uploading" line holds its place until it is stored. Copies of that line are not saved, and they go away once the image is stored. If the image cannot be added, a notice above the text says why and what to do (for example, that it would go past your account's storage limit). The notice goes away once a later image is added, or select "Dismiss" to close it.
 
 The story's title in the path at the top of the window is a menu. Select it to open the story: its settings (details, cover, page setup, publishing, review links, exports, and more), the print preview, and the public reading page once you have published one. The first item in that menu, "Go to the story", brings you back to the editor from anywhere.
 

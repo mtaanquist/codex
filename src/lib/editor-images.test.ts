@@ -15,6 +15,7 @@ import {
 	startUpload,
 	storedText,
 	uploadFailure,
+	uploadImage,
 	uploadPlaced,
 	uploadTracking,
 	withoutRanges,
@@ -459,6 +460,9 @@ describe('uploadFailure', () => {
 		expect(uploadFailure('a.png', 429, 'Too many uploads in a short time. Try again in 30s.')).toBe(
 			'The image a.png could not be added. Too many uploads in a short time. Try again in 30s.'
 		);
+		const limit =
+			"This image would take you past your account's limit of 1 MB of uploaded images. To upload more, ask the admin of this site to raise your limit.";
+		expect(uploadFailure('a.png', 403, limit)).toBe(`The image a.png could not be added. ${limit}`);
 	});
 
 	it('says what to do when there is no reason for the writer', () => {
@@ -474,5 +478,37 @@ describe('uploadFailure', () => {
 		expect(uploadFailure('a.png', 500)).toBe(
 			'The image a.png could not be added. Add the image again.'
 		);
+	});
+});
+
+describe('uploadImage', () => {
+	const file = new File(['png'], 'map.png', { type: 'image/png' });
+
+	it('returns the served path of a stored image', async () => {
+		const fetcher = async () => Response.json({ id: 'a1', path: '/assets/a1' }, { status: 201 });
+		expect(await uploadImage(file, 'u1', fetcher as typeof fetch)).toEqual({
+			ok: true,
+			path: '/assets/a1'
+		});
+	});
+
+	it("passes on the server's reason when it refuses the image", async () => {
+		const message =
+			"This image would take you past your account's limit of 1 MB of uploaded images. To upload more, ask the admin of this site to raise your limit.";
+		const fetcher = async () => Response.json({ message }, { status: 403 });
+		expect(await uploadImage(file, 'u1', fetcher as typeof fetch)).toEqual({
+			ok: false,
+			message: `The image map.png could not be added. ${message}`
+		});
+	});
+
+	it('says the upload failed when the request does not get through', async () => {
+		const fetcher = async () => {
+			throw new TypeError('network down');
+		};
+		expect(await uploadImage(file, 'u1', fetcher as typeof fetch)).toEqual({
+			ok: false,
+			message: uploadFailure('map.png', null)
+		});
 	});
 });

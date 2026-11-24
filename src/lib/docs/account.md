@@ -464,6 +464,63 @@ not carry their own alignment marker, and also shows while you write.
 These are your defaults. Any single story can set its own and fall back to these
 with a "use my account setting" option.
 
+## Limits on your account
+
+The person who runs your Codex can set limits on how many universes and stories
+your account can have, how much space your uploaded images can take, and how
+large one image can be (never more than 10 MB). If you reach one, Codex tells
+you which limit it is and does not make the new universe or story, restore it
+from the trash, or store the image. To go past a limit,
+ask the admin of your site to raise it.
+
+Universes and stories in the trash do not count toward the limits, so moving
+one to the trash makes room. Restoring it counts again. If restoring one would
+take you past a limit, it stays in the trash and is still deleted for good when
+its days run out, so move another one to the trash first or ask the admin to
+raise the limit. Text never counts.
+
+Before a picture uploads, Codex shrinks one wider or taller than 2560 pixels
+to that size, so it takes less space. A picture over your per-image limit is
+saved again at lower quality, and then at a smaller size, until it fits. A
+PNG, such as a screenshot, stays a PNG unless a WebP copy would be much
+smaller; other pictures are saved as WebP. Pictures that already fit, animated
+pictures such as GIFs, and ones that come out no smaller upload as they are.
+A picture that still does not fit is refused. This applies to pictures you upload: pictures in your text, covers,
+avatars and badges. Pictures inside a story file you import are not shrunk, so
+one over your per-image limit is skipped and the rest of the story imports.
+
+Images count until they are deleted. Replacing your avatar, a badge or a
+story's cover does not delete the old image straight away: it keeps counting
+until nothing uses it and the daily check below deletes it. A saved draft or a
+published edition that still shows the old image keeps it in use, so it keeps
+counting for as long as that draft or edition does. You can still make the
+swap when you are at your storage limit, so your usage can read above the
+limit until the old image is deleted. The swap has to be a direct replace:
+choose the new picture in place of the old one. Removing the old picture first
+and then uploading a new one counts as a new upload, which has to fit under
+the limit. Until the old image is deleted, it still counts, so a later upload
+or swap goes through only if it fits under the limit with the old image
+counted.
+
+Images in your text, covers, avatars and badges are freed once nothing uses
+them any more. Codex checks once a day. The first time it finds that no scene,
+note, entry, profile, saved draft, published edition or saved version in a
+history shows an image, it notes the date and keeps the image. If the image
+is still unused 30 days later, it is deleted. If you use it again in the
+meantime, even only for a moment before you take it out again, the countdown
+is cancelled, and the 30 days start over the next time a daily check finds it
+unused. An image is also always kept for 30 days after you add it, used or not. Taking an image
+out of a scene usually does not free it, because the scene's history still
+holds the older text with the image in it.
+
+After you delete a story for good, the next daily check starts those 30 days
+for the images only that story used, including its cover. An image another
+story still shows is kept. Deleting a universe for good starts those 30 days at once for
+every image in it. The daily check then deletes each one that is still unused
+30 days later and was added more than 30 days ago. An image a story in another
+universe still shows is kept. Moving a story or universe to the trash is not
+enough; its images are kept until the trash is emptied.
+
 ## Getting your work out
 
 The Security section has two ways to take your work with you. Export prepares a

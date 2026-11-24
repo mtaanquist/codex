@@ -750,6 +750,62 @@
 			"when": 1795373293396,
 			"tag": "0106_draft-source",
 			"breakpoints": true
+		},
+		{
+			"idx": 107,
+			"version": "7",
+			"when": 1795391438925,
+			"tag": "0107_plans-entitlements",
+			"breakpoints": true
+		},
+		{
+			"idx": 108,
+			"version": "7",
+			"when": 1795418850130,
+			"tag": "0108_slug-history",
+			"breakpoints": true
+		},
+		{
+			"idx": 109,
+			"version": "7",
+			"when": 1795431993158,
+			"tag": "0109_unreferenced-since",
+			"breakpoints": true
+		},
+		{
+			"idx": 110,
+			"version": "7",
+			"when": 1795445917014,
+			"tag": "0110_badge-asset-indexes",
+			"breakpoints": true
+		},
+		{
+			"idx": 111,
+			"version": "7",
+			"when": 1795448896339,
+			"tag": "0111_assets-indexes",
+			"breakpoints": true
+		},
+		{
+			"idx": 112,
+			"version": "7",
+			"when": 1795454378946,
+			"tag": "0112_clear-asset-marks",
+			"breakpoints": true
+		},
+		{
+			"idx": 113,
+			"version": "7",
+			"when": 1795454881615,
+			"tag": "0113_pending-deletion-owner",
+			"breakpoints": true
+		},
+		{
+			"idx": 114,
+			"version": "7",
+			"when": 1795461033931,
+			"tag": "0114_slug-history-kind-check",
+			"breakpoints": true
 		}
 	]
 }

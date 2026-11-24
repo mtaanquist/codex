@@ -38,3 +38,43 @@ export function isValidSlug(value: string): boolean {
 		value.length <= SLUG_MAX && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(value) && !isUuid(value)
 	);
 }
+
+// Looser than SLUG_MAX: the 0035 backfill could append "-N" and an id
+// fragment to a 60-character base, and those slugs are still live.
+const PUBLIC_REF_MAX = 100;
+
+/**
+ * An address under /@handle: a story or universe id, or its slug. Case does
+ * not matter here (handles are matched the same way); lookups lowercase it.
+ */
+export function isPublicRef(value: string): boolean {
+	const lower = value.toLowerCase();
+	return (
+		isUuid(lower) ||
+		(lower.length <= PUBLIC_REF_MAX && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(lower))
+	);
+}
+
+/**
+ * The public address of a story or universe listed by slug. A uuid-shaped
+ * ref is always looked up as an id, so a slug of that shape is linked by the
+ * id instead. Such a slug comes from a title that slugifies to a uuid, saved
+ * by the 0035 backfill or by a create or rename before uniqueSlug began
+ * giving those a suffix.
+ */
+export function slugAddress(item: { id: string; slug: string }): string {
+	return isUuid(item.slug.toLowerCase()) ? item.id : item.slug;
+}
+
+/**
+ * The address a story's reading page is linked at: its slug when the story
+ * is listed publicly, its id when unlisted. A slug comes from the title and
+ * can be guessed, so an unlisted story answers only at its id.
+ */
+export function readingAddress(story: {
+	id: string;
+	slug: string;
+	visibility: 'private' | 'unlisted' | 'public';
+}): string {
+	return story.visibility === 'public' ? slugAddress(story) : story.id;
+}

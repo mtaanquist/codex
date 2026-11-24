@@ -1,0 +1,1 @@
+ALTER TABLE "assets" ADD COLUMN "unreferenced_since" timestamp with time zone;

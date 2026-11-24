@@ -9,6 +9,7 @@ import {
 	assistantChats,
 	exportArtifacts,
 	notifications,
+	pendingObjectDeletions,
 	publications,
 	reviewers,
 	sessions,
@@ -89,8 +90,9 @@ export async function listAccountsDueForPurge(db: Database): Promise<string[]> {
 }
 
 // Hard-deletes an account and everything it owns, irreversibly. Every owned row
-// goes in one transaction in dependency order; the uploaded image objects are
-// removed from the bucket afterwards (best-effort - an orphaned object is swept
+// goes in one transaction in dependency order; the uploaded image objects,
+// including the queued files of images already deleted, are removed from the
+// bucket afterwards (best-effort - an orphaned object is swept
 // later, never a blocker). Used by the scheduled purge and by admin deletion.
 // The scheduled purge passes requireSchedule so a cancellation racing the
 // worker aborts the purge; admin deletion is immediate and skips that check.
@@ -100,24 +102,6 @@ export async function purgeAccount(
 	store: AssetObjectStore | null,
 	options: { requireSchedule?: boolean } = {}
 ): Promise<void> {
-	// Capture the bucket keys before the rows go, including the stored export
-	// files of the account's editions (their rows cascade with publications).
-	const assetRows = await db
-		.select({ storageKey: assets.storageKey })
-		.from(assets)
-		.where(eq(assets.ownerId, userId));
-	const artifactRows = await db
-		.select({ storageKey: exportArtifacts.storageKey })
-		.from(exportArtifacts)
-		.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
-		.where(eq(publications.ownerId, userId));
-	// User-requested export archives; their rows cascade with the user, so the
-	// bucket keys must be captured now or the objects leak forever.
-	const userExportRows = await db
-		.select({ storageKey: userExports.storageKey })
-		.from(userExports)
-		.where(and(eq(userExports.ownerId, userId), isNotNull(userExports.storageKey)));
-
 	const purged = await db.transaction(async (tx) => {
 		// Re-assert the schedule under a row lock: a cancellation that landed
 		// after listAccountsDueForPurge read the due list must abort the purge.
@@ -125,14 +109,51 @@ export async function purgeAccount(
 		// blocks on the lock until the purge commits (by then the account is
 		// already gone, and its clearing update matches nothing). Admin deletion
 		// is immediate and not scheduled, so it skips this check.
-		if (options.requireSchedule) {
-			const [stillDue] = await tx
-				.select({ id: users.id })
-				.from(users)
-				.where(and(eq(users.id, userId), isNotNull(users.deletionScheduledAt)))
-				.for('update');
-			if (!stillDue) return false;
-		}
+		// The lock comes first either way: every storage path locks the account
+		// row before asset rows (see lockStorageOwners), and the purge deletes
+		// both. No key update, like those paths: it still turns a cancellation
+		// or an upload away, but lets a foreign-key check on the account through
+		// until the row itself is deleted at the end.
+		const [account] = await tx
+			.select({ scheduledAt: users.deletionScheduledAt })
+			.from(users)
+			.where(eq(users.id, userId))
+			.for('no key update');
+		if (!account) return null;
+		if (options.requireSchedule && !account.scheduledAt) return null;
+
+		// The bucket keys, read under the lock so an image uploaded while the
+		// purge waited is in them, including the stored export files of the
+		// account's editions (their rows cascade with publications) and its
+		// export archives (their rows cascade with the user).
+		const assetRows = await tx
+			.select({ storageKey: assets.storageKey })
+			.from(assets)
+			.where(eq(assets.ownerId, userId));
+		const artifactRows = await tx
+			.select({ storageKey: exportArtifacts.storageKey })
+			.from(exportArtifacts)
+			.innerJoin(publications, eq(exportArtifacts.publicationId, publications.id))
+			.where(eq(publications.ownerId, userId));
+		const userExportRows = await tx
+			.select({ storageKey: userExports.storageKey })
+			.from(userExports)
+			.where(and(eq(userExports.ownerId, userId), isNotNull(userExports.storageKey)));
+		// Files of the account's already deleted images and editions, still
+		// waiting out their delay in the queue: they go now too. Left queued
+		// when there is no store to remove them from.
+		const queuedRows = store
+			? await tx
+					.delete(pendingObjectDeletions)
+					.where(eq(pendingObjectDeletions.ownerId, userId))
+					.returning({ storageKey: pendingObjectDeletions.storageKey })
+			: [];
+		const keys = [
+			...assetRows.map((row) => row.storageKey),
+			...artifactRows.map((row) => row.storageKey),
+			...userExportRows.flatMap((row) => (row.storageKey ? [row.storageKey] : [])),
+			...queuedRows.map((row) => row.storageKey)
+		];
 
 		// Each universe purges through the shared cascade (stories first, then
 		// entities, history, categories, relation types, and assets).
@@ -166,20 +187,15 @@ export async function purgeAccount(
 		await tx.delete(notifications).where(eq(notifications.userId, userId));
 		await tx.delete(sessions).where(eq(sessions.userId, userId));
 		await tx.delete(users).where(eq(users.id, userId));
-		return true;
+		return keys;
 	});
 
 	// Only sweep the bucket if the account was actually purged (not cancelled
-	// out from under us between reading the keys and the locked re-check).
-	// Removed at once rather than deferred: this is the owner's erasure. A
-	// failure is logged so the operator can remove the object by hand.
+	// by the locked re-check). Removed at once rather than deferred: this is
+	// the owner's erasure. A failure is logged so the operator can remove the
+	// object by hand.
 	if (purged && store) {
-		const keys = [
-			...assetRows.map((row) => row.storageKey),
-			...artifactRows.map((row) => row.storageKey),
-			...userExportRows.flatMap((row) => (row.storageKey ? [row.storageKey] : []))
-		];
-		for (const key of keys) {
+		for (const key of purged) {
 			await store.remove(key).catch((error) => {
 				logEvent('error', 'purge.object_failed', { key, ...errorFields(error) });
 			});

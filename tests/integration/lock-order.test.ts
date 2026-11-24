@@ -1,16 +1,19 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import {
+	assets,
 	assistantDrafts,
 	chapters,
 	characters,
+	entitlements,
 	entityCategories,
 	loreEntries,
 	places,
+	plans,
 	revisions,
 	scenes,
 	stories,
@@ -33,8 +36,26 @@ import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { setSceneStatus } from '../../src/lib/server/scene-status';
 import { rebuildSceneMentions } from '../../src/lib/server/mentions';
 import { saveStoryDetails } from '../../src/lib/server/story-details';
-import { trashStory } from '../../src/lib/server/story-lifecycle';
+import { restoreStory, STORY_TRASH_DAYS, trashStory } from '../../src/lib/server/story-lifecycle';
+import { saveUniverseDetails } from '../../src/lib/server/universe-details';
 import { purgeStory } from '../../src/lib/server/story-delete';
+import { sweepUnusedAssets } from '../../src/lib/server/unused-assets';
+import { publishStory } from '../../src/lib/server/publish';
+import { setEntityBadgeImage } from '../../src/lib/server/entity-badge';
+import {
+	clearUserAvatar,
+	createAsset,
+	deleteAsset,
+	ObjectNotFoundError,
+	setStoryCover,
+	setUserAvatar,
+	type AssetConfig,
+	type AssetObjectStore
+} from '../../src/lib/server/assets';
+import { recountStorageUsed } from '../../src/lib/server/quotas';
+import { UNIVERSE_TRASH_DAYS } from '../../src/lib/server/universe-lifecycle';
+import { purgeAccount } from '../../src/lib/server/account-deletion';
+import { runImport } from '../../src/lib/server/import-story';
 import { saveEntity } from '../../src/lib/server/entity-save';
 import { saveAccountLlmConfig, saveStoryLlmOverride } from '../../src/lib/server/llm/config';
 import {
@@ -50,8 +71,22 @@ import {
 } from '../../src/lib/server/story-replace';
 import { recordRevision, restoreRevision } from '../../src/lib/server/revisions';
 import { createSuggestion, decideSuggestion } from '../../src/lib/server/review';
-import { newStoryFromDraft, restoreDraftScene, saveDraft } from '../../src/lib/server/story-drafts';
-import { purgeUniverse } from '../../src/lib/server/universe-lifecycle';
+import {
+	newStoryFromDraft,
+	replaceCover,
+	restoreDraftScene,
+	saveDraft
+} from '../../src/lib/server/story-drafts';
+import {
+	purgeUniverse,
+	restoreUniverse,
+	trashUniverse
+} from '../../src/lib/server/universe-lifecycle';
+import {
+	createStoryInUniverse,
+	createUniverse,
+	standaloneUniverse
+} from '../../src/lib/server/story-create';
 import type { Database } from '../../src/lib/server/auth';
 import { lockStoryScenes } from '../../src/lib/server/row-locks';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
@@ -77,6 +112,31 @@ import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
 process.env.APP_SECRET = process.env.APP_SECRET || 'lock-order-test-secret';
 
+// An import stores its bundled images through the configured storage; here
+// that is an in-memory store, like the one the uploads below use.
+vi.mock('../../src/lib/server/assets', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../src/lib/server/assets')>();
+	return {
+		...actual,
+		effectiveAssetConfig: async () => ({
+			endpoint: undefined,
+			region: 'auto',
+			bucket: 'test',
+			prefix: 'codex-assets',
+			accessKeyId: 'id',
+			secretAccessKey: 'secret'
+		}),
+		s3AssetStore: () => ({
+			async put() {},
+			async upload() {},
+			async get(key: string) {
+				throw new actual.ObjectNotFoundError(key);
+			},
+			async remove() {}
+		})
+	};
+});
+
 // Each scenario gets fresh ids under its own prefix, which is quicker than
 // truncating between scenarios. Within one, id order differs from position
 // order and from insertion order, so a lock taken in id order, in position
@@ -95,7 +155,8 @@ const KEYS = {
 	aldric: 31,
 	quay: 32,
 	toll: 33,
-	category: 34
+	category: 34,
+	image: 41
 };
 type Key = keyof typeof KEYS;
 const S = {} as Record<Key, string>;
@@ -115,7 +176,8 @@ const NAMES: Record<Key, string> = {
 	aldric: 'character Aldric',
 	quay: 'place Quay',
 	toll: 'lore entry Toll',
-	category: 'lore category'
+	category: 'lore category',
+	image: 'image'
 };
 
 // What a holder takes: a row, or an advisory lock by the text its key hashes.
@@ -135,11 +197,12 @@ const ROWS: { table: string; key: Key }[] = [
 	{ table: 'scenes', key: 'T' },
 	{ table: 'characters', key: 'aldric' },
 	{ table: 'places', key: 'quay' },
-	{ table: 'lore_entries', key: 'toll' }
+	{ table: 'lore_entries', key: 'toll' },
+	{ table: 'assets', key: 'image' }
 ];
 
 // The advisory locks the write paths take (row-locks.ts, revisions.ts,
-// review.ts, story-drafts.ts).
+// review.ts, story-drafts.ts, slugs.ts, quotas.ts).
 const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the story-scenes lock', advisory: () => `story-scenes:${S.story}` },
 	...(['A', 'B', 'C', 'D', 'T'] as const).map((key) => ({
@@ -149,7 +212,9 @@ const ADVISORY: { name: string; advisory: () => string }[] = [
 	{ name: 'the revision lock of character Aldric', advisory: () => `character:${S.aldric}` },
 	{ name: 'the revision lock of place Quay', advisory: () => `place:${S.quay}` },
 	{ name: 'the revision lock of lore entry Toll', advisory: () => `lore_entry:${S.toll}` },
-	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` }
+	{ name: 'the draft-restore lock of scene T', advisory: () => `draft-restore:${S.story}:${S.T}` },
+	{ name: 'the slug lock of the account', advisory: () => `slugs:${S.user}` },
+	{ name: 'the quota lock of the account', advisory: () => `quota:${S.user}` }
 ];
 
 const TARGETS: Target[] = [...ROWS.map((row) => ({ ...row, name: NAMES[row.key] })), ...ADVISORY];
@@ -158,6 +223,7 @@ let pool: pg.Pool;
 let opPool: pg.Pool;
 let db: Database;
 let opDb: Database;
+let limitedPlanId: string;
 
 beforeAll(async () => {
 	await ensureTestDatabase();
@@ -173,6 +239,20 @@ beforeAll(async () => {
 	await pool.query(
 		'truncate table entity_mentions, scene_markers, revisions, scenes, chapters, characters, stories, universes, users cascade'
 	);
+	// A plan with limits, so the creates and restores take the quota lock.
+	const [plan] = await db
+		.insert(plans)
+		.values({ key: 'lock-order-limits', name: 'Lock order limits' })
+		.onConflictDoUpdate({ target: plans.key, set: { name: 'Lock order limits' } })
+		.returning({ id: plans.id });
+	limitedPlanId = plan.id;
+	await db
+		.insert(entitlements)
+		.values([
+			{ planId: plan.id, key: 'max_universes', value: 100 },
+			{ planId: plan.id, key: 'max_stories', value: 100 }
+		])
+		.onConflictDoNothing();
 });
 
 afterAll(async () => {
@@ -190,7 +270,10 @@ async function seed() {
 		email: `locks${scenario}@example.com`,
 		displayName: 'L',
 		passwordHash: 'x',
-		role: 'user'
+		role: 'user',
+		planId: limitedPlanId,
+		handle: `locks${scenario}`,
+		publicArchiveEnabled: true
 	});
 	await db.insert(universes).values({ id: S.universe, ownerId: S.user, name: 'Lockland' });
 	await db
@@ -238,8 +321,39 @@ async function seed() {
 		title: 'Toll',
 		categoryId: S.category
 	});
+	// An image nothing uses, unused long enough for the unused-image sweep.
+	await db.insert(assets).values({
+		id: S.image,
+		ownerId: S.user,
+		universeId: S.universe,
+		kind: 'inline',
+		filename: 'map.png',
+		contentType: 'image/png',
+		byteSize: 10,
+		storageKey: `codex-assets/${S.image}`,
+		createdAt: new Date(Date.now() - 60 * 86_400_000),
+		unreferencedSince: new Date(Date.now() - 60 * 86_400_000)
+	});
 	for (const sceneId of [S.A, S.B, S.C, S.D]) await rebuildSceneMentions(db, sceneId);
 }
+
+// Uploads land here; the bucket has no part in the locks.
+const memoryStore: AssetObjectStore = {
+	async put() {},
+	async upload() {},
+	async get(key) {
+		throw new ObjectNotFoundError(key);
+	},
+	async remove() {}
+};
+const assetConfig: AssetConfig = {
+	endpoint: undefined,
+	region: 'auto',
+	bucket: 'test',
+	prefix: 'codex-assets',
+	accessKeyId: 'id',
+	secretAccessKey: 'secret'
+};
 
 // prepare runs after the seed and before anything is held: what the operation
 // needs to exist first (a saved draft, a suggestion to accept).
@@ -390,7 +504,7 @@ const OPS: Op[] = [
 			await saveStoryDetails(
 				db,
 				S.user,
-				{ id: S.story, title: 'Turns', slug: 'turns' },
+				{ id: S.story },
 				{
 					title: 'Other Turns',
 					author: null,
@@ -405,8 +519,115 @@ const OPS: Op[] = [
 		name: 'mute story for the Assistant',
 		run: async (db) => await saveStoryLlmOverride(db, S.story, { enabled: false })
 	},
+	{
+		name: 'rename universe',
+		run: async (db) =>
+			await saveUniverseDetails(
+				db,
+				S.user,
+				{ id: S.universe },
+				{ name: 'Other Lockland', descriptionMd: null, establishedSetting: false }
+			)
+	},
 	{ name: 'trash story', run: async (db) => ok(await trashStory(db, S.user, S.story)) },
-	{ name: 'purge story', run: async (db) => await purgeStory(db, S.story) },
+	{
+		name: 'restore story',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+		},
+		run: async (db) => ok(await restoreStory(db, S.user, S.story))
+	},
+	{
+		name: 'purge story',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+		},
+		run: async (db) => ok(await purgeStory(db, S.story))
+	},
+	{
+		name: 'purge story on schedule',
+		prepare: async () => {
+			await trashStory(db, S.user, S.story);
+			await db
+				.update(stories)
+				.set({ deletedAt: new Date(Date.now() - (STORY_TRASH_DAYS + 1) * 86_400_000) })
+				.where(eq(stories.id, S.story));
+		},
+		run: async (db) => ok(await purgeStory(db, S.story, { dueAfterDays: STORY_TRASH_DAYS }))
+	},
+	{ name: 'sweep unused images', run: async (db) => await sweepUnusedAssets(db) },
+	{ name: 'delete an image', run: async (db) => ok(await deleteAsset(db, S.user, S.image)) },
+	{
+		name: 'replace the avatar',
+		prepare: async () => {
+			await db.update(users).set({ avatarAssetId: S.image }).where(eq(users.id, S.user));
+		},
+		run: async (db) =>
+			ok(
+				await setUserAvatar(db, memoryStore, assetConfig, S.user, {
+					filename: 'avatar.png',
+					contentType: 'image/png',
+					bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+				})
+			)
+	},
+	{
+		name: 'clear the avatar',
+		prepare: async () => {
+			await db.update(users).set({ avatarAssetId: S.image }).where(eq(users.id, S.user));
+		},
+		run: async (db) => await clearUserAvatar(db, S.user)
+	},
+	{ name: 'recount storage', run: async (db) => await recountStorageUsed(db, S.user) },
+	{
+		name: 'set the story cover',
+		run: async (db) => await replaceCover(db, S.story, S.image)
+	},
+	{
+		name: 'upload a story cover',
+		prepare: async () => {
+			await db.update(stories).set({ coverAssetId: S.image }).where(eq(stories.id, S.story));
+		},
+		run: async (db) =>
+			ok(
+				await setStoryCover(
+					db,
+					memoryStore,
+					assetConfig,
+					S.user,
+					{ id: S.story, universeId: S.universe },
+					{
+						filename: 'cover.png',
+						contentType: 'image/png',
+						bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+					}
+				)
+			)
+	},
+	{
+		name: 'publish the story',
+		prepare: async () => {
+			await db
+				.update(scenes)
+				.set({ bodyMd: `Aldric walks in. ![map](/assets/${S.image})` })
+				.where(eq(scenes.id, S.A));
+		},
+		run: async (db) => ok(await publishStory(db, S.user, S.story))
+	},
+	{
+		name: 'replace a badge image',
+		prepare: async () => {
+			await db.update(characters).set({ badgeAssetId: S.image }).where(eq(characters.id, S.aldric));
+		},
+		run: async (db) =>
+			ok(
+				await setEntityBadgeImage(db, memoryStore, assetConfig, S.user, S.aldric, {
+					filename: 'badge.png',
+					contentType: 'image/png',
+					bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+				})
+			)
+	},
 	{
 		name: 'delete trashed scene for good',
 		run: async (db) => ok(await destroyScene(db, S.user, S.T))
@@ -496,7 +717,116 @@ const OPS: Op[] = [
 			return ok(await newStoryFromDraft(db, S.user, story, made.draftId, 'Copy'));
 		}
 	},
-	{ name: 'purge universe', run: async (db) => await purgeUniverse(db, S.universe) },
+	{
+		name: 'purge universe',
+		prepare: async () => {
+			await trashUniverse(db, S.user, S.universe);
+		},
+		run: async (db) => ok(await purgeUniverse(db, S.universe))
+	},
+	{
+		// With no images there is no image owner to lock first; the account row
+		// must still come before the universe row.
+		name: 'purge universe with no images',
+		prepare: async () => {
+			await db.delete(assets).where(eq(assets.id, S.image));
+			await trashUniverse(db, S.user, S.universe);
+		},
+		run: async (db) => ok(await purgeUniverse(db, S.universe))
+	},
+	{
+		name: 'purge universe on schedule',
+		prepare: async () => {
+			await trashUniverse(db, S.user, S.universe);
+			await db
+				.update(universes)
+				.set({ deletedAt: new Date(Date.now() - (UNIVERSE_TRASH_DAYS + 1) * 86_400_000) })
+				.where(eq(universes.id, S.universe));
+		},
+		run: async (db) =>
+			ok(await purgeUniverse(db, S.universe, { dueAfterDays: UNIVERSE_TRASH_DAYS }))
+	},
+	{
+		name: 'delete the account',
+		run: async (db) => await purgeAccount(db, S.user, null)
+	},
+	{
+		name: 'create universe',
+		run: async (db) => await createUniverse(db, S.user, 'Second Lockland')
+	},
+	{
+		name: 'import a story',
+		run: async (db) =>
+			await runImport(
+				db,
+				{ id: S.universe, ownerId: S.user },
+				{
+					story: { title: 'Imported', author: null, brief: null, descriptionMd: '' },
+					chapters: [],
+					unfiled: [{ title: null, status: null, bodyMd: 'Aldric came by boat.' }],
+					notes: [],
+					assets: [],
+					problems: []
+				}
+			)
+	},
+	{
+		name: 'import a story with images',
+		run: async (db) =>
+			await runImport(
+				db,
+				{ id: S.universe, ownerId: S.user },
+				{
+					story: { title: 'Pictured', author: null, brief: null, descriptionMd: '' },
+					chapters: [],
+					unfiled: [{ title: null, status: null, bodyMd: 'A map: ![map](assets/map.png)' }],
+					notes: [],
+					assets: [
+						{
+							id: 'map',
+							path: 'map.png',
+							bytes: new Uint8Array(Buffer.from('89504e470d0a1a0a', 'hex'))
+						}
+					],
+					problems: []
+				}
+			)
+	},
+	{
+		name: 'upload an image',
+		run: async (db) =>
+			ok(
+				await createAsset(db, memoryStore, assetConfig, S.user, {
+					universeId: S.universe,
+					kind: 'inline',
+					filename: 'upload.png',
+					contentType: 'image/png',
+					bytes: Buffer.from('89504e470d0a1a0a', 'hex')
+				})
+			)
+	},
+	{
+		name: 'restore universe',
+		prepare: async () => {
+			await trashUniverse(db, S.user, S.universe);
+		},
+		run: async (db) => ok(await restoreUniverse(db, S.user, S.universe))
+	},
+	{
+		// The seeded universe stands in for a trashed standalone-stories
+		// universe, which a new standalone story brings back.
+		name: 'new standalone story',
+		prepare: async () => {
+			await db
+				.update(universes)
+				.set({ standalone: true, deletedAt: new Date() })
+				.where(eq(universes.id, S.universe));
+		},
+		run: async (db) => {
+			const universe = await standaloneUniverse(db, S.user);
+			return ok(await createStoryInUniverse(db, S.user, universe.id, 'Loose'));
+		}
+	},
 	{
 		name: 'save place with a first story note',
 		run: async (db) =>
@@ -821,12 +1151,19 @@ describe('lock order', () => {
 		const t = Date.now();
 		// Stops of one operation that hold the same rows are the same point in
 		// its work for this purpose; one of each is enough. A purge only runs on
-		// a trashed story or universe, which every racer refuses, so neither
-		// purge is raced.
+		// a trashed story or universe, which every racer refuses, and an account
+		// is deleted only once it is signed out everywhere, so no purge is raced.
+		const unraced = new Set([
+			'purge story',
+			'purge story on schedule',
+			'purge universe',
+			'purge universe on schedule',
+			'delete the account'
+		]);
 		const seen = new Set<string>();
 		const points = stops.filter((stop) => {
 			const at = `${stop.op}: ${[...stop.held.keys()].sort().join()}`;
-			if (stop.op === 'purge story' || stop.op === 'purge universe' || seen.has(at)) return false;
+			if (unraced.has(stop.op) || seen.has(at)) return false;
 			seen.add(at);
 			return true;
 		});
@@ -1010,6 +1347,35 @@ describe('lock order around scenes being added', () => {
 			.from(assistantDrafts)
 			.where(eq(assistantDrafts.id, failed.id));
 		expect(after.status).toBe('discarded');
+	});
+
+	// The purge reads the trash state under the row lock, so a restore that
+	// committed while it waited leaves the work in place.
+	it('a story restored while its purge waits is kept', async () => {
+		await seed();
+		await trashStory(db, S.user, S.story);
+		let purged: unknown = null;
+		const failure = await overlap(
+			(tx) => restoreStory(tx, S.user, S.story),
+			async () => (purged = await purgeStory(opDb, S.story))
+		);
+		expect(failure).toBeNull();
+		expect(purged).toBe(false);
+		expect(await db.select().from(scenes).where(eq(scenes.storyId, S.story))).toHaveLength(5);
+	});
+
+	it('a universe restored while its purge waits is kept', async () => {
+		await seed();
+		await trashUniverse(db, S.user, S.universe);
+		let purged: unknown = null;
+		const failure = await overlap(
+			(tx) => restoreUniverse(tx, S.user, S.universe),
+			async () => (purged = await purgeUniverse(opDb, S.universe))
+		);
+		expect(failure).toBeNull();
+		expect(purged).toBe(false);
+		expect(await db.select().from(stories).where(eq(stories.id, S.story))).toHaveLength(1);
+		expect(await db.select().from(assets).where(eq(assets.id, S.image))).toHaveLength(1);
 	});
 
 	// The move must read the chapter list under its lock, or it writes back a

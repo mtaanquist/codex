@@ -1,12 +1,14 @@
-import { and, eq } from 'drizzle-orm';
+import { and, count, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import { isUniqueViolation } from './db-errors.ts';
 import { entityCategories, stories, universes } from './db/schema';
 import { uniqueSlug, untrash } from './slugs';
+import { holdCountQuota, holdStoryQuota } from './quotas.ts';
 
 // Creates a story with a readable slug, shared by the library's new-story
 // card and the universe plan board. Retries once when a concurrent create
-// takes the picked slug between the pick and the insert.
+// takes the picked slug between the pick and the insert. Throws
+// QuotaExceededError when the account is at its story limit.
 export async function createStoryInUniverse(
 	db: Database,
 	ownerId: string,
@@ -14,14 +16,46 @@ export async function createStoryInUniverse(
 	title: string
 ) {
 	const create = (slug: string) =>
-		db.insert(stories).values({ universeId, ownerId, title, slug }).returning();
+		db.transaction(async (tx) => {
+			await holdStoryQuota(tx, ownerId, universeId);
+			const [story] = await tx
+				.insert(stories)
+				.values({ universeId, ownerId, title, slug })
+				.returning();
+			return story;
+		});
 	try {
-		const [story] = await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
-		return story;
+		return await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
 	} catch (err) {
 		if (!isUniqueViolation(err)) throw err;
-		const [story] = await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
-		return story;
+		return await create(await uniqueSlug(db, 'stories', ownerId, title, 'story'));
+	}
+}
+
+// Every universe starts with a couple of categories; writers rename and
+// extend from there.
+async function addStarterCategories(db: Database, universeId: string, ownerId: string) {
+	await db.insert(entityCategories).values([
+		{ universeId, ownerId, name: 'Lore', sortOrder: 0 },
+		{ universeId, ownerId, name: 'Faction', sortOrder: 1 }
+	]);
+}
+
+// Creates a universe from the library, with the same slug retry as a story.
+// Throws QuotaExceededError when the account is at its universe limit.
+export async function createUniverse(db: Database, ownerId: string, name: string) {
+	const create = (slug: string) =>
+		db.transaction(async (tx) => {
+			await holdCountQuota(tx, ownerId, { universes: 1 });
+			const [row] = await tx.insert(universes).values({ ownerId, name, slug }).returning();
+			await addStarterCategories(tx, row.id, ownerId);
+			return row;
+		});
+	try {
+		return await create(await uniqueSlug(db, 'universes', ownerId, name, 'universe'));
+	} catch (err) {
+		if (!isUniqueViolation(err)) throw err;
+		return await create(await uniqueSlug(db, 'universes', ownerId, name, 'universe'));
 	}
 }
 
@@ -54,10 +88,7 @@ export async function standaloneUniverse(db: Database, ownerId: string) {
 			.returning();
 		// The same starter categories every universe gets, so lore entries
 		// (which need a category) work here too.
-		await db.insert(entityCategories).values([
-			{ universeId: created.id, ownerId, name: 'Lore', sortOrder: 0 },
-			{ universeId: created.id, ownerId, name: 'Faction', sortOrder: 1 }
-		]);
+		await addStarterCategories(db, created.id, ownerId);
 		return created;
 	} catch (err) {
 		// A concurrent request created it between the select and the insert.
@@ -71,10 +102,36 @@ export async function standaloneUniverse(db: Database, ownerId: string) {
 }
 
 // Brings a trashed standalone universe back so a new story has a live home.
-async function reviveIfTrashed(db: Database, universe: typeof universes.$inferSelect) {
+// Its live stories come back with it, so there must be room for them and the
+// new story; otherwise this throws QuotaExceededError and nothing is revived.
+// Exported for tests.
+export async function reviveIfTrashed(
+	db: Database,
+	universe: typeof universes.$inferSelect
+): Promise<typeof universes.$inferSelect> {
 	if (!universe.deletedAt) return universe;
-	await untrash(db, 'universes', universe.id);
+	const outcome = await db.transaction(async (tx) => {
+		// The row before the quota lock, as restoreUniverse takes them. The
+		// trash state is read again under the lock: another request may have
+		// revived it, or the purge removed it, since it was read.
+		const { rows } = await tx.execute<{ trashed: boolean }>(
+			sql`select deleted_at is not null as trashed from universes where id = ${universe.id} for update`
+		);
+		if (rows.length === 0) return 'gone';
+		if (!rows[0].trashed) return 'live';
+		const [inside] = await tx
+			.select({ n: count() })
+			.from(stories)
+			.where(and(eq(stories.universeId, universe.id), isNull(stories.deletedAt)));
+		if (inside.n > 0) {
+			await holdCountQuota(tx, universe.ownerId, { stories: inside.n + 1 }, 'revive');
+		}
+		await untrash(tx, 'universes', universe.id);
+		return 'revived';
+	});
+	// Purged meanwhile: make a new one, as for an owner who never had one.
+	if (outcome === 'gone') return standaloneUniverse(db, universe.ownerId);
 	// Re-read: the restore may have given it a fresh slug.
 	const [live] = await db.select().from(universes).where(eq(universes.id, universe.id));
-	return live ?? { ...universe, deletedAt: null };
+	return live ?? standaloneUniverse(db, universe.ownerId);
 }

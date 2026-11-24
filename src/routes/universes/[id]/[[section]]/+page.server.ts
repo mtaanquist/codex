@@ -1,17 +1,15 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
-import { isUniqueViolation } from '#lib/server/db-errors';
-import { universes } from '#lib/server/db/schema';
 import { ownedUniverse } from '#lib/server/universe-access';
-import { uniqueSlug } from '#lib/server/slugs';
+import { saveUniverseDetails } from '#lib/server/universe-details';
 import { universeTimeline, universeRevisionCount } from '#lib/server/revisions';
 import { listCategories, saveCategories, universeContents } from '#lib/server/categories';
 import { trashUniverse, UNIVERSE_TRASH_DAYS } from '#lib/server/universe-lifecycle';
 import { parseStoryZip, StoryZipError, type ImportPlan } from '#lib/import-markdown';
 import { parseDocument, DocumentImportError } from '#lib/server/import-document';
 import { previewImport, runImport } from '#lib/server/import-story';
+import { quotaFailure } from '#lib/server/quotas';
 import { effectiveAssetConfig } from '#lib/server/assets';
 import { listUserExports, markExportFailed, requestExport } from '#lib/server/user-exports';
 import { queueUserExport } from '#lib/server/jobs';
@@ -112,24 +110,12 @@ export const actions: Actions = {
 		if (!name) {
 			return fail(400, { action: 'update', message: 'The universe needs a name.' });
 		}
-		// The slug follows the name: a rename moves the universe's URL, an
-		// unchanged name leaves it alone.
-		const save = async (slug: string) => {
-			await db
-				.update(universes)
-				.set({ name, slug, descriptionMd, establishedSetting })
-				.where(eq(universes.id, universe.id));
-			return slug;
-		};
-		const freshSlug = () => uniqueSlug(db, 'universes', locals.user!.id, name, 'universe');
-		let slug;
-		try {
-			slug = await save(name === universe.name ? universe.slug : await freshSlug());
-		} catch (err) {
-			// A concurrent create took the slug between the pick and the update.
-			if (!isUniqueViolation(err)) throw err;
-			slug = await save(await freshSlug());
-		}
+		const slug = await saveUniverseDetails(db, locals.user!.id, universe, {
+			name,
+			descriptionMd,
+			establishedSetting
+		});
+		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.
 		if (slug !== universe.slug) redirect(303, `/universes/${slug}`);
 		return { action: 'update', saved: true };
@@ -246,9 +232,15 @@ export const actions: Actions = {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
 		const upload = await planFromUpload(await request.formData());
 		if (upload.fail) return upload.fail;
-		return {
-			action: 'import' as const,
-			imported: await runImport(db, universe, upload.plan as ImportPlan)
-		};
+		try {
+			return {
+				action: 'import' as const,
+				imported: await runImport(db, universe, upload.plan as ImportPlan)
+			};
+		} catch (err) {
+			const message = quotaFailure(err);
+			if (message === undefined) throw err;
+			return fail(403, { action: 'import' as const, message });
+		}
 	}
 };

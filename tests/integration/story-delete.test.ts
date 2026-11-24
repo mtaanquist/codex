@@ -26,7 +26,7 @@ import {
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
-import { deleteStory } from '../../src/lib/server/story-delete';
+import { destroyStory, trashStory } from '../../src/lib/server/story-lifecycle';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureBuiltInRelationTypes, ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
@@ -161,19 +161,21 @@ afterAll(async () => {
 	await pool.end();
 });
 
-describe('deleteStory', () => {
+describe('destroyStory', () => {
 	it('refuses a story the user does not own', async () => {
 		const [stranger] = await db
 			.insert(users)
 			.values({ email: 's@example.com', displayName: 'S', passwordHash: 'x', role: 'user' })
 			.returning();
-		expect(await deleteStory(db, storyId, stranger.id)).toBe(false);
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		expect(await destroyStory(db, stranger.id, storyId)).toBe(false);
 		const [stillThere] = await db.select().from(stories).where(eq(stories.id, storyId));
 		expect(stillThere).toBeDefined();
 	});
 
 	it('clears every story-scoped row and leaves the universe intact', async () => {
-		expect(await deleteStory(db, storyId, ownerId)).toBe(true);
+		expect(await trashStory(db, ownerId, storyId)).toBe(true);
+		expect(await destroyStory(db, ownerId, storyId)).toBe(true);
 
 		// The story and all its scoped rows are gone.
 		expect(await db.select().from(stories).where(eq(stories.id, storyId))).toHaveLength(0);

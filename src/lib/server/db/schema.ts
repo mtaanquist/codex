@@ -74,10 +74,11 @@ export const users = pgTable('users', {
 	// The account's default print/PDF page setup; stories may override per
 	// key through stories.page_setup.
 	pageSetup: jsonb('page_setup').notNull().default({}),
-	// References plans(id) in the schema design; the constraint is added once
-	// the plans table exists. Null falls back to the default plan.
-	planId: uuid('plan_id'),
-	// Reserved for quota enforcement; not maintained in v1.
+	// The account's plan; null falls back to the default plan. See quotas.ts.
+	planId: uuid('plan_id').references((): AnyPgColumn => plans.id),
+	// Bytes of uploaded files the account owns (the sum of its assets'
+	// byte_size), kept in step by createAsset and every asset delete, and
+	// checked against the plan's storage_bytes. recountStorageUsed rebuilds it.
 	storageUsedBytes: bigint('storage_used_bytes', { mode: 'number' }).notNull().default(0),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	// Null until the email-confirm link is clicked.
@@ -99,6 +100,44 @@ export const users = pgTable('users', {
 	// the Assistant toggle in llm_config.
 	mcpEnabled: boolean('mcp_enabled').notNull().default(false)
 });
+
+// A named bundle of entitlements. Every account is on one: its own plan_id,
+// or the default plan when that is null. The seeded default plan has no
+// entitlement rows, which means no limits.
+export const plans = pgTable(
+	'plans',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		key: text('key').unique().notNull(),
+		name: text('name').notNull(),
+		description: text('description'),
+		isDefault: boolean('is_default').notNull().default(false),
+		sortOrder: integer('sort_order').notNull().default(0),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		uniqueIndex('plans_one_default_idx')
+			.on(table.isDefault)
+			.where(sql`${table.isDefault}`)
+	]
+);
+
+// One limit or capability of a plan. The value is a number, a boolean, or
+// null for unlimited; a missing row also means unlimited. Only the keys in
+// #lib/quota.ts are enforced.
+export const entitlements = pgTable(
+	'entitlements',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		planId: uuid('plan_id')
+			.references(() => plans.id)
+			.notNull(),
+		key: text('key').notNull(),
+		value: jsonb('value').notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [unique('entitlements_plan_key').on(table.planId, table.key)]
+);
 
 // Server-side session rows so sessions can be listed and revoked; the cookie
 // carries the session id.
@@ -247,6 +286,35 @@ export const stories = pgTable(
 			.on(table.ownerId, table.slug)
 			.where(sql`${table.deletedAt} is null`),
 		index('stories_universe_idx').on(table.universeId)
+	]
+);
+
+// Slugs a story or universe has moved off by a rename: always for a
+// universe, and for a story once it has been published. Two jobs: a public link made
+// before the rename redirects to the current address, and no other story (or
+// universe) of the account can take the old slug, so an old link never opens
+// a different work. A purge keeps the reservation (the target goes null
+// and the old link 404s); deleting the account removes the rows. Not authored
+// content, so it stays out of exports.
+export const slugHistory = pgTable(
+	'slug_history',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		ownerId: uuid('owner_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		kind: text('kind', { enum: ['story', 'universe'] }).notNull(),
+		slug: text('slug').notNull(),
+		// The one the kind names; null once it has been purged.
+		storyId: uuid('story_id').references(() => stories.id, { onDelete: 'set null' }),
+		universeId: uuid('universe_id').references(() => universes.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		uniqueIndex('slug_history_owner_kind_slug_idx').on(table.ownerId, table.kind, table.slug),
+		index('slug_history_story_idx').on(table.storyId),
+		index('slug_history_universe_idx').on(table.universeId),
+		check('slug_history_kind_check', sql`${table.kind} in ('story', 'universe')`)
 	]
 );
 
@@ -422,7 +490,11 @@ export const characters = pgTable(
 		// The palette search filters by owner and substring-matches the name.
 		index('characters_owner_idx').on(table.ownerId),
 		index('characters_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
-		index('characters_universe_idx').on(table.universeId)
+		index('characters_universe_idx').on(table.universeId),
+		// For the foreign-key check on each image the unused image sweep deletes.
+		index('characters_badge_asset_idx')
+			.on(table.badgeAssetId)
+			.where(sql`${table.badgeAssetId} is not null`)
 	]
 );
 
@@ -512,7 +584,11 @@ export const loreEntries = pgTable(
 		// The palette search filters by owner and substring-matches the title.
 		index('lore_entries_owner_idx').on(table.ownerId),
 		index('lore_entries_title_trgm_idx').using('gin', table.title.op('gin_trgm_ops')),
-		index('lore_entries_universe_idx').on(table.universeId)
+		index('lore_entries_universe_idx').on(table.universeId),
+		// For the foreign-key check on each image the unused image sweep deletes.
+		index('lore_entries_badge_asset_idx')
+			.on(table.badgeAssetId)
+			.where(sql`${table.badgeAssetId} is not null`)
 	]
 );
 
@@ -581,7 +657,11 @@ export const places = pgTable(
 		// The palette search filters by owner and substring-matches the name.
 		index('places_owner_idx').on(table.ownerId),
 		index('places_name_trgm_idx').using('gin', table.name.op('gin_trgm_ops')),
-		index('places_universe_idx').on(table.universeId)
+		index('places_universe_idx').on(table.universeId),
+		// For the foreign-key check on each image the unused image sweep deletes.
+		index('places_badge_asset_idx')
+			.on(table.badgeAssetId)
+			.where(sql`${table.badgeAssetId} is not null`)
 	]
 );
 
@@ -957,31 +1037,48 @@ export const exportArtifacts = pgTable(
 // backups bucket) and served through the app. The row is the source of
 // truth for type and ownership; the object key is just the asset id under
 // the configured prefix.
-export const assets = pgTable('assets', {
-	id: uuid('id').primaryKey().defaultRandom(),
-	ownerId: uuid('owner_id')
-		.references(() => users.id)
-		.notNull(),
-	// Scope; null for account-level images such as an avatar.
-	universeId: uuid('universe_id').references(() => universes.id),
-	// 'cover' | 'inline' | 'avatar' | ...
-	kind: text('kind').notNull(),
-	filename: text('filename').notNull(),
-	contentType: text('content_type').notNull(),
-	byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
-	// Key in the storage bucket.
-	storageKey: text('storage_key').notNull(),
-	width: integer('width'),
-	height: integer('height'),
-	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
-});
+export const assets = pgTable(
+	'assets',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		ownerId: uuid('owner_id')
+			.references(() => users.id)
+			.notNull(),
+		// Scope; null for account-level images such as an avatar.
+		universeId: uuid('universe_id').references(() => universes.id),
+		// 'cover' | 'inline' | 'avatar' | ...
+		kind: text('kind').notNull(),
+		filename: text('filename').notNull(),
+		contentType: text('content_type').notNull(),
+		byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+		// Key in the storage bucket.
+		storageKey: text('storage_key').notNull(),
+		width: integer('width'),
+		height: integer('height'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		// When the unused-image sweep first found nothing using this image, or
+		// null while something does. See unused-assets.ts.
+		unreferencedSince: timestamp('unreferenced_since', { withTimezone: true })
+	},
+	// For the universe purge's unlink, the storage recount and account deletion.
+	(table) => [
+		index('assets_universe_idx')
+			.on(table.universeId)
+			.where(sql`${table.universeId} is not null`),
+		index('assets_owner_idx').on(table.ownerId)
+	]
+);
 
 // Bucket objects whose rows are gone, waiting out the backup retention window
 // before the worker removes them, so restoring an older database dump still
 // finds every image it points at. See sweepDeletedObjects in assets.ts.
 export const pendingObjectDeletions = pgTable('pending_object_deletions', {
 	storageKey: text('storage_key').primaryKey(),
-	deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow()
+	deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+	// The account the file belonged to, so deleting that account removes it at
+	// once. No foreign key: the row outlives the account otherwise. Null for
+	// rows queued before migration 0113.
+	ownerId: uuid('owner_id')
 });
 
 // A user-requested export (account, story, or universe; zip or EPUB), built by

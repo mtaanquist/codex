@@ -1,0 +1,1 @@
+ALTER TABLE "slug_history" ADD CONSTRAINT "slug_history_kind_check" CHECK ("slug_history"."kind" in ('story', 'universe'));

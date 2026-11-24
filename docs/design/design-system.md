@@ -143,7 +143,7 @@ Every page uses exactly one of these five wrappers. Do not build a sixth.
 | Workspace | `.app` grid + `AppBar.svelte` | Write, Plan, Notes, Review (story scope); Plan, Notes, Insights (universe scope); help; guest review |
 | Page | `.page-shell` + `AppBar.svelte` | Library, print preview, a saved draft, the error page when signed in |
 | Settings | `SettingsShell.svelte` + `AppBar.svelte` | Account, admin, story settings, universe settings |
-| Reader | `.reader-shell` + `AppBar.svelte` (`shell="reader"`) | The public shelf and the public story page |
+| Reader | `.reader-shell` + `AppBar.svelte` (`shell="reader"`) | The public shelf, the public universe page, and the public story page |
 | Public | `.public-surface` + `AppBar.svelte` (`shell="public"`) + `ReaderFooter.svelte` (`shell="public"`) | The landing page, and `AuthShell.svelte` over it for sign-in, sign-up, every email-flow page, and the error page when signed out |
 
 **Narrow windows.** At 960px wide and narrower the story editor and the review shell (owner
@@ -685,7 +685,9 @@ The outward face of the work, built from the same tokens as everything else.
   `stories.cover_color` palette token, resolved by `storyCoverColor()`): a
   spine in the full colour, the page mixed 30% into `--bg-card`, the title in
   `--text`. The library card, the public shelf and the story settings preview
-  all draw the same blank, so a book looks the same everywhere.
+  all draw the same blank, so a book looks the same everywhere. The public
+  shelf and the public universe page draw their covers with `ShelfGrid.svelte`;
+  do not copy its markup into a third page.
 - **One footer, on both pages:** the mark and "Written in Codex", who
   published it, and three links (Reading in Codex, About Codex, Write your
   own). "Write your own" targets the app root - the library for a signed-in
@@ -776,7 +778,8 @@ inline ad-hoc SVG in components.
 - Tooltips: native `title` attributes plus `aria-label` for icon-only
   controls. There is no custom tooltip primitive; do not build one ad hoc.
 - Banners: `.revision-banner` for the past-revision state is the reference
-  pattern for a centre-column banner.
+  pattern for a centre-column banner. `SceneConflictBanner.svelte` is
+  built on it.
 
 ### Assistant text
 
@@ -1008,7 +1011,7 @@ Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `TagInput`,
 `ReviewReplyRow`, `ReviewMarginRail`, `ReviewSelectionToolbar`.
 
 Shared composites: `AppBar`, `SettingsShell`, `DocsShell`, `AuthShell`,
-`ReaderFooter`,
+`ReaderFooter`, `ShelfGrid`,
 `UserMenu`, `NotificationBell`, `BackgroundJobs`, `ActivityCenter`, `ViewMenu`,
 `EditorToolbar`, `SelectionMenu`, `NotesWorkspace`, `NotesSidebar`, `PlanSidebar`,
 `StoryOutline`, `StoryRowMenu`, `StoryDraftsMenu`, `RevisionHistory`, `EntityBadgePicker`,

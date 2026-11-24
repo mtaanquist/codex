@@ -5,15 +5,9 @@ import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { stories } from '#lib/server/db/schema';
 import { storyTimeline } from '#lib/server/revisions';
-import { effectiveAssetConfig, createAsset, deleteAsset, s3AssetStore } from '#lib/server/assets';
-import { publishStory } from '#lib/server/publish';
-import {
-	deleteDraft,
-	listDrafts,
-	replaceCover,
-	saveDraft,
-	updateDraftDetails
-} from '#lib/server/story-drafts';
+import { effectiveAssetConfig, s3AssetStore, setStoryCover } from '#lib/server/assets';
+import { publishStory, readingPageRef } from '#lib/server/publish';
+import { deleteDraft, listDrafts, saveDraft, updateDraftDetails } from '#lib/server/story-drafts';
 import { rateLimitWrites } from '#lib/server/write-guard';
 import { setPenNameIfUnset } from '#lib/server/account';
 import { listEditionArtifacts, setDownloadsPublic } from '#lib/server/export-artifacts';
@@ -30,6 +24,8 @@ import {
 	type ExportFormat
 } from '#lib/server/user-exports';
 import { exportLimit, uploadLimit } from '#lib/server/rate-limit';
+import { accountLimits } from '#lib/server/quotas';
+import { imageLimit, MAX_IMAGE_BYTES } from '#lib/quota';
 import { STORY_TRASH_DAYS, trashStory } from '#lib/server/story-lifecycle';
 import { saveStoryDetails } from '#lib/server/story-details';
 import { publications, users } from '#lib/server/db/schema';
@@ -55,6 +51,7 @@ import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The current edition, if the story has been published.
 async function currentEdition(storyId: string) {
@@ -137,11 +134,18 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		timeline,
 		trashDays: STORY_TRASH_DAYS,
 		assetsConfigured,
+		// Only the Cover section uses it.
+		maxImageBytes:
+			params.section === 'cover'
+				? imageLimit(await accountLimits(db, locals.user!.id))
+				: MAX_IMAGE_BYTES,
 		archive,
 		// The first publish with no pen name set asks what name goes public.
 		displayName: locals.user!.displayName,
 		edition,
-		reading: edition && archive?.handle ? { handle: archive.handle, storyId: story.id } : null,
+		// Null while readers cannot open it: no edition, private, taken down,
+		// or the author suspended.
+		reading: edition ? await readingPageRef(db, story.id) : null,
 		artifacts: edition ? await listEditionArtifacts(db, edition.id) : [],
 		exports: await listUserExports(db, locals.user!.id, { scope: 'story', targetId: story.id }),
 		reviewInvitations,
@@ -209,6 +213,7 @@ export const actions: Actions = {
 			styleNotes,
 			coverColor
 		});
+		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.
 		if (slug !== story.slug) redirect(303, `/stories/${slug}/settings`);
 		return { action: 'update', saved: true };
@@ -357,7 +362,7 @@ export const actions: Actions = {
 			return fail(400, { action: 'exports', message: 'Publish an edition first.' });
 		}
 		if (!(await effectiveAssetConfig(db))) {
-			return fail(400, { action: 'exports', message: 'Assets are not configured on this server.' });
+			return fail(400, { action: 'exports', message: ASSETS_OFF_MESSAGE });
 		}
 		if (!(await queueExportArtifacts(edition.id))) {
 			return fail(500, { action: 'exports', message: 'Could not queue the export run.' });
@@ -417,27 +422,24 @@ export const actions: Actions = {
 		}
 		const config = await effectiveAssetConfig(db);
 		if (!config) {
-			return fail(400, { action: 'cover', message: 'Assets are not configured on this server.' });
+			return fail(400, { action: 'cover', message: ASSETS_OFF_MESSAGE });
 		}
 		const data = await request.formData();
 		const file = data.get('cover');
 		if (!(file instanceof File) || file.size === 0) {
 			return fail(400, { action: 'cover', message: 'Choose an image file.' });
 		}
-		const store = s3AssetStore(config);
-		const created = await createAsset(db, store, config, locals.user!.id, {
-			universeId: story.universeId,
-			kind: 'cover',
+		const created = await setStoryCover(db, s3AssetStore(config), config, locals.user!.id, story, {
 			filename: file.name,
 			contentType: file.type,
 			bytes: Buffer.from(await file.arrayBuffer())
 		});
 		if (!created.ok) {
-			return fail(400, { action: 'cover', message: created.reason });
+			return fail(created.code === 'over_limit' ? 403 : 400, {
+				action: 'cover',
+				message: created.reason
+			});
 		}
-		// The replaced cover goes, unless a saved draft still shows it.
-		const unused = await replaceCover(db, story.id, created.id);
-		if (unused) await deleteAsset(db, locals.user!.id, unused);
 		return { action: 'cover', saved: true };
 	},
 	saveDraft: async ({ request, params, locals }) => {
@@ -471,7 +473,7 @@ export const actions: Actions = {
 		if (!isUuid(draftId)) {
 			return fail(400, { action: 'drafts', message: 'That saved draft no longer exists.' });
 		}
-		const result = await deleteDraft(db, locals.user!.id, story.id, draftId);
+		const result = await deleteDraft(db, story.id, draftId);
 		if (!result.ok) return fail(400, { action: 'drafts', message: result.reason });
 		return { action: 'drafts', deleted: true };
 	},

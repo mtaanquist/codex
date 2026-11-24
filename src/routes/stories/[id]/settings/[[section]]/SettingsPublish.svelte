@@ -67,24 +67,37 @@
 				<input type="checkbox" name="isAdult" checked={data.story.isAdult} />
 				Adult content
 			</label>
+			{#if data.edition}
+				<p class="field-hint">Readers see a change to Adult content after you publish again.</p>
+			{/if}
 		</div>
+		{#if data.reading}
+			<p class="field-hint">
+				Readers find this story at
+				<a href={resolve('/@[handle]/[story=ref]', data.reading)}>
+					/@{data.reading.handle}/{data.reading.story}
+				</a>.
+			</p>
+		{/if}
 		<div class="settings-actions">
 			<button class="btn btn-primary" type="submit">Save visibility</button>
 		</div>
 	</form>
 	<form method="POST" action="?/publish" bind:this={publishForm} onsubmit={onPublishSubmit}>
 		<input type="hidden" name="penName" value={chosenPenName} />
-		{#if form?.action === 'publish' && 'published' in form && form.published && data.archive.handle}
+		{#if form?.action === 'publish' && 'published' in form && form.published}
 			<p class="field-hint" role="status" style="color:var(--status-final-ink);">
-				Edition published. Readers see it at
-				<a
-					href={resolve('/@[handle]/[story=uuid]', {
-						handle: data.archive.handle,
-						story: data.story.id
-					})}
-				>
-					/@{data.archive.handle}/{data.story.id}
-				</a>.
+				{#if data.reading}
+					Edition published. Readers see it at
+					<a href={resolve('/@[handle]/[story=ref]', data.reading)}>
+						/@{data.reading.handle}/{data.reading.story}
+					</a>.
+				{:else if data.story.visibility === 'private'}
+					Edition published. Set the visibility to unlisted or public so readers can open it.
+				{:else}
+					Edition published, but readers cannot open it at the moment. Ask the admin of your site
+					why.
+				{/if}
 			</p>
 		{/if}
 		{#if data.drafts.length > 0}

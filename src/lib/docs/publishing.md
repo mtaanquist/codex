@@ -17,8 +17,12 @@ If the story has [saved drafts](/docs/drafts), "What to publish" lets you publis
 Each story has a visibility:
 
 - **Private** keeps it to yourself.
-- **Unlisted** is reachable by direct link but is not listed on your public page.
+- **Unlisted** is reachable by direct link but is not listed on your public page or on a universe page.
 - **Public** is listed on your page at your handle.
+
+## Adult content
+
+Tick "Adult content" in the Publish section of a story's settings if the story is for adults. Readers who open its reading page first see a notice and choose to go on, and search engines are asked to leave the page out. The label is saved with each edition, so after you tick or untick it on a story that is already published, publish again for readers to see the change.
 
 ## Edition downloads
 
@@ -42,7 +46,9 @@ To force a page break inside a chapter, put \page alone on its own line in your 
 
 Your handle page is your shelf: your name, your handle, and every story you have set to public, each with its title, when it was published, and its description. When your profile is set to public it also shows a short bio, any links you add, and whether you are open for commissions. You control all of that on your account page, under Profile.
 
-A story you set to public gets its own reading page under your handle. It opens with the title, who wrote it, how long it is, and the story's description, then the contents and the prose itself.
+A story you publish gets its own reading page under your handle, at your handle followed by the story's address: for example /@yourhandle/the-long-road. The address is the one in your story's own link in Codex, so renaming the story changes it. Once a story has been published, links to its old address keep working and take readers to the new one, and none of your other stories can take the old address. Deleting a story is different: moving it to the trash frees its address at once, so its page stops answering there and a story you create or rename later can take that address. If you restore the story, it gets its old address back, unless another story took it in the meantime; then it comes back at a new address made from its title, and links to the old address no longer reach it. Older links that use the story's id instead keep working too. An unlisted story's link always uses its id, a long string of letters and numbers, so nobody can find it by guessing its title. Once the story is published, not private and open to readers, the Publish section of its settings shows the link readers use, ready to copy. The page opens with the title, who wrote it, how long it is, and the story's description, then the contents and the prose itself.
+
+When at least one story in a universe is published and set to public, the universe gets a page too, at /@yourhandle/universes/ followed by the universe's address. It shows the universe's name and the stories in it that are listed on your shelf. The reading page of every published story in the universe, unlisted ones included, links to it just above the title. It shows nothing else from the universe. A one-off story that is not in a universe has no universe page. Renaming a universe also changes its address, and its old address is always kept for it, whether or not anything in it has been published yet: links to the old address take readers to the new one, and none of your other universes can take it. Deleting a universe also works like deleting a story: moving it to the trash frees its address, so a universe you create or rename later can take it. A restored universe gets its old address back unless another universe took it in the meantime, in which case it comes back at a new address made from its name.
 
 ## What a reader sees
 
@@ -55,3 +61,5 @@ A reader gets two controls in the bar: the theme, which starts in whichever of l
 ## Taking something down
 
 Set a story back to private, or republish after edits. An administrator can also take an edition down if needed.
+
+While an administrator has your account suspended, your public page, your stories' reading pages and universe pages, and their downloads are hidden from readers. They come back as they were when the suspension is lifted.

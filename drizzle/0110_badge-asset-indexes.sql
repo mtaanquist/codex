@@ -1,0 +1,3 @@
+CREATE INDEX "characters_badge_asset_idx" ON "characters" USING btree ("badge_asset_id") WHERE "characters"."badge_asset_id" is not null;--> statement-breakpoint
+CREATE INDEX "lore_entries_badge_asset_idx" ON "lore_entries" USING btree ("badge_asset_id") WHERE "lore_entries"."badge_asset_id" is not null;--> statement-breakpoint
+CREATE INDEX "places_badge_asset_idx" ON "places" USING btree ("badge_asset_id") WHERE "places"."badge_asset_id" is not null;

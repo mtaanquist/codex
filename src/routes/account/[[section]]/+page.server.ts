@@ -87,6 +87,8 @@ import { listPasskeys, removePasskey } from '#lib/server/passkeys';
 import { reauthLimit } from '#lib/server/reauth';
 import QRCode from 'qrcode';
 import { formText } from '#lib/server/validation';
+import { accountLimits } from '#lib/server/quotas';
+import { imageLimit, MAX_IMAGE_BYTES } from '#lib/quota';
 import {
 	createPersonalToken,
 	listGrants,
@@ -99,6 +101,7 @@ import {
 	mcpInstanceEnabled,
 	setMcpAccountEnabled
 } from '#lib/server/mcp/settings';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // The actions that re-verify the password share one throttle (see reauthLimit),
 // so a borrowed session cannot brute-force the password through them. Passkey
@@ -190,6 +193,9 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		displayName: user.displayName,
 		email: user.email,
 		assetsConfigured: (await effectiveAssetConfig(db)) !== null,
+		// Only the profile's avatar hint shows it.
+		maxImageBytes:
+			params.section === undefined ? imageLimit(await accountLimits(db, user.id)) : MAX_IMAGE_BYTES,
 		isAdmin: user.role === 'admin',
 		origin: publicOrigin(url),
 		profile,
@@ -458,7 +464,7 @@ export const actions: Actions = {
 		}
 		const config = await effectiveAssetConfig(db);
 		if (!config) {
-			return fail(503, { scope: 'avatar', message: 'Image uploads are not configured.' });
+			return fail(503, { scope: 'avatar', message: ASSETS_OFF_MESSAGE });
 		}
 		const data = await request.formData();
 		const file = data.get('file');
@@ -470,7 +476,12 @@ export const actions: Actions = {
 			contentType: file.type,
 			bytes: Buffer.from(await file.arrayBuffer())
 		});
-		if (!result.ok) return fail(400, { scope: 'avatar', message: result.reason });
+		if (!result.ok) {
+			return fail(result.code === 'over_limit' ? 403 : 400, {
+				scope: 'avatar',
+				message: result.reason
+			});
+		}
 		return { scope: 'avatar', saved: true };
 	},
 	removeAvatar: async ({ locals }) => {

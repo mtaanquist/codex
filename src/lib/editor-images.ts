@@ -12,6 +12,7 @@ import {
 import { invertedEffects, isolateHistory } from '@codemirror/commands';
 import { landsWhilePaused } from './editor-paused';
 import { defineUndoSteps } from './undo-steps';
+import { shrinkImage } from './image-shrink';
 
 // Paste or drop an image into the prose: it uploads and lands as a
 // markdown image pointing at the app-served path. Markdown is the stored
@@ -317,7 +318,8 @@ export const uploadTracking: Extension = [pendingField, breakHistory];
 
 // Why an upload was refused, for the writer. The server's own reason is shown
 // when it is one written for them (a file too large or of the wrong type, too
-// many uploads); null status means the request never got an answer.
+// many uploads, an account limit); null status means the request never got
+// an answer.
 export function uploadFailure(fileName: string, status: number | null, reason?: string): string {
 	const why =
 		status === null
@@ -326,7 +328,9 @@ export function uploadFailure(fileName: string, status: number | null, reason?: 
 				? 'Image uploads are not set up on this server.'
 				: status === 413
 					? 'The image is too large.'
-					: (status === 400 || status === 429) && reason && /^[A-Z].*\.$/.test(reason)
+					: (status === 400 || status === 403 || status === 429) &&
+						  reason &&
+						  /^[A-Z].*\.$/.test(reason)
 						? reason
 						: 'Add the image again.';
 	return `The image ${fileName} could not be added. ${why}`;
@@ -348,10 +352,37 @@ export function withoutUndoAdvice(message: string): string {
 		: message;
 }
 
+// Uploads one image into the universe, shrunk first when it is large: its
+// app-served path, or the message for the writer when it was not stored.
+export async function uploadImage(
+	file: File,
+	universeId: string,
+	fetcher: typeof fetch = fetch
+): Promise<{ ok: true; path: string } | { ok: false; message: string }> {
+	let response: Response;
+	try {
+		const form = new FormData();
+		form.set('file', await shrinkImage(file));
+		form.set('kind', 'inline');
+		form.set('universeId', universeId);
+		response = await fetcher('/api/assets', { method: 'POST', body: form });
+	} catch {
+		return { ok: false, message: uploadFailure(file.name, null) };
+	}
+	const body = (await response.json().catch(() => null)) as {
+		path?: unknown;
+		message?: unknown;
+	} | null;
+	if (response.ok && typeof body?.path === 'string') return { ok: true, path: body.path };
+	const reason = typeof body?.message === 'string' ? body.message : undefined;
+	return { ok: false, message: uploadFailure(file.name, response.status, reason) };
+}
+
 // onLost hears a message for the writer when an image was not added: the
 // upload was refused or failed, or it finished but its placeholder was no
-// longer in the text. onFound hears that same message again when an undo
-// brings the placeholder back and the image lands after all.
+// longer in the text. onFound hears that same message again when it no longer
+// applies: an undo brought the placeholder back and the image landed after
+// all, or (for a refused or failed upload) a later image was added.
 export function imageUploadExtension(
 	universeId: string,
 	onLost?: (message: string) => void,
@@ -359,6 +390,8 @@ export function imageUploadExtension(
 ): Extension {
 	// The messages for finished uploads whose placeholder was gone, by upload.
 	const lostMessages = new Map<number, string>();
+	// The refused or failed uploads' messages, until an image is added.
+	let failures: string[] = [];
 	// Settle a finished upload; a null replacement just removes the
 	// placeholder, the failed-upload case, and failure says why.
 	function clear(
@@ -377,36 +410,23 @@ export function imageUploadExtension(
 		if (spec) view.dispatch(spec);
 		const copies = clearCopies(view.state, id);
 		if (copies) view.dispatch(copies);
-		if (failure) onLost?.(failure);
-		else if (lost) {
+		if (failure) {
+			failures.push(failure);
+			onLost?.(failure);
+		} else if (lost) {
 			const message = lostImageMessage(fileName);
 			lostMessages.set(id, message);
 			onLost?.(message);
+		} else {
+			for (const message of failures) onFound?.(message);
+			failures = [];
 		}
 	}
 
 	async function resolve(view: EditorView, file: File, id: number) {
-		let response: Response;
-		try {
-			const form = new FormData();
-			form.set('file', file);
-			form.set('kind', 'inline');
-			form.set('universeId', universeId);
-			response = await fetch('/api/assets', { method: 'POST', body: form });
-		} catch {
-			clear(view, id, null, file.name, uploadFailure(file.name, null));
-			return;
-		}
-		const body = (await response.json().catch(() => null)) as {
-			path?: unknown;
-			message?: unknown;
-		} | null;
-		if (response.ok && typeof body?.path === 'string') {
-			clear(view, id, `![${file.name}](${body.path})\n`, file.name);
-			return;
-		}
-		const reason = typeof body?.message === 'string' ? body.message : undefined;
-		clear(view, id, null, file.name, uploadFailure(file.name, response.status, reason));
+		const result = await uploadImage(file, universeId);
+		if (result.ok) clear(view, id, `![${file.name}](${result.path})\n`, file.name);
+		else clear(view, id, null, file.name, result.message);
 	}
 
 	// Insert a placeholder per file at consecutive positions, then start the

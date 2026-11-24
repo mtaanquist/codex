@@ -27,9 +27,14 @@ import {
 	markReviewerNotified
 } from '../lib/server/notification-digest.ts';
 import { listAccountsDueForPurge, purgeAccount } from '../lib/server/account-deletion.ts';
-import { listUniversesDueForPurge, purgeUniverse } from '../lib/server/universe-lifecycle.ts';
-import { listStoriesDueForPurge } from '../lib/server/story-lifecycle.ts';
+import {
+	listUniversesDueForPurge,
+	purgeUniverse,
+	UNIVERSE_TRASH_DAYS
+} from '../lib/server/universe-lifecycle.ts';
+import { listStoriesDueForPurge, STORY_TRASH_DAYS } from '../lib/server/story-lifecycle.ts';
 import { purgeStory } from '../lib/server/story-delete.ts';
+import { sweepUnusedAssets } from '../lib/server/unused-assets.ts';
 import {
 	assetMigrationSource,
 	clearAssetMigrationSource,
@@ -1189,20 +1194,24 @@ export function createHandlers(deps: WorkerDeps) {
 		async purgeUniverses() {
 			for (const universeId of await listUniversesDueForPurge(db)) {
 				try {
-					await purgeUniverse(db, universeId);
-					logEvent('info', 'purge.universe', { universeId });
+					if (await purgeUniverse(db, universeId, { dueAfterDays: UNIVERSE_TRASH_DAYS })) {
+						logEvent('info', 'purge.universe', { universeId });
+					}
 				} catch (error) {
 					logEvent('error', 'purge.universe_failed', { universeId, ...errorFields(error) });
 				}
 			}
 			for (const storyId of await listStoriesDueForPurge(db)) {
 				try {
-					await purgeStory(db, storyId);
-					logEvent('info', 'purge.story', { storyId });
+					if (await purgeStory(db, storyId, { dueAfterDays: STORY_TRASH_DAYS })) {
+						logEvent('info', 'purge.story', { storyId });
+					}
 				} catch (error) {
 					logEvent('error', 'purge.story_failed', { storyId, ...errorFields(error) });
 				}
 			}
+			// The images only those stories used are marked by the nightly
+			// unused-image sweep; none is due to go sooner than that anyway.
 		},
 
 		// Bucket objects of deleted rows, once no kept backup can still point at
@@ -1218,6 +1227,28 @@ export function createHandlers(deps: WorkerDeps) {
 					kept: result.kept,
 					failed: result.failed
 				});
+			}
+		},
+
+		// Uploaded images nothing references any more: marked on the first run
+		// that finds them unused, deleted once unused for long enough. Their
+		// rows go and their bytes come back now; the objects are queued for the
+		// sweep above.
+		async sweepUnusedAssets() {
+			const progress = { count: 0, bytes: 0 };
+			try {
+				const result = await sweepUnusedAssets(db, progress);
+				if (result.count > 0) {
+					logEvent('info', 'assets.unused_sweep', { deleted: result.count, bytes: result.bytes });
+				}
+			} catch (error) {
+				// What the run freed before it failed stays freed.
+				logEvent('error', 'assets.unused_sweep_failed', {
+					deleted: progress.count,
+					bytes: progress.bytes,
+					...errorFields(error)
+				});
+				throw error;
 			}
 		},
 

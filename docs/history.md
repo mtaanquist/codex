@@ -48,6 +48,473 @@ longer running, and they would then be saved.
 The narrative that sat under `## Open` in `TODO.md`, newest first, as it was
 written at the time.
 
+Merging main's image upload rework into Phase 10 (2026-11-23,
+`chore/phase-10-sync-main-2` on `staging/phase-10`). Main's undo-aware
+placeholders (#1480) replaced the upload code that Phase 10 had moved into
+`uploadImage`, so `uploadImage` now builds on main's flow: it shrinks the
+image, posts it, and turns a refusal into main's `uploadFailure` message,
+which now also passes on the reason for a 403 (an account limit, such as
+the storage limit). The refused-image banner (`ImageUploadNotice`) is gone;
+the message goes into main's lost-images notice instead. Clearing that
+message once a later image is added (#1491) uses
+main's second callback: the extension keeps the failure messages and hands
+each to `onFound` when an image lands. Lost-image messages stay, since undo
+can still bring their line back.
+
+Phase 10 leftover lows (server) (2026-11-23, `fix/phase-10-lows-a` on
+`staging/phase-10`). A story import took the account's quota lock at the
+start of its transaction, so a create, restore or import in another tab
+could wait out the whole import (#1489). It now writes everything first and
+takes the lock at the end, with the story row already in, so the count
+includes it; the row goes in under the column's placeholder slug and takes
+the picked one after the lock, because a create holding the quota lock may be
+waiting on that slug and the import would otherwise deadlock with it. The
+retry after a clash only fires on `stories_owner_slug_idx` now (#1494). An
+avatar, cover or badge upload read the image it replaced before the storage
+transaction, so two at once could both count the same old image as freed
+(#1490); `createAsset` now takes a slot (row and column), locks the account
+and then that row, reads the current image, and sets the new one in the
+same transaction. That also removes the window in which the sweep could
+delete a badge image between upload and save (#1488); a publish whose image
+link fails its foreign key gets a plain message instead of a 500 (its read
+already locks the images, so this is a backstop, tested by a trigger that
+deletes the image). `restoreStory` locks the account row and then the universe
+row shared before the story row and the quota lock, so a universe trash in
+flight is waited for (the account row first, because the account and
+universe purges lock it first and then take universe and story in opposite
+orders; the lock-order suite caught that).
+A universe purge still holds the owner's account row for the whole cascade:
+taking it later would bring back the deadlock with an account purge, so that
+is documented instead. The sweep (#1492) reads a table at a time, each in its
+own snapshot, instead of everything in one; the clear-on-write trigger makes
+a reference missed by a move between tables harmless (marked once, cleared
+next run). Its reads hold a shared advisory lock, which the migrator takes
+exclusively after cancelling them, so a cancel that lands between statements
+no longer lets a new read slip in front of the ALTER. The sweep job is not
+retried, a failed run logs what it freed, and a chunk refused by a foreign
+key is retried one image at a time, so only the referenced image is kept
+(its mark cleared). The compose files give Postgres 1 GB of shared memory. The
+plain `CREATE INDEX` in 0110 and 0111 is noted for upgraders rather than
+rewritten. `slug_history.kind` gets a check constraint (migration 0114,
+#1495).
+
+Phase 10 leftover lows (UI, admin, docs) (2026-11-23,
+`fix/phase-10-lows-b` on `staging/phase-10`). A restore refused at a count
+limit now says that moving another universe or story to the trash makes
+room, and that the item stays in the trash and is still deleted on its date
+(#1485); the date itself is not in the message, since the trash list beside
+the button already shows the days left and passing it would mean changing
+the lifecycle modules. Image shrinking (#1491) now also works by bytes: an
+image over the per-image limit is re-encoded at falling WebP quality, then
+at 75, 50, 35 and 25 percent of its size, until one fits. A PNG is
+re-encoded as a PNG unless the WebP at the same size is at most a fifth of
+it, which keeps screenshots lossless and still turns photos saved as PNG
+into WebP. The animation check walks a PNG's chunk headers over the file by
+offset instead of reading the first 64 KB, so a large chunk before the image
+data no longer makes a still PNG look animated. The cover and avatar forms
+show "Uploading..." while the image shrinks, the badge shows it is busy,
+and a later successful upload clears the editor's failed-upload notice. The
+cover form and avatar form pass the account's own per-image limit; the
+editor and badge upload use the 10 MB ceiling, since passing the plan limit
+down to every editor was not worth it for a case the server still refuses
+with a clear message. Admin > Usage & storage (#1493) pages the accounts 50
+at a time with a search by email or name, and counts universes and stories
+for the whole page in one grouped query (the same rules as
+`liveCountsSql`, checked against `countLive` in a test). Recount images runs
+200 accounts per request through `recountStorageBatch` in `plans.ts`; the
+page posts the next batch itself and shows the running count. A worker job
+was not used because adding a queue meant touching modules another branch
+was changing, and batches from the page need no new state. A plan whose
+largest image was set above 10 MB by SQL shows 10 MB (the size that
+applies) with a note, so the form saves unchanged. Small corrections
+(#1494): one shared "Image storage is not set up on this server." message
+for every upload, download and form; the roadmap says a story's old slug is
+kept only once the story has been published; the `slugAddress` comment
+names where uuid-shaped slugs came from; the self-hosting image paragraph
+has its backup sentence back in place. The MCP latency tests (#1496) allow
+2 s for the other writer's save (the pool check still catches an emptied
+pool) and 500 ms of event loop stall, against a full character diff that
+holds the thread for over a minute.
+
+Phase 10 leftover review fixes (2026-11-23, `fix/phase-10-leftover-mediums`
+on `staging/phase-10`). An image used and dropped again between two nightly
+sweeps kept its old unused mark (#1484). Round 9 left a save-time clear out
+because markdown is written by about a dozen paths; a shared helper would
+still rely on every new path calling it, and a stricter sweep cannot see a
+use that came and went between two runs. Migration 0112 instead adds one
+`clear_asset_marks` row trigger to every table but `assets`: it reads the new
+row whole as text, the way the sweep reads columns, and nulls the mark of any
+image id in it, so no path and no later column can miss it. A table created
+later needs its own `CREATE TRIGGER`; the sweep refuses to delete while any
+table lacks one, and a test fails. The gap left is a save committed during a
+run's full read and undone before the next run, which can bring a deletion
+forward by under a day. A story import picks its story id up front, and
+when its write fails it deletes the images it stored only once that story
+row is known to be absent (#1486): a commit whose reply was lost leaves the
+story with its images and reports the import as done, and a failed check
+leaves the images to the sweep. Deleting an account left the files the
+sweep (or an earlier delete) had already queued in the bucket for the backup
+window plus 30 days (#1487): migration 0113 adds a nullable
+`pending_object_deletions.owner_id`, every queueing path fills it, and
+`purgeAccount` drops that account's queue rows in its transaction and removes
+the files with its other keys. `assets.unused_deleted` no longer logs the
+original filename; the rest of the row is still enough to restore one.
+
+Phase 10 staging review round 9 (2026-11-23, `fix/phase-10-review-9` on
+`staging/phase-10`). An image used and dropped again between two nightly
+sweeps keeps its old unused mark, so it can be deleted while an open tab's
+undo still holds a link to it. Clearing the mark on save was considered and
+left out: markdown is written by about a dozen separate paths (scenes,
+notes, descriptions, entity text, bio, find and replace, Assistant and MCP
+writes) with no shared save helper, so the help and design now say plainly
+that only a daily check that sees the image in use restarts the countdown.
+Migration 0111 indexes `assets.universe_id` (partial, non-null) for the
+universe purge's unlink and `assets.owner_id`. The story import retries
+once with a fresh slug when a concurrent create takes its pick, resetting
+its counts and problems for the second attempt. Self-hosting docs describe
+the nightly image sweep, plans, and a recount after upgrading; the publishing
+help says a universe always keeps its old address after a rename.
+
+Phase 10 staging review round 8 (2026-11-23, `fix/phase-10-review-8` on
+`staging/phase-10`). The sweep's read before the delete bound the due id list
+once per column it reads (about 400), so a large backlog sent hundreds of MB
+of parameters and failed every night; the list is now bound once in a
+`wanted` CTE every column's part reads, as the full read's `scope` does. Not
+batched: each batch would read every column again. `purgeUniverse` locks the
+owner's account row even when the universe has no images, so it takes rows
+in the account purge's order; the lock-order suite gained that case.
+`cancelLongReads` cancels in the statement that matches the application
+name, so a pooled connection that moved on is not cancelled, and falls back
+to one pid at a time (name re-checked in the cancel) when a refusal fails the
+statement. Partial indexes on the three badge columns (migration 0110) speed
+the foreign-key check on each sweep delete. The import preview leaves out the
+per-image and storage warnings when image storage is not set up.
+`reviveIfTrashed` re-reads the trash state under its row lock: a home another
+request revived is returned as is (no second quota check), and one purged
+meanwhile is replaced by a new standalone universe.
+
+Phase 10 staging review round 7 (2026-11-23, `fix/phase-10-review-7` on
+`staging/phase-10`). The sweep committed each delete chunk on its own but
+logged `assets.unused_deleted` only after the last one, so a later chunk that
+threw left committed deletions unlogged and so not restorable by hand. Each
+chunk is now logged as it commits. A chunk whose DELETE hits a foreign key (a
+badge or publish saved after the second read) rolls back, clears that chunk's
+marks so its images start over rather than go early once the row is gone,
+logs `assets.unused_delete_skipped`, and the run goes on. Clearing the whole
+chunk delays up to 99 innocent images by a cycle in a rare race; finding the
+one offender would need another full read. `cancelLongReads` skips backends
+the migrator's role may not signal and catches a refusal per pid, since
+`pg_cancel_backend` raises rather than returning false and would stop
+startup. The upload shrink falls back to `requestSubmit()` when the pressed
+button left the form, which lost the upload. `publicUniverseLink` uses
+`storyIsLive()` and `authorNotSuspended()` like `publicShelf`. Help: the
+nightly image clean-up for operators, imported pictures not shrunk, and the
+swap text no longer says a later swap is always refused.
+
+Phase 10 staging review round 6 (2026-11-23, `fix/phase-10-review-6` on
+`staging/phase-10`). The sweep matched ids as text (`id::text = any(...)`),
+which skips the primary key index, so each 100-image chunk scanned `users`
+and `assets` while holding owners' rows; it now compares uuids. A sweep read
+of up to hours holds a lock on every table it reads, so a deploy's ALTER
+TABLE would queue behind it and the app's queries behind the ALTER. The long
+reads now set `application_name` to `codex-unused-asset-sweep` for their
+transaction, and `runMigrations`, when a migration is pending, cancels those
+backends first and logs it; the run fails and the next night's retries. Each
+read's limit is now the job's expiry / 2.5, so both reads fit in one run and
+an expired job never overlaps a read still going. The import preview warns
+when the bundled images do not fit in the storage left. `formatBytes`
+rounds before picking the unit ("1 MB", not "1024 KB"). A legacy
+uuid-shaped slug was linked as is and then looked up as an id, a dead link;
+public story and universe links (`slugAddress`) use the id instead.
+
+Phase 10 staging review round 5 (2026-11-23, `fix/phase-10-review-5` on
+`staging/phase-10`). The unused-image sweep's whole-database reads ran under
+the worker pool's five-minute statement limit, so on a large database they
+were cancelled long before the job's six-hour expiry. They now run in their
+own read-only transaction with `statement_timeout` raised to that expiry (a
+plain read holds no lock a write waits on), and the recheck before deleting
+reads once for every due image rather than once per 100-image chunk; the
+short locked delete transactions are unchanged. The extra runs (one per
+account after a story was deleted for good, one after the hourly purge) were
+dropped: with the two-phase rule nothing is due right after a purge, so the
+nightly run is enough. A failed run is logged (`assets.unused_sweep_failed`).
+A universe purge now sets `unreferenced_since` to now over any earlier mark,
+since that mark may be stale (it is cleared only when a run sees the image in
+use) and would cut the 30 days short. A new standalone story that brings back
+trashed standalone stories is refused with a message saying so. The unused
+`deleteStory` (a hard delete with no trash check) is gone. The plan form posts
+each size limit's stored bytes beside the rounded MB field, and a field left
+as shown keeps the stored value. Restoring a story whose universe is in the
+trash was checked and is not reachable (`ownedStoryRow` requires a live
+universe), so its count was left alone.
+
+Phase 10 staging review round 3 (2026-11-23, `fix/phase-10-review-3` on
+`staging/phase-10`). The sweep's 30-day grace counted from upload, so an old
+image taken out of a field with no history (a description, a bio) could be
+deleted minutes later by a sweep any writer's "delete for good" queued, and an
+undo or a retried save then linked a dead image. The sweep now deletes in two
+phases: the first run that finds an image unused sets
+`assets.unreferenced_since` (migration 0109), a run that finds it in use
+clears it, and only an image marked for 30 days (and uploaded more than 30
+days ago) goes. The sweep queued from the dashboard covers only that account
+(a pg-boss singleton key per account, so it never takes the nightly run's
+place). Its per-chunk recheck of every column used to run under the account
+row locks, holding up that writer's uploads and profile saves for a full
+scan; it now runs first, outside any lock, and the short locked transaction
+only checks the rows are still there and still marked long enough. Replacing
+an avatar, cover or badge passes `replaces` to `createAsset`, whose limit check
+(not the counter) takes the old image's bytes off, so a writer at the limit
+can swap; the counter reads above the limit until the sweep frees the old
+image, and the next check sees that overage, so it is bounded by one image.
+A credit for every marked image was considered and left out: unlinking and
+relinking images would let usage grow past the limit a day at a time. A
+universe purge frees images the way the sweep does (file kept 30 days longer,
+row logged). The story settings take the reading link from `readingPageRef`,
+so a takedown or suspension hides it; an unlisted reading page is noindex; the
+plan form's "Make default" is its own form; and `saveWithSlug` locks the row
+only when it is the caller's, so no history is recorded for another's row.
+
+Phase 10 staging review round 2 (2026-11-23, `fix/phase-10-review-2` on
+`staging/phase-10`). The 308 from an old public slug stays permanent for
+search engines but carries `Cache-Control: no-cache`: a browser caches a
+permanent redirect for good otherwise, and a rename back to the old slug then
+loops. A universe purge deleted every image with its `universe_id`, though a
+scene, edition or profile elsewhere can show one (and a `publication_assets`
+row made the purge fail every hour). It now detaches the images
+(`universe_id` null) with the rest of the universe, then deletes only those
+past the 30-day grace that the full reference check (the same one the sweep
+uses) finds unused; the rest wait for the sweep. Replacing or clearing a cover, avatar or badge no longer
+deletes the old image either, and so no longer credits its bytes to the
+upload that replaces it: checking references there would scan the whole
+database on every avatar change, and the eager delete threw after the new
+cover was saved when an edition held the old one. Writers near the limit now
+wait for the sweep instead; the help says so. Purges lock the row and return
+when it is no longer in the trash, and the scheduled purge checks the 30 days
+again under the lock, so a restore that lands first wins. A story purge locks
+the scenes before the story (row-locks.ts order); a universe purge locks the
+account rows before the universe, in no key update so foreign-key checks on
+it are not held up. Adding the account purge to the lock-order test showed
+its FOR UPDATE on the account row against every insert's key share on it; it
+now takes no key update, which still turns a cancellation or an upload away,
+and reads the bucket keys under that lock. The sweep's recheck covers every
+catalog column, limited to the held ids, rather than a hand-kept list that
+had missed chapter summaries, story notes and more. A same-base rename keeps
+its slug, and the shelf 404s for an unknown handle or a suspended author.
+
+Freeing storage on story purge and for unused images (2026-11-23,
+`feat/free-storage` on `staging/phase-10`, #1446). Before this only a
+universe purge gave image bytes back, so a writer at the storage limit could
+not get under it. Deleting an image a writer still uses is the failure that
+matters, so "in use" is read as widely as possible: an image is kept while
+its id appears anywhere in the database outside its own `assets` row, in any
+uuid column or in the text of any other column that could hold it. The
+columns come from `pg_catalog` on each run (information_schema hides columns
+the role has no privilege on), and the run refuses to go on if scenes,
+revisions or story covers are missing from the list; an explicit list of
+reference sources was weighed and dropped, since one forgotten column would
+mean lost images. `sweepUnusedAssets` (worker queue `sweep-unused-assets`,
+03:00 UTC, policy `stately` with a six hour expiry so runs never pile up)
+reads every such column once, in one statement and so one snapshot (a
+reference moving between tables, a staged draft accepted into a scene, is
+seen in one of them), and anti-joins the images older than the grace period.
+For those it then takes, a hundred at a time, the owners' account rows and
+the image rows with SKIP LOCKED, so a sign-in, a settings save or an upload
+is never kept waiting (a skipped one waits for the next run), checks again
+the columns writers type into or point at images from (scene, note and entry
+bodies, descriptions, saved and staged drafts, and every uuid column named
+for an asset), and deletes, giving the bytes back and queueing the objects
+in the same transaction. The object store is never called on this path.
+
+Review round 1 (independent review): the first version scanned the whole
+database twice per 500 images, the second time holding up to 500 account
+rows, and ran inside the story purge request. The grace period was 24 hours,
+but an image can live only in an unsaved editor, a save still retrying or the
+undo history of an open tab for longer than that, and autosaves a couple of
+minutes apart share one history entry, so an image added and removed in one
+sitting may be in no saved row. The grace is now 30 days. A freed image's
+object is queued 30 days later than usual and the deleted row is logged
+(`assets.unused_deleted`), so it can be put back by hand. Reviving a row
+automatically (from the image route or a save) was weighed and left out: the
+queue keeps only the key, so the owner, type and size would need a new
+column, and a revived image would be charged to an account that may since
+have filled its limit. The race window is not an instant: a link saved
+after the full read into a column the recheck does not cover (a revision
+written on its own, a chat transcript) is not seen. The recheck covers the
+places a writer adds a link, and with a 30 day grace the image has been in
+no row for a month. Badges and editions hold the asset row through a foreign
+key, so a sweep skips an image one is being pointed at. `purgeStory` no
+longer touches images; destroying a story from the trash queues a sweep, and
+the hourly trash purge queues one after purging stories. The sweep a purge
+queues frees every unused image past the grace, the story's and any other. Because history is never pruned, taking an
+image out of a scene usually frees nothing while the scene exists; the help
+says so.
+
+Per-image size limit per plan (2026-11-23, `feat/image-size-limit` on
+`staging/phase-10`, #1451). `max_image_bytes` joins the enforced keys in
+`src/lib/quota.ts`, so `listPlans`, `savePlan` and `accountLimits` pick it up
+with no new code, and it needs no migration (entitlements are key/value
+rows). The fixed 10 MB cap moved from `assets.ts` (`MAX_ASSET_BYTES`) to
+`MAX_IMAGE_BYTES` in `quota.ts`, since the admin form and the account page
+both need it. It stays the hard ceiling: an upload over it is still refused
+as invalid (400) with the old wording, before the plan is read, so a plan
+value above it (only possible by editing the database) can never raise it.
+Under the ceiling, an upload over the plan's value is `over_limit` (403)
+with a message naming the size. The check is in `createAsset`, before the
+object is stored, and reuses the limits read for the storage pre-check, so
+an upload still reads the plan once outside the transaction. It does not
+need to be re-checked under the account lock the way storage is: nothing
+two uploads do at once changes the answer. The admin enters whole MB from 1
+to 10 (blank is the ceiling; 0 would refuse every image, and the message
+telling the writer to choose a smaller image could not be followed); a
+higher value is refused with a message saying so rather than quietly
+clamped, so the admin never saves something other than what they typed.
+Review round 1 added the import preview line naming each bundled image the
+limit will skip, and read the limit on the account page only for the
+profile section. The avatar hint on the account page now names
+the account's own limit. Stacked on #1450 (`feat/image-downscale`), since
+both touch the same help article and history.
+
+Large images shrink in the browser (2026-11-23, `feat/image-downscale` on
+`staging/phase-10`, #1450). Images used to be stored exactly as uploaded. Now
+`shrinkImage` (`src/lib/image-shrink.ts`) scales a still image longer than
+2560 px down to that on its long edge and re-encodes it as WebP at quality
+0.85, with `createImageBitmap(file, { imageOrientation: 'from-image' })` so a
+phone photo comes out upright, and an `OffscreenCanvas` (a plain canvas where
+there is none). It keeps the original whenever it cannot do better: the image
+fits already, the copy is not smaller, the browser hands back another type
+(Safari's canvas could not encode WebP until recently and falls back to PNG),
+or decoding fails. Animation is detected from the first 64 KB rather than by
+decoding: every GIF is skipped (counting GIF frames means walking the whole
+file, and a large still GIF is rare), and so is a PNG with `acTL` before its
+first `IDAT`, a WebP with the VP8X animation flag, and an AVIF branded
+`avis`. A PNG whose first `IDAT` is past the 64 KB read is treated as
+animated, so it goes up unchanged. The decision logic is unit-tested through
+an injected codec; the canvas path itself runs only in a browser. The editor
+and the badge picker post with fetch, so they call it directly; the cover and
+avatar forms are plain form posts, so `shrinkImagesOnSubmit` holds the submit,
+swaps the input's files through a `DataTransfer`, and submits again. Story
+import sends the archive to the server, which extracts its images there; that
+path is unchanged. No server dependency was added, and the server checks are
+the same.
+
+Public pages at /@handle/slug (2026-11-22, `feat/public-slug-pages` on
+`staging/phase-10`, #854). The roadmap assumed `(owner_id, slug)` made
+`/@handle/<slug>` collision-free, but stories and universes keep separate
+unique indexes, so one account can hold a story and a universe both called
+`ember-reach`. A flat address would need a precedence rule, and a later
+rename on either side could quietly re-point a link someone shared, so the
+story keeps the flat address the uuid links already used and the universe
+takes `/@handle/universes/<slug>`. Two segments never meet one, so no
+reserved words are needed. One `ref` matcher (an id or a valid slug, any
+case) replaces `uuid` on these routes; a malformed address is still a router
+404. `publicEdition` and the new `publicUniverse` take either form and scope
+the lookup by the handle's owner (`stories.owner_id = publications.owner_id`,
+`universes.owner_id` through `users.handle`). The shelf, the story menu and
+the publish confirmation now hand out slug links. Review round 1 caught that
+this made unlisted stories guessable from their titles, so a slug resolves
+only a public story and an unlisted one keeps its id address
+(`readingAddress`). It also caught that `src/params.ts` is loaded by Node
+itself during the build, where `#lib/slug` has no extension to resolve: the
+build failed in CI until it imported `./lib/slug.ts`. The matcher also
+accepts slugs up to 100 characters, since the 0035 backfill could append a
+suffix to a 60-character base.
+
+Old slugs redirect (decided by Mads after round 1). A rename used to break a
+shared slug link, and a later story could take the freed slug and inherit
+it. `slug_history` (migration 0108) keeps each slug a rename moves off, per
+account and kind, always for a universe and, for a story, once it has been
+published; an unpublished story's rename has no public link to protect,
+and reserving it would only push suffixes onto later drafts. Universes are
+reserved regardless (review round 3): judging them by their stories'
+publications failed once those stories were purged. `saveStoryDetails`
+and the new `saveUniverseDetails` go through `saveWithSlug`, which locks the
+row, compares the name it holds now (review round 3: a form that read an
+older name could leave the slug behind), and on a rename takes a
+per-account advisory lock, picks, saves and records (review round 2: two
+renames at once used to retire a stale slug and lose the one in between). `uniqueSlug` counts history
+as taken, except a story's own old slugs, so renaming back works. A restore
+from the trash whose slug became another story's old slug picks a fresh one,
+since coming back under it would re-point that story's links; it runs under
+the same lock, so a rename cannot reserve the slug between the check and
+the revive. Trashing still frees a story's current slug, unchanged. The public
+loaders redirect with 308 (SvelteKit's permanent redirect) only when the
+target is readable at its slug, which keeps an unlisted story's id out of
+any redirect. Purge keeps the reservation with a null target (safer than
+freeing it: an old link 404s rather than opening another work); the account
+deletion cascade removes the rows. The private app routes do not redirect
+old slugs, to keep this to the public promise. Both public pages now carry
+`rel=canonical`. No redirect from the id
+address to the slug one: the id is the address that survives a rename.
+
+The universe page shows the name and the shelf's own query narrowed to that
+universe, so takedowns, visibility, adult labels and noindex follow the
+shelf exactly. It is a 404 while nothing in it is listed, so a guessed slug
+never confirms a private universe's name, and the standalone universe never
+gets one. No description: universes have no frozen copy, and public pages
+show only frozen editions. Each story's kicker links its universe page when
+there is one, since nothing else would lead a reader there.
+
+While there: the public reads checked `stories.deleted_at` but not the
+universe's, so a trashed universe's editions, covers, inline images and
+reader downloads stayed public until the purge. They now use `storyIsLive()`
+(`publicEdition`, `publicShelf`, `isPublicAsset`, `artifactForDownload`).
+
+Plans, usage accounting and quota enforcement (2026-11-23, `feat/quotas` on
+`staging/phase-10`, #858). Migration 0107 creates `plans` and
+`entitlements` as `schema.md` had them, seeds a default plan with no
+entitlement rows (no limits, so self-host is unchanged), clears any stray
+`users.plan_id` and adds its foreign key, and backfills
+`storage_used_bytes` from the asset rows in SQL, the way 0083 backfilled
+stale marks; a worker job was weighed and dropped, since the sum is one
+grouped update. Only `max_universes`, `max_stories` and `storage_bytes` are
+enforced. Counts are of live rows, the idiomatic choice (a writer at the
+limit expects the trash to make room), which means restoring is checked like
+a create; restoring a universe counts the live stories it brings back. The
+standalone-stories universe is a container, so it never counts. Every create
+runs its check inside its own transaction under
+`pg_advisory_xact_lock(hashtext('quota:<user>'))`, taken only when a limit
+applies, so the default plan pays one small read and no lock. A refused
+count throws `QuotaExceededError`, which rolls the create's transaction
+back, and the routes turn it into a 403 form message; `newStoryFromDraft`
+returns it as an `over_limit` failure, matching its other failures.
+`untrash` now runs each slug attempt as a savepoint, so a restore can run in
+the caller's transaction. Storage (`reserveStorage`) locks the account row,
+reads its use and the limit under that lock, and adds the bytes only when
+they fit, in the same transaction as the asset insert, after the object is
+stored; a refused upload removes its object. A
+pre-check before the bucket write keeps an obviously oversized file from
+being sent at all. Deletes and universe purges subtract in the same
+transaction. Trashing keeps the images counted until the purge. Review
+round: the reserve now locks the account row and reads the limit under the
+lock (so a plan change mid-upload is honoured), and every storage path takes
+the account row before asset rows (`lockStorageOwners`), since a delete
+racing the account purge could otherwise deadlock. A replacement cover,
+avatar or badge is credited with the size of the image it replaces. A failed
+import deletes the images it stored. Reviving a trashed standalone universe
+for a new story checks room for its stories, and a second restore of the
+same row finds it live instead of counting it. Deleting one story for good
+still leaves its images (they belong to the universe); that is documented in
+the help and left for a follow-up. The admin recount locks each account row before summing, so an
+upload in flight is counted once. Admin got a Plans section (rename, limits,
+make default, new plan) and an Accounts block under Usage & storage with the
+plan picker per account, under the asset storage block, which was left
+alone. Plan deletion and the `public_archive` entitlement were left out: the
+per-account publishing switch already gates that. Staging review round 1
+(`fix/phase-10-review-1`): reviving a trashed standalone universe took the
+quota lock before the universe row, the reverse of `restoreUniverse`, and
+the story creates (new story, new story from a draft, import) took the quota
+lock before the insert's foreign-key check on the universe row. Lock order
+is now the row, then the quota lock, then the slug lock: the revive locks
+the row first and the creates key-share it first (`holdStoryQuota`). The
+lock-order harness now runs on a plan with limits and knows the quota lock,
+and it caught both. The account purge now locks the account row before
+anything else, so an image delete or upload running at the same time can no
+longer deadlock with it over the avatar. An import also deletes its stored
+images on a failure anywhere after the first one, not only in the final
+transaction. A suspended author's shelf, story and universe pages,
+redirects, covers, images, avatar and reader downloads answer as not found
+until the suspension is lifted (#1441).
+
 Marker limits after the #1448 reviews (2026-11-23,
 `fix/marker-limits-1477-1478` on `staging/bug-fixes-4`, #1478 and part of
 #1477). The page data's markers now carry the fingerprint of the text their

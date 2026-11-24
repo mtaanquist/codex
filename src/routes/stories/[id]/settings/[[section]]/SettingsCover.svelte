@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { storyCoverColor } from '#lib/entity-color';
+	import { formatBytes } from '#lib/format';
+	import { shrinkImagesOnSubmit } from '#lib/image-shrink';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const coverColor = $derived(storyCoverColor(data.story));
+	let shrinking = $state(false);
 </script>
 
 <div class="admin-block-head">
@@ -25,7 +28,15 @@
 			{data.story.title}
 		</span>
 	{/if}
-	<form method="POST" action="?/setCover" enctype="multipart/form-data">
+	<form
+		method="POST"
+		action="?/setCover"
+		enctype="multipart/form-data"
+		use:shrinkImagesOnSubmit={{
+			maxBytes: data.maxImageBytes,
+			onBusy: (busy) => (shrinking = busy)
+		}}
+	>
 		{#if form?.action === 'cover' && form.message}
 			<p class="form-error" role="alert">{form.message}</p>
 		{/if}
@@ -38,7 +49,11 @@
 				name="cover"
 				accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
 				required
+				aria-describedby="st-cover-hint"
 			/>
+			<p class="field-hint" id="st-cover-hint">
+				PNG, JPEG, WebP, GIF or AVIF, up to {formatBytes(data.maxImageBytes)}.
+			</p>
 		</div>
 		<div class="settings-actions">
 			{#if form?.action === 'cover' && form.saved}
@@ -46,7 +61,9 @@
 					>Cover saved.</span
 				>
 			{/if}
-			<button class="btn btn-primary" type="submit">Upload cover</button>
+			<button class="btn btn-primary" type="submit" aria-disabled={shrinking} aria-busy={shrinking}>
+				{shrinking ? 'Uploading...' : 'Upload cover'}
+			</button>
 		</div>
 	</form>
 </div>

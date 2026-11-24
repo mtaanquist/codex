@@ -4,12 +4,15 @@
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { shrinkImagesOnSubmit } from '#lib/image-shrink';
+	import { formatBytes } from '#lib/format';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	let avatarForm = $state<HTMLFormElement | null>(null);
+	let avatarShrinking = $state(false);
 	let profileForm = $state<HTMLFormElement | null>(null);
 
 	// Claiming the handle is the first step into public, so with no pen name
@@ -89,9 +92,13 @@
 							action="?/uploadAvatar"
 							enctype="multipart/form-data"
 							bind:this={avatarForm}
+							use:shrinkImagesOnSubmit={{
+								maxBytes: data.maxImageBytes,
+								onBusy: (busy) => (avatarShrinking = busy)
+							}}
 						>
-							<label class="btn btn-secondary btn-sm">
-								Upload photo
+							<label class="btn btn-secondary btn-sm" aria-busy={avatarShrinking}>
+								{avatarShrinking ? 'Uploading...' : 'Upload photo'}
 								<input
 									type="file"
 									name="file"
@@ -108,7 +115,8 @@
 						{/if}
 					</div>
 					<p class="avatar-edit-hint">
-						PNG, JPEG, WebP, GIF or AVIF, up to 10 MB. A square image works best.
+						PNG, JPEG, WebP, GIF or AVIF, up to {formatBytes(data.maxImageBytes)}. A square image
+						works best.
 					</p>
 					<FormStatus error={form?.scope === 'avatar' && form.message ? form.message : null} />
 				{/if}

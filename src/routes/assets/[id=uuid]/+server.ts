@@ -6,12 +6,13 @@ import { db } from '#lib/server/db';
 import { assets } from '#lib/server/db/schema';
 import { effectiveAssetConfig, getObjectOrNull, openAsset, s3AssetStore } from '#lib/server/assets';
 import { isPublicAsset, isPublicAvatar } from '#lib/server/publish';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // Streams an uploaded asset: to its owner always, and to anyone when it
 // belongs to a publicly readable edition (cover or inline image).
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const config = await effectiveAssetConfig(db);
-	if (!config) error(503, 'assets are not configured');
+	if (!config) error(503, ASSETS_OFF_MESSAGE);
 	const store = s3AssetStore(config);
 
 	let opened = locals.user ? await openAsset(db, store, locals.user.id, params.id) : null;

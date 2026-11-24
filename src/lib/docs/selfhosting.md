@@ -22,3 +22,7 @@ People with an account can connect an AI app they use, such as Claude, so it can
 ## Running it for other people
 
 A Codex you run can hold accounts for other people, each with their own writing. Whoever runs it decides who gets in: nobody, invited people only, people who ask and get approved, or anybody who signs up. If you are the one running it, that setting is in the admin panel.
+
+Nobody has limits unless you set them. To limit how many universes and stories an account can have, how much space its uploaded images take, or how large one image can be (never more than 10 MB), set the limits on a plan under Plans in the admin panel, then pick that plan for the account under Usage & storage. Usage & storage also shows what each account uses.
+
+Images that nothing has used for 30 days, and that were uploaded more than 30 days ago, are deleted by a job that runs every night at 03:00 UTC. The file of a deleted image is kept for 30 more days, and each deletion is written to the server log as `assets.unused_deleted` with the image's details, so you can put an image back by hand during that time.

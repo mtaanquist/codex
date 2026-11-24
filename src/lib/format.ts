@@ -120,6 +120,22 @@ export function compactCount(n: number): string {
 	return n < 1000 ? String(n) : `${(n / 1000).toFixed(1)}k`;
 }
 
+/** "512 bytes", "3.4 MB", "1 GB": a size in binary units, to one decimal. */
+export function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} byte${pluralSuffix(bytes)}`;
+	const units = ['KB', 'MB', 'GB', 'TB'];
+	let value = bytes / 1024;
+	let unit = 0;
+	const round = (n: number) => Math.round(n * 10) / 10;
+	// Rounded before the unit is picked, so 1023.96 KB reads "1 MB", not "1024 KB".
+	while (round(value) >= 1024 && unit < units.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+	const rounded = round(value);
+	return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} ${units[unit]}`;
+}
+
 /** The message from a failed API response, or the fallback. */
 export async function apiErrorMessage(response: Response, fallback: string): Promise<string> {
 	const body = (await response.json().catch(() => null)) as { message?: string } | null;

@@ -52,6 +52,16 @@ import {
 	s3AssetStore,
 	saveAssetStorage
 } from '#lib/server/assets';
+import {
+	createPlan,
+	listAccountUsage,
+	listPlans,
+	recountStorageBatch,
+	savePlan,
+	setDefaultPlan,
+	setUserPlan
+} from '#lib/server/plans';
+import { MAX_IMAGE_BYTES, MEGABYTE, parseLimitInput, parseMegabytesField } from '#lib/quota';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
 import { appVersion } from '#lib/server/app-version';
@@ -63,6 +73,10 @@ function formatUptime(seconds: number): string {
 	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
 	return `${Math.floor(seconds / 86400)}d`;
 }
+
+// Upper bounds for typed limits, well past any real use.
+const MAX_COUNT_LIMIT = 100_000;
+const MAX_STORAGE_MB = 100_000_000;
 
 function requireAdmin(locals: App.Locals) {
 	if (locals.user?.role !== 'admin') error(404, 'Not found');
@@ -76,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 	if (legacy && isSectionSlug(legacy)) redirect(308, `/admin/${legacy}`);
 	// The overview rests on /admin itself; anything else must be a known slug.
 	if (params.section !== undefined && !isSectionSlug(params.section)) error(404, 'Not found');
+	const section = params.section ?? 'overview';
 	return {
 		meId: locals.user!.id,
 		meEmail: locals.user!.email,
@@ -90,6 +105,16 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		assetStorage: await assetStorageView(db),
 		assetMigrationPending: (await assetMigrationSource(db)) !== null,
 		assetMigration: await assetMigrationResult(db),
+		// Only the sections that show them pay for these.
+		plans: section === 'plans' || section === 'usage' ? await listPlans(db) : [],
+		// The accounts table pages through ?page=N (zero-based) and searches ?q=.
+		usage:
+			section === 'usage'
+				? await listAccountUsage(db, {
+						query: url.searchParams.get('q') ?? '',
+						page: Number(url.searchParams.get('page')) || 0
+					})
+				: null,
 		smtp: await smtpView(db),
 		egress: await egressPolicy(db),
 		externalAccess: await mcpInstanceEnabled(db),
@@ -330,6 +355,105 @@ export const actions: Actions = {
 		requireAdmin(locals);
 		await clearAssetMigrationSource(db);
 		return { scope: 'storage', done: true };
+	},
+	createPlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const result = await createPlan(db, formText(await request.formData(), 'name'));
+		if (!result.ok) return fail(400, { scope: 'plans', message: result.reason });
+		return { scope: 'plans', done: true };
+	},
+	savePlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const data = await request.formData();
+		const planId = formText(data, 'planId');
+		const universes = parseLimitInput(formText(data, 'maxUniverses'), MAX_COUNT_LIMIT);
+		const stories = parseLimitInput(formText(data, 'maxStories'), MAX_COUNT_LIMIT);
+		const storageBytes = parseMegabytesField(
+			formText(data, 'storageMb'),
+			formText(data, 'storageBytes'),
+			MAX_STORAGE_MB
+		);
+		// 0 would refuse every image, so the smallest size is 0.1 MB.
+		const parsedImageBytes = parseMegabytesField(
+			formText(data, 'maxImageMb'),
+			formText(data, 'maxImageBytes'),
+			MAX_IMAGE_BYTES / MEGABYTE
+		);
+		const imageBytes = parsedImageBytes === 0 ? undefined : parsedImageBytes;
+		if (universes === undefined || stories === undefined) {
+			return fail(400, {
+				scope: 'plans',
+				planId,
+				message: `Limits are whole numbers from 0 to ${MAX_COUNT_LIMIT}, or blank for no limit.`
+			});
+		}
+		if (storageBytes === undefined) {
+			return fail(400, {
+				scope: 'plans',
+				planId,
+				message: `Storage is a number of MB from 0 to ${MAX_STORAGE_MB}, with at most one decimal place, or blank for no limit.`
+			});
+		}
+		if (imageBytes === undefined) {
+			return fail(400, {
+				scope: 'plans',
+				planId,
+				message: `The largest image is a number of MB from 0.1 to ${MAX_IMAGE_BYTES / MEGABYTE}, with at most one decimal place, or blank for ${MAX_IMAGE_BYTES / MEGABYTE} MB, the most any plan allows.`
+			});
+		}
+		if (!isUuid(planId)) {
+			return fail(400, { scope: 'plans', message: 'That plan does not exist.' });
+		}
+		const result = await savePlan(db, planId, {
+			name: formText(data, 'name'),
+			limits: {
+				max_universes: universes,
+				max_stories: stories,
+				storage_bytes: storageBytes,
+				max_image_bytes: imageBytes
+			}
+		});
+		if (!result.ok) return fail(400, { scope: 'plans', planId, message: result.reason });
+		return { scope: 'plans', planId, saved: true };
+	},
+	setDefaultPlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const planId = formText(await request.formData(), 'planId');
+		if (!isUuid(planId) || !(await setDefaultPlan(db, planId))) {
+			return fail(400, { scope: 'plans', message: 'That plan does not exist.' });
+		}
+		return { scope: 'plans', done: true };
+	},
+	// Blank plan id puts the account back on the default plan.
+	setUserPlan: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const data = await request.formData();
+		const userId = formText(data, 'userId');
+		const planId = formText(data, 'planId');
+		if (
+			!isUuid(userId) ||
+			(planId !== '' && !isUuid(planId)) ||
+			!(await setUserPlan(db, userId, planId || null))
+		) {
+			return fail(400, { scope: 'usage', message: 'That account could not be updated.' });
+		}
+		return { scope: 'usage', done: true };
+	},
+	// One batch of accounts per request; the page posts again with next until
+	// it is null. done carries the running total.
+	recountStorage: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const data = await request.formData();
+		const after = formText(data, 'after');
+		const done = Math.max(0, Math.floor(Number(formText(data, 'done')) || 0));
+		if (after !== '' && !isUuid(after)) {
+			return fail(400, {
+				scope: 'usage',
+				message: 'The recount could not continue. Start it again.'
+			});
+		}
+		const batch = await recountStorageBatch(db, after || null);
+		return { scope: 'usage', recounted: done + batch.recounted, next: batch.next };
 	},
 	saveSmtp: async ({ request, locals }) => {
 		requireAdmin(locals);

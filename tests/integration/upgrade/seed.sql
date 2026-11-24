@@ -63,3 +63,19 @@ insert into entity_mentions (source_type, source_id, target_type, target_id, pos
 -- the scope key from before the categories were part of it and not continued since.
 insert into assistant_review_runs (job_id, user_id, state) values
 	('00000000-0000-4000-8000-0000000000aa', '00000000-0000-4000-8000-0000000000a1', '{"phase":"scenes","scope":"full:00000000-0000-4000-8000-0000000000c1","total":3,"completed":["00000000-0000-4000-8000-0000000000e1","00000000-0000-4000-8000-0000000000e2"],"reviewed":2,"failed":0,"notes":4,"failures":[],"capped":true,"spentUsd":0.5}');
+
+-- Uploaded images from before storage use was counted, long past the unused
+-- image sweep's grace period: a cover in a universe and an account avatar
+-- that nothing shows, and an image only a published edition shows.
+insert into assets (id, owner_id, universe_id, kind, filename, content_type, byte_size, storage_key, created_at) values
+	(gen_random_uuid(), '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000b1', 'cover', 'cover.png', 'image/png', 1000, 'codex-assets/upgrade-cover', now() - interval '90 days'),
+	(gen_random_uuid(), '00000000-0000-4000-8000-0000000000a1', null, 'avatar', 'me.png', 'image/png', 2345, 'codex-assets/upgrade-avatar', now() - interval '90 days'),
+	('00000000-0000-4000-8000-0000000000ab', '00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-0000000000b1', 'inline', 'chart.png', 'image/png', 500, 'codex-assets/upgrade-chart', now() - interval '90 days');
+
+-- A published edition of The Long Tide, public, that shows the chart.
+update users set handle = 'upgrader' where id = '00000000-0000-4000-8000-0000000000a1';
+update stories set visibility = 'public' where id = '00000000-0000-4000-8000-0000000000c1';
+insert into publications (id, story_id, owner_id, handle, title, content, published_at) values
+	('00000000-0000-4000-8000-0000000000ac', '00000000-0000-4000-8000-0000000000c1', '00000000-0000-4000-8000-0000000000a1', 'upgrader', 'The Long Tide', '{"chapters":[],"unfiled":[{"title":"Chart","bodyMd":"The chart: ![chart](/assets/00000000-0000-4000-8000-0000000000ab)"}]}', now() - interval '40 days');
+insert into publication_assets (publication_id, asset_id) values
+	('00000000-0000-4000-8000-0000000000ac', '00000000-0000-4000-8000-0000000000ab');

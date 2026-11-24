@@ -12,6 +12,10 @@
 	let { data }: { data: PageData } = $props();
 
 	const shelfHref = $derived(resolve('/@[handle]', { handle: data.handle }));
+	// One address for search engines whether the reader came by id or by slug.
+	const canonical = $derived(
+		page.url.origin + resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story })
+	);
 
 	// Every chapter of the edition in one list, unfiled scenes last, so the
 	// contents and the prose below it are built from the same thing.
@@ -39,7 +43,8 @@
 
 <svelte:head>
 	<title>{data.title} - by {data.author}</title>
-	{#if data.gate || data.isAdult}
+	<link rel="canonical" href={canonical} />
+	{#if data.gate || data.isAdult || !data.listed}
 		<meta name="robots" content="noindex" />
 	{/if}
 </svelte:head>
@@ -62,7 +67,7 @@
 				<p class="reader-byline">
 					<a
 						href={withQuery(
-							resolve('/@[handle]/[story=uuid]', { handle: data.handle, story: data.storyId }),
+							resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story }),
 							{ adult: 'ok' }
 						)}
 					>
@@ -73,7 +78,15 @@
 			</div>
 		{:else}
 			<div class="reader-col">
-				<p class="reader-kicker">A story by <a href={shelfHref}>{data.author}</a></p>
+				<p class="reader-kicker">
+					A story by <a href={shelfHref}>{data.author}</a>{#if data.universe}, in
+						<a
+							href={resolve('/@[handle]/universes/[universe=ref]', {
+								handle: data.handle,
+								universe: data.universe.slug
+							})}>{data.universe.name}</a
+						>{/if}
+				</p>
 				<h1 class="reader-title">{data.title}</h1>
 				<p class="reader-byline">
 					{chapters.length}

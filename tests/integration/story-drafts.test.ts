@@ -25,7 +25,6 @@ import {
 import {
 	deleteDraft,
 	draftsByStory,
-	draftUsesCover,
 	getDraft,
 	replaceCover,
 	listDrafts,
@@ -45,7 +44,7 @@ import {
 	gatherDrafts,
 	gatherStory
 } from '../../src/lib/server/export';
-import { deleteStory } from '../../src/lib/server/story-delete';
+import { destroyStory, trashStory } from '../../src/lib/server/story-lifecycle';
 import { purgeUniverse } from '../../src/lib/server/universe-lifecycle';
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import { zipBytes } from '../../src/lib/server/zip-stream';
@@ -278,8 +277,8 @@ describe('updateDraftDetails and deleteDraft', () => {
 			.insert(stories)
 			.values({ universeId, ownerId, title: 'Other', slug: 'other' })
 			.returning();
-		expect(await deleteDraft(db, ownerId, elsewhere.id, id)).toMatchObject({ ok: false });
-		expect(await deleteDraft(db, ownerId, storyId, id)).toEqual({ ok: true });
+		expect(await deleteDraft(db, elsewhere.id, id)).toMatchObject({ ok: false });
+		expect(await deleteDraft(db, storyId, id)).toEqual({ ok: true });
 		expect(await getDraft(db, storyId, id)).toBeNull();
 	});
 });
@@ -656,7 +655,7 @@ describe('publishing a saved draft', () => {
 			unfiled: [{ title: 'Loose', bodyMd: 'A stray page.' }]
 		});
 		// Deleting the draft keeps the edition.
-		await deleteDraft(db, ownerId, storyId, id);
+		await deleteDraft(db, storyId, id);
 		const [kept] = await db.select().from(publications);
 		expect(kept.sourceDraftId).toBeNull();
 	});
@@ -676,6 +675,7 @@ describe('lifecycle', () => {
 	it('goes with the universe, editions published from a draft included', async () => {
 		const id = await save();
 		expect((await publishStory(db, ownerId, storyId, 'Edition 1', id)).ok).toBe(true);
+		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, universeId));
 		await purgeUniverse(db, universeId);
 		expect(await db.select().from(storyDrafts)).toEqual([]);
 		expect(await db.select().from(publications)).toEqual([]);
@@ -684,21 +684,9 @@ describe('lifecycle', () => {
 
 	it('goes with the story when it is deleted', async () => {
 		await save();
-		await deleteStory(db, storyId, ownerId);
+		await trashStory(db, ownerId, storyId);
+		expect(await destroyStory(db, ownerId, storyId)).toBe(true);
 		expect(await db.select().from(storyDrafts)).toEqual([]);
-	});
-
-	it('knows when a draft still shows an image as its cover', async () => {
-		const assetId = '00000000-0000-4000-8000-000000000001';
-		expect(await draftUsesCover(db, storyId, assetId)).toBe(false);
-		await db.update(stories).set({ coverAssetId: assetId }).where(eq(stories.id, storyId));
-		await save();
-		expect(await draftUsesCover(db, storyId, assetId)).toBe(true);
-		const [elsewhere] = await db
-			.insert(stories)
-			.values({ universeId, ownerId, title: 'Other', slug: 'other' })
-			.returning();
-		expect(await draftUsesCover(db, elsewhere.id, assetId)).toBe(false);
 	});
 
 	const cover = async (name: string) => {
@@ -718,30 +706,16 @@ describe('lifecycle', () => {
 	};
 	const assetIds = async () => (await db.select({ id: assets.id }).from(assets)).map((a) => a.id);
 
-	it('keeps an old cover a draft shows, and frees it with the last such draft', async () => {
-		const first = await cover('first');
-		const second = await cover('second');
-		expect(await replaceCover(db, storyId, first)).toBeNull();
-		const id = await save();
-		// The draft still shows the first cover, so it is not freed.
-		expect(await replaceCover(db, storyId, second)).toBeNull();
-		expect(await deleteDraft(db, ownerId, storyId, id)).toEqual({ ok: true });
-		expect(await assetIds()).toEqual([second]);
-	});
-
-	it('hands back an old cover no draft shows', async () => {
+	// The unused image sweep frees an old cover once nothing shows it; a
+	// replace or a draft delete never deletes one itself.
+	it('leaves a replaced cover, and one a deleted draft showed, for the sweep', async () => {
 		const first = await cover('first');
 		const second = await cover('second');
 		await replaceCover(db, storyId, first);
-		expect(await replaceCover(db, storyId, second)).toBe(first);
-	});
-
-	it('keeps the story cover when a draft that shows it is deleted', async () => {
-		const first = await cover('first');
-		await replaceCover(db, storyId, first);
 		const id = await save();
-		await deleteDraft(db, ownerId, storyId, id);
-		expect(await assetIds()).toEqual([first]);
+		await replaceCover(db, storyId, second);
+		expect(await deleteDraft(db, storyId, id)).toEqual({ ok: true });
+		expect((await assetIds()).sort()).toEqual([first, second].sort());
 	});
 });
 

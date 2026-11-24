@@ -4,13 +4,14 @@ import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { effectiveAssetConfig, getObjectOrNull, s3AssetStore } from '#lib/server/assets';
 import { artifactForDownload } from '#lib/server/export-artifacts';
+import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
 
 // Streams a stored export file (markdown zip, EPUB, PDF): to the edition's
 // owner always, and to anyone when the edition is readable and the owner has
 // switched reader downloads on. artifactForDownload owns those rules.
 export const GET: RequestHandler = async ({ params, locals }) => {
 	const config = await effectiveAssetConfig(db);
-	if (!config) error(503, 'assets are not configured');
+	if (!config) error(503, ASSETS_OFF_MESSAGE);
 
 	const artifact = await artifactForDownload(db, params.id, locals.user?.id ?? null);
 	if (!artifact) error(404, 'Not found');

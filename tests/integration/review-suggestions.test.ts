@@ -14,7 +14,7 @@ import {
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
-import { deleteStory } from '../../src/lib/server/story-delete';
+import { destroyStory, trashStory } from '../../src/lib/server/story-lifecycle';
 import { recordRevision } from '../../src/lib/server/revisions';
 import { saveSceneBody } from '../../src/lib/server/scene-save';
 import type { Database } from '../../src/lib/server/auth';
@@ -893,7 +893,8 @@ describe('lifecycle', () => {
 	it('deleting the story removes its suggestions', async () => {
 		const start = BODY.indexOf('quick');
 		await suggest({ start, end: start + 5 }, 'swift');
-		expect(await deleteStory(db, storyId, authorId)).toBe(true);
+		await trashStory(db, authorId, storyId);
+		expect(await destroyStory(db, authorId, storyId)).toBe(true);
 		expect(await listSuggestions(db, storyId)).toEqual([]);
 	});
 
