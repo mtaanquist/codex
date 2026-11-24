@@ -81,7 +81,11 @@
 							{/if}
 							<form method="POST" action="?/dismiss">
 								<input type="hidden" name="reportId" value={report.id} />
-								<button type="submit" class="btn btn-ghost btn-sm">Dismiss</button>
+								<button
+									type="submit"
+									class="btn btn-ghost btn-sm"
+									aria-label="Dismiss report about {report.title}">Dismiss</button
+								>
 							</form>
 						</div>
 					</div>

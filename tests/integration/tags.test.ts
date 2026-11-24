@@ -126,6 +126,35 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Fam']);
 	});
 
+	it('a save while merged or removed keeps the old entry, so undoing gives it back', async () => {
+		await tagStory(storyId, ['Fam', 'Spoilers', 'Kept']);
+		await tagStory(otherStoryId, ['Found Family']);
+		expect(await mergeTag(db, await tagId('fam'), 'Found Family')).toEqual({ ok: true });
+		await setTagRemoved(db, await tagId('spoilers'), true, ownerId);
+		// The form shows "Found Family" and "Kept" and sends them back as they are.
+		await tagStory(storyId, ['Found Family', 'Kept']);
+		expect(await names(storyId)).toEqual(['Found Family', 'Kept']);
+
+		await unmergeTag(db, await tagId('fam'));
+		await setTagRemoved(db, await tagId('spoilers'), false, ownerId);
+		expect(await names(storyId)).toEqual(['Fam', 'Kept', 'Spoilers']);
+
+		// Dropping the survivor drops the merged entry with it.
+		await mergeTag(db, await tagId('fam'), 'Found Family');
+		await tagStory(storyId, ['Kept', 'Spoilers']);
+		await unmergeTag(db, await tagId('fam'));
+		expect(await names(storyId)).toEqual(['Kept', 'Spoilers']);
+	});
+
+	it('keeps a merged curated entry on a save too', async () => {
+		await addListEntries(db, 'genre', 'Grimdark\nDark fantasy');
+		await setStoryList(db, storyId, 'genre', [await tagId('grimdark')]);
+		expect(await mergeTag(db, await tagId('grimdark'), 'Dark fantasy')).toEqual({ ok: true });
+		await setStoryList(db, storyId, 'genre', [await tagId('dark-fantasy')]);
+		await unmergeTag(db, await tagId('grimdark'));
+		expect((await storyTagView(db, storyId)).genres.map((tag) => tag.name)).toEqual(['Grimdark']);
+	});
+
 	it('follows a chain of merges and refuses one that would loop', async () => {
 		await tagStory(storyId, ['A']);
 		await db.insert(tags).values([
@@ -294,6 +323,21 @@ describe('a universe linked to a fandom', () => {
 		const view = await storyTagView(db, storyId);
 		expect(view.fandoms).toEqual([expect.objectContaining({ name: 'Discworld' })]);
 		expect(view.fandoms[0].inherited).toBeUndefined();
+	});
+
+	it('lets a story over the limit after a link keep its fandoms, but not add more', async () => {
+		const universeId = await linked();
+		await addListEntries(db, 'fandom', 'A\nB\nC\nD\nE\nF');
+		const own = await findFandoms(db, ['A', 'B', 'C', 'D', 'E']);
+		if (!own.ok) throw new Error(own.message);
+		await setStoryList(db, storyId, 'fandom', own.ids);
+		await setUniverseFandom(db, universeId, await tagId('discworld'));
+		const shown = (await storyTagView(db, storyId)).fandoms;
+		expect(shown).toHaveLength(6);
+		expect((await findFandoms(db, ['A', 'B', 'C', 'D', 'E'], ['discworld'], 6)).ok).toBe(true);
+		expect((await findFandoms(db, ['A', 'B', 'C', 'D', 'F'], ['discworld'], 6)).ok).toBe(true);
+		const more = await findFandoms(db, ['A', 'B', 'C', 'D', 'E', 'F'], ['discworld'], 6);
+		expect(more).toMatchObject({ ok: false, message: expect.stringMatching(/universe/) });
 	});
 
 	it('suggests close matches from the list as a writer types', async () => {

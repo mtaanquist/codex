@@ -5,6 +5,7 @@ import { pattern } from './search.ts';
 import { tagsForStories, type ListKind, type TagKind } from './tags.ts';
 import { storyCoverColor } from '../entity-color.ts';
 import { authorName } from '../author-name.ts';
+import { slugAddress } from '../slug.ts';
 import { BROWSE_PAGE_SIZE, encodeCursor, type BrowseQuery } from '../browse.ts';
 import type { ReportReason } from '../report-reasons.ts';
 
@@ -161,7 +162,7 @@ export async function browseStories(
 	const result = await db.execute(sql`
 		select p.id as publication_id, p.story_id, s.slug, p.title, p.description_md, p.is_adult,
 			p.published_at, ${MICROS}::text as published_micros, s.cover_asset_id, s.cover_color, p.handle, p.author,
-			u.pen_name, u.display_name, un.name as universe_name, un.slug as universe_slug,
+			u.pen_name, u.display_name, un.id as universe_id, un.name as universe_name, un.slug as universe_slug,
 			un.standalone
 		from publications p
 		join stories s on s.id = p.story_id
@@ -186,6 +187,7 @@ export async function browseStories(
 		author: string | null;
 		pen_name: string | null;
 		display_name: string | null;
+		universe_id: string;
 		universe_name: string;
 		universe_slug: string;
 		standalone: boolean;
@@ -213,7 +215,12 @@ export async function browseStories(
 			row.author?.trim() ||
 			authorName({ penName: row.pen_name, displayName: row.display_name }) ||
 			`@${row.handle}`,
-		universe: row.standalone ? null : { name: row.universe_name, slug: row.universe_slug }
+		universe: row.standalone
+			? null
+			: {
+					name: row.universe_name,
+					slug: slugAddress({ id: row.universe_id, slug: row.universe_slug })
+				}
 	}));
 	const last = page[page.length - 1];
 	return {
@@ -283,28 +290,28 @@ export async function browseTagSuggestions(db: Database): Promise<string[]> {
 
 // ============ Listing and moderation ============
 
-export type ListResult = { ok: true } | { ok: false; message: string };
-
-// The author's own switch. Only a public story can be listed, and not while a
-// moderator has removed it from Browse.
-export async function setListedInBrowse(
+// Saves a story's visibility, adult flag and Browse listing together. Only a
+// public story stays listed, and never while a moderator has removed it from
+// Browse; the block is checked in the update itself, so a save racing a
+// removal cannot list the story again. `listed` is null to keep the stored
+// choice (the box is hidden while Browse is off).
+export async function saveStoryVisibility(
 	db: Database,
 	storyId: string,
-	listedInBrowse: boolean
-): Promise<ListResult> {
-	const [story] = await db
-		.select({ visibility: stories.visibility, blockedAt: stories.browseBlockedAt })
-		.from(stories)
+	visibility: 'private' | 'unlisted' | 'public',
+	isAdult: boolean,
+	listed: boolean | null
+): Promise<void> {
+	const keep = listed === null ? sql`${stories.listedInBrowse}` : sql`${listed}::boolean`;
+	await db
+		.update(stories)
+		.set({
+			visibility,
+			isAdult,
+			listedInBrowse:
+				visibility === 'public' ? sql`(${keep} and ${stories.browseBlockedAt} is null)` : false
+		})
 		.where(eq(stories.id, storyId));
-	if (!story) return { ok: false, message: 'That story does not exist.' };
-	if (listedInBrowse && story.visibility !== 'public') {
-		return { ok: false, message: 'Make the story public first.' };
-	}
-	if (listedInBrowse && story.blockedAt) {
-		return { ok: false, message: 'A moderator removed this story from Browse.' };
-	}
-	await db.update(stories).set({ listedInBrowse }).where(eq(stories.id, storyId));
-	return { ok: true };
 }
 
 // A moderator takes a story off Browse and keeps it off until allowed again.

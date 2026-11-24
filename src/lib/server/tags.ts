@@ -179,11 +179,21 @@ export async function listedByName(
 export async function findFandoms(
 	db: Database,
 	typed: string[],
-	inheritedSlugs: string[] = []
+	inheritedSlugs: string[] = [],
+	// How many the story has now, own and inherited. A story already over the
+	// limit (its universe was linked later) may keep them but not add more.
+	currentCount = 0
 ): Promise<{ ok: true; ids: string[] } | { ok: false; message: string }> {
 	const names = typed.filter((name) => !inheritedSlugs.includes(tagSlug(name)));
-	if (new Set(names.map(tagSlug).filter(Boolean)).size + inheritedSlugs.length > MAX_FANDOMS) {
-		return { ok: false, message: `A story can have up to ${MAX_FANDOMS} fandoms.` };
+	const count = new Set(names.map(tagSlug).filter(Boolean)).size + inheritedSlugs.length;
+	if (count > Math.max(MAX_FANDOMS, currentCount)) {
+		return {
+			ok: false,
+			message:
+				inheritedSlugs.length > 0
+					? `A story can have up to ${MAX_FANDOMS} fandoms, including the one its universe is set in.`
+					: `A story can have up to ${MAX_FANDOMS} fandoms.`
+		};
 	}
 	const { ids, missing } = await listedByName(db, 'fandom', names);
 	if (missing.length > 0) {
@@ -226,15 +236,49 @@ export async function setStoryList(db: Database, storyId: string, kind: ListKind
 	});
 }
 
+// Replaces a story's entries of one kind with the ones the writer submitted.
+// The form shows merged entries as the entry they were merged into and hides
+// removed ones, so a save keeps the rows it could not show: a merged entry
+// whose survivor was submitted, and an entry that is (or was merged into) a
+// removed one. Undoing the merge or the
+// removal then gives the story its old entry back.
 async function replaceStoryTags(tx: Database, storyId: string, kind: TagKind, tagIds: string[]) {
+	const existing = await tx.execute(sql`
+		with recursive chain as (
+			select t.id as start_id, t.id, t.merged_into_id, t.removed_at is not null as removed, 0 as depth
+			from story_tags st join tags t on t.id = st.tag_id
+			where st.story_id = ${storyId} and t.kind = ${kind}
+			union all
+			select c.start_id, t.id, t.merged_into_id, c.removed or t.removed_at is not null, c.depth + 1
+			from chain c join tags t on t.id = c.merged_into_id
+			where c.depth < ${MAX_MERGE_DEPTH}
+		)
+		select distinct on (start_id) start_id, id as survivor_id, removed
+		from chain order by start_id, depth desc
+	`);
+	const wanted = new Set(tagIds);
+	const kept = (
+		existing.rows as { start_id: string; survivor_id: string; removed: boolean }[]
+	).filter((row) => row.removed || wanted.has(row.survivor_id));
+	const keptIds = kept.map((row) => row.start_id);
 	await tx.execute(sql`
 		delete from story_tags st using tags t
 		where st.tag_id = t.id and st.story_id = ${storyId} and t.kind = ${kind}
+		${
+			keptIds.length > 0
+				? sql`and st.tag_id not in (${sql.join(
+						keptIds.map((id) => sql`${id}::uuid`),
+						sql`, `
+					)})`
+				: sql``
+		}
 	`);
-	if (tagIds.length > 0) {
+	const covered = new Set(kept.map((row) => row.survivor_id));
+	const added = tagIds.filter((id) => !covered.has(id));
+	if (added.length > 0) {
 		await tx
 			.insert(storyTags)
-			.values(tagIds.map((tagId) => ({ storyId, tagId })))
+			.values(added.map((tagId) => ({ storyId, tagId })))
 			.onConflictDoNothing();
 	}
 }

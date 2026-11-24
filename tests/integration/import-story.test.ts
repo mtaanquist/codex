@@ -326,6 +326,25 @@ describe('runImport', () => {
 		expect(result.problems.some((problem) => problem.includes('Elsewhere'))).toBe(true);
 	});
 
+	it('keeps a fandom from the universe on export, and does not store it twice on import', async () => {
+		const original = await seedStory();
+		const [discworld] = await db
+			.insert(tags)
+			.values({ kind: 'fandom', name: 'Discworld', slug: 'discworld' })
+			.returning();
+		await db.update(universes).set({ fandomId: discworld.id }).where(eq(universes.id, universe.id));
+		const plan = await exportPlan(original);
+		expect(plan.story.fandoms).toEqual(['Discworld']);
+
+		const result = await runImport(db, universe, plan);
+		const stored = await pool.query('select tag_id from story_tags where story_id = $1', [
+			result.storyId
+		]);
+		expect(stored.rows).toEqual([]);
+		const view = await storyTagView(db, result.storyId);
+		expect(view.fandoms).toMatchObject([{ name: 'Discworld', inherited: true }]);
+	});
+
 	it('imports the same zip twice as two independent stories', async () => {
 		const plan = await exportPlan(await seedStory());
 		const first = await runImport(db, universe, plan);

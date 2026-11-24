@@ -220,13 +220,11 @@ export type StoryContent = {
 
 // The story.md front matter: what the story is, and how it is labelled for
 // readers, so an export round-trips the labels too.
-function storyFront(
-	story: ExportStory,
-	labels: { kind: string; name: string; inherited?: boolean }[] = []
-) {
-	// A fandom that comes from the universe belongs in universe.md, not here.
-	const names = (kind: string) =>
-		labels.filter((tag) => tag.kind === kind && !tag.inherited).map((tag) => tag.name);
+function storyFront(story: ExportStory, labels: { kind: string; name: string }[] = []) {
+	// Includes the fandom the story gets from its universe, so a story exported
+	// on its own keeps it; an import into a universe with that fandom does not
+	// store it on the story again.
+	const names = (kind: string) => labels.filter((tag) => tag.kind === kind).map((tag) => tag.name);
 	return {
 		title: story.title,
 		author: story.author,

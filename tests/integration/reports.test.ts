@@ -164,6 +164,19 @@ describe('the queue', () => {
 		expect(await countOpenReports(db)).toBe(0);
 	});
 
+	it('taking down the current edition closes reports on older editions too', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		await createReport(db, publicationId, 'spam', '');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const again = await publishStory(db, author.id, storyId);
+		if (!again.ok) throw new Error(again.reason);
+		expect(await takedownPublication(db, again.publicationId, mod.id, 'spam')).toBe(true);
+		expect(await countOpenReports(db)).toBe(0);
+	});
+
 	it('publishing again after a takedown is refused until the edition is restored', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		const [{ storyId }] = await db

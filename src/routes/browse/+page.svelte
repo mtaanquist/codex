@@ -31,19 +31,18 @@
 		}
 	}
 
-	// The same search with one more page.
+	// The same search from its first page, and with one more page.
+	const searchParams = $derived({
+		q: data.query.q,
+		genre: data.query.genre,
+		fandom: data.query.fandom,
+		tag: data.query.tag,
+		adult: data.query.adult ? 'show' : null,
+		hide: data.query.hide
+	});
+	const firstHref = $derived(withQuery(browse, searchParams));
 	const nextHref = $derived(
-		data.next
-			? withQuery(browse, {
-					q: data.query.q,
-					genre: data.query.genre,
-					fandom: data.query.fandom,
-					tag: data.query.tag,
-					adult: data.query.adult ? 'show' : null,
-					hide: data.query.hide,
-					after: data.next
-				})
-			: null
+		data.next ? withQuery(browse, { ...searchParams, after: data.next }) : null
 	);
 
 	const heading = $derived(
@@ -178,7 +177,7 @@
 			{#if nextHref || data.query.after}
 				<nav class="browse-pages" aria-label="More stories">
 					{#if data.query.after}
-						<a href={browse}>Back to the newest</a>
+						<a href={firstHref}>Back to the newest</a>
 					{/if}
 					{#if nextHref}
 						<a href={nextHref}>Older stories</a>
