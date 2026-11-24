@@ -510,7 +510,7 @@ describe('gateway gating', () => {
 			}
 		};
 		// A scene of about 40k tokens. Read once with every search's results, it
-		// fits under $3; read again after each of the five searches, it does not.
+		// fits under $3; read again in every round of the search loop, it does not.
 		const scene = 'x'.repeat(120_000);
 		const run = (capUsd: number) =>
 			completeDetailed(
@@ -531,7 +531,7 @@ describe('gateway gating', () => {
 			);
 		await expect(run(3)).rejects.toThrow(SpendCapError);
 		expect(calls).toBe(0);
-		await run(10);
+		await run(20);
 		expect(calls).toBe(1);
 	});
 

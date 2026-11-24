@@ -180,19 +180,23 @@ export function ceilingPromptTokens(
 }
 
 // What a request that may search can bill as input, for the spend cap. The
-// search loop runs on Anthropic's side: after each search the model samples
-// again over the whole prompt, the results so far, and what it wrote so far,
-// and every one of those rounds bills as input. So a request allowed N
-// searches is counted as N + 1 reads of the prompt, plus each search's results
-// (at most this much) read again in every round after it, plus the reply read
-// again in each later round.
+// search loop runs on Anthropic's side, up to SERVER_LOOP_MAX_ROUNDS model
+// rounds before it pauses the turn (a round can also be a filtering step or a
+// search refused past max_uses), and every round bills as input: the whole
+// prompt, the results so far, and what it wrote so far. So the prompt is
+// counted once per round, each search's results (at most this much) in every
+// round after it with all searches in the first rounds, and the reply in every
+// round after the first.
 const WEB_SEARCH_RESULT_CEILING_TOKENS = 10_000;
+const SERVER_LOOP_MAX_ROUNDS = 10;
 
 export function searchingPromptTokens(promptTokens: number, maxTokens: number): number {
-	const n = WEB_SEARCH_MAX_USES;
-	return (
-		(n + 1) * promptTokens + (WEB_SEARCH_RESULT_CEILING_TOKENS * n * (n + 1)) / 2 + n * maxTokens
-	);
+	const rounds = SERVER_LOOP_MAX_ROUNDS;
+	let results = 0;
+	for (let search = 1; search <= WEB_SEARCH_MAX_USES; search += 1) {
+		results += WEB_SEARCH_RESULT_CEILING_TOKENS * (rounds - search);
+	}
+	return rounds * promptTokens + results + (rounds - 1) * maxTokens;
 }
 
 // The persona system message the gateway puts at the front of every turn.

@@ -16,11 +16,14 @@ input tokens, both while Claude keeps searching within a turn and in later
 conversation turns": the server-side loop samples again after each search,
 over the prompt, the results so far and the text written so far. The old
 allowance added five searches' results once, so a capped request with a long
-prompt could cost close to six times what the check counted. The ceiling is
-now `searchingPromptTokens`: six reads of the prompt, each search's results
-(10k tokens at most) in every round after it, and the reply read again in each
-later round. It is pessimistic on purpose (cache reads would make the later
-rounds cheaper), so a review that may search is held earlier near the cap.
+prompt could cost many times what the check counted. The ceiling is now
+`searchingPromptTokens`: the server loop runs up to 10 model rounds before it
+pauses (a round can be a dynamic-filtering step or a search refused past
+`max_uses`, so it is not one per search), so the prompt is counted ten times,
+each search's results (10k tokens at most) in every round after it with all
+five searches first, and the reply in every later round. It is pessimistic on
+purpose (cache reads would make the later rounds cheaper), so a review that
+may search is held earlier near the cap.
 
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
