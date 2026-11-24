@@ -561,9 +561,14 @@ export async function listPublications(db: Database, limit = 50) {
 			isAdult: publications.isAdult,
 			isCurrent: publications.isCurrent,
 			removedAt: publications.removedAt,
-			publishedAt: publications.publishedAt
+			publishedAt: publications.publishedAt,
+			storyId: publications.storyId,
+			listedInBrowse: stories.listedInBrowse,
+			browseBlockedAt: stories.browseBlockedAt,
+			browseBlockedReason: stories.browseBlockedReason
 		})
 		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.orderBy(desc(publications.publishedAt))
 		.limit(limit);
 }

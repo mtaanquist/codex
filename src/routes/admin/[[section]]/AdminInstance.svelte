@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
+	import { enhance } from '#lib/enhance';
+	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import FormStatus from '#lib/components/FormStatus.svelte';
 	import type { PageData, ActionData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -69,6 +73,42 @@
 			<button type="submit" class="btn btn-primary">Save</button>
 		</div>
 	</form>
+</div>
+
+<div class="admin-block">
+	<div class="admin-block-head">
+		<div>
+			<h2 class="admin-block-title">Browse</h2>
+			<p class="admin-block-sub">
+				A public page at <a href={resolve('/browse')}>/browse</a> where readers find stories from every
+				author on this site. Authors choose which public stories appear there. While it is off, the page
+				does not exist and authors do not see the option.
+			</p>
+		</div>
+	</div>
+	<div class="admin-card">
+		<form
+			method="POST"
+			action="?/saveBrowse"
+			use:enhance={autosaveSubmit}
+			onchange={autosubmitForm}
+		>
+			<div class="toggle-row">
+				<div>
+					<div class="t-title">Browse page</div>
+					<div class="t-sub">Turn on to show the Browse page and the links to it.</div>
+				</div>
+				<label class="toggle">
+					<input type="checkbox" name="enabled" aria-label="Browse page" checked={data.browse} />
+					<span class="toggle-track"></span>
+				</label>
+			</div>
+			<FormStatus
+				error={null}
+				success={form?.scope === 'browse' && 'saved' in form && form.saved ? 'Saved.' : null}
+			/>
+		</form>
+	</div>
 </div>
 
 <div class="admin-block">

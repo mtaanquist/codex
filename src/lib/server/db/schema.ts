@@ -61,6 +61,9 @@ export const users = pgTable('users', {
 	profilePublic: boolean('profile_public').notNull().default(false),
 	// Admin grants this before a user may publish public pages.
 	publicArchiveEnabled: boolean('public_archive_enabled').notNull().default(false),
+	// Keeps all of this author's stories and their name off Browse, whatever
+	// each story's own setting says.
+	hiddenFromBrowse: boolean('hidden_from_browse').notNull().default(false),
 	// How many invite codes the user may generate for friends; each code
 	// admits one person. Counted against the codes they have created.
 	inviteAllowance: integer('invite_allowance').notNull().default(0),
@@ -251,6 +254,17 @@ export const stories = pgTable(
 			.default('private'),
 		// Author-flagged adult content; readers avoid it by default.
 		isAdult: boolean('is_adult').notNull().default(false),
+		// The author's choice to show the story on Browse. Only meaningful while
+		// the story is public; leaving public clears it.
+		listedInBrowse: boolean('listed_in_browse').notNull().default(false),
+		// Set when a moderator removes the story from Browse; the author cannot
+		// list it again until a moderator allows it. The reason is a report
+		// reason key (#lib/report-reasons).
+		browseBlockedAt: timestamp('browse_blocked_at', { withTimezone: true }),
+		browseBlockedReason: text('browse_blocked_reason'),
+		browseBlockedBy: uuid('browse_blocked_by').references((): AnyPgColumn => users.id, {
+			onDelete: 'set null'
+		}),
 		// References assets(id); null renders a generated default cover on the
 		// public shelf.
 		coverAssetId: uuid('cover_asset_id'),
@@ -1057,7 +1071,7 @@ export const publicationReports = pgTable(
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
 		resolvedBy: uuid('resolved_by').references(() => users.id, { onDelete: 'set null' }),
-		// 'taken_down' or 'dismissed' (and 'removed_from_browse' once Browse lands).
+		// 'taken_down', 'removed_from_browse' or 'dismissed'.
 		resolution: text('resolution')
 	},
 	(table) => [

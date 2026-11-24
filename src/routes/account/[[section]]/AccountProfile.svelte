@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { tick } from 'svelte';
 	import { enhance } from '#lib/enhance';
@@ -356,6 +357,40 @@
 				</div>
 			</form>
 		</div>
+		{#if page.data.browse}
+			<div class="admin-card" style="margin-top:var(--space-4);">
+				<form
+					method="POST"
+					action="?/saveBrowseOptOut"
+					use:enhance={autosaveSubmit}
+					onchange={autosubmitForm}
+				>
+					<div class="toggle-row">
+						<div>
+							<div class="t-title">Stay off Browse</div>
+							<div class="t-sub">
+								When on, none of your stories and not your name show on the site's Browse page,
+								whatever each story's own setting says. Your page and stories stay reachable as
+								before.
+							</div>
+						</div>
+						<label class="toggle">
+							<input
+								type="checkbox"
+								name="hiddenFromBrowse"
+								aria-label="Stay off Browse"
+								checked={data.profile.hiddenFromBrowse}
+							/>
+							<span class="toggle-track"></span>
+						</label>
+					</div>
+					<FormStatus
+						error={form?.scope === 'browse' && form.message ? form.message : null}
+						success={form?.scope === 'browse' && form.saved ? 'Saved.' : null}
+					/>
+				</form>
+			</div>
+		{/if}
 	{/if}
 </div>
 

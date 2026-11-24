@@ -473,6 +473,14 @@
 	font-size: var(--text-prose-sm);
 	color: var(--text-muted);
 }
+/* Browse's byline, under the card because the card itself is one link. */
+.shelf-item-by {
+	display: block;
+	margin-top: var(--space-2);
+	padding: 0 var(--space-4);
+	font-size: var(--text-prose-sm);
+	color: var(--text-muted);
+}
 .shelf-item-brief {
 	margin: 0;
 	font-family: var(--font-content);

@@ -42,13 +42,27 @@
 								@{edition.handle}/{edition.title}
 								<span class="pill">{edition.isCurrent ? 'current' : 'superseded'}</span>
 								{#if edition.isAdult}<span class="pill">adult</span>{/if}
+								{#if edition.isCurrent && edition.listedInBrowse}<span class="pill"
+										>listed in Browse</span
+									>{/if}
+								{#if edition.isCurrent && edition.browseBlockedAt}<span class="pill"
+										>removed from Browse</span
+									>{/if}
 							</div>
 							<div class="list-sub">
 								published {formatDate(edition.publishedAt, page.data.timeZone)}
 							</div>
 						</div>
 						<div class="list-actions">
-							<TakedownForm publicationId={edition.id} title={edition.title} />
+							<TakedownForm id={edition.id} title={edition.title} />
+							{#if edition.isCurrent && edition.listedInBrowse}
+								<TakedownForm mode="browse" id={edition.storyId} title={edition.title} />
+							{:else if edition.isCurrent && edition.browseBlockedAt}
+								<form method="POST" action="?/allowInBrowse">
+									<input type="hidden" name="storyId" value={edition.storyId} />
+									<button type="submit" class="btn btn-ghost btn-sm">Allow in Browse again</button>
+								</form>
+							{/if}
 						</div>
 					</div>
 				{/each}

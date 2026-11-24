@@ -695,8 +695,10 @@ The outward face of the work, built from the same tokens as everything else.
   spine in the full colour, the page mixed 30% into `--bg-card`, the title in
   `--text`. The library card, the public shelf and the story settings preview
   all draw the same blank, so a book looks the same everywhere. The public
-  shelf and the public universe page draw their covers with `ShelfGrid.svelte`;
-  do not copy its markup into a third page.
+  shelf, the public universe page and Browse draw their covers with
+  `ShelfGrid.svelte`; do not copy its markup into another page. Browse passes
+  books that carry their own `handle` and `byline` (and `universe`), and the
+  grid adds `.shelf-item-by` under each card, outside the card's link.
 - **One footer, on both pages:** the mark and "Written in Codex", who
   published it, and three links (Reading in Codex, About Codex, Write your
   own). "Write your own" targets the app root - the library for a signed-in
@@ -717,11 +719,16 @@ The outward face of the work, built from the same tokens as everything else.
 Everything a signed-out visitor sees, in `public.css`, loaded last.
 `.public-surface` wraps `AppBar` (`shell="public"`), the page's own main, and
 `ReaderFooter` (`shell="public"`). The landing page fills it with `.public-in`;
-`AuthShell.svelte` fills it with `.auth-main` and one `.auth-card`.
+`AuthShell.svelte` fills it with `.auth-main` and one `.auth-card`. Browse
+(`/browse`) fills `.public-in` with a heading, a GET filter form (search,
+genre and fandom selects, a fieldset of warnings to hide, the adult box) and
+a `ShelfGrid`.
 
 - **The public bar is the fourth reduction of the one bar**, not a second
   header: brand linking home, then theme and help, and no path, because a
-  visitor is not anywhere in the library. `AppBar` takes `crumbs` optional for
+  visitor is not anywhere in the library. While Browse is on
+  (`page.data.browse`), the public and reader bars add a plain `.appbar-link`
+  to it before the tools, and both footers add "Browse stories". `AppBar` takes `crumbs` optional for
   this shell and leaves out the rule and the path nav entirely.
 - **One footer serves both public faces.** `ReaderFooter` takes
   `shell="reader" | "public"`. The public reduction says "Codex" rather than

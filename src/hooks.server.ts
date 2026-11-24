@@ -44,6 +44,8 @@ const PUBLIC_PATHS = new Set([
 	// The help pages. The question mark in the bar is there for a guest
 	// reviewer and a reader too, and neither has an account.
 	'/docs',
+	// The public Browse page; it answers 404 itself while Browse is off.
+	'/browse',
 	// Liveness probe for the reverse proxy and orchestrators; no auth.
 	'/healthz'
 ]);

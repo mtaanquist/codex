@@ -43,6 +43,7 @@ users (
   bio_md              text,                 -- short bio shown on the public profile shelf
   profile_public      boolean not null default false,  -- whether the '@handle' shelf is listed publicly
   public_archive_enabled boolean not null default false,  -- admin grants this before a user may publish public pages
+  hidden_from_browse  boolean not null default false,  -- keeps all their stories and their name off Browse
   password_hash       text not null,
   role                text not null,        -- 'admin' | 'moderator' | 'user'
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
@@ -221,6 +222,10 @@ stories (
   position_in_series  int,              -- null if standalone or unordered
   visibility          text not null default 'private',  -- 'private' | 'unlisted' | 'public'
   is_adult            boolean not null default false,   -- author-flagged adult content; readers avoid it by default
+  listed_in_browse    boolean not null default false,   -- the author's choice to show it on Browse; cleared when it leaves public
+  browse_blocked_at   timestamptz,                      -- a moderator removed it from Browse; the author cannot list it again until cleared
+  browse_blocked_reason text,                           -- a report reason key (#lib/report-reasons)
+  browse_blocked_by   uuid references users on delete set null,
   cover_asset_id      uuid references assets(id),       -- null renders a default cover from title and author
   cover_color         text,                             -- palette token tinting the default cover; random on insert, null on rows from before it
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
@@ -818,7 +823,7 @@ publication_reports (
   created_at      timestamptz not null,
   resolved_at     timestamptz,           -- null while open
   resolved_by     uuid references users on delete set null,
-  resolution      text                   -- 'taken_down' | 'dismissed'
+  resolution      text                   -- 'taken_down' | 'removed_from_browse' | 'dismissed'
 )
 
 -- partial index on (created_at) where resolved_at is null, for the queue

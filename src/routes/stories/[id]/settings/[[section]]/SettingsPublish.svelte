@@ -88,6 +88,33 @@
 				<option value="public">Public - listed on your shelf</option>
 			</select>
 		</div>
+		{#if page.data.browse}
+			<div class="field">
+				<label class="check-row">
+					<input
+						type="checkbox"
+						name="listedInBrowse"
+						checked={data.story.listedInBrowse}
+						disabled={!!data.story.browseBlockedAt}
+					/>
+					List in Browse
+				</label>
+				{#if data.story.browseBlockedAt}
+					<p class="field-hint">
+						The people who look after this site removed this story from Browse, so you cannot list
+						it there. Reason: {reportReasonLabel(data.story.browseBlockedReason)}. Its pages are
+						still up.
+					</p>
+				{:else}
+					<p class="field-hint">
+						Lets readers find a public story on the site's <a href={resolve('/browse')}>Browse</a>
+						page.{#if data.archive?.hiddenFromBrowse}
+							Your account is set to stay off Browse, so it will not appear there until you change
+							that in your account settings.{/if}
+					</p>
+				{/if}
+			</div>
+		{/if}
 		<div class="field">
 			<label class="check-row">
 				<input type="checkbox" name="isAdult" checked={data.story.isAdult} />
@@ -178,6 +205,7 @@
 				values={tags}
 				onChange={(next) => (tags = next)}
 				addLabel="Add tag"
+				suggestions={data.lists.tags}
 				inputId="st-tags"
 			/>
 			<p class="field-hint">

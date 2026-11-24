@@ -888,6 +888,7 @@ describe('moderation pages', () => {
 			const f = new FormData();
 			f.set('publicationId', row.id);
 			f.set('reportId', report.id);
+			f.set('storyId', row.storyId);
 			f.set('reason', 'spam');
 			for (const user of [B, null]) {
 				await expectRefused(
@@ -898,19 +899,22 @@ describe('moderation pages', () => {
 		}
 	});
 
-	it('takedown refuses a plain user and a missing user', async () => {
+	it("the published page's actions refuse a plain user and a missing user", async () => {
 		const row = await edition();
 		const form = () => {
 			const f = new FormData();
 			f.set('publicationId', row.id);
+			f.set('storyId', row.storyId);
 			f.set('reason', 'spam');
 			return f;
 		};
-		for (const user of [B, null]) {
-			await expectRefused(
-				publishedPage.actions.takedown as Handler,
-				event(user, { path: '/admin/published?/takedown', form: form() })
-			);
+		for (const [name, action] of Object.entries(publishedPage.actions)) {
+			for (const user of [B, null]) {
+				await expectRefused(
+					action as Handler,
+					event(user, { path: `/admin/published?/${name}`, form: form() })
+				);
+			}
 		}
 	});
 

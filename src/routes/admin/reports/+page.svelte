@@ -10,6 +10,7 @@
 
 	const RESOLUTION_LABELS: Record<string, string> = {
 		taken_down: 'Taken down',
+		removed_from_browse: 'Removed from Browse',
 		dismissed: 'Dismissed'
 	};
 </script>
@@ -65,7 +66,15 @@
 						<div class="list-actions">
 							{#if !report.editionRemovedAt}
 								<TakedownForm
-									publicationId={report.publicationId}
+									id={report.publicationId}
+									title={report.title}
+									reason={isReportReason(report.reason) ? report.reason : 'other'}
+								/>
+							{/if}
+							{#if report.listedInBrowse && !report.browseBlockedAt}
+								<TakedownForm
+									mode="browse"
+									id={report.storyId}
 									title={report.title}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 								/>
