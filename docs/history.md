@@ -10,6 +10,23 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Suggest details stores the /enrich fingerprint (2026-11-24,
+`fix/suggest-details-fingerprint-1371` on `staging/llm-issues`, #1371). A
+Suggest details read stored nothing, so the next `/enrich` pass read the
+entry again with nothing changed. Mads chose to keep the fingerprint rule
+rather than document an exception, so the read now stores the pass's own
+fingerprint (the universe-wide snippet request, taken before the read) and
+`assistant_enriched_at`. Its request is a different one (full text, maybe one
+story), so it stores only when it covered what the pass would send: no part
+failed, the job was not stopped or capped, the summary was asked for (or is
+closed), and every piece of every scene behind the pass's passages was in a part
+whose reply came back whole (a long scene is split into pieces that share its
+id, and a story muted mid-read drops the later ones without a failure). A story-scoped read of an entry also mentioned elsewhere
+stores nothing. Staged suggestions the writer has not seen are no reason to
+hold back: the pass stores its fingerprint right after staging too. A cut-off
+reply stores no `unusableReplyMark`, since it says nothing about the pass's
+shorter request and would make the pass report a cut-off it never sent.
+
 The provider on usage rows (2026-11-24, `feat/usage-provider-1373` on
 `staging/llm-issues`, #1373). `assistant_usage` gains a nullable `provider`
 column (migration 0115), written by the gateway's `recordUsage` from the
