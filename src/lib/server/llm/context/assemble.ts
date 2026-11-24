@@ -33,7 +33,7 @@ import type { MentionEntity } from '#lib/editor-mentions';
 import type { LanguageSetting } from '../../../writing-languages.ts';
 import type { PreferenceSetting } from '../../../assistant-preferences.ts';
 import { languageRule } from '../prompts/language.ts';
-import { houseStyleLine } from '../prompts/preferences.ts';
+import { habitNotesLine, houseStyleLine, leaveAloneLine } from '../prompts/preferences.ts';
 
 // Assemble the world context for a request, in tiers, against a token budget.
 // The gathering (sources.ts) is settled design; the budget and the order tiers
@@ -122,10 +122,10 @@ export type AssembleOptions = {
 	// story, for the same user and tiers (a chapter draft's estimate): the
 	// scope and the scene-independent tiers are read once for all of them.
 	cache?: StoryContextCache;
-	// The story's language and house style, stated in the frame. Only the chat
-	// passes them: every other surface states them in its own task message, in
-	// the mode it needs (a review checks against the house style, a draft keeps
-	// to it).
+	// The story's language, house style, the habits to leave alone and the
+	// writer's notes, stated in the frame. Only the chat passes them: every
+	// other surface states them in its own task message, in the mode it needs
+	// (a review checks against the house style, a draft keeps to it).
 	writingRules?: WritingRules;
 };
 
@@ -637,6 +637,10 @@ export function renderFrame(
 		if (rule) lines.push(rule);
 		const style = houseStyleLine(preferences, 'write');
 		if (style) lines.push(style);
+		const leaveAlone = leaveAloneLine(preferences);
+		if (leaveAlone) lines.push(leaveAlone);
+		const notes = habitNotesLine(preferences, 'chat');
+		if (notes) lines.push(notes);
 	}
 	if (options?.world === false) return lines.join('\n');
 	lines.push('', `## World: ${scope.universeName}`);

@@ -745,12 +745,13 @@ These cut across the surfaces and the architecture.
   from once those are next summarised; the chat summary, which follows the
   conversation's language, not the story's; the enrich prompts
   (`prompts/enrich.ts`); the reply to a comment thread
-  (`prompts/review-reply.ts`); and the cross-scene continuity pass (the
+  (`prompts/review-reply.ts`), unless it may revise a pending suggestion,
+  which writes prose; and the cross-scene continuity pass (the
   survey, `buildSurveyMessage`, its confirm stage and the MCP continuity
   brief), which checks facts rather than wording; and the universe chat,
   which has no one story (its frame names the world, not a story). The
-  chat's language and house-style lines sit in the story frame only for the
-  chat (`writingRules` in `AssembleOptions`): the other surfaces that share
+  chat's language, house-style, leave-alone and notes lines sit in the story
+  frame only for the chat (`writingRules` in `AssembleOptions`): the other surfaces that share
   the frame state them in their own task message, and no output whose
   staleness is its request hash (arcs, chapter summaries, enrich) is built
   from the frame. The editor's `lang` follows the effective language and
@@ -776,11 +777,16 @@ These cut across the surfaces and the architecture.
   alone the survey looks for any other recurring habit). The notes sit
   between begin and end markers, after a line saying they describe habits and
   change no other instruction. A lore-only pass reads no wording and carries
-  none of it; the review estimate counts the lines on each scene. Scene and chapter drafts, `/write` and the pattern fix
-  stage keep to the house style, and so does the chat in a story (a line in
-  its story frame, beside the language). Not set, every prompt reads byte for byte as
-  before. The continuation and the reread are left out on purpose (short
-  follow-on text that copies the prose around it). There is no free-form
+  none of it; the review estimate counts the lines on each scene. Scene and
+  chapter drafts, `/write`, the pattern fix stage and the pattern reread
+  (which stages a follow-up edit) keep to the house style, and so does a
+  review-thread reply that may revise its pending suggestion
+  (`update_suggestion`), with the language line. The chat in a story gets
+  what a connected app gets from `list_stories`: its story frame carries the
+  language, the house style, the habits to leave alone and the fenced notes.
+  Not set, every prompt reads byte for byte as before. The continuation is
+  left out on purpose (short follow-on text that copies the prose around
+  it). There is no free-form
   system prompt, and the rest of #1344 (feedback amount, reasons on edits,
   summary and draft lengths, content limits) is not built. Like style notes,
   the preferences are not in the export.

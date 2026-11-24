@@ -10,6 +10,29 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 4
+(2026-11-24, `fix/llm-staging-review-4`, into `staging/llm-issues`). The
+search loop's bound (`searchingPromptTokens`) counted each search's results
+only in the rounds after it, which assumed one search per round; nothing
+holds the model to that, and five searches run together in the first round
+put all their results in all nine later rounds. It now counts every search
+in every round after the first: for a 20k prompt and a 4k reply, 686k tokens
+of input (106k written plus 580k plain) rather than 586k. The cache-write
+part is unchanged, since the final conversation is the same length in any
+order. The 10k per-search ceiling assumes what dynamic filtering adds (the
+filtering code and its output) stays within it, and the comment says so. A
+review-thread reply that may revise its pending suggestion now carries the
+language and the house style in write mode, and the unset-language fixture
+holds the reply with and without a suggestion (generated from `origin/main`
+in a worktree). The chat's story frame also carries the habits to leave
+alone and the writer's notes, fenced as in review, so the chat gets what a
+connected app gets from `list_stories`. On a story's preference form the
+blank choice of a house style the universe leaves unset reads "Use the
+universe's: Not set" (or "Use the standalone default: Not set"). The help
+says what to set "Native language" to without the ambiguous "it". The
+review modal's legend style and the preference form's differ (spacing and
+weight), so they were left as two rules.
+
 Staging review of the language setting and Assistant preferences, round 3
 (2026-11-24, `fix/llm-staging-review-3`, into `staging/llm-issues`). The
 spend cap's bound for a request that may search no longer prices the whole
@@ -19,7 +42,8 @@ searches at 10k tokens, and nine replies) is priced at the write rate, and
 the rest of the ten rounds at the plain prompt rate, not the cache-read rate,
 since a read is not guaranteed (`searchingCacheWriteTokens`). For a 20k
 prompt and a 4k reply that is 106k written plus 480k plain, against 586k
-written before. Claude's per-search fee is still left out, as the help says.
+written before (580k plain since round 4 counts every search in every later
+round). Claude's per-search fee is still left out, as the help says.
 The review estimate leaves searches out and now says so, with the cap's
 extra room, when the gateway would search (`webSearchAllowed`, now
 exported). A capped job that spent nothing tells the writer to raise the
@@ -109,9 +133,10 @@ named in a "leave them alone" line, since a model still flags filter verbs
 from habit when they are merely not listed. The sparing review and passes
 with mechanics or prose carry the house style, that line and the notes; a
 lore-only pass carries none of it, like the native-language hint. Drafts,
-`/write` and the pattern fix stage get the house style only. The continuation
-and the pattern reread are left out (they copy the prose around them), and
-so is the summary family, so no summary or arc fingerprint moves.
+`/write` and the pattern fix stage get the house style only (the pattern
+reread gained it in staging review round 3). The continuation is left out
+(it copies the prose around it), and so is the summary family, so no summary
+or arc fingerprint moves.
 
 Every prompt builder was checked byte for byte against #1343's output with
 nothing set, across every review category mix, both world sources, with and
@@ -217,7 +242,9 @@ prompt could cost many times what the check counted. The ceiling is now
 pauses (a round can be a dynamic-filtering step or a search refused past
 `max_uses`, so it is not one per search), so the prompt is counted ten times,
 each search's results (10k tokens at most) in every round after it with all
-five searches first, and the reply in every later round. It is pessimistic on
+five searches first, and the reply in every later round. (Staging review
+round 4 counts all five searches in all nine later rounds instead, since
+nothing holds the model to one search per round.) It is pessimistic on
 purpose (cache reads would make the later rounds cheaper), so a review that
 may search is held earlier near the cap.
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`

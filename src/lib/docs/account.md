@@ -14,7 +14,7 @@ On a large window, the sidebar lists the parts of Security and Assistant under
 
 Set your display name and, if you like, a separate pen name to show on your
 public pages. If you write in a language that is not the one you grew up
-speaking, set "Native language" to it. For a story whose language is set to
+speaking, set "Native language" to the language you grew up speaking. For a story whose language is set to
 another language, the Assistant then also looks for habits carried over from
 your native language, such as idioms translated word for word, false friends,
 or prepositions and word order from it. It does this when a review checks

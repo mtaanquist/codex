@@ -592,6 +592,58 @@ describe('prepareReviewReply', () => {
 		expect(turn.messages.at(-1)?.content).toContain('Why?');
 	});
 
+	it("states the story's language and house style when the reply may revise a suggestion", async () => {
+		const suggestionId = await assistantSuggestion();
+		const thread = await ensureSuggestionThread(db, { storyId, suggestionId });
+		if (!thread.ok) throw new Error(thread.reason);
+		await addComment(db, {
+			storyId,
+			threadId: thread.threadId,
+			author: { assistant: true },
+			body: 'Swift reads better here.'
+		});
+		await addComment(db, {
+			storyId,
+			threadId: thread.threadId,
+			author: { userId: authorId },
+			body: 'Something shorter?'
+		});
+		const task = async () =>
+			(
+				await prepareReviewReply(db, {
+					userId: authorId,
+					storyId,
+					threadId: thread.threadId,
+					assistantName: 'Muse'
+				})
+			).messages.at(-1)?.content ?? '';
+
+		const unset = await task();
+		expect(unset).toContain('update_suggestion');
+		expect(unset).not.toContain('The story is written in');
+		expect(unset).not.toContain('House style');
+
+		await db.update(universes).set({ language: 'en-GB' });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { quoteMarks: 'single' } })
+			.where(eq(stories.id, storyId));
+		const set = await task();
+		expect(set).toContain('The story is written in British English.');
+		expect(set).toContain('House style for this story: single quotation marks');
+		expect(set).toContain('Keep to it.');
+
+		// A thread with no suggestion to revise writes no prose, so it states neither.
+		const plain = await assistantThread();
+		const reply = await prepareReviewReply(db, {
+			userId: authorId,
+			storyId,
+			threadId: plain,
+			assistantName: 'Muse'
+		});
+		expect(reply.messages.at(-1)?.content).not.toContain('House style');
+	});
+
 	it('refuses a thread the Assistant did not open', async () => {
 		const made = await createThread(db, {
 			storyId,
