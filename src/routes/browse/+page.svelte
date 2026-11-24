@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { withQuery } from '#lib/href';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
@@ -60,6 +61,8 @@
 	<title>{heading === 'Browse' ? 'Browse stories' : `${heading} - Browse`}</title>
 	{#if !data.indexable}
 		<meta name="robots" content="noindex" />
+	{:else}
+		<link rel="canonical" href={new URL(withQuery(browse, data.resolved), page.url.origin).href} />
 	{/if}
 </svelte:head>
 
@@ -89,7 +92,7 @@
 				<div class="browse-filters">
 					<div class="field">
 						<label for="browse-genre">Genre</label>
-						<select id="browse-genre" class="select" name="genre" value={data.query.genre ?? ''}>
+						<select id="browse-genre" class="select" name="genre" value={data.resolved.genre ?? ''}>
 							<option value="">Any genre</option>
 							{#each data.lists.genres as genre (genre.slug)}
 								<option value={genre.slug}>{genre.name}</option>
@@ -103,7 +106,7 @@
 								id="browse-fandom"
 								class="select"
 								name="fandom"
-								value={data.query.fandom ?? ''}
+								value={data.resolved.fandom ?? ''}
 							>
 								<option value="">Any fandom</option>
 								{#each data.lists.fandoms as fandom (fandom.slug)}

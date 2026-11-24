@@ -10,8 +10,16 @@
 		id,
 		title,
 		reason = 'other',
-		mode = 'takedown'
-	}: { id: string; title: string; reason?: ReportReason; mode?: 'takedown' | 'browse' } = $props();
+		mode = 'takedown',
+		reportId = null
+	}: {
+		id: string;
+		title: string;
+		reason?: ReportReason;
+		mode?: 'takedown' | 'browse';
+		// From the report queue: the report a Browse removal answers, which closes.
+		reportId?: string | null;
+	} = $props();
 
 	const takedown = $derived(mode === 'takedown');
 	const label = $derived(takedown ? 'Take down' : 'Remove from Browse');
@@ -31,6 +39,7 @@
 	})}
 >
 	<input type="hidden" name={takedown ? 'publicationId' : 'storyId'} value={id} />
+	{#if reportId}<input type="hidden" name="reportId" value={reportId} />{/if}
 	<select
 		class="select"
 		name="reason"

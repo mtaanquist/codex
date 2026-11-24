@@ -239,8 +239,8 @@ export async function setStoryList(db: Database, storyId: string, kind: ListKind
 // Replaces a story's entries of one kind with the ones the writer submitted.
 // The form shows merged entries as the entry they were merged into and hides
 // removed ones, so a save keeps the rows it could not show: a merged entry
-// whose survivor was submitted, and an entry that is (or was merged into) a
-// removed one. Undoing the merge or the
+// whose survivor was submitted, and an entry whose survivor is removed (the
+// same rule tagsForStories hides by). Undoing the merge or the
 // removal then gives the story its old entry back.
 async function replaceStoryTags(tx: Database, storyId: string, kind: TagKind, tagIds: string[]) {
 	const existing = await tx.execute(sql`
@@ -249,7 +249,7 @@ async function replaceStoryTags(tx: Database, storyId: string, kind: TagKind, ta
 			from story_tags st join tags t on t.id = st.tag_id
 			where st.story_id = ${storyId} and t.kind = ${kind}
 			union all
-			select c.start_id, t.id, t.merged_into_id, c.removed or t.removed_at is not null, c.depth + 1
+			select c.start_id, t.id, t.merged_into_id, t.removed_at is not null, c.depth + 1
 			from chain c join tags t on t.id = c.merged_into_id
 			where c.depth < ${MAX_MERGE_DEPTH}
 		)

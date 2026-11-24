@@ -20,7 +20,8 @@
 	<h1 class="admin-title">Reports</h1>
 	<p class="admin-lede">
 		What readers reported about published stories, oldest first. Take the edition down, or dismiss
-		the report if nothing is wrong. Taking an edition down closes every report about it.
+		the report if nothing is wrong. Taking an edition down closes every report about the story.
+		Removing a story from Browse closes only the report you acted on.
 	</p>
 </div>
 
@@ -75,6 +76,7 @@
 								<TakedownForm
 									mode="browse"
 									id={report.storyId}
+									reportId={report.id}
 									title={report.title}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 								/>

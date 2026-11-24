@@ -8,7 +8,6 @@
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const liveEditions = $derived(data.published.filter((e) => !e.removedAt));
-	const takenDown = $derived(data.published.filter((e) => e.removedAt && e.isCurrent));
 </script>
 
 <div class="admin-head">
@@ -77,7 +76,7 @@
 	{/if}
 </div>
 
-{#if takenDown.length > 0}
+{#if data.takenDown.length > 0}
 	<div class="admin-block">
 		<div class="admin-block-head">
 			<h2 class="admin-block-title">Taken down</h2>
@@ -87,7 +86,7 @@
 		</div>
 		<div class="admin-card tight">
 			<div class="attn-list">
-				{#each takenDown as edition (edition.id)}
+				{#each data.takenDown as edition (edition.id)}
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">@{edition.handle}/{edition.title}</div>

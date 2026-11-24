@@ -40,6 +40,9 @@ const { publishStory, restorePublication, takedownPublication } =
 	await import('../../src/lib/server/publish');
 const { createReport, dismissReport, listOpenReports, countOpenReports } =
 	await import('../../src/lib/server/reports');
+const { scheduleAccountDeletion, cancelAccountDeletion } =
+	await import('../../src/lib/server/account-deletion');
+const { sentToken } = await import('./token-helpers');
 const reportPage = await import('../../src/routes/@[handle]/[story=ref]/report/+page.server');
 
 let author: { id: string };
@@ -194,6 +197,17 @@ describe('the queue', () => {
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
 
+	it("editions the author's own deletion took down do not hold and cannot be restored", async () => {
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
+	});
+
 	it('dismissing closes one report, once', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await createReport(db, publicationId, 'spam', '');
@@ -227,7 +241,7 @@ describe('the report form', () => {
 	});
 
 	it('is a 404 for a story readers cannot open', async () => {
-		await takedownPublication(db, publicationId);
+		await takedownPublication(db, publicationId, null, 'other');
 		try {
 			await report({ reason: 'spam' });
 			throw new Error('expected a 404');
