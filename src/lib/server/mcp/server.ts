@@ -4,6 +4,7 @@ import { logEvent } from '../log.ts';
 import type { BearerIdentity } from './oauth.ts';
 import { buildMcpPrompt, mcpPrompts, type McpPrompt } from './prompts.ts';
 import { workLanguage } from '../language.ts';
+import { workPreferences } from '../assistant-preferences.ts';
 import { callMcpTool, mcpTools } from './tools.ts';
 
 // The MCP protocol side of the endpoint, on the official SDK. Stateless: a
@@ -77,7 +78,8 @@ function buildServer(connection: Connection): McpServer {
 				});
 				const text = buildMcpPrompt(prompt.name, args, {
 					permissions: identity.permissions,
-					language: await workLanguage(connection.db, identity.userId, args)
+					language: await workLanguage(connection.db, identity.userId, args),
+					preferences: await workPreferences(connection.db, identity.userId, args)
 				});
 				return { messages: [{ role: 'user', content: { type: 'text', text } }] };
 			}

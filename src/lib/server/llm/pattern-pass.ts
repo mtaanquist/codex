@@ -1,5 +1,7 @@
 import { storyLanguage } from '../language.ts';
+import { storyPreferences } from '../assistant-preferences.ts';
 import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
+import { NO_PREFERENCES, type PreferenceSetting } from '../../assistant-preferences.ts';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import {
@@ -114,7 +116,8 @@ export function patternSurveyTokens(
 	units: PatternUnit[],
 	budgetTokens: number,
 	overheadTokens: number,
-	language: LanguageSetting = NO_LANGUAGE
+	language: LanguageSetting = NO_LANGUAGE,
+	preferences: PreferenceSetting = NO_PREFERENCES
 ): number {
 	let total = 0;
 	for (const unit of units) {
@@ -129,6 +132,7 @@ export function patternSurveyTokens(
 							scope: unit.scope,
 							cap,
 							language,
+							preferences,
 							...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
 						})
 					);
@@ -181,15 +185,22 @@ export async function planBookPass(
 	const titles = await chapterTitles(db, opts.storyId);
 	const overhead = await patternSurveyOverhead(db, opts.userId, opts.storyId);
 	const language = await storyLanguage(db, opts.storyId, opts.userId);
+	const preferences = await storyPreferences(db, opts.storyId, opts.userId);
 	const whole = bookPatternUnit(opts.scenes, titles, true);
-	const wholeTokens = patternSurveyTokens([whole], opts.budgetTokens, overhead, language);
+	const wholeTokens = patternSurveyTokens(
+		[whole],
+		opts.budgetTokens,
+		overhead,
+		language,
+		preferences
+	);
 	const fit = wholeBookFit(wholeTokens, opts.contextWindow, opts.replyTokens);
 	if (fit === 'fits') return { unit: whole, fit, tokens: wholeTokens };
 	const unit = bookPatternUnit(opts.scenes, titles, false);
 	return {
 		unit,
 		fit,
-		tokens: patternSurveyTokens([unit], opts.budgetTokens, overhead, language)
+		tokens: patternSurveyTokens([unit], opts.budgetTokens, overhead, language, preferences)
 	};
 }
 
@@ -219,7 +230,8 @@ export async function checkBookFit(
 			[skeleton],
 			0,
 			overhead,
-			await storyLanguage(db, opts.storyId, opts.userId)
+			await storyLanguage(db, opts.storyId, opts.userId),
+			await storyPreferences(db, opts.storyId, opts.userId)
 		) + bodies,
 		opts.contextWindow,
 		opts.replyTokens
@@ -266,6 +278,7 @@ type Request = {
 	storyId: string;
 	system: ChatMessage | null;
 	language: LanguageSetting;
+	preferences: PreferenceSetting;
 	meter?: SpendMeter;
 	signal?: AbortSignal;
 };
@@ -345,6 +358,7 @@ async function surveyPart(
 			cap,
 			open,
 			language: req.language,
+			preferences: req.preferences,
 			...(known.length ? { known } : {}),
 			...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
 		});
@@ -588,7 +602,8 @@ export async function runPatternPass(
 	});
 	const system = frame ? buildSystemMessage(frame) : null;
 	const language = await storyLanguage(db, opts.storyId, opts.userId);
-	const req = { ...opts, system, language };
+	const preferences = await storyPreferences(db, opts.storyId, opts.userId);
+	const req = { ...opts, system, language, preferences };
 	const save = () => opts.save({ notes, failures });
 	const bodyChars = opts.budgetTokens * 4;
 
@@ -686,7 +701,7 @@ export async function runPatternPass(
 				const scene = { ...byId.get(sceneId)!, ...current };
 				const task: ChatMessage = {
 					role: 'user',
-					content: buildPatternApplyMessage(pattern, scene, bodyChars, language)
+					content: buildPatternApplyMessage(pattern, scene, bodyChars, language, preferences)
 				};
 				try {
 					const result = await completeDetailed(

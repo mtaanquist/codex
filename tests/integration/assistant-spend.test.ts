@@ -159,6 +159,17 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(estimate.model).toBe(MODEL);
 	});
 
+	it("counts the story's Assistant preferences on each scene", async () => {
+		const storyId = await seedStory(2);
+		const bare = await estimateStoryReview(db, { userId, storyId });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { tense: 'past' }, assistantNotes: 'x'.repeat(800) })
+			.where(eq(stories.id, storyId));
+		const withPreferences = await estimateStoryReview(db, { userId, storyId });
+		expect(withPreferences.estTokens).toBeGreaterThan(bare.estTokens);
+	});
+
 	it('omits the cost when the model has no known price', async () => {
 		const storyId = await seedStory(2);
 		const estimate = await estimateStoryReview(db, { userId, storyId });

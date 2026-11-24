@@ -744,6 +744,31 @@ These cut across the surfaces and the architecture.
   language is a separate matter. Export carries a story's title, author and
   brief but none of its settings (style notes, models, editor preferences),
   so the language stays out of it too.
+- **Assistant preferences (#1344, items 1 to 3).** A universe and a story each
+  carry `assistant_preferences`, a jsonb object of known keys from
+  `#lib/assistant-preferences` (absent is not set), and `assistant_notes`, one
+  markdown field capped at 1,000 characters (migration 0117). The keys are a
+  house style (quote marks, serial comma, thoughts, tense, narration, each a
+  fixed choice) and seven habit checks (filter verbs, point-of-view epithets,
+  dangling modifiers, close repetition, comma splices, pet phrases, repeated
+  sentence shapes), each "check" or "leave". A story's own key wins over the
+  universe's, key by key; its notes replace the universe's when set.
+  `#lib/server/assistant-preferences` reads the effective setting and
+  `llm/prompts/preferences.ts` writes every line once. Review and copyedit
+  state the house style (judge against it rather than infer it) and, with
+  the pattern survey and the MCP pattern brief, the habits to leave alone and
+  the writer's notes; a habit left alone also drops out of the category lines,
+  the survey's list of kinds and the pattern examples (with every kind left
+  alone the survey looks for any other recurring habit). The notes sit
+  between begin and end markers, after a line saying they describe habits and
+  change no other instruction. A lore-only pass reads no wording and carries
+  none of it; the review estimate counts the lines on each scene. Scene and chapter drafts, `/write` and the pattern fix
+  stage keep to the house style. Not set, every prompt reads byte for byte as
+  before. The continuation and the reread are left out on purpose (short
+  follow-on text that copies the prose around it). There is no free-form
+  system prompt, and the rest of #1344 (feedback amount, reasons on edits,
+  summary and draft lengths, content limits) is not built. Like style notes,
+  the preferences are not in the export.
 - **Accessibility.** The streaming chat and the ghost-text continuation follow
   the same WCAG 2.1 AA bar as the rest of the app: streamed output is
   announced to assistive tech, and the inline suggestion is operable and
@@ -1147,7 +1172,11 @@ the connected writer, and hands it to the builder, so a prompt carries the
 same language lines as the Assistant's. Another writer's id reads the same as
 nothing set. `list_universes` and `list_stories` return the setting as
 `language` (the tag) and `languageName`, null when not set; a story's is its
-effective one. The prompts that stage
+effective one. The Assistant preferences are looked up the same way
+(`workPreferences`), and both list tools return them as `preferences`: the
+five house-style keys (null when not set), `leaveAlone` (the habit keys) and
+`notes`; a story's is its effective one, a universe's is the default for its
+stories. The prompts that stage
 notes are offered only to a connection that may suggest. `rewrite` stages its
 result as a suggested edit when the connection may suggest. `write`, `draft`
 and `draft-chapter` hand their result over with `stage_scene_draft` when the
@@ -1386,6 +1415,10 @@ context assembly and the cross-scene pass read them.
 - Language: `universes.language`, `stories.language` and
   `users.native_language` (migration 0116), nullable text holding a tag from
   `#lib/writing-languages`. See "Language and spelling convention" above.
+- Assistant preferences: `universes.assistant_preferences` and
+  `stories.assistant_preferences` (jsonb, not null, default `{}`) with
+  `assistant_notes` text beside each (migration 0117). See "Assistant
+  preferences" above.
 - Persisted chats: `assistant_chats`, with `chat_id` on
   `assistant_chat_messages` and `assistant_chat_summaries` (migration 0080,
   which made each earlier conversation its scope's first chat).

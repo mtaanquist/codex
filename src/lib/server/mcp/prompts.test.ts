@@ -259,3 +259,42 @@ describe('language', () => {
 		expect(build('copyedit')).toBe(build('copyedit', {}, { ...SUGGEST, language: undefined }));
 	});
 });
+
+describe('assistant preferences', () => {
+	const withPreferences: PromptConnection = {
+		...SUGGEST,
+		preferences: {
+			houseStyle: {
+				quoteMarks: 'single',
+				serialComma: null,
+				thoughts: null,
+				tense: 'present',
+				narration: null
+			},
+			leaveAlone: ['filterVerbs'],
+			notes: 'I lean on "suddenly".'
+		}
+	};
+
+	it('states the house style in the prompts that write or check prose', () => {
+		for (const name of ['review', 'copyedit', 'write', 'rewrite', 'draft', 'draft-chapter']) {
+			expect(
+				build(name, { brief: 'b', chapter: 'One', instruction: 'i', passage: 'p' }, withPreferences)
+			).toContain('House style for this story: single quotation marks');
+		}
+	});
+
+	it('leaves alone what the writer uses on purpose, and passes on their notes', () => {
+		for (const name of ['review', 'copyedit', 'pattern-pass']) {
+			const text = build(name, { chapter: 'One' }, withPreferences);
+			expect(text).toContain('Leave them alone');
+			expect(text).toContain('I lean on "suddenly".');
+		}
+		expect(build('pattern-pass', {}, withPreferences)).not.toContain('- Filter verbs (saw');
+	});
+
+	it('reads as before with no preferences', () => {
+		expect(build('copyedit')).toBe(build('copyedit', {}, { ...SUGGEST, preferences: undefined }));
+		expect(build('copyedit')).not.toContain('House style');
+	});
+});

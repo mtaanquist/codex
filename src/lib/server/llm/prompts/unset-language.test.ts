@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildMcpPrompt } from '../../mcp/prompts.ts';
 import { NO_LANGUAGE } from '../../../writing-languages.ts';
+import { NO_PREFERENCES } from '../../../assistant-preferences.ts';
+import { IN_CONTEXT } from './format.ts';
 import { buildArcMessage } from './arc.ts';
 import { buildCoauthorMessage } from './coauthor.ts';
 import { buildContinuationMessage } from './continuation.ts';
@@ -69,5 +71,53 @@ describe('prompts with no language set', () => {
 			now[`mcp-${name}`] = buildMcpPrompt(name, ids, connection);
 		}
 		expect(now).toEqual(before);
+	});
+
+	// The Assistant preferences (#1344) follow the same rule: passed with
+	// nothing set, every prompt is still the one in the fixture.
+	it('are byte-identical with no Assistant preferences set', () => {
+		const scene = { id: 'scene-1', title: 'The Gate' };
+		const ps = { id: 's1', title: 'One', bodyMd: 'Text.' };
+		const ids = {
+			universeId: '11111111-1111-4111-8111-111111111111',
+			storyId: '22222222-2222-4222-8222-222222222222',
+			sceneId: '33333333-3333-4333-8333-333333333333',
+			brief: 'b',
+			chapter: 'One'
+		};
+		const none = { language: NO_LANGUAGE, preferences: NO_PREFERENCES };
+		const connection = { permissions: ['read', 'suggest'] as const, ...none };
+		const review = (categories: Parameters<typeof buildReviewMessage>[2]) =>
+			buildReviewMessage(
+				scene,
+				[],
+				categories,
+				false,
+				false,
+				IN_CONTEXT,
+				NO_LANGUAGE,
+				NO_PREFERENCES
+			);
+		const now: Record<string, string> = {
+			review: review([]),
+			copyedit: review(['mechanics', 'prose', 'lore']),
+			patternSurvey: buildPatternSurveyMessage([ps], { scope: 'chapter', cap: 5, ...none }),
+			patternBrief: buildPatternBrief({ storyId: 'st', cap: 5, ...none }),
+			patternApply: buildPatternApplyMessage(
+				{ name: 'E', description: 'd', sceneIds: ['s1'], examples: [] },
+				ps,
+				1000,
+				NO_LANGUAGE,
+				NO_PREFERENCES
+			),
+			coauthor: buildCoauthorMessage('b', null, none),
+			draft: buildSceneDraftMessage({ brief: 'b', targetWords: 500, ...none })
+		};
+		for (const name of ['review', 'copyedit', 'pattern-pass', 'write', 'draft', 'draft-chapter']) {
+			now[`mcp-${name}`] = buildMcpPrompt(name, ids, connection);
+		}
+		for (const [name, text] of Object.entries(now)) {
+			expect(text, name).toBe((before as Record<string, string>)[name]);
+		}
 	});
 });

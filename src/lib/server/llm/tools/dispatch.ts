@@ -37,6 +37,7 @@ import {
 import { GateBusyError, stagingGate, stagingKey } from '../../mcp/call-gate.ts';
 import { isUuid } from '#lib/slug';
 import { effectiveLanguage, normaliseLanguage, writingLanguageName } from '#lib/writing-languages';
+import { effectivePreferences, type PreferenceSetting } from '#lib/assistant-preferences';
 import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
 import { locateQuote } from '#lib/quote-locate';
@@ -460,6 +461,13 @@ function languageFields(tag: string | null) {
 	return { language, languageName: language ? writingLanguageName(language) : null };
 }
 
+// The Assistant preferences as the list tools give them: each house-style
+// choice (null when not set: infer it from the text), the habit checks the
+// writer leaves alone, and their own notes (null when none).
+function preferenceFields(setting: PreferenceSetting) {
+	return { ...setting.houseStyle, leaveAlone: setting.leaveAlone, notes: setting.notes };
+}
+
 // The writer's live universes. The one tool that needs no universe: it is how
 // an outside app finds the ids the others take.
 async function listUniverses(ctx: ToolContext): Promise<string> {
@@ -469,7 +477,9 @@ async function listUniverses(ctx: ToolContext): Promise<string> {
 			name: universes.name,
 			description: universes.descriptionMd,
 			establishedSetting: universes.establishedSetting,
-			language: universes.language
+			language: universes.language,
+			assistantPreferences: universes.assistantPreferences,
+			assistantNotes: universes.assistantNotes
 		})
 		.from(universes)
 		.where(and(eq(universes.ownerId, ctx.userId), isNull(universes.deletedAt)))
@@ -482,9 +492,12 @@ async function listUniverses(ctx: ToolContext): Promise<string> {
 		.groupBy(stories.universeId);
 	const storyCount = new Map(counts.map((row) => [row.universeId, row.n]));
 	return JSON.stringify({
-		universes: rows.map((row) => ({
+		universes: rows.map(({ assistantPreferences, assistantNotes, ...row }) => ({
 			...row,
 			...languageFields(row.language),
+			preferences: preferenceFields(
+				effectivePreferences(null, { preferences: assistantPreferences, notes: assistantNotes })
+			),
 			storyCount: storyCount.get(row.id) ?? 0
 		}))
 	});
@@ -500,7 +513,11 @@ async function listStories(ctx: ToolContext): Promise<string> {
 			brief: stories.brief,
 			positionInSeries: stories.positionInSeries,
 			language: stories.language,
-			universeLanguage: universes.language
+			universeLanguage: universes.language,
+			assistantPreferences: stories.assistantPreferences,
+			assistantNotes: stories.assistantNotes,
+			universePreferences: universes.assistantPreferences,
+			universeNotes: universes.assistantNotes
 		})
 		.from(stories)
 		.innerJoin(universes, eq(stories.universeId, universes.id))
@@ -530,11 +547,27 @@ async function listStories(ctx: ToolContext): Promise<string> {
 		: [];
 	const sceneCount = new Map(counts.map((row) => [row.storyId, row.n]));
 	return JSON.stringify({
-		stories: rows.map(({ language, universeLanguage, ...row }) => ({
-			...row,
-			...languageFields(effectiveLanguage(language, universeLanguage)),
-			sceneCount: sceneCount.get(row.id) ?? 0
-		}))
+		stories: rows.map(
+			({
+				language,
+				universeLanguage,
+				assistantPreferences,
+				assistantNotes,
+				universePreferences,
+				universeNotes,
+				...row
+			}) => ({
+				...row,
+				...languageFields(effectiveLanguage(language, universeLanguage)),
+				preferences: preferenceFields(
+					effectivePreferences(
+						{ preferences: assistantPreferences, notes: assistantNotes },
+						{ preferences: universePreferences, notes: universeNotes }
+					)
+				),
+				sceneCount: sceneCount.get(row.id) ?? 0
+			})
+		)
 	});
 }
 

@@ -1,4 +1,5 @@
 import { storyLanguage } from '../language.ts';
+import { storyPreferences } from '../assistant-preferences.ts';
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantUsage, scenes, stories } from '../db/schema.ts';
@@ -18,7 +19,8 @@ import {
 	resolveLlmConfig,
 	type ResolvedConfig
 } from './config.ts';
-import { buildSurveyMessage, splitSurveyChunks } from './prompts/review.ts';
+import { buildSurveyMessage, readsWording, splitSurveyChunks } from './prompts/review.ts';
+import { reviewPreferenceText } from './prompts/preferences.ts';
 import { PERSONA_TOKENS } from './context/budgets.ts';
 import {
 	checkBookFit,
@@ -176,6 +178,11 @@ export async function estimateStoryReview(
 		throw new AssistantDisabledError('No model is configured for reviews.');
 	}
 	const includeTiers = reviewTiers(categories);
+	// The preference lines ride on each scene's task message when the review
+	// reads the wording.
+	const preferenceTokens = readsWording(categories)
+		? estimateTokens(reviewPreferenceText(await storyPreferences(db, opts.storyId, opts.userId)))
+		: 0;
 
 	// One pass over the story's scenes, shared by the per-scene reading and the
 	// cross-scene survey below. The chapter filter is applied in memory because
@@ -242,6 +249,7 @@ export async function estimateStoryReview(
 			PERSONA_TOKENS +
 			toolTokens +
 			TASK_MESSAGE_TOKENS +
+			preferenceTokens +
 			estimateTokens(delta?.text ?? '');
 	}
 
@@ -315,7 +323,8 @@ export async function estimateStoryReview(
 						units,
 						budgetTokens,
 						await patternSurveyOverhead(db, opts.userId, opts.storyId),
-						await storyLanguage(db, opts.storyId, opts.userId)
+						await storyLanguage(db, opts.storyId, opts.userId),
+						await storyPreferences(db, opts.storyId, opts.userId)
 					)
 				: 0;
 		}

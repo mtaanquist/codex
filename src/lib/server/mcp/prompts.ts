@@ -19,6 +19,7 @@ import {
 } from '../llm/prompts/review.ts';
 import { buildSceneDraftMessage, CONTINUE_RULE } from '../llm/prompts/scene-draft.ts';
 import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
+import { NO_PREFERENCES, type PreferenceSetting } from '../../assistant-preferences.ts';
 
 // The Assistant's flow commands as MCP prompts: one per command that starts a
 // piece of work in the chat panel (/review, /copyedit, ...). A prompt is the
@@ -29,9 +30,10 @@ import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
 // A prompt reads nothing from the database. It is text built from the
 // arguments the caller sent, so it can say nothing about anyone's work; the
 // tools it points at check every id against the connected writer. The one
-// exception is the language setting, which the server looks up for the
-// connected writer's own work before building (workLanguage) and hands in on
-// the connection; an id that is not theirs reads the same as nothing set.
+// exception is the language setting and the Assistant preferences, which the
+// server looks up for the connected writer's own work before building
+// (workLanguage, workPreferences) and hands in on the connection; an id that
+// is not theirs reads the same as nothing set.
 
 export type PromptArgument = { name: string; description: string; required: boolean };
 
@@ -51,6 +53,8 @@ export type PromptConnection = {
 	permissions: readonly McpPermission[];
 	// The language of the work the arguments name; left out, none is stated.
 	language?: LanguageSetting;
+	// The Assistant preferences of that work; left out, none are stated.
+	preferences?: PreferenceSetting;
 };
 
 // How a drafting prompt ends: staged where the connection may suggest, else
@@ -170,7 +174,8 @@ const review = (args: Args, picked: ReviewCategory[], connection: PromptConnecti
 				false,
 				true,
 				READ_WITH_TOOLS,
-				connection.language ?? NO_LANGUAGE
+				connection.language ?? NO_LANGUAGE,
+				connection.preferences ?? NO_PREFERENCES
 			)
 		],
 		STAGES_ONLY
@@ -252,7 +257,8 @@ const PROMPTS: PromptDef[] = [
 						storyId: story(args),
 						chapter: text(args, 'chapter', MAX_SHORT_TEXT, false),
 						cap: CHAPTER_PATTERN_CAP,
-						language: connection.language
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				`${STAGES_ONLY} Give the writer the link each pattern note returned; it opens the note in Codex and takes them through its edits one at a time.`
@@ -275,7 +281,8 @@ const PROMPTS: PromptDef[] = [
 					currentScene(scene(args)),
 					buildCoauthorMessage(text(args, 'brief', MAX_DRAFT_BRIEF_CHARS), null, {
 						source: READ_WITH_TOOLS,
-						language: connection.language
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				draftClose(connection, false, 'passage')
@@ -306,7 +313,12 @@ const PROMPTS: PromptDef[] = [
 					buildCoauthorMessage(
 						text(args, 'instruction', MAX_DRAFT_BRIEF_CHARS),
 						{ kind: 'selection', text: text(args, 'passage', MAX_COAUTHOR_REFERENCE_CHARS) },
-						{ source: READ_WITH_TOOLS, rewrite: true, language: connection.language }
+						{
+							source: READ_WITH_TOOLS,
+							rewrite: true,
+							language: connection.language,
+							preferences: connection.preferences
+						}
 					)
 				],
 				connection.permissions.includes('suggest')
@@ -346,7 +358,8 @@ const PROMPTS: PromptDef[] = [
 						brief: text(args, 'brief', MAX_DRAFT_BRIEF_CHARS),
 						targetWords: words(args),
 						pov: text(args, 'pov', MAX_DRAFT_POV_CHARS, false),
-						language: connection.language
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				draftClose(connection, false)
@@ -383,7 +396,8 @@ const PROMPTS: PromptDef[] = [
 						brief: '',
 						chapterBrief: text(args, 'brief', MAX_DRAFT_BRIEF_CHARS),
 						targetWords: words(args),
-						language: connection.language
+						language: connection.language,
+						preferences: connection.preferences
 					})
 				],
 				draftClose(connection, true)
