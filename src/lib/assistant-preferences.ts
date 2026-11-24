@@ -123,11 +123,23 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 	return out as StoredPreferences;
 }
 
+// The lines the prompts put around the notes. Kept here so the notes can
+// never hold one and end the framing early.
+export const NOTES_BEGIN = "--- the writer's notes ---";
+export const NOTES_END = '--- end of the notes ---';
+
 // The free text, trimmed, with Windows line ends (a submitted form sends
-// CRLF) as plain newlines and null characters dropped; blank is not set.
+// CRLF) as plain newlines, null characters dropped, and any line that reads
+// as one of the framing lines removed; blank is not set.
 export function normaliseNotes(raw: unknown): string | null {
 	if (typeof raw !== 'string') return null;
-	const text = raw.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
+	const text = raw
+		.replace(/\r\n?/g, '\n')
+		.replaceAll('\u0000', '')
+		.split('\n')
+		.filter((line) => line.trim() !== NOTES_BEGIN && line.trim() !== NOTES_END)
+		.join('\n')
+		.trim();
 	return text || null;
 }
 

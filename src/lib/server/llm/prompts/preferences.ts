@@ -3,10 +3,12 @@
 // surface (the Assistant's and the MCP prompts). Each returns '' when nothing
 // is set, so a prompt with no preferences reads as it did before they existed.
 
-import type {
-	HabitCheck,
-	HouseStyleKey,
-	PreferenceSetting
+import {
+	NOTES_BEGIN,
+	NOTES_END,
+	type HabitCheck,
+	type HouseStyleKey,
+	type PreferenceSetting
 } from '../../../assistant-preferences.ts';
 
 // Whether a habit check runs: every one does unless the writer left it alone.
@@ -87,9 +89,6 @@ export function habitNotesLine(setting: PreferenceSetting, stage: 'review' | 'pa
 		NOTES_END
 	].join('\n');
 }
-
-const NOTES_BEGIN = "--- the writer's notes ---";
-const NOTES_END = '--- end of the notes ---';
 
 // The lines a review adds for the preferences, for the estimate.
 export function reviewPreferenceText(setting: PreferenceSetting): string {

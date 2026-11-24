@@ -65,7 +65,7 @@ Open the story's settings and find **Assistant preferences** under Details. Set 
 - **Habits to check**: filter verbs, point-of-view epithets, dangling modifiers, close repetition, comma splices, pet words and phrases, and repeated sentence shapes and gestures. All are checked unless you choose "Leave alone" for one you use on purpose. A habit left alone is skipped by review, copyedit and the pattern pass.
 - **Your own habits**: a short note, up to 1,000 characters, for anything the lists cannot know, such as "I overuse the word 'just'" or "Sentence fragments are on purpose, leave them". Review and the pattern pass check these first.
 
-Select **Save preferences** to keep your changes. An app you connect over MCP is given the same preferences.
+Select **Save preferences** to keep your changes. An AI app you connect to your account (see [Connected apps](/docs/account)) is given the same preferences.
 
 ## Working through the feedback
 

@@ -170,6 +170,17 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(withPreferences.estTokens).toBeGreaterThan(bare.estTokens);
 	});
 
+	it("counts the story's language lines on each scene", async () => {
+		const storyId = await seedStory(2);
+		const bare = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		await db.update(stories).set({ language: 'en-GB' }).where(eq(stories.id, storyId));
+		const withRule = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(withRule.estTokens).toBeGreaterThan(bare.estTokens);
+		await db.update(users).set({ nativeLanguage: 'da' }).where(eq(users.id, userId));
+		const withNative = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(withNative.estTokens).toBeGreaterThan(withRule.estTokens);
+	});
+
 	it('omits the cost when the model has no known price', async () => {
 		const storyId = await seedStory(2);
 		const estimate = await estimateStoryReview(db, { userId, storyId });

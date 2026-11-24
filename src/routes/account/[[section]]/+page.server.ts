@@ -440,7 +440,8 @@ export const actions: Actions = {
 		const result = await saveIdentity(db, locals.user!.id, {
 			displayName: formText(data, 'displayName'),
 			penName: formText(data, 'penName'),
-			nativeLanguage: formText(data, 'nativeLanguage')
+			// A form without the field leaves the native language as it is.
+			nativeLanguage: data.has('nativeLanguage') ? formText(data, 'nativeLanguage') : undefined
 		});
 		if (!result.ok) return fail(400, { scope: 'name', message: result.reason });
 		return { scope: 'name', saved: true };

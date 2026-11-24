@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
-import { REVIEW_CATEGORIES } from '../../../review-shape.ts';
+import { REVIEW_CATEGORIES, type ReviewCategory } from '../../../review-shape.ts';
 import {
 	languageRule,
 	nativeInterferenceLine,
@@ -14,7 +14,8 @@ import {
 	buildPatternBrief,
 	buildPatternSurveyMessage,
 	buildRereadMessage,
-	buildReviewMessage
+	buildReviewMessage,
+	reviewLanguageText
 } from './review.ts';
 import { buildSceneDraftMessage } from './scene-draft.ts';
 import { buildCoauthorMessage } from './coauthor.ts';
@@ -123,5 +124,24 @@ describe('the prompts that state the language', () => {
 		);
 		expect(buildRecapMessage(null, da)).toContain('Write in Danish.');
 		expect(buildRecapMessage(null)).toContain('Write in the same language as the story.');
+	});
+});
+
+describe('reviewLanguageText', () => {
+	it('is exactly the language lines the review task carries, for the estimate', () => {
+		const scene = { id: 's1', title: 'One' };
+		const cases: ReviewCategory[][] = [[], ['prose'], ['mechanics', 'lore'], ['lore']];
+		for (const categories of cases) {
+			const text = reviewLanguageText(UK_DANE, categories);
+			const message = buildReviewMessage(scene, [], categories, false, false, IN_CONTEXT, UK_DANE);
+			const bare = buildReviewMessage(scene, [], categories, false, false, IN_CONTEXT, NO_LANGUAGE);
+			for (const line of text.split('\n')) expect(message).toContain(line);
+			expect(text.includes('Interference')).toBe(
+				message.includes('Interference') && !bare.includes('Interference')
+			);
+		}
+		expect(reviewLanguageText(UK_DANE, [])).toBe(languageRule(UK_DANE));
+		expect(reviewLanguageText(UK_DANE, ['prose'])).toContain('Interference from Danish');
+		expect(reviewLanguageText(NO_LANGUAGE, ['prose'])).toBe('');
 	});
 });

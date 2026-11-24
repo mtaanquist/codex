@@ -2,6 +2,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { isUuid } from '../slug.ts';
 import { scenes, stories, universes } from './db/schema.ts';
+import { storyAssistantOn, storyIsLive } from './universe-scope.ts';
 import {
 	effectivePreferences,
 	NO_PREFERENCES,
@@ -12,12 +13,15 @@ import {
 // The Assistant preferences the prompts state for a piece of work, read the
 // way language.ts reads the language: the callers pass ids they have already
 // checked, and ownerId, where given, scopes the read too (the MCP prompts).
-// A story or universe that is gone, or not that owner's, reads as nothing set.
+// A story or universe that is gone (or in a trashed universe), or not that
+// owner's, reads as nothing set, and so, with assistantOn, does a story the
+// Assistant is muted on.
 
 export async function storyPreferences(
 	db: Database,
 	storyId: string,
-	ownerId?: string
+	ownerId?: string,
+	options: { assistantOn?: boolean } = {}
 ): Promise<PreferenceSetting> {
 	const [row] = await db
 		.select({
@@ -32,7 +36,8 @@ export async function storyPreferences(
 			and(
 				eq(stories.id, storyId),
 				ownerId ? eq(stories.ownerId, ownerId) : undefined,
-				isNull(stories.deletedAt)
+				storyIsLive(),
+				options.assistantOn ? storyAssistantOn() : undefined
 			)
 		);
 	if (!row) return NO_PREFERENCES;
@@ -61,23 +66,25 @@ export async function universePreferences(
 }
 
 // The preferences of whatever an MCP prompt names, most specific first: a
-// story, else a scene's story, else a universe. Ids that are not ids read as
-// nothing set.
+// story, else a scene's story, else a universe. Ids that are not ids, and a
+// story the Assistant is muted on, read as nothing set.
 export async function workPreferences(
 	db: Database,
 	ownerId: string,
 	ids: { storyId?: unknown; sceneId?: unknown; universeId?: unknown }
 ): Promise<PreferenceSetting> {
-	const valid = (value: unknown): value is string => typeof value === 'string' && isUuid(value);
-	if (valid(ids.storyId)) return storyPreferences(db, ids.storyId, ownerId);
+	const valid = (value: unknown): value is string =>
+		typeof value === 'string' && isUuid(value.trim());
+	const on = { assistantOn: true };
+	if (valid(ids.storyId)) return storyPreferences(db, ids.storyId.trim(), ownerId, on);
 	if (valid(ids.sceneId)) {
 		const [row] = await db
 			.select({ storyId: scenes.storyId })
 			.from(scenes)
-			.where(eq(scenes.id, ids.sceneId));
-		return row ? storyPreferences(db, row.storyId, ownerId) : NO_PREFERENCES;
+			.where(eq(scenes.id, ids.sceneId.trim()));
+		return row ? storyPreferences(db, row.storyId, ownerId, on) : NO_PREFERENCES;
 	}
-	if (valid(ids.universeId)) return universePreferences(db, ids.universeId, ownerId);
+	if (valid(ids.universeId)) return universePreferences(db, ids.universeId.trim(), ownerId);
 	return NO_PREFERENCES;
 }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import type pg from 'pg';
-import { stories, universes, users } from '../../src/lib/server/db/schema';
+import { scenes, stories, universes, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase } from './test-db';
 
@@ -128,6 +128,18 @@ describe('the language settings', () => {
 		expect((await storyLanguage(db, storyId)).native).toBeNull();
 	});
 
+	it('keeps the native language when the name form leaves the field out', async () => {
+		const save = (fields: Record<string, string>) =>
+			accountPage.actions.updateName(post({ displayName: 'L', penName: '', ...fields }, {}));
+		await save({ nativeLanguage: 'da' });
+		expect(await save({})).toMatchObject({ saved: true });
+		const [row] = await db
+			.select({ native: users.nativeLanguage })
+			.from(users)
+			.where(eq(users.id, user.id));
+		expect(row.native).toBe('da');
+	});
+
 	it("gives a standalone story its universe's language, and says so in Details", async () => {
 		const standalone = await standaloneUniverse(db, user.id);
 		const loose = await createStoryInUniverse(db, user.id, standalone.id, 'Loose Leaf');
@@ -151,5 +163,28 @@ describe('the language settings', () => {
 		expect((await workLanguage(db, otherId, { universeId })).language).toBeNull();
 		expect((await workLanguage(db, user.id, { universeId })).language).toBe('en-GB');
 		expect((await workLanguage(db, user.id, { storyId: 'not-an-id' })).language).toBeNull();
+		expect((await workLanguage(db, user.id, { storyId: ` ${storyId} ` })).language).toBe('en-GB');
+	});
+
+	it('reads nothing of a story in a trashed universe', async () => {
+		await saveUniverse('en-GB');
+		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, universeId));
+		expect((await storyLanguage(db, storyId)).language).toBeNull();
+	});
+
+	it('gives an app nothing for a story the Assistant is muted on', async () => {
+		await saveUniverse('en-GB');
+		await db
+			.update(stories)
+			.set({ llmConfig: { enabled: false } } as Partial<typeof stories.$inferInsert>)
+			.where(eq(stories.id, storyId));
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 1, title: 'One', bodyMd: '' })
+			.returning({ id: scenes.id });
+		expect((await workLanguage(db, user.id, { storyId })).language).toBeNull();
+		expect((await workLanguage(db, user.id, { sceneId: scene.id })).language).toBeNull();
+		// The app's own surfaces check the mute themselves.
+		expect((await storyLanguage(db, storyId, user.id)).language).toBe('en-GB');
 	});
 });

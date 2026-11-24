@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import type pg from 'pg';
-import { stories, universes, users } from '../../src/lib/server/db/schema';
+import { scenes, stories, universes, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { NO_PREFERENCES, MAX_ASSISTANT_NOTES } from '../../src/lib/assistant-preferences';
 import { ensureTestDatabase } from './test-db';
@@ -160,5 +160,30 @@ describe('the assistant preferences', () => {
 		expect(await workPreferences(db, other.id, { universeId })).toEqual(NO_PREFERENCES);
 		expect((await workPreferences(db, user.id, { storyId })).houseStyle.quoteMarks).toBe('double');
 		expect(await workPreferences(db, user.id, { storyId: 'not-an-id' })).toEqual(NO_PREFERENCES);
+		expect(
+			(await workPreferences(db, user.id, { storyId: ` ${storyId} ` })).houseStyle.quoteMarks
+		).toBe('double');
+	});
+
+	it('reads nothing of a story in a trashed universe', async () => {
+		await saveStory({ quoteMarks: 'double' });
+		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, universeId));
+		expect(await storyPreferences(db, storyId)).toEqual(NO_PREFERENCES);
+	});
+
+	it('gives an app nothing for a story the Assistant is muted on', async () => {
+		await saveStory({ quoteMarks: 'double' });
+		await db
+			.update(stories)
+			.set({ llmConfig: { enabled: false } } as Partial<typeof stories.$inferInsert>)
+			.where(eq(stories.id, storyId));
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 1, title: 'One', bodyMd: '' })
+			.returning({ id: scenes.id });
+		expect(await workPreferences(db, user.id, { storyId })).toEqual(NO_PREFERENCES);
+		expect(await workPreferences(db, user.id, { sceneId: scene.id })).toEqual(NO_PREFERENCES);
+		// The app's own surfaces check the mute themselves.
+		expect((await storyPreferences(db, storyId, user.id)).houseStyle.quoteMarks).toBe('double');
 	});
 });

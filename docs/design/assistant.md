@@ -734,12 +734,19 @@ These cut across the surfaces and the architecture.
   language that is set and is a different language (by primary subtag, so
   en-US is not interference for en-GB), adds one
   "interference" line to the mechanics and prose passes and the pattern
-  survey, as a hint of where to look. Three prompts stay on inferring on
-  purpose: the chapter summary and the character arc, whose requests are
-  their currency fingerprints (naming the language would mark every stored
-  one stale when the setting changed) and which are written from scene
-  summaries that already follow the setting, and the chat summary, which follows the conversation's language,
-  not the story's. The editor's `lang` follows the effective language and
+  survey, as a hint of where to look. A scene summary is current by its
+  scene's `updated_at`, so setting or changing the language does not rewrite
+  the summaries already stored; each follows the setting once its scene is
+  next summarised. These prompts carry no language line: the chapter summary
+  and the character arc, whose requests are their currency fingerprints
+  (naming the language would mark every stored one stale when the setting
+  changed) and which follow it through the scene summaries they are written
+  from once those are next summarised; the chat summary, which follows the
+  conversation's language, not the story's; the enrich prompts
+  (`prompts/enrich.ts`); the reply to a comment thread
+  (`prompts/review-reply.ts`); and the cross-scene continuity pass (the
+  survey, `buildSurveyMessage`, its confirm stage and the MCP continuity
+  brief), which checks facts rather than wording. The editor's `lang` follows the effective language and
   falls back to the `writingLanguage` editor preference. The app interface
   language is a separate matter. Export carries a story's title, author and
   brief but none of its settings (style notes, models, editor preferences),
