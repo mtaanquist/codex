@@ -123,19 +123,17 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 	return out as StoredPreferences;
 }
 
-// The lines the prompts put around the notes. Kept here so the notes can
-// never hold one and end the framing early.
+// The lines the prompts put around the notes.
 export const NOTES_BEGIN = "--- the writer's notes ---";
 export const NOTES_END = '--- end of the notes ---';
 
-// The free text, trimmed, with Windows line ends (a submitted form sends
-// CRLF) as plain newlines, null characters dropped, and every run of three or
-// more hyphens cut to one, so no part of a note can read as a framing line
-// (whatever its case, spacing or the text around it) and end the fence early.
-// Blank is not set.
+// The free text as the writer typed it, trimmed, with Windows line ends (a
+// submitted form sends CRLF) as plain newlines and null characters dropped;
+// blank is not set. The prompts fence it (habitNotesLine), and keep it from
+// reading as a fence line there, not here.
 export function normaliseNotes(raw: unknown): string | null {
 	if (typeof raw !== 'string') return null;
-	const text = raw.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').replace(/-{3,}/g, '-').trim();
+	const text = raw.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
 	return text || null;
 }
 

@@ -776,8 +776,9 @@ These cut across the surfaces and the architecture.
   the survey's list of kinds and the pattern examples (with every kind left
   alone the survey looks for any other recurring habit). The notes sit
   between begin and end markers, after a line saying they describe habits and
-  change no other instruction; saving cuts any run of three or more hyphens
-  in the notes to one, so no part of them can read as a marker. A lore-only pass reads no wording and carries
+  change no other instruction; the fence (`habitNotesLine`) cuts any run of
+  three or more hyphens in the notes to one, so no part of them can read as a
+  marker, while the stored notes keep what the writer typed. A lore-only pass reads no wording and carries
   none of it; the review estimate counts the lines on each scene. Scene and
   chapter drafts, `/write`, the pattern fix stage and the pattern reread
   (which stages a follow-up edit) keep to the house style, and so does a

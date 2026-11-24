@@ -20,10 +20,13 @@ see settings that applied. The loads now pass `assistantPreferencesShown`
 both the instance and the account. A save now changes only the keys the post
 carries, merged in one jsonb statement (`||` then `-` the cleared keys), and
 keeps the notes when their field is missing; a blank select still clears its
-key. The notes no longer drop lines that read as a framing line, which missed
-a marker with more text on its line: every run of three or more hyphens is
-cut to one, so nothing in them can match a marker in any case, spacing or
-position. A trashed scene's id reads as nothing set in `sceneLanguage` and
+key. Saving no longer drops note lines that read as a framing line (which
+also missed a marker with more text on its line), so the stored notes are
+what the writer typed apart from line ends and null characters. Instead
+`habitNotesLine`, the one place that fences the notes for review, the
+pattern pass and the chat, cuts every run of three or more hyphens to one,
+so nothing in them can match a marker in any case, spacing or position. The
+MCP list tools still return the stored notes as data. A trashed scene's id reads as nothing set in `sceneLanguage` and
 `workPreferences`. The round 4 note on the search bound was corrected to say
 the code prices the whole bound at the cache-write rate.
 
