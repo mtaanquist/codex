@@ -62,8 +62,16 @@ import {
 	setStoryTags,
 	storyTagView
 } from '#lib/server/tags';
-import { MAX_GENRES, splitTags } from '#lib/story-tags';
+import { MAX_GENRES } from '#lib/story-tags';
 import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
+
+// One form field per chip, so a name that contains a comma stays whole.
+function chipValues(data: FormData, name: string): string[] {
+	return data
+		.getAll(name)
+		.map((value) => (typeof value === 'string' ? value.trim() : ''))
+		.filter(Boolean);
+}
 
 // The current edition, if the story has been published.
 async function currentEdition(storyId: string) {
@@ -379,12 +387,12 @@ export const actions: Actions = {
 		const genres = (await pickListed(db, 'genre', data.getAll('genres'))).slice(0, MAX_GENRES);
 		const warnings = await pickListed(db, 'warning', data.getAll('contentWarnings'));
 		// Checked before anything is written, so a refused name saves nothing.
-		const checked = checkTagNames(splitTags(formText(data, 'tags')));
+		const checked = checkTagNames(chipValues(data, 'tags'));
 		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
 		const inherited = (await storyTagView(db, story.id)).fandoms.filter((tag) => tag.inherited);
 		const fandoms = await findFandoms(
 			db,
-			splitTags(formText(data, 'fandoms')),
+			chipValues(data, 'fandoms'),
 			inherited.map((tag) => tag.slug)
 		);
 		if (!fandoms.ok) return fail(400, { action: 'tags', message: fandoms.message });

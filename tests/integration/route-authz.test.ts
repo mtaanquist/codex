@@ -961,6 +961,22 @@ describe('story tags and their moderation', () => {
 		expect(view.genres.map((tag) => tag.id)).toEqual([genre.id]);
 	});
 
+	it('keeps a picked name that contains a comma whole', async () => {
+		await db
+			.insert(tags)
+			.values({ kind: 'fandom', name: 'Love, Death & Robots', slug: 'love,-death-&-robots' });
+		const form = new FormData();
+		form.append('fandoms', 'Love, Death & Robots');
+		form.append('tags', 'Hurt, comfort');
+		const result = await storySettings.actions.saveTags(
+			event(A, { params: { id: s.storyA.id }, form }) as never
+		);
+		expect(result).toMatchObject({ saved: true });
+		const view = await storyTagView(db, s.storyA.id);
+		expect(view.fandoms.map((tag) => tag.name)).toContain('Love, Death & Robots');
+		expect(view.tags.map((tag) => tag.name)).toEqual(['Hurt, comfort']);
+	});
+
 	for (const [page, kind, actions] of [
 		['tags', 'tag', tagsPage.actions],
 		['fandoms', 'fandom', fandomsPage.actions],

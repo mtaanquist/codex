@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { formatDateTime } from '#lib/format';
 	import { tick } from 'svelte';
+	import { enhance } from '#lib/enhance';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
 	import { reportReasonLabel } from '#lib/report-reasons';
@@ -68,7 +69,7 @@
 		<span class="x">
 			The people who look after this site took this edition down, so readers cannot open it. Reason: {reportReasonLabel(
 				data.edition.removedReason
-			)}.
+			)}. You cannot publish it again until they restore it.
 		</span>
 	</div>
 {/if}
@@ -136,7 +137,15 @@
 			<button class="btn btn-primary" type="submit">Save visibility</button>
 		</div>
 	</form>
-	<form method="POST" action="?/saveTags">
+	<!-- Enhanced so a refused save keeps what the writer picked and typed. -->
+	<form
+		method="POST"
+		action="?/saveTags"
+		use:enhance={() =>
+			async ({ update }) => {
+				await update({ reset: false });
+			}}
+	>
 		{#if form?.action === 'tags' && form.message}
 			<p class="form-error" role="alert">{form.message}</p>
 		{/if}
@@ -186,7 +195,7 @@
 		</div>
 		<div class="field">
 			<label for="st-fandoms">Fandoms</label>
-			<input type="hidden" name="fandoms" value={fandoms.join('\n')} />
+			{#each fandoms as fandom (fandom)}<input type="hidden" name="fandoms" value={fandom} />{/each}
 			<TagInput
 				values={fandoms}
 				onChange={(next) => (fandoms = next)}
@@ -201,7 +210,7 @@
 		</div>
 		<div class="field">
 			<label for="st-tags">Tags</label>
-			<input type="hidden" name="tags" value={tags.join('\n')} />
+			{#each tags as tag (tag)}<input type="hidden" name="tags" value={tag} />{/each}
 			<TagInput
 				values={tags}
 				onChange={(next) => (tags = next)}

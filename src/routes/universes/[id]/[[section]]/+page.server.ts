@@ -20,7 +20,7 @@ import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models
 import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/server/proposals';
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
-import { setUniverseFandom, universeFandom } from '#lib/server/tags';
+import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/tags';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
@@ -113,25 +113,24 @@ export const actions: Actions = {
 		if (!name) {
 			return fail(400, { action: 'update', message: 'The universe needs a name.' });
 		}
+		// The known setting: an empty field unlinks it. Linking ticks
+		// Established setting. Checked first, so a fandom no longer on the list
+		// refuses the whole save rather than half of it.
+		const fandomId = data.has('fandomId') ? formText(data, 'fandomId') || null : universe.fandomId;
+		const fandomChanged = fandomId !== universe.fandomId;
+		if (fandomChanged && fandomId !== null && !(await pickableFandom(db, fandomId))) {
+			return fail(400, {
+				action: 'update',
+				message: 'That setting is no longer on the list. Pick another.'
+			});
+		}
 		const slug = await saveUniverseDetails(db, locals.user!.id, universe, {
 			name,
 			descriptionMd,
 			establishedSetting
 		});
 		if (!slug) error(404, 'Not found');
-		// The known setting: an empty field unlinks it. Linking ticks
-		// Established setting; a fandom no longer on the list is refused.
-		if (data.has('fandomId')) {
-			const fandomId = formText(data, 'fandomId') || null;
-			if (fandomId !== universe.fandomId) {
-				if (!(await setUniverseFandom(db, universe.id, fandomId))) {
-					return fail(400, {
-						action: 'update',
-						message: 'That setting is no longer on the list. Pick another.'
-					});
-				}
-			}
-		}
+		if (fandomChanged) await setUniverseFandom(db, universe.id, fandomId);
 		// A changed slug moves this page's own URL.
 		if (slug !== universe.slug) redirect(303, `/universes/${slug}`);
 		return { action: 'update', saved: true };

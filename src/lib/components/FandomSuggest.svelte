@@ -36,6 +36,7 @@
 		clearTimeout(timer);
 		const query = value.trim();
 		if (query.length < 2) {
+			latest++;
 			results = [];
 			return;
 		}
