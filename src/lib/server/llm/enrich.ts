@@ -438,6 +438,8 @@ export async function enrichEntityFromText(
 	const readScenes = new Set([...readPieces].map((piece) => piece.id));
 	if (
 		passRequest &&
+		// A pass over no scenes read nothing to fingerprint.
+		passRequest.sceneIds.length > 0 &&
 		!failure &&
 		!capped &&
 		!skipped &&

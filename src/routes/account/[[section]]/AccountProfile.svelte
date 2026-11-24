@@ -171,9 +171,9 @@
 				</select>
 				<p class="field-hint">
 					The language you grew up speaking. When a story's language is set to another one, a review
-					that checks "Spelling and grammar" or "Prose and style", and the pattern pass, also look
-					for habits carried over from your native language, such as idioms translated word for word
-					or false friends.
+					that checks "Spelling and grammar" or "Prose and style", or that has "Look for habits that
+					repeat in the prose" ticked, also looks for habits carried over from your native language,
+					such as idioms translated word for word or false friends.
 				</p>
 			</div>
 			<div class="settings-actions">

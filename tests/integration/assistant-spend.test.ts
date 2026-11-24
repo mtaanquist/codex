@@ -234,6 +234,7 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(low.webSearch).toBe(true);
 		expect(low.capEnforceable).toBe(true);
 		expect(low.overCap).toBe(true);
+		expect(low.overCapAt).toBe('scene');
 
 		await searching(10_000, true);
 		expect((await estimateStoryReview(db, { userId, storyId })).overCap).toBeUndefined();
@@ -241,6 +242,86 @@ describe('pre-flight review estimate (#548)', () => {
 		// Without search a scene's own request is a few cents, well under $1.
 		await searching(1, false);
 		expect((await estimateStoryReview(db, { userId, storyId })).overCap).toBeUndefined();
+	});
+
+	// Search on, a 1M window so the whole book is read in one request, and the
+	// reviewer priced. Every round of the search loop is held for each request,
+	// so the room kept for one request runs to several dollars.
+	async function searchingWithPatterns(storyId: string, spendCapUsd: number) {
+		await db
+			.update(universes)
+			.set({ establishedSetting: true })
+			.where(eq(universes.id, universeId));
+		const save = () =>
+			saveAccountLlmConfig(db, userId, {
+				enabled: true,
+				assistantName: '',
+				persona: 'balanced',
+				provider: 'anthropic',
+				endpoint: 'https://api.anthropic.com',
+				apiKey: 'sk-ant',
+				models: { reviewer: MODEL },
+				modelContextManual: { [MODEL]: 1_000_000 },
+				toolCallBudget: 8,
+				webSearch: true,
+				spendCapUsd
+			});
+		// The first save switches provider, which resets the model picks to the
+		// preset's; the second puts this test's model back.
+		await save();
+		await save();
+		const { model } = await estimateStoryReview(db, { userId, storyId });
+		expect(model).toBe(MODEL);
+		await saveModelPricing(db, userId, { [MODEL]: { prompt: PRICE_PER_TOKEN, completion: 0 } });
+	}
+
+	async function seedBodies(bodies: string[]): Promise<string> {
+		const [story] = await db
+			.insert(stories)
+			.values({ universeId, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		for (const [i, bodyMd] of bodies.entries()) {
+			await db
+				.insert(scenes)
+				.values({ storyId: story.id, globalPosition: i + 1, title: `Scene ${i + 1}`, bodyMd });
+		}
+		return story.id;
+	}
+
+	it('warns when the whole-book habits pass would be held, though every scene fits', async () => {
+		// Each scene's own request stays small (the context leaves a long scene
+		// out), but the habits pass sends the whole book in one request.
+		const storyId = await seedBodies(Array.from({ length: 30 }, () => 'word '.repeat(2400)));
+		await searchingWithPatterns(storyId, 16);
+		const scenesOnly = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(scenesOnly.webSearch).toBe(true);
+		expect(scenesOnly.overCap).toBeUndefined();
+
+		const withHabits = await estimateStoryReview(db, {
+			userId,
+			storyId,
+			categories: ['prose'],
+			patterns: 'book'
+		});
+		expect(withHabits.wholeBook).toBe('fits');
+		expect(withHabits.overCap).toBe(true);
+		expect(withHabits.overCapAt).toBe('habits');
+	});
+
+	it('counts text outside plain English the way the cap does, not at four characters a token', async () => {
+		// The same number of characters: three bytes each in CJK, one in ASCII.
+		// chars/4 counts both the same and under the cap; the cap's own count
+		// (bytes/3) puts the CJK book over it.
+		const cjk = await seedBodies(['\u6587'.repeat(40_000), '\u5b57'.repeat(40_000)]);
+		const ascii = await seedBodies(['a'.repeat(40_000), 'b'.repeat(40_000)]);
+		await searchingWithPatterns(cjk, 14);
+		const opts = { userId, categories: ['prose'] as ReviewCategory[], patterns: 'book' as const };
+		const overCjk = await estimateStoryReview(db, { ...opts, storyId: cjk });
+		const overAscii = await estimateStoryReview(db, { ...opts, storyId: ascii });
+		expect(overCjk.estTokens).toBe(overAscii.estTokens);
+		expect(overAscii.overCap).toBeUndefined();
+		expect(overCjk.overCap).toBe(true);
+		expect(overCjk.overCapAt).toBe('habits');
 	});
 
 	it('omits the cost when the model has no known price', async () => {

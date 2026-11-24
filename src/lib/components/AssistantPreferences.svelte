@@ -125,8 +125,9 @@
 		<fieldset class="prefs-set">
 			<legend>Habits to check</legend>
 			<p class="field-hint prefs-lead">
-				Review, copyedit and the pattern pass look for each of these habits. Choose "Leave alone"
-				for one you use on purpose, and the chat in a story leaves it alone too.
+				Reviews and copyedits look for each of these habits, and so does "Look for habits that
+				repeat in the prose" in the review window. Choose "Leave alone" for one you use on purpose,
+				and the chat in a story leaves it alone too.
 			</p>
 			{#each HABIT_CHECKS as item (item.key)}
 				<div class="field">
@@ -154,8 +155,8 @@
 			>
 			<p class="field-hint">
 				Habits only you know about, for example "I overuse the word 'just'" or "Sentence fragments
-				are on purpose, leave them". Review and the pattern pass check these first, and the chat in
-				a story keeps to them. Up to {MAX_ASSISTANT_NOTES}
+				are on purpose, leave them". Reviews, including "Look for habits that repeat in the prose",
+				check these first, and the chat in a story keeps to them. Up to {MAX_ASSISTANT_NOTES}
 				characters.
 				{#if universeNotes}
 					Left blank, the {standalone
