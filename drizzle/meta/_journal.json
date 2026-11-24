@@ -813,6 +813,13 @@
 			"when": 1795516135744,
 			"tag": "0115_assistant-usage-provider",
 			"breakpoints": true
+		},
+		{
+			"idx": 116,
+			"version": "7",
+			"when": 1795517110968,
+			"tag": "0116_language-setting",
+			"breakpoints": true
 		}
 	]
 }

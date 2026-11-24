@@ -4,14 +4,20 @@
 // task turns. No tools, no world context beyond the text supplied - a summary
 // describes what is on the page. Shipped-fixed in v1 (see assistant.md).
 
+import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
 import { PLAIN_TEXT_FORMAT } from './format.ts';
+import { writeInLine } from './language.ts';
 
-export function buildSceneSummaryMessage(title: string | null, bodyMd: string): string {
+export function buildSceneSummaryMessage(
+	title: string | null,
+	bodyMd: string,
+	language: LanguageSetting = NO_LANGUAGE
+): string {
 	const name = title?.trim() ? `the scene "${title.trim()}"` : 'this scene';
 	return [
 		`Summarise ${name} in one or two sentences: what happens in it, plainly.`,
 		'Reply with only the summary - no preamble, no heading, no quotation marks. Keep it factual and spoiler-plain; this is a note to the writer, not back-cover copy.',
-		'Write in the same language as the scene.',
+		writeInLine(language, 'Write in the same language as the scene.'),
 		PLAIN_TEXT_FORMAT,
 		'',
 		'---',
@@ -19,6 +25,10 @@ export function buildSceneSummaryMessage(title: string | null, bodyMd: string): 
 	].join('\n');
 }
 
+// The chapter summary states no language: it is written from scene summaries
+// that already follow the story's, and its request is the fingerprint that
+// says whether a stored summary is current, so naming the language would
+// mark every chapter summary out of date when the setting changed.
 export function buildChapterSummaryMessage(title: string | null, sceneSummaries: string[]): string {
 	const name = title?.trim() ? `the chapter "${title.trim()}"` : 'this chapter';
 	return [

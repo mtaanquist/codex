@@ -10,6 +10,7 @@ import { readSceneMarkers, readStoryMarkers } from '#lib/server/markers';
 import { loadSceneLive, loadStoryLive, type InSceneEntity } from '#lib/server/story-live';
 import { reviewMentionData } from '#lib/server/mention-entities';
 import { ownedStory } from '#lib/server/story-access';
+import { effectiveLanguage } from '#lib/writing-languages';
 import { readingPageRef } from '#lib/server/publish';
 import { createSceneNote, listSceneNotes, listStoryNotes } from '#lib/server/notes';
 import { isUuid } from '#lib/slug';
@@ -191,7 +192,13 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		story,
 		universe,
 		reading: await readingPageRef(db, story.id),
-		preferences,
+		// The story's language (its own, else its universe's) sets the editor's
+		// spell-check language; the editor preference covers a story with none.
+		preferences: {
+			...preferences,
+			writingLanguage:
+				effectiveLanguage(story.language, universe.language) ?? preferences.writingLanguage
+		},
 		assistantChat,
 		storySiblings,
 		chapters: chapterList,

@@ -20,6 +20,7 @@ import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models
 import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/server/proposals';
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
+import { normaliseLanguage } from '#lib/writing-languages';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
@@ -107,13 +108,19 @@ export const actions: Actions = {
 		const name = formText(data, 'name').trim();
 		const descriptionMd = formText(data, 'description').trim() || null;
 		const establishedSetting = data.get('establishedSetting') === 'on';
+		const languageRaw = formText(data, 'language');
+		const language = normaliseLanguage(languageRaw);
 		if (!name) {
 			return fail(400, { action: 'update', message: 'The universe needs a name.' });
+		}
+		if (languageRaw && !language) {
+			return fail(400, { action: 'update', message: 'Pick a language from the list.' });
 		}
 		const slug = await saveUniverseDetails(db, locals.user!.id, universe, {
 			name,
 			descriptionMd,
-			establishedSetting
+			establishedSetting,
+			language
 		});
 		if (!slug) error(404, 'Not found');
 		// A changed slug moves this page's own URL.

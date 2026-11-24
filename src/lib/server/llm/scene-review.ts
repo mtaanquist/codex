@@ -1,3 +1,5 @@
+import { storyLanguage } from '../language.ts';
+import { IN_CONTEXT } from './prompts/format.ts';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { dbNowText } from '../db-clock.ts';
@@ -307,7 +309,15 @@ export async function reviewOneScene(
 		role: 'user',
 		content:
 			scenePrefix +
-			buildReviewMessage(opts.scene, prior, categories, sceneTextIncluded, patternTool)
+			buildReviewMessage(
+				opts.scene,
+				prior,
+				categories,
+				sceneTextIncluded,
+				patternTool,
+				IN_CONTEXT,
+				await storyLanguage(db, opts.storyId, opts.userId)
+			)
 	};
 	const messages: ChatMessage[] = system ? [system, task] : [task];
 	const result = await completeDetailed(

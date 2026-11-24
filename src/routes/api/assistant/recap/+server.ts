@@ -12,6 +12,7 @@ import { RECAP_CHAT_TITLE } from '#lib/assistant-chat';
 import { assembleRecapContext } from '#lib/server/llm/context/assemble';
 import { buildRecapMessage } from '#lib/server/llm/prompts/recap';
 import type { ChatMessage } from '#lib/server/llm/providers/types';
+import { storyLanguage } from '#lib/server/language';
 
 // Recap ("catch me up"): the server assembles the story so far - every scene up
 // to and including the open one - and streams a recap back as Server-Sent
@@ -43,7 +44,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 	const messages: ChatMessage[] = [
 		{ role: 'system', content: context },
-		{ role: 'user', content: buildRecapMessage(throughTitle) }
+		{
+			role: 'user',
+			content: buildRecapMessage(throughTitle, await storyLanguage(db, story.id, userId))
+		}
 	];
 
 	// The recap joins the open chat (or starts one) as an assistant turn once

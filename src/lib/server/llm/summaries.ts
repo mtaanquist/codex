@@ -9,6 +9,7 @@ import {
 	type GatewayDeps
 } from './gateway.ts';
 import { buildSceneSummaryMessage } from './prompts/summary.ts';
+import { storyLanguage } from '../language.ts';
 import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
 import type { ChatMessage } from './providers/types.ts';
@@ -148,6 +149,7 @@ export async function summariseStory(
 		else return false;
 		return true;
 	};
+	const language = await storyLanguage(db, storyId, userId);
 	const sceneRows = await db
 		.select({
 			id: scenes.id,
@@ -215,7 +217,10 @@ export async function summariseStory(
 					userId,
 					storyId,
 					messages: [
-						{ role: 'user', content: buildSceneSummaryMessage(scene.title, scene.bodyMd) }
+						{
+							role: 'user',
+							content: buildSceneSummaryMessage(scene.title, scene.bodyMd, language)
+						}
 					],
 					meter,
 					signal

@@ -86,9 +86,9 @@
 			</select>
 		</div>
 		<div class="field">
-			<label for="st-language">Writing language</label>
+			<label for="st-spell-language">Spell-check language</label>
 			<select
-				id="st-language"
+				id="st-spell-language"
 				class="select"
 				name="writingLanguage"
 				value={data.preferenceOverrides.writingLanguage === undefined
@@ -107,6 +107,10 @@
 					<option value={language.tag}>{language.label}</option>
 				{/each}
 			</select>
+			<span class="field-hint">
+				Used while the story has no language set. A language set in Details, or on the universe,
+				replaces it.
+			</span>
 		</div>
 		<div class="field">
 			<label for="st-marks">Scene marks in the story view</label>

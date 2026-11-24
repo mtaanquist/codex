@@ -224,11 +224,11 @@
 			</div>
 			<div class="behavior-card">
 				<div class="behavior-head">
-					<span class="behavior-title">Writing language</span>
+					<span class="behavior-title">Spell-check language</span>
 					<select
 						class="select"
 						name="writingLanguage"
-						aria-label="Writing language"
+						aria-label="Spell-check language"
 						value={data.preferences.writingLanguage}
 					>
 						<option value="">Follow my browser</option>
@@ -238,7 +238,8 @@
 					</select>
 				</div>
 				<div class="behavior-body">
-					The language your prose is written in; spell-check uses its dictionary.
+					The dictionary spell-check uses. A story or universe with its own language set in its
+					details uses that language instead.
 				</div>
 			</div>
 			<div class="behavior-card">

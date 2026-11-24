@@ -180,7 +180,7 @@ To turn the Assistant off for just this book, choose "Mute for this story" from 
 
 ## Spelling
 
-The browser's spell-checker underlines possible misspellings as you write. Set the language your prose is written in on your account page, under Display, so the right dictionary is used; "Follow my browser" uses whatever your browser is set to. Turn spell-check off there if the underlines distract you. Both settings can be overridden per story in the story's settings.
+The browser's spell-checker underlines possible misspellings as you write. It uses the story's language when one is set: choose it under "Language" in the story's settings, or in the universe's settings for every story in it. For a story with no language set, the spell-check language on your account page, under Display, picks the dictionary; "Follow my browser" uses whatever your browser is set to. Turn spell-check off there if the underlines distract you. Both settings can be overridden per story in the story's settings, under Editor.
 
 ## How it looks
 

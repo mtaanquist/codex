@@ -1,3 +1,5 @@
+import { storyLanguage } from '../language.ts';
+import type { LanguageSetting } from '../../writing-languages.ts';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import {
@@ -251,6 +253,7 @@ type Request = {
 	userId: string;
 	storyId: string;
 	system: ChatMessage | null;
+	language: LanguageSetting;
 	meter?: SpendMeter;
 	signal?: AbortSignal;
 };
@@ -329,6 +332,7 @@ async function surveyPart(
 			scope: unit.scope,
 			cap,
 			open,
+			language: req.language,
 			...(known.length ? { known } : {}),
 			...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
 		});
@@ -571,7 +575,8 @@ export async function runPatternPass(
 		includeTiers: ['frame']
 	});
 	const system = frame ? buildSystemMessage(frame) : null;
-	const req = { ...opts, system };
+	const language = await storyLanguage(db, opts.storyId, opts.userId);
+	const req = { ...opts, system, language };
 	const save = () => opts.save({ notes, failures });
 	const bodyChars = opts.budgetTokens * 4;
 
@@ -669,7 +674,7 @@ export async function runPatternPass(
 				const scene = { ...byId.get(sceneId)!, ...current };
 				const task: ChatMessage = {
 					role: 'user',
-					content: buildPatternApplyMessage(pattern, scene, bodyChars)
+					content: buildPatternApplyMessage(pattern, scene, bodyChars, language)
 				};
 				try {
 					const result = await completeDetailed(

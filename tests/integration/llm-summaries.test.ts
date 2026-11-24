@@ -194,6 +194,19 @@ describe('summariseStory', () => {
 		expect(chapter.summaryGeneratedAt).not.toBeNull();
 	});
 
+	it("writes scene summaries in the story's language when one is set", async () => {
+		await summariseStory(db, { userId: ownerId, storyId }, deps);
+		const scenePrompt = () => prompts.find((p) => p.includes('Summarise the scene "The Gate"'))!;
+		expect(scenePrompt()).toContain('Write in the same language as the scene.');
+
+		prompts = [];
+		await db.update(scenes).set({ summaryMd: null, summaryGeneratedAt: null });
+		await db.update(stories).set({ language: 'da' }).where(eq(stories.id, storyId));
+		await summariseStory(db, { userId: ownerId, storyId }, deps);
+		expect(scenePrompt()).toContain('Write in Danish.');
+		expect(scenePrompt()).not.toContain('Write in the same language as the scene.');
+	});
+
 	it('is a no-op on a second run when nothing changed', async () => {
 		await summariseStory(db, { userId: ownerId, storyId }, deps);
 		const again = await summariseStory(db, { userId: ownerId, storyId }, deps);

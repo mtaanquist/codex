@@ -3,7 +3,9 @@
 // system message the gateway places after the persona). The result is staged
 // for the writer to keep or discard; it is never written to a scene on its own.
 
+import { type LanguageSetting } from '../../../writing-languages.ts';
 import { IN_CONTEXT, PROSE_FORMAT, type WorldSource } from './format.ts';
+import { languageRule } from './language.ts';
 
 export type SceneDraftBrief = {
 	brief: string;
@@ -34,6 +36,8 @@ export type SceneDraftBrief = {
 	// A chapter draft: the scene drafted just before this one (or its closing
 	// part). It is not in the manuscript yet, so the context does not hold it.
 	previousDraft?: string | null;
+	// The story's language and spelling convention, when set.
+	language?: LanguageSetting;
 };
 
 // What a draft does with a scene that already has prose.
@@ -124,5 +128,7 @@ export function buildSceneDraftMessage(input: SceneDraftBrief): string {
 		}. Reply with only the scene: no title, no preamble, no commentary, and no surrounding quotation marks.`,
 		PROSE_FORMAT
 	);
+	const rule = input.language ? languageRule(input.language) : '';
+	if (rule) parts.push(rule);
 	return parts.join('\n');
 }

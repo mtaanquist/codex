@@ -7,6 +7,7 @@
 	import { shrinkImagesOnSubmit } from '#lib/image-shrink';
 	import { formatBytes } from '#lib/format';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
+	import { WRITING_LANGUAGES } from '#lib/writing-languages';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -153,6 +154,25 @@
 					placeholder="A name to publish under"
 				/>
 				<p class="field-hint">Used as the author name on stories and your public page when set.</p>
+			</div>
+			<div class="field">
+				<label for="native-language">Native language <span class="lbl-opt">optional</span></label>
+				<select
+					id="native-language"
+					class="select"
+					name="nativeLanguage"
+					value={data.profile.nativeLanguage ?? ''}
+				>
+					<option value="">Not set</option>
+					{#each WRITING_LANGUAGES as language (language.tag)}
+						<option value={language.tag}>{language.label}</option>
+					{/each}
+				</select>
+				<p class="field-hint">
+					The language you grew up speaking. When you write a story in another language, the
+					Assistant's copyedit and prose review also look for habits carried over from it, such as
+					idioms translated word for word or false friends.
+				</p>
 			</div>
 			<div class="settings-actions">
 				<FormStatus

@@ -8,6 +8,7 @@ import { EMAIL_RE } from './signup.ts';
 import { MAX_DISPLAY_NAME } from './validation.ts';
 import { revokeAllGrants } from './mcp/oauth.ts';
 import { MIN_PASSWORD } from '#lib/password';
+import { normaliseLanguage } from '#lib/writing-languages';
 
 const EMAIL_CHANGE_TTL_MINUTES = 60 * 24;
 
@@ -35,16 +36,24 @@ const MAX_PEN_NAME = 120;
 export async function saveIdentity(
 	db: Database,
 	userId: string,
-	input: { displayName: string; penName: string }
+	input: { displayName: string; penName: string; nativeLanguage?: string }
 ): Promise<AccountResult> {
 	// Capped like the pen name: the display name renders on every page that
 	// shows the author, so an unbounded value should not reach the database.
 	const name = input.displayName.trim().slice(0, MAX_DISPLAY_NAME);
 	if (!name) return { ok: false, reason: 'Enter a display name.' };
 	const pen = input.penName.trim().slice(0, MAX_PEN_NAME);
+	// Left out, the native language stays as it is.
+	const native = input.nativeLanguage === undefined ? undefined : input.nativeLanguage.trim();
+	const nativeLanguage = native === undefined ? undefined : normaliseLanguage(native);
+	if (native && !nativeLanguage) return { ok: false, reason: 'Pick a language from the list.' };
 	await db
 		.update(users)
-		.set({ displayName: name, penName: pen || null })
+		.set({
+			displayName: name,
+			penName: pen || null,
+			...(nativeLanguage !== undefined ? { nativeLanguage } : {})
+		})
 		.where(eq(users.id, userId));
 	return { ok: true };
 }

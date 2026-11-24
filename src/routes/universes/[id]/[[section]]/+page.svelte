@@ -6,6 +6,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
+	import { WRITING_LANGUAGES } from '#lib/writing-languages';
 	import { letterFill } from '#lib/entity-badge';
 	import Icon from '#lib/components/Icon.svelte';
 	import ImportStoryModal from '#lib/components/ImportStoryModal.svelte';
@@ -253,6 +254,25 @@
 						>{data.universe.descriptionMd ?? ''}</textarea
 					>
 					<span class="field-hint">Markdown is fine. Shown on the library card.</span>
+				</div>
+				<div class="field">
+					<label for="u-language">Language</label>
+					<select
+						id="u-language"
+						class="select"
+						name="language"
+						value={data.universe.language ?? ''}
+					>
+						<option value="">Not set</option>
+						{#each WRITING_LANGUAGES as language (language.tag)}
+							<option value={language.tag}>{language.label}</option>
+						{/each}
+					</select>
+					<span class="field-hint">
+						The language and spelling your stories here are written in. The Assistant writes and
+						checks spelling in it, and the editor's spell-check uses it. A story can choose its own
+						in its settings. Not set, the Assistant works it out from the text.
+					</span>
 				</div>
 				<div class="field">
 					<label class="check-row">

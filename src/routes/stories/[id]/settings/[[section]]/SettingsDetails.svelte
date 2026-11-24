@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
+	import {
+		normaliseLanguage,
+		WRITING_LANGUAGES,
+		writingLanguageLabel
+	} from '#lib/writing-languages';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -7,6 +12,11 @@
 	// The select overrides it so the swatch previews the choice; it resets to
 	// the stored colour whenever the story's data changes.
 	let coverColor = $derived(storyCoverColor(data.story));
+	// What a story with no language of its own falls back to. A standalone
+	// story's universe is hidden, so it has none to offer.
+	let universeLanguage = $derived(
+		data.universe.standalone ? null : normaliseLanguage(data.universe.language)
+	);
 </script>
 
 <div class="admin-block-head">
@@ -71,15 +81,36 @@
 			</div>
 		{/if}
 		<div class="field">
+			<label for="st-language">Language</label>
+			<select id="st-language" class="select" name="language" value={data.story.language ?? ''}>
+				<option value="">
+					{universeLanguage
+						? `Use the universe's (${writingLanguageLabel(universeLanguage)})`
+						: 'Not set'}
+				</option>
+				{#each WRITING_LANGUAGES as language (language.tag)}
+					<option value={language.tag}>{language.label}</option>
+				{/each}
+			</select>
+			<p class="field-hint">
+				The language and spelling this story is written in. The Assistant writes and checks spelling
+				in it, and the editor's spell-check uses it.
+				{#if universeLanguage}
+					Leave it on the universe's unless this story differs.
+				{:else}
+					Not set, the Assistant works it out from the text.
+				{/if}
+			</p>
+		</div>
+		<div class="field">
 			<label for="st-style-notes">Genre and style</label>
 			<textarea id="st-style-notes" class="input" name="styleNotes" rows="2"
 				>{data.story.styleNotes ?? ''}</textarea
 			>
 			<p class="field-hint">
 				A sentence on the genre and the style you are writing in, for example "epic fantasy serial,
-				omniscient narrator, formal prose". The intended audience, the spelling you write in
-				(British or American), and a comparison title or two also help. The Assistant reads this and
-				judges the prose against it. Readers never see it.
+				omniscient narrator, formal prose". The intended audience and a comparison title or two also
+				help. The Assistant reads this and judges the prose against it. Readers never see it.
 			</p>
 		</div>
 		<div class="settings-actions">

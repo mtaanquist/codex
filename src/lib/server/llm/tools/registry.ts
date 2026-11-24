@@ -30,7 +30,7 @@ export const TOOLS: ToolDef[] = [
 		external: true,
 		name: 'list_universes',
 		description:
-			"List the writer's universes with each one's id, name, description and number of stories. Every other tool needs a universe id from this list.",
+			"List the writer's universes with each one's id, name, description, language and spelling convention (null when not set) and number of stories. Every other tool needs a universe id from this list.",
 		parameters: obj({}, [])
 	},
 	{
@@ -38,7 +38,7 @@ export const TOOLS: ToolDef[] = [
 		external: true,
 		name: 'list_stories',
 		description:
-			"List the stories in this universe with each one's id, title, one-line brief and number of scenes. Use list_scenes for their chapters and scenes.",
+			"List the stories in this universe with each one's id, title, one-line brief, language and spelling convention (null when not set; then work it out from the text) and number of scenes. Use list_scenes for their chapters and scenes.",
 		parameters: obj({}, [])
 	},
 	{
