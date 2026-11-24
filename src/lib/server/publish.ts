@@ -507,10 +507,14 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 }
 
 // Admin takedown: hides the edition without touching the author's source.
-export async function takedownPublication(db: Database, publicationId: string): Promise<boolean> {
+export async function takedownPublication(
+	db: Database,
+	publicationId: string,
+	removedBy: string | null = null
+): Promise<boolean> {
 	const updated = await db
 		.update(publications)
-		.set({ removedAt: sql`now()` })
+		.set({ removedAt: sql`now()`, removedBy })
 		.where(and(eq(publications.id, publicationId), isNull(publications.removedAt)))
 		.returning({ id: publications.id });
 	return updated.length > 0;

@@ -1,0 +1,2 @@
+ALTER TABLE "publications" ADD COLUMN "removed_by" uuid;--> statement-breakpoint
+ALTER TABLE "publications" ADD CONSTRAINT "publications_removed_by_users_id_fk" FOREIGN KEY ("removed_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;

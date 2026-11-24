@@ -9,7 +9,7 @@
 </script>
 
 <div class="admin-head">
-	<p class="admin-eyebrow">Data</p>
+	<p class="admin-eyebrow">Moderation</p>
 	<h1 class="admin-title">Published editions</h1>
 	<p class="admin-lede">
 		Everything writers have made public. Take an edition down to remove it from the public pages.

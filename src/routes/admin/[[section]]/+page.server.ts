@@ -4,6 +4,7 @@ import { EMAIL_RE } from '#lib/server/signup';
 import { isSectionSlug } from './sections';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
+import { requireAdmin } from '#lib/server/roles';
 import {
 	approveUser,
 	confirmUserEmail,
@@ -11,6 +12,7 @@ import {
 	listAllUsers,
 	rejectUser,
 	setUserArchive,
+	setUserRole,
 	setUserSuspended
 } from '#lib/server/admin';
 import {
@@ -27,7 +29,7 @@ import {
 	listInviteCodes,
 	setInviteAllowance
 } from '#lib/server/invites';
-import { listPublications, takedownPublication } from '#lib/server/publish';
+import { listPublications } from '#lib/server/publish';
 import {
 	instanceType,
 	saveInstanceType,
@@ -67,25 +69,17 @@ import {
 import { MAX_IMAGE_BYTES, MEGABYTE, parseLimitInput, parseMegabytesField } from '#lib/quota';
 import { eq } from 'drizzle-orm';
 import { users } from '#lib/server/db/schema';
-import { appVersion } from '#lib/server/app-version';
 import { formText } from '#lib/server/validation';
-
-// A compact uptime for the sidebar footer: minutes, then hours, then days.
-function formatUptime(seconds: number): string {
-	if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))}m`;
-	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-	return `${Math.floor(seconds / 86400)}d`;
-}
 
 // Upper bounds for typed limits, well past any real use.
 const MAX_COUNT_LIMIT = 100_000;
 const MAX_STORAGE_MB = 100_000_000;
 
-function requireAdmin(locals: App.Locals) {
-	if (locals.user?.role !== 'admin') error(404, 'Not found');
-}
-
 export const load: PageServerLoad = async ({ locals, params, url }) => {
+	// A moderator's way in is the moderation pages; plain /admin sends them there.
+	if (locals.user?.role === 'moderator' && params.section === undefined) {
+		redirect(303, '/admin/published');
+	}
 	requireAdmin(locals);
 	// Older links carried the section as a query string; send them to the
 	// section's own page.
@@ -122,9 +116,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		smtp: await smtpView(db),
 		egress: await egressPolicy(db),
 		externalAccess: await mcpInstanceEnabled(db),
-		secretsAvailable: secretsAvailable(),
-		version: appVersion(),
-		uptime: formatUptime(process.uptime())
+		secretsAvailable: secretsAvailable()
 	};
 };
 
@@ -172,6 +164,19 @@ export const actions: Actions = {
 	disableArchive: async ({ request, locals }) => {
 		requireAdmin(locals);
 		return onUser(request, 'accounts', (id) => setUserArchive(db, id, false));
+	},
+	setRole: async ({ request, locals }) => {
+		requireAdmin(locals);
+		const data = await request.formData();
+		const userId = formText(data, 'userId');
+		const role = formText(data, 'role');
+		if (role !== 'moderator' && role !== 'user') {
+			return fail(400, { scope: 'accounts', message: 'Pick a role.' });
+		}
+		if (!isUuid(userId) || userId === locals.user!.id || !(await setUserRole(db, userId, role))) {
+			return fail(400, { scope: 'accounts', message: 'That account could not be updated.' });
+		}
+		return { scope: 'accounts', done: true };
 	},
 	suspend: async ({ request, locals }) => {
 		requireAdmin(locals);
@@ -285,15 +290,7 @@ export const actions: Actions = {
 		}
 		return { scope: 'accounts', done: true };
 	},
-	takedown: async ({ request, locals }) => {
-		requireAdmin(locals);
-		const data = await request.formData();
-		const publicationId = formText(data, 'publicationId');
-		if (!isUuid(publicationId) || !(await takedownPublication(db, publicationId))) {
-			return fail(400, { scope: 'published', message: 'That edition does not exist.' });
-		}
-		return { scope: 'published', done: true };
-	},
+
 	runBackup: async ({ locals }) => {
 		requireAdmin(locals);
 		if (!(await effectiveBackupConfig(db))) {

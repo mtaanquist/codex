@@ -21,12 +21,13 @@ const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
 // that lookups take the same time whether or not the account exists.
 const DUMMY_HASH =
 	'$argon2id$v=19$m=19456,t=2,p=1$9kz8Iw6tXEkTYPTKrCUt0g$zuCnbUeMW0FRTmdH6eCAKsIQqZg72Sl6chFf/O2cFbw';
+import type { Role } from '../roles.ts';
 
 export type SessionUser = {
 	id: string;
 	email: string;
 	displayName: string;
-	role: 'admin' | 'user';
+	role: Role;
 };
 
 export type CredentialResult =

@@ -204,6 +204,12 @@ width on a wide screen sits to the right. A section that holds a wide table
 or a stat grid passes `wide` for an 860px column (`.admin-main-inner.wide`):
 admin Overview and Users, and universe Details.
 
+**The admin area's shell** lives in `src/routes/admin/+layout.svelte`, so the
+admin-only sections (`/admin/[[section]]`) and the moderation pages (their own
+routes, such as `/admin/published`) share one sidebar. A moderator sees only
+the Moderation group. A new moderation page is a route under `/admin` with its
+own `requireModerator` load and actions, and a link in that group.
+
 **Setting rows.** When the column is at least 600px wide (a container query
 on `.admin-main-inner`), every `.field` in it lays out as a row: the label on
 the left (13rem), the controls and their `.field-hint` on the right, and a

@@ -601,6 +601,14 @@ a.nav-item {
 .role-tag.admin::before {
 	background: var(--accent);
 }
+.role-tag.moderator {
+	background: var(--bg-inset);
+	border: 1px solid var(--border);
+	color: var(--text);
+}
+.role-tag.moderator::before {
+	background: var(--text-muted);
+}
 
 /* ============ INVITE / SNAPSHOT ROWS ============ */
 .list-row {

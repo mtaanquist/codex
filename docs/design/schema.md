@@ -44,7 +44,7 @@ users (
   profile_public      boolean not null default false,  -- whether the '@handle' shelf is listed publicly
   public_archive_enabled boolean not null default false,  -- admin grants this before a user may publish public pages
   password_hash       text not null,
-  role                text not null,        -- 'admin' | 'user'
+  role                text not null,        -- 'admin' | 'moderator' | 'user'
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
   preferences         jsonb not null default '{}',  -- theme, content width, autocomplete mode, entity underline toggle, library view, etc.
   plan_id             uuid references plans(id),    -- null falls back to the default plan; see Plans and entitlements
@@ -783,7 +783,8 @@ publications (
   version_label   text,                  -- optional, e.g. 'Edition 2'
   source_draft_id uuid references story_drafts(id) on delete set null,  -- the saved draft it came from, if any
   is_current      boolean not null default true,
-  removed_at      timestamptz,           -- set by an admin takedown; hides the edition without deleting the source
+  removed_at      timestamptz,           -- set by a takedown (admin or moderator); hides the edition without deleting the source
+  removed_by      uuid references users on delete set null, -- who took it down
   published_at    timestamptz not null
 )
 

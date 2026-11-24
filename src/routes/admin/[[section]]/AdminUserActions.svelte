@@ -47,6 +47,19 @@
 				</form>
 			{/if}
 			{#if manageable}
+				{#if account.role === 'moderator'}
+					<form method="POST" action="?/setRole">
+						<input type="hidden" name="userId" value={account.id} />
+						<input type="hidden" name="role" value="user" />
+						<button class="menu-item" type="submit" role="menuitem">Stop moderating</button>
+					</form>
+				{:else}
+					<form method="POST" action="?/setRole">
+						<input type="hidden" name="userId" value={account.id} />
+						<input type="hidden" name="role" value="moderator" />
+						<button class="menu-item" type="submit" role="menuitem">Make moderator</button>
+					</form>
+				{/if}
 				{#if !account.emailVerifiedAt}
 					<form method="POST" action="?/confirmEmail">
 						<input type="hidden" name="userId" value={account.id} />

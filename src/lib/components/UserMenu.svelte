@@ -8,7 +8,12 @@
 	import Icon from './Icon.svelte';
 	import ThemePicker from './ThemePicker.svelte';
 
-	type MenuUser = { displayName: string; email: string; isAdmin: boolean };
+	type MenuUser = {
+		displayName: string;
+		email: string;
+		isAdmin: boolean;
+		isModerator?: boolean;
+	};
 	const user = $derived(page.data.user as MenuUser | null);
 
 	let open = $state(false);
@@ -73,6 +78,16 @@
 							<Icon name="shield" size={16} />
 							<span class="lbl">Admin panel</span>
 							<span class="avatar-dd-tag">Admin</span>
+						</a>
+					{:else if user.isModerator}
+						<a
+							class="avatar-dd-item"
+							role="menuitem"
+							href={resolve('/admin/published')}
+							onclick={() => (open = false)}
+						>
+							<Icon name="shield" size={16} />
+							<span class="lbl">Moderation</span>
 						</a>
 					{/if}
 				</div>
