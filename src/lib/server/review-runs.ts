@@ -42,13 +42,6 @@ export function reviewScopeKey(input: ScopeInput): string {
 	return input.patterns ? `${base}:patterns-${input.patterns}` : base;
 }
 
-// LEGACY, remove with the legacy queues (#1041): the key a copyedit had before
-// its categories were part of it, so a run capped before the upgrade can still
-// be continued (see adoptCappedRun). A continuity key did not change.
-export function legacyReviewScopeKey(input: ScopeInput): string | null {
-	return input.mode === 'continuity' ? null : `full:${scopeTarget(input)}`;
-}
-
 // The earlier progress of a review could not be read. The review does not
 // start over in its place (that would bill every scene again); the attempt
 // fails so pg-boss can retry it.
@@ -99,33 +92,12 @@ export async function loadReviewRun(
 //
 // The counts come across, but not the ceiling: each run gets the whole budget
 // again, which is what "run the review again to continue" promises.
-//
-// legacy: when nothing was run under the scope yet, a capped run saved under
-// the old key (no categories in it) is continued, but only when its job is
-// known to have checked these same categories. The old row does not record
-// them, so they are read from the job; once the queue has forgotten the job the
-// run starts over, since carrying it forward could report scenes as reviewed
-// for categories nobody checked.
 export async function adoptCappedRun(
 	db: Database,
-	opts: {
-		userId: string;
-		scope: string;
-		legacy?: {
-			scope: string;
-			categories: ReviewCategory[];
-			jobCategories: (jobId: string) => Promise<ReviewCategory[] | null>;
-		};
-	}
+	opts: { userId: string; scope: string }
 ): Promise<ReviewRunState | null> {
 	const row = await newestRun(db, opts.userId, opts.scope);
-	if (row) return resumable(row.state) ? carryForward(db, row.state, opts.scope) : null;
-	if (!opts.legacy) return null;
-	const legacy = await newestRun(db, opts.userId, opts.legacy.scope);
-	if (!legacy || !resumable(legacy.state)) return null;
-	const checked = await opts.legacy.jobCategories(legacy.jobId);
-	if (!checked || !sameCategories(checked, opts.legacy.categories)) return null;
-	return carryForward(db, legacy.state, opts.scope);
+	return row && resumable(row.state) ? carryForward(db, row.state, opts.scope) : null;
 }
 
 // The completed scenes edited since their pass read them. A scene with no
@@ -182,10 +154,6 @@ async function newestRun(
 function resumable(state: ReviewRunState): boolean {
 	if (state.capped) return true;
 	return !!state.carriedForward && (state.phase !== 'done' || !!state.aborted);
-}
-
-function sameCategories(a: ReviewCategory[], b: ReviewCategory[]): boolean {
-	return parseCategories(a).join('+') === parseCategories(b).join('+');
 }
 
 // A failed scene, and one the writer edited since its pass, leave the completed

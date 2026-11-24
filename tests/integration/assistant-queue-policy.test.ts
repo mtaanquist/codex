@@ -6,8 +6,7 @@ import {
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_QUEUE_OPTIONS,
 	ASSISTANT_REVIEW_QUEUE,
-	ASSISTANT_SUMMARIES_QUEUE,
-	LEGACY_ASSISTANT_REVIEW_QUEUE
+	ASSISTANT_SUMMARIES_QUEUE
 } from '../../src/lib/server/queues';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 
@@ -218,20 +217,5 @@ describe('assistant queue policy', () => {
 		const queued = await boss.getJobById(ASSISTANT_DRAFT_QUEUE, first as string);
 		expect(queued?.data).toEqual(data);
 		await boss.deleteAllJobs(ASSISTANT_DRAFT_QUEUE);
-	});
-
-	it('reads the state of a job queued on the old review queue before the upgrade', async () => {
-		await boss.createQueue(LEGACY_ASSISTANT_REVIEW_QUEUE);
-		const id = await boss.send(
-			LEGACY_ASSISTANT_REVIEW_QUEUE,
-			{ userId: 'u1', storyId: 's1' },
-			{ retryLimit: 0 }
-		);
-		expect(await jobs.getAssistantJobState('review', id!)).toBe('running');
-
-		await boss.fetch(LEGACY_ASSISTANT_REVIEW_QUEUE);
-		await boss.fail(LEGACY_ASSISTANT_REVIEW_QUEUE, id!);
-		expect(await jobs.getAssistantJobState('review', id!)).toBe('failed');
-		await boss.deleteAllJobs(LEGACY_ASSISTANT_REVIEW_QUEUE);
 	});
 });
