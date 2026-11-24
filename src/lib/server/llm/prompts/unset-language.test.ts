@@ -7,6 +7,7 @@ import { buildArcMessage } from './arc.ts';
 import { buildCoauthorMessage } from './coauthor.ts';
 import { buildContinuationMessage } from './continuation.ts';
 import { buildRecapMessage } from './recap.ts';
+import { buildReviewReplyMessage } from './review-reply.ts';
 import {
 	buildPatternApplyMessage,
 	buildPatternBrief,
@@ -18,6 +19,17 @@ import { buildSceneDraftMessage } from './scene-draft.ts';
 import { buildChapterSummaryMessage, buildSceneSummaryMessage } from './summary.ts';
 import { renderFrame } from '../context/assemble.ts';
 import before from './unset-language.fixture.json';
+
+// A review-thread reply, with and without a pending suggestion to revise.
+const replyInput = {
+	sceneTitle: 'The Gate',
+	excerpt: 'The gate opened.',
+	transcript: [
+		{ author: 'Author', body: 'Why?' },
+		{ author: 'Ada', body: 'Agreed.' }
+	]
+};
+const replySuggestion = { original: 'opened', replacement: 'swung open' };
 
 // The chat's story frame, which states the language and house style when set.
 const frameScope = {
@@ -76,6 +88,11 @@ describe('prompts with no language set', () => {
 			arc: buildArcMessage('Mara', [{ storyTitle: 'S', sceneTitle: 'T', text: 'x' }]),
 			frame: renderFrame(frameScope, {
 				writingRules: { language: NO_LANGUAGE, preferences: NO_PREFERENCES }
+			}),
+			reviewReply: buildReviewReplyMessage({ ...replyInput, suggestion: null }),
+			reviewReplySuggestion: buildReviewReplyMessage({
+				...replyInput,
+				suggestion: replySuggestion
 			})
 		};
 		for (const name of [
@@ -135,7 +152,12 @@ describe('prompts with no language set', () => {
 			),
 			coauthor: buildCoauthorMessage('b', null, none),
 			draft: buildSceneDraftMessage({ brief: 'b', targetWords: 500, ...none }),
-			frame: renderFrame(frameScope, { writingRules: none })
+			frame: renderFrame(frameScope, { writingRules: none }),
+			reviewReplySuggestion: buildReviewReplyMessage({
+				...replyInput,
+				suggestion: replySuggestion,
+				...none
+			})
 		};
 		for (const name of [
 			'review',

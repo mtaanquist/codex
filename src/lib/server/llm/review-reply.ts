@@ -11,6 +11,8 @@ import {
 	reviewReplyToolNames
 } from './prompts/review-reply';
 import type { GatewayRequest } from './gateway';
+import { storyLanguage } from '../language';
+import { storyAssistantPreferences } from '../assistant-preferences';
 import type { ChatMessage } from './providers/types';
 
 // The gateway request for the Assistant's answer in a review thread it opened,
@@ -57,7 +59,15 @@ export async function prepareReviewReply(
 				author: comment.isAssistant ? input.assistantName : comment.authorName,
 				body: comment.body
 			})),
-			suggestion: pending ? { original: pending.original, replacement: pending.replacement } : null
+			suggestion: pending ? { original: pending.original, replacement: pending.replacement } : null,
+			// A revision of the pending suggestion writes prose, so it keeps to
+			// the story's language and house style.
+			...(pending
+				? {
+						language: await storyLanguage(db, storyId, userId),
+						preferences: await storyAssistantPreferences(db, storyId, userId)
+					}
+				: {})
 		})
 	};
 	// The passage is already in the task message as an excerpt; the reply needs

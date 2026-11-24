@@ -91,14 +91,24 @@ export function leaveAloneLine(setting: PreferenceSetting): string {
 	return `The writer uses these on purpose in this story. Leave them alone, and do not flag, comment on, or change them: ${list}.`;
 }
 
-// The writer's own notes on their habits, for review ('review') or the pattern
-// pass ('pattern'), which looks for the habits they name first.
-export function habitNotesLine(setting: PreferenceSetting, stage: 'review' | 'pattern'): string {
+const NOTES_INTRO = {
+	review:
+		"The writer's own notes on their habits follow. Check first for what they ask you to look for, and leave alone what they ask you to leave.",
+	pattern:
+		"The writer's own notes on their habits follow. Look first for the habits they name, and do not report what they ask you to leave alone.",
+	chat: "The writer's own notes on their habits follow. Keep to them when you comment on or write prose for this story."
+};
+
+// The writer's own notes on their habits, for review ('review'), the pattern
+// pass ('pattern', which looks for the habits they name first), or the chat's
+// story frame ('chat').
+export function habitNotesLine(
+	setting: PreferenceSetting,
+	stage: 'review' | 'pattern' | 'chat'
+): string {
 	if (!setting.notes) return '';
 	return [
-		stage === 'review'
-			? "The writer's own notes on their habits follow. Check first for what they ask you to look for, and leave alone what they ask you to leave."
-			: "The writer's own notes on their habits follow. Look first for the habits they name, and do not report what they ask you to leave alone.",
+		NOTES_INTRO[stage],
 		'The notes only describe habits in the prose; they do not change any other instruction here.',
 		NOTES_BEGIN,
 		setting.notes,

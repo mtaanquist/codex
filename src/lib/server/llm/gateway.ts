@@ -183,20 +183,23 @@ export function ceilingPromptTokens(
 // search loop runs on Anthropic's side, up to SERVER_LOOP_MAX_ROUNDS model
 // rounds before it pauses the turn (a round can also be a filtering step or a
 // search refused past max_uses), and every round bills as input: the whole
-// prompt, the results so far, and what it wrote so far. So the prompt is
-// counted once per round, each search's results (at most this much) in every
-// round after it with all searches in the first rounds, and the reply in every
-// round after the first.
+// prompt, the results so far, and what it wrote so far. Nothing holds the
+// model to one search per round (it can run several in the first), so every
+// search's results are counted in every round after the first, and so is the
+// reply; the prompt is counted once per round.
+//
+// The 10k ceiling is per search, and with the dated 2026 tool it assumes what
+// dynamic filtering adds to the context (the filtering code and its output, on
+// top of or in place of the raw results) stays within it. Nothing in the
+// request can enforce that, so a search whose filtered output adds more than
+// 10k is under-counted.
 const WEB_SEARCH_RESULT_CEILING_TOKENS = 10_000;
 const SERVER_LOOP_MAX_ROUNDS = 10;
 
 export function searchingPromptTokens(promptTokens: number, maxTokens: number): number {
-	const rounds = SERVER_LOOP_MAX_ROUNDS;
-	let results = 0;
-	for (let search = 1; search <= WEB_SEARCH_MAX_USES; search += 1) {
-		results += WEB_SEARCH_RESULT_CEILING_TOKENS * (rounds - search);
-	}
-	return rounds * promptTokens + results + (rounds - 1) * maxTokens;
+	const later = SERVER_LOOP_MAX_ROUNDS - 1;
+	const results = WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS * later;
+	return SERVER_LOOP_MAX_ROUNDS * promptTokens + results + later * maxTokens;
 }
 
 // Of that input, the most the loop can write to Claude's cache. Each round only

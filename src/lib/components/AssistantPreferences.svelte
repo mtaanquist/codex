@@ -47,7 +47,8 @@
 
 	const useInherited = $derived(inheritedChoiceLabel(standalone));
 
-	// An unset house style shows the plain choice; an unset habit check is
+	// The blank choice names what it falls back to: the universe's choice, or
+	// "Not set" for a house style it leaves unset. An unset habit check is
 	// checked, so it says so.
 	function blankLabel(key: string, fallback: string): string {
 		if (!fromUniverse) return fallback;
@@ -58,7 +59,7 @@
 			: value === 'leave'
 				? 'Leave alone'
 				: 'Check';
-		return label ? `${useInherited}: ${label}` : useInherited;
+		return `${useInherited}: ${label ?? 'Not set'}`;
 	}
 </script>
 

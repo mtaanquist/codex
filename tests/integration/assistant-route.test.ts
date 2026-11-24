@@ -757,18 +757,38 @@ describe('chats over the endpoints', () => {
 			(await chatPost({ storyId, chatId, messages: [{ role: 'user', content: 'Hi.' }] })).text();
 
 		await ask();
-		expect(systems.at(-1)).not.toContain('The story is written in');
-		expect(systems.at(-1)).not.toContain('House style for this story');
+		const unset = systems.at(-1)!;
+		expect(unset).not.toContain('The story is written in');
+		expect(unset).not.toContain('House style for this story');
+		expect(unset).not.toContain('Leave them alone');
+		expect(unset).not.toContain("The writer's own notes");
 
 		await db.update(universes).set({ language: 'en-GB' }).where(eq(universes.id, universeId));
 		await db
 			.update(stories)
-			.set({ assistantPreferences: { quoteMarks: 'single' } })
+			.set({
+				assistantPreferences: { quoteMarks: 'single', filterVerbs: 'leave' },
+				assistantNotes: 'Long sentences on purpose.'
+			})
 			.where(eq(stories.id, storyId));
 		await ask();
 		expect(systems.at(-1)).toContain('The story is written in British English.');
 		expect(systems.at(-1)).toContain('House style for this story: single quotation marks');
 		expect(systems.at(-1)).toContain('Keep to it.');
+		expect(systems.at(-1)).toContain('Leave them alone');
+		expect(systems.at(-1)).toContain('filter verbs');
+		expect(systems.at(-1)).toContain(
+			"--- the writer's notes ---\nLong sentences on purpose.\n--- end of the notes ---"
+		);
+
+		// Cleared again, the frame reads exactly as it did before anything was set.
+		await db.update(universes).set({ language: null }).where(eq(universes.id, universeId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: {}, assistantNotes: null })
+			.where(eq(stories.id, storyId));
+		await ask();
+		expect(systems.at(-1)).toBe(unset);
 	});
 
 	it('sends attachments with the newest message only, and stores them with it', async () => {

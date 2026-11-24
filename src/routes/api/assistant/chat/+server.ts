@@ -119,8 +119,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		const story = await requireAssistantStory(userId, payload.storyId);
 		scope = { storyId: story.id };
 		// The chat can write prose (suggest_edit, drafted text), so its frame
-		// states the language and house style the other surfaces state in
-		// their own task messages.
+		// states the language, house style, habits left alone and notes the
+		// other surfaces state in their own task messages.
 		assembleOptions = {
 			userId,
 			storyId: story.id,
