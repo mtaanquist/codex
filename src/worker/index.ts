@@ -84,8 +84,14 @@ await boss.createQueue(ASSISTANT_ENRICH_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 await boss.createQueue(ASSISTANT_DRAFT_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 // The review and summaries queues used before #986, and drained until #1041.
 // Nothing reads them now; deleting a queue that is already gone does nothing.
-await boss.deleteQueue('assistant-review');
-await boss.deleteQueue('assistant-summaries');
+// A failure here is only logged: the cleanup is retried on the next start, and
+// must not keep the worker from starting.
+try {
+	await boss.deleteQueue('assistant-review');
+	await boss.deleteQueue('assistant-summaries');
+} catch (err) {
+	logEvent('warn', 'worker.legacy_queue_cleanup_failed', errorFields(err));
+}
 
 // Each Assistant queue runs several jobs at once, but one per writer (the job's
 // group), so one writer's slow or hung endpoint does not hold up anyone else.

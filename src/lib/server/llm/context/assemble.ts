@@ -32,7 +32,7 @@ import { OUT_OF_DATE_SCENE_SUMMARY_NOTE } from '../../summary-currency.ts';
 import type { MentionEntity } from '#lib/editor-mentions';
 import type { LanguageSetting } from '../../../writing-languages.ts';
 import type { PreferenceSetting } from '../../../assistant-preferences.ts';
-import { languageRule } from '../prompts/language.ts';
+import { chatLanguageRule } from '../prompts/language.ts';
 import { habitNotesLine, houseStyleLine, leaveAloneLine } from '../prompts/preferences.ts';
 
 // Assemble the world context for a request, in tiers, against a token budget.
@@ -633,7 +633,7 @@ export function renderFrame(
 	}
 	if (options?.writingRules) {
 		const { language, preferences } = options.writingRules;
-		const rule = languageRule(language);
+		const rule = chatLanguageRule(language);
 		if (rule) lines.push(rule);
 		const style = houseStyleLine(preferences, 'chat');
 		if (style) lines.push(style);

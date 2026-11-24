@@ -10,7 +10,8 @@ import {
 	estimateTokens
 } from './context/assemble.ts';
 import { cacheWriteRate } from '../../assistant-cost.ts';
-import { AssistantDisabledError, webSearchAllowed } from './gateway.ts';
+import { AssistantDisabledError, capCeilingUsage, webSearchAllowed } from './gateway.ts';
+import { requestCostUsd } from './spend.ts';
 import { adapterKind } from './providers/presets.ts';
 import {
 	DEFAULT_SPEND_WARN_USD,
@@ -125,6 +126,10 @@ export type ReviewEstimate = {
 	// before each request (see searchingPromptTokens), so a capped run can stop
 	// well short of the figure.
 	webSearch?: true;
+	// With web search on, the room the cap holds back for one scene's first
+	// request is already more than the cap, so the run would stop at its first
+	// scene until the cap is raised.
+	overCap?: true;
 };
 
 // How much bigger the actual prompt of a reviewer request has been than the
@@ -250,6 +255,7 @@ export async function estimateStoryReview(
 
 	const toolTokens = toolSchemaTokens(resolved.config);
 	let sceneTokens = 0;
+	let largestSceneTokens = 0;
 	for (const scene of targets) {
 		const delta = frame
 			? await assembleSceneDelta(db, {
@@ -260,13 +266,15 @@ export async function estimateStoryReview(
 					includeTiers
 				})
 			: null;
-		sceneTokens +=
+		const tokens =
 			frameTokens +
 			PERSONA_TOKENS +
 			toolTokens +
 			TASK_MESSAGE_TOKENS +
 			preferenceTokens +
 			estimateTokens(delta?.text ?? '');
+		sceneTokens += tokens;
+		largestSceneTokens = Math.max(largestSceneTokens, tokens);
 	}
 
 	const { multiplier, basis, avgCompletion } = await agenticMultiplier(
@@ -383,6 +391,30 @@ export async function estimateStoryReview(
 		role: 'reviewer'
 	});
 
+	// With web search on, the cap holds back room for every round of the search
+	// loop before each request (capCeilingUsage). When that room for the
+	// largest scene's first request alone is more than the cap, the run stops
+	// at its first scene until the cap is raised.
+	const capUsd = resolved.config.spendCapUsd;
+	const ceilingUsd =
+		webSearch && capUsd && largestSceneTokens > 0
+			? requestCostUsd(
+					resolved.config.modelPricing,
+					model,
+					capCeilingUsage(
+						largestSceneTokens,
+						reviewerReplyTokens(resolved.config, modelContextWindow(resolved.config, 'reviewer')),
+						{
+							webSearch: true,
+							claude: adapterKind(resolved.config.provider) === 'anthropic',
+							cacheTtl: resolved.config.cacheTtl
+						}
+					),
+					resolved.config.provider
+				)
+			: undefined;
+	const overCap = ceilingUsd !== undefined && capUsd !== undefined && ceilingUsd > capUsd + 1e-9;
+
 	return {
 		scenes: targets.length,
 		estTokens,
@@ -401,7 +433,8 @@ export async function estimateStoryReview(
 		...(resolved.config.spendCapUsd ? { capUsd: resolved.config.spendCapUsd } : {}),
 		capEnforceable: Boolean(price),
 		...(wholeBook ? { wholeBook } : {}),
-		...(webSearch ? { webSearch: true as const } : {})
+		...(webSearch ? { webSearch: true as const } : {}),
+		...(overCap ? { overCap: true as const } : {})
 	};
 }
 

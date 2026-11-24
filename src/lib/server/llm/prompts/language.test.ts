@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
 import { REVIEW_CATEGORIES, type ReviewCategory } from '../../../review-shape.ts';
 import {
+	chatLanguageRule,
 	languageRule,
 	nativeInterferenceLine,
 	nativePatternLine,
@@ -32,6 +33,13 @@ describe('language prompt lines', () => {
 			'The story is written in British English. Write in British English, and keep to British English spelling and usage.'
 		);
 		expect(languageRule(NO_LANGUAGE)).toBe('');
+	});
+
+	it("keeps the chat answering in the writer's language while prose keeps the story's", () => {
+		expect(chatLanguageRule(UK)).toBe(
+			'The story is written in British English. Write prose, passages and suggested edits in British English, keeping to British English spelling and usage. Answer the writer in the language they write to you in.'
+		);
+		expect(chatLanguageRule(NO_LANGUAGE)).toBe('');
 	});
 
 	it('names the language to write a summary in, or keeps the fallback', () => {

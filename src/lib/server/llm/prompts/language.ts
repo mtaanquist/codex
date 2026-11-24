@@ -19,6 +19,14 @@ export function languageRule(setting: LanguageSetting): string {
 	return `The story is written in ${name}. Write in ${name}, and keep to ${name} spelling and usage.`;
 }
 
+// For the chat in a story: prose it writes keeps to the story's language, but
+// it answers the writer in whatever language they write to it in.
+export function chatLanguageRule(setting: LanguageSetting): string {
+	if (!setting.language) return '';
+	const name = writingLanguageName(setting.language);
+	return `The story is written in ${name}. Write prose, passages and suggested edits in ${name}, keeping to ${name} spelling and usage. Answer the writer in the language they write to you in.`;
+}
+
 // For a summary, an arc or a recap: the language to write it in, or the
 // caller's own "same language as ..." line when none is set.
 export function writeInLine(setting: LanguageSetting, fallback: string): string {

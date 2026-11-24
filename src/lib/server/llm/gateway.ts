@@ -343,12 +343,26 @@ async function respondWithRetry(
 type CappedRequest = Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>;
 
 function ceilingUsage(p: Prepared, request: CappedRequest): TokenUsage {
-	const prompt = ceilingPromptTokens(request.messages, request.tools);
-	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, request.maxTokens) : prompt;
+	return capCeilingUsage(
+		ceilingPromptTokens(request.messages, request.tools),
+		request.maxTokens,
+		p
+	);
+}
+
+// The usage one request is held against the cap at, from its prompt and reply
+// limit. Exported so the review estimate can tell when a single request would
+// already pass the cap.
+export function capCeilingUsage(
+	prompt: number,
+	maxTokens: number,
+	p: { webSearch?: boolean; claude: boolean; cacheTtl?: '5m' | '1h' }
+): TokenUsage {
+	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, maxTokens) : prompt;
 	const written = p.claude ? promptTokens : 0;
 	return {
 		promptTokens,
-		completionTokens: request.maxTokens,
+		completionTokens: maxTokens,
 		cacheWriteTokens: written,
 		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
 	};

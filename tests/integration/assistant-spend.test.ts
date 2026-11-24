@@ -204,6 +204,45 @@ describe('pre-flight review estimate (#548)', () => {
 		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBe(true);
 	});
 
+	it('says a review with web search stops at its first scene when the cap cannot hold one', async () => {
+		const storyId = await seedStory(2);
+		await db
+			.update(universes)
+			.set({ establishedSetting: true })
+			.where(eq(universes.id, universeId));
+		const searching = async (spendCapUsd: number, webSearch: boolean) => {
+			await saveAccountLlmConfig(db, userId, {
+				enabled: true,
+				assistantName: '',
+				persona: 'balanced',
+				provider: 'anthropic',
+				endpoint: 'https://api.anthropic.com',
+				apiKey: 'sk-ant',
+				models: { reviewer: MODEL },
+				toolCallBudget: 8,
+				webSearch,
+				spendCapUsd
+			});
+			// The Anthropic preset may pick its own reviewer model; price that one.
+			const { model } = await estimateStoryReview(db, { userId, storyId });
+			await saveModelPricing(db, userId, { [model]: { prompt: PRICE_PER_TOKEN, completion: 0 } });
+		};
+
+		// Every round of the search loop for one scene is far more than $1.
+		await searching(1, true);
+		const low = await estimateStoryReview(db, { userId, storyId });
+		expect(low.webSearch).toBe(true);
+		expect(low.capEnforceable).toBe(true);
+		expect(low.overCap).toBe(true);
+
+		await searching(10_000, true);
+		expect((await estimateStoryReview(db, { userId, storyId })).overCap).toBeUndefined();
+
+		// Without search a scene's own request is a few cents, well under $1.
+		await searching(1, false);
+		expect((await estimateStoryReview(db, { userId, storyId })).overCap).toBeUndefined();
+	});
+
 	it('omits the cost when the model has no known price', async () => {
 		const storyId = await seedStory(2);
 		const estimate = await estimateStoryReview(db, { userId, storyId });

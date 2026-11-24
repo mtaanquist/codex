@@ -107,6 +107,9 @@
 		capEnforceable: boolean;
 		wholeBook?: 'fits' | 'chapters' | 'unavailable';
 		webSearch?: true;
+		// Web search is on and the room the cap keeps for one scene is already
+		// more than the cap: the review stops at its first scene.
+		overCap?: true;
 	};
 
 	// The estimate is advisory: anything that does not carry the two figures the
@@ -477,7 +480,14 @@
 						{#if estimate.capUsd !== undefined && !estimate.capEnforceable}
 							<p class="rm-note">{capNotAppliedNote(estimate.capUsd)}</p>
 						{/if}
-						{#if estimate.webSearch}
+						{#if estimate.webSearch && estimate.overCap && estimate.capUsd !== undefined}
+							<p class="rm-note">
+								Web search is on for this story, and these figures do not include it. Your spend cap
+								of ${money(estimate.capUsd)} is too low to leave room for searches on even one scene,
+								so the review will stop at its first scene. Raise the cap under Account, Assistant to
+								review more.
+							</p>
+						{:else if estimate.webSearch}
 							<p class="rm-note">
 								Web search is on for this story, and these figures do not include it.{estimate.capUsd !==
 									undefined && estimate.capEnforceable

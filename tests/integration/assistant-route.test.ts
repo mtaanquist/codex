@@ -773,6 +773,7 @@ describe('chats over the endpoints', () => {
 			.where(eq(stories.id, storyId));
 		await ask();
 		expect(systems.at(-1)).toContain('The story is written in British English.');
+		expect(systems.at(-1)).toContain('Answer the writer in the language they write to you in.');
 		expect(systems.at(-1)).toContain('House style for this story: single quotation marks');
 		expect(systems.at(-1)).toContain('Keep to it.');
 		expect(systems.at(-1)).toContain('Leave them alone');

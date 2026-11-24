@@ -751,7 +751,10 @@ These cut across the surfaces and the architecture.
   brief), which checks facts rather than wording; and the universe chat,
   which has no one story (its frame names the world, not a story). The
   chat's language, house-style, leave-alone and notes lines sit in the story
-  frame only for the chat (`writingRules` in `AssembleOptions`): the other surfaces that share
+  frame only for the chat (its language line, `chatLanguageRule`, keeps prose,
+  passages and suggested edits in the story's language but answers the writer
+  in the language they write in, so a Danish question about an English story
+  gets a Danish answer) (`writingRules` in `AssembleOptions`): the other surfaces that share
   the frame state them in their own task message, and no output whose
   staleness is its request hash (arcs, chapter summaries, enrich) is built
   from the frame. The editor's `lang` follows the effective language and
@@ -776,9 +779,10 @@ These cut across the surfaces and the architecture.
   the survey's list of kinds and the pattern examples (with every kind left
   alone the survey looks for any other recurring habit). The notes sit
   between begin and end markers, after a line saying they describe habits and
-  change no other instruction; the fence (`habitNotesLine`) cuts any run of
-  three or more hyphens in the notes to one, so no part of them can read as a
-  marker, while the stored notes keep what the writer typed. A lore-only pass reads no wording and carries
+  change no other instruction; the fence (`habitNotesLine`) spaces out any
+  run of three or more hyphens in the notes ("---" becomes "- - -"), keeping
+  its length but leaving no two hyphens adjacent, so no part of them can read
+  as a marker, while the stored notes keep what the writer typed. A lore-only pass reads no wording and carries
   none of it; the review estimate counts the lines on each scene. Scene and
   chapter drafts, `/write`, the pattern fix stage and the pattern reread
   (which stages a follow-up edit) keep to the house style, and so does a

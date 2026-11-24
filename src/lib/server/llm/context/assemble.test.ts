@@ -171,6 +171,12 @@ describe('renderFrame', () => {
 		expect(language).toBeGreaterThan(text.indexOf('Literary.'));
 		expect(style).toBeGreaterThan(language);
 		expect(world).toBeGreaterThan(style);
+		// The chat answers the writer in their own language; only prose it
+		// writes keeps to the story's.
+		expect(text).toContain(
+			'Write prose, passages and suggested edits in British English, keeping to British English spelling and usage. Answer the writer in the language they write to you in.'
+		);
+		expect(text).not.toContain('Write in British English,');
 		expect(text).toContain('single quotation marks for dialogue');
 		expect(text).toContain('past tense');
 		expect(text).toContain('Keep to it.');
