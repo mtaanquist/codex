@@ -110,6 +110,34 @@ export function bookPatternUnit(
 	return { key: 'book', scope: 'book', scenes: listed, chapters, ...(fits ? { whole: true } : {}) };
 }
 
+// The task message of each survey request these units send, in order.
+export function patternSurveyMessages(
+	units: PatternUnit[],
+	budgetTokens: number,
+	language: LanguageSetting = NO_LANGUAGE,
+	preferences: PreferenceSetting = NO_PREFERENCES
+): string[] {
+	const messages: string[] = [];
+	for (const unit of units) {
+		const cap = unit.scope === 'book' ? BOOK_PATTERN_CAP : CHAPTER_PATTERN_CAP;
+		for (const part of unit.whole ? [unit.scenes] : (unit.chapters ?? [unit.scenes])) {
+			const chunks = unit.whole ? [part] : splitPatternChunks(part, budgetTokens);
+			chunks.forEach((chunk, i) => {
+				messages.push(
+					buildPatternSurveyMessage(chunk, {
+						scope: unit.scope,
+						cap,
+						language,
+						preferences,
+						...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
+					})
+				);
+			});
+		}
+	}
+	return messages;
+}
+
 // The tokens the survey of these units sends: each request's text plus the
 // overhead every request carries (the frame and the persona).
 export function patternSurveyTokens(
@@ -119,27 +147,21 @@ export function patternSurveyTokens(
 	language: LanguageSetting = NO_LANGUAGE,
 	preferences: PreferenceSetting = NO_PREFERENCES
 ): number {
-	let total = 0;
-	for (const unit of units) {
-		const cap = unit.scope === 'book' ? BOOK_PATTERN_CAP : CHAPTER_PATTERN_CAP;
-		for (const part of unit.whole ? [unit.scenes] : (unit.chapters ?? [unit.scenes])) {
-			const chunks = unit.whole ? [part] : splitPatternChunks(part, budgetTokens);
-			chunks.forEach((chunk, i) => {
-				total +=
-					overheadTokens +
-					estimateTokens(
-						buildPatternSurveyMessage(chunk, {
-							scope: unit.scope,
-							cap,
-							language,
-							preferences,
-							...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
-						})
-					);
-			});
-		}
-	}
-	return total;
+	return patternSurveyMessages(units, budgetTokens, language, preferences).reduce(
+		(total, message) => total + overheadTokens + estimateTokens(message),
+		0
+	);
+}
+
+// The system message each survey request carries: the story frame alone, the
+// style notes the prose is judged against.
+export async function patternSurveySystem(
+	db: Database,
+	userId: string,
+	storyId: string
+): Promise<ChatMessage | null> {
+	const frame = await assembleStoryFrame(db, { userId, storyId, includeTiers: ['frame'] });
+	return frame ? buildSystemMessage(frame) : null;
 }
 
 // The overhead each survey request carries: the story frame the pass ships and
@@ -149,8 +171,8 @@ export async function patternSurveyOverhead(
 	userId: string,
 	storyId: string
 ): Promise<number> {
-	const frame = await assembleStoryFrame(db, { userId, storyId, includeTiers: ['frame'] });
-	return (frame ? estimateTokens(buildSystemMessage(frame).content) : 0) + PERSONA_TOKENS;
+	const system = await patternSurveySystem(db, userId, storyId);
+	return (system ? estimateTokens(system.content) : 0) + PERSONA_TOKENS;
 }
 
 // The reply room a reviewer request reserves: the writer's own figure, or the
@@ -593,14 +615,8 @@ export async function runPatternPass(
 	const failures: ReviewFailure[] = [];
 	let notes = 0;
 	let capped = false;
-	// The story frame alone: the style notes the prose is judged against. The
-	// text itself rides in each message.
-	const frame = await assembleStoryFrame(db, {
-		userId: opts.userId,
-		storyId: opts.storyId,
-		includeTiers: ['frame']
-	});
-	const system = frame ? buildSystemMessage(frame) : null;
+	// The text itself rides in each message.
+	const system = await patternSurveySystem(db, opts.userId, opts.storyId);
 	const language = await storyLanguage(db, opts.storyId, opts.userId);
 	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
 	const req = { ...opts, system, language, preferences };

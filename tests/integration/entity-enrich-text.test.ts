@@ -835,6 +835,17 @@ describe('the /enrich pass after a read', () => {
 		expect(await pass()).toMatchObject({ entities: 0, unchanged: 1 });
 	});
 
+	it('stores nothing for the pass after a whole-book read that found no mention', async () => {
+		// The pass would send no passages, so the read covered nothing it reads.
+		await writeScenes(storyId, ['FIRST the old man watched.', 'SECOND the storm came.']);
+		expect((await read('book')).scenes).toBe(2);
+		const [row] = await db
+			.select({ input: characters.assistantEnrichedInput })
+			.from(characters)
+			.where(eq(characters.id, bram));
+		expect(row.input).toBeNull();
+	});
+
 	it('reads the entity when a story-scoped read left out its other stories', async () => {
 		await writeScenes(storyId, ['Bram counted the boats.']);
 		await writeScenes(await makeStory('The Second Book'), ['Bram sailed north.']);

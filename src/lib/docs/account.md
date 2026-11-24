@@ -18,8 +18,9 @@ speaking, set "Native language" to the language you grew up speaking. For a stor
 another language, the Assistant then also looks for habits carried over from
 your native language, such as idioms translated word for word, false friends,
 or prepositions and word order from it. It does this when a review checks
-"Spelling and grammar" or "Prose and style", and in the pattern pass, but not
-in a review with only "General notes" or "Entities and lore". Leave it on "Not
+"Spelling and grammar" or "Prose and style", or has "Look for habits that
+repeat in the prose" ticked, but not otherwise in a review with only "General
+notes" or "Entities and lore". Leave it on "Not
 set" to skip this. The public-page block is where you claim a handle: a short name
 that becomes your public address at `/@yourhandle`. You can claim a handle once,
 so pick it with care. Add a short bio and, if you take requests, a note that

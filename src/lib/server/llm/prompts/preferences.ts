@@ -45,9 +45,15 @@ export function houseStyleLine(
 	setting: PreferenceSetting,
 	mode: 'write' | 'check' | 'chat'
 ): string {
+	// Narration "other" gives a check nothing concrete to hold the text to: told
+	// to flag what strays from it, a model flags every chapter of a story that
+	// moves between first and third person. Writing still keeps to the text's
+	// own narration.
+	const style = { ...setting.houseStyle };
+	if (mode === 'check' && style.narration === 'other') style.narration = null;
 	const parts = (Object.keys(HOUSE_STYLE_PHRASES) as HouseStyleKey[])
 		.map((key) => {
-			const value = setting.houseStyle[key];
+			const value = style[key];
 			return value ? HOUSE_STYLE_PHRASES[key][value] : null;
 		})
 		.filter(Boolean);
@@ -60,7 +66,7 @@ export function houseStyleLine(
 	// Dialogue and quoted thoughts keep their own tense and person, so a check
 	// would otherwise flag every "I am" a character says in a past-tense,
 	// third-person story.
-	const { tense, narration } = setting.houseStyle;
+	const { tense, narration } = style;
 	if (mode !== 'write' && (tense || narration)) {
 		return `${line} The ${
 			tense && narration

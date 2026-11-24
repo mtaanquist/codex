@@ -67,6 +67,19 @@ describe('preference prompt lines', () => {
 		);
 	});
 
+	it('leaves narration "other" out of a check, which has nothing concrete to hold it to', () => {
+		const other = prefs({ houseStyle: { narration: 'other' } as never });
+		expect(houseStyleLine(other, 'check')).toBe('');
+		const withTense = prefs({ houseStyle: { narration: 'other', tense: 'past' } as never });
+		const check = houseStyleLine(withTense, 'check');
+		expect(check).not.toContain('narration other than');
+		expect(check).toContain('past tense');
+		expect(check).toContain('The tense applies to the narration only');
+		// Writing and the chat still keep to the text's own narration.
+		expect(houseStyleLine(other, 'write')).toContain('narration other than first or third person');
+		expect(houseStyleLine(other, 'chat')).toContain('narration other than first or third person');
+	});
+
 	it('states each house-style choice that is set', () => {
 		expect(houseStyleLine(STYLE, 'write')).toBe(
 			"House style for this story: single quotation marks for dialogue ('Like this.'); no serial comma (red, white and blue); a character's direct thoughts in italics; present tense; third-person limited narration, one viewpoint character at a time. Keep to it."

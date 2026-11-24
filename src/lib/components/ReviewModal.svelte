@@ -107,9 +107,19 @@
 		capEnforceable: boolean;
 		wholeBook?: 'fits' | 'chapters' | 'unavailable';
 		webSearch?: true;
-		// Web search is on and the room the cap keeps for one scene is already
-		// more than the cap: the review stops at its first scene.
+		// Web search is on and the room the cap keeps for one request is already
+		// more than the cap: the review stops at that request. overCapAt names
+		// the part of the review it is in.
 		overCap?: true;
+		overCapAt?: 'scene' | 'continuity' | 'habits';
+	};
+
+	// Where a review held at the cap stops, in the names the options carry.
+	const OVER_CAP_STOP: Record<'scene' | 'continuity' | 'habits', string> = {
+		scene: 'at its first scene',
+		continuity:
+			'when it starts comparing the scenes to each other (the cross-scene consistency pass)',
+		habits: 'when it starts to look for habits that repeat in the prose'
 	};
 
 	// The estimate is advisory: anything that does not carry the two figures the
@@ -483,9 +493,9 @@
 						{#if estimate.webSearch && estimate.overCap && estimate.capUsd !== undefined}
 							<p class="rm-note">
 								Web search is on for this story, and these figures do not include it. Your spend cap
-								of ${money(estimate.capUsd)} is too low to leave room for searches on even one scene,
-								so the review will stop at its first scene. Raise the cap under Account, Assistant to
-								review more.
+								of ${money(estimate.capUsd)} is too low to leave room for searches, so the review will
+								stop {OVER_CAP_STOP[estimate.overCapAt ?? 'scene']}. Raise the cap under Account,
+								Assistant to review more.
 							</p>
 						{:else if estimate.webSearch}
 							<p class="rm-note">

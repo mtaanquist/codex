@@ -10,6 +10,27 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 8
+(2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's
+over-cap warning looked only at the largest scene, but every reviewer request
+may search, the continuity survey and the habits survey included, and a
+whole-book habits request is far larger than any scene. The estimate now
+takes the largest request of each part (scene, survey chunk, habits survey,
+via the new `patternSurveyMessages`), counts it the way the gateway does
+before sending (`ceilingPromptTokens`, UTF-8 bytes / 3, with the persona and
+tool specs), and returns `overCapAt` for the first part in run order (habits,
+scenes, continuity) whose request alone would pass the cap; the modal names
+that part. The displayed token figure still uses chars/4. A text read now
+stores the /enrich fingerprint only when the pass would read at least one
+scene, so a whole-book read of an entity with no mentions no longer marks it
+unchanged. Each legacy queue deletion has its own try/catch. Narration
+"Other" is left out of the check-mode house-style line, since flagging text
+that strays from "narration other than first or third person" flagged every
+chapter of a story that alternates; writing and the chat keep it. User-facing
+text says "Look for habits that repeat in the prose" instead of "pattern
+pass" (the connected-app prompt keeps its "Pattern pass" title), and the
+reviewing help links Connected apps to its own page.
+
 Staging review of the language setting and Assistant preferences, round 7
 (2026-11-24, `fix/llm-staging-review-7`, into `staging/llm-issues`). The
 story chat's frame used the prose language rule ("Write in X"), so a writer
