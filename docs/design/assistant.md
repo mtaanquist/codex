@@ -776,7 +776,8 @@ These cut across the surfaces and the architecture.
   the survey's list of kinds and the pattern examples (with every kind left
   alone the survey looks for any other recurring habit). The notes sit
   between begin and end markers, after a line saying they describe habits and
-  change no other instruction. A lore-only pass reads no wording and carries
+  change no other instruction; saving cuts any run of three or more hyphens
+  in the notes to one, so no part of them can read as a marker. A lore-only pass reads no wording and carries
   none of it; the review estimate counts the lines on each scene. Scene and
   chapter drafts, `/write`, the pattern fix stage and the pattern reread
   (which stages a follow-up edit) keep to the house style, and so does a
@@ -789,7 +790,10 @@ These cut across the surfaces and the architecture.
   it). There is no free-form
   system prompt, and the rest of #1344 (feedback amount, reasons on edits,
   summary and draft lengths, content limits) is not built. Like style notes,
-  the preferences are not in the export.
+  the preferences are not in the export. The settings pages show the form
+  with the Assistant tab on or with connected apps on for the account
+  (`assistantPreferencesShown`), since both read the preferences, and a save
+  changes only the keys the form posts.
 - **Accessibility.** The streaming chat and the ghost-text continuation follow
   the same WCAG 2.1 AA bar as the rest of the app: streamed output is
   announced to assistive tech, and the inline suggestion is operable and

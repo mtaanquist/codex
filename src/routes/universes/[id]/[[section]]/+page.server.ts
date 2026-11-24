@@ -22,7 +22,7 @@ import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
-import { savePreferences } from '#lib/server/assistant-preferences';
+import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
 import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/tags';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
@@ -68,6 +68,12 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		assistantModels: assistant.tabEnabled
 			? await scopeModelSettings(db, locals.user!.id, { universeId: universe.id })
 			: null,
+		// The Assistant preferences form, shown wherever the preferences apply.
+		assistantPreferencesShown: await assistantPreferencesShown(
+			db,
+			locals.user!.id,
+			assistant.tabEnabled
+		),
 		universe,
 		contents,
 		categories,

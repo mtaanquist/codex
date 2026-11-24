@@ -64,7 +64,8 @@ export async function universeLanguage(
 	return { language: normaliseLanguage(row.universe), native: normaliseLanguage(row.native) };
 }
 
-// The story of a scene, for the callers that hold only a scene id.
+// The story of a scene, for the callers that hold only a scene id. A
+// trashed scene reads as nothing set.
 export async function sceneLanguage(
 	db: Database,
 	sceneId: string,
@@ -74,7 +75,7 @@ export async function sceneLanguage(
 	const [row] = await db
 		.select({ storyId: scenes.storyId })
 		.from(scenes)
-		.where(eq(scenes.id, sceneId));
+		.where(and(eq(scenes.id, sceneId), isNull(scenes.deletedAt)));
 	return row ? storyLanguage(db, row.storyId, ownerId, options) : NO_LANGUAGE;
 }
 

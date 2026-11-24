@@ -128,23 +128,14 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 export const NOTES_BEGIN = "--- the writer's notes ---";
 export const NOTES_END = '--- end of the notes ---';
 
-// A line compared with the framing lines: case and runs of whitespace ignored,
-// so "--- THE  writer's notes ---" cannot pass as text and close the fence.
-const markerKey = (line: string) => line.trim().replace(/\s+/g, ' ').toLowerCase();
-const MARKER_KEYS = new Set([markerKey(NOTES_BEGIN), markerKey(NOTES_END)]);
-
 // The free text, trimmed, with Windows line ends (a submitted form sends
-// CRLF) as plain newlines, null characters dropped, and any line that reads
-// as one of the framing lines removed; blank is not set.
+// CRLF) as plain newlines, null characters dropped, and every run of three or
+// more hyphens cut to one, so no part of a note can read as a framing line
+// (whatever its case, spacing or the text around it) and end the fence early.
+// Blank is not set.
 export function normaliseNotes(raw: unknown): string | null {
 	if (typeof raw !== 'string') return null;
-	const text = raw
-		.replace(/\r\n?/g, '\n')
-		.replaceAll('\u0000', '')
-		.split('\n')
-		.filter((line) => !MARKER_KEYS.has(markerKey(line)))
-		.join('\n')
-		.trim();
+	const text = raw.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').replace(/-{3,}/g, '-').trim();
 	return text || null;
 }
 
@@ -169,8 +160,12 @@ export function effectivePreferences(
 }
 
 export type PreferencesForm =
-	| { ok: true; preferences: StoredPreferences; notes: string | null }
+	| { ok: true; changes: PreferenceChanges; notes: string | null | undefined }
 	| { ok: false; reason: string; submitted: SubmittedPreferences };
+
+// The keys a form carried: a value to store, or null to clear back to not
+// set. A key the post did not carry is left as stored.
+export type PreferenceChanges = { [K in keyof StoredPreferences]?: StoredPreferences[K] | null };
 
 // The form's values as submitted, handed back on a refusal so the page shows
 // them again instead of losing what was typed.
@@ -183,8 +178,9 @@ const FIELD_KEYS = [
 ];
 
 // The preferences form as submitted: one select per key (blank is not set)
-// and the notes. A value that is not on its list is refused rather than
-// dropped, so a tampered form does not silently clear a setting.
+// and the notes (undefined when the post lacks the field, so they are kept).
+// A value that is not on its list is refused rather than dropped, so a
+// tampered form does not silently clear a setting.
 export function readPreferencesForm(data: FormData): PreferencesForm {
 	const submitted: SubmittedPreferences = {};
 	for (const key of FIELD_KEYS) {
@@ -192,22 +188,22 @@ export function readPreferencesForm(data: FormData): PreferencesForm {
 		submitted[key] = typeof raw === 'string' ? raw : '';
 	}
 	const refuse = (reason: string): PreferencesForm => ({ ok: false, reason, submitted });
-	const out: Record<string, string> = {};
+	const changes: Record<string, string | null> = {};
 	for (const { key } of HOUSE_STYLE) {
+		if (!data.has(key)) continue;
 		const raw = submitted[key].trim();
-		if (!raw) continue;
-		if (!houseStyleValue(key, raw)) return refuse('Pick each setting from its list.');
-		out[key] = raw;
+		if (raw && !houseStyleValue(key, raw)) return refuse('Pick each setting from its list.');
+		changes[key] = raw || null;
 	}
 	for (const { key } of HABIT_CHECKS) {
+		if (!data.has(key)) continue;
 		const raw = submitted[key].trim();
-		if (!raw) continue;
-		if (!CHECK_CHOICES.includes(raw)) return refuse('Pick each setting from its list.');
-		out[key] = raw;
+		if (raw && !CHECK_CHOICES.includes(raw)) return refuse('Pick each setting from its list.');
+		changes[key] = raw || null;
 	}
-	const notes = normaliseNotes(submitted.assistantNotes);
+	const notes = data.has('assistantNotes') ? normaliseNotes(submitted.assistantNotes) : undefined;
 	if (notes && notes.length > MAX_ASSISTANT_NOTES) {
 		return refuse(`Keep your notes to ${MAX_ASSISTANT_NOTES} characters or fewer.`);
 	}
-	return { ok: true, preferences: out as StoredPreferences, notes };
+	return { ok: true, changes: changes as PreferenceChanges, notes };
 }

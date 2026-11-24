@@ -55,7 +55,7 @@ import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
-import { savePreferences } from '#lib/server/assistant-preferences';
+import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
 import {
 	checkTagNames,
 	findFandoms,
@@ -156,6 +156,12 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		assistantModels: assistant.tabEnabled
 			? await scopeModelSettings(db, locals.user!.id, { storyId: story.id })
 			: null,
+		// The Assistant preferences form, shown wherever the preferences apply.
+		assistantPreferencesShown: await assistantPreferencesShown(
+			db,
+			locals.user!.id,
+			assistant.tabEnabled
+		),
 		story,
 		universe,
 		timeline,
