@@ -179,14 +179,24 @@ export function ceilingPromptTokens(
 	);
 }
 
-// What one web search's results may add to a request's input, for the spend
-// cap. Results come back inside the reply but bill as input tokens, so a capped
-// request that may search is counted as if it ran every search it is allowed
-// (WEB_SEARCH_MAX_USES), each returning this much.
+// What a request that may search can bill as input, for the spend cap. The
+// search loop runs on Anthropic's side, up to SERVER_LOOP_MAX_ROUNDS model
+// rounds before it pauses the turn (a round can also be a filtering step or a
+// search refused past max_uses), and every round bills as input: the whole
+// prompt, the results so far, and what it wrote so far. So the prompt is
+// counted once per round, each search's results (at most this much) in every
+// round after it with all searches in the first rounds, and the reply in every
+// round after the first.
 const WEB_SEARCH_RESULT_CEILING_TOKENS = 10_000;
+const SERVER_LOOP_MAX_ROUNDS = 10;
 
-function webSearchCeilingTokens(webSearch: boolean | undefined): number {
-	return webSearch ? WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS : 0;
+export function searchingPromptTokens(promptTokens: number, maxTokens: number): number {
+	const rounds = SERVER_LOOP_MAX_ROUNDS;
+	let results = 0;
+	for (let search = 1; search <= WEB_SEARCH_MAX_USES; search += 1) {
+		results += WEB_SEARCH_RESULT_CEILING_TOKENS * (rounds - search);
+	}
+	return rounds * promptTokens + results + (rounds - 1) * maxTokens;
 }
 
 // The persona system message the gateway puts at the front of every turn.
@@ -320,18 +330,18 @@ async function respondWithRetry(
 // before every send (a first send, a resend after a failure the endpoint may
 // have billed, a resume, a tool round), so the rule lives here and not in each
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
-// Claude's cache, the dearest way it can be billed, with the results of every
-// web search the request may run (webSearchCeilingTokens). A caller with its own mayResend
-// hook holds its own ceiling (drafting, against the cap in force at each
-// request).
+// Claude's cache, the dearest way it can be billed, and for a request that may
+// search, as every round of the search loop (searchingPromptTokens). A caller
+// with its own mayResend hook holds its own ceiling (drafting, against the cap
+// in force at each request).
 function wouldPassCap(
 	p: Prepared,
 	req: GatewayRequest,
 	request: Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>
 ): boolean {
 	if (!req.meter || req.mayResend) return false;
-	const promptTokens =
-		ceilingPromptTokens(request.messages, request.tools) + webSearchCeilingTokens(p.webSearch);
+	const prompt = ceilingPromptTokens(request.messages, request.tools);
+	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, request.maxTokens) : prompt;
 	const written = p.claude ? promptTokens : 0;
 	return req.meter.wouldPassCap(p.model, {
 		promptTokens,
