@@ -23,7 +23,8 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	db: Database;
 	pool: pg.Pool;
 };
-const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
+const { createStoryInUniverse, standaloneUniverse } =
+	await import('../../src/lib/server/story-create');
 const { storyLanguage, universeLanguage, workLanguage } =
 	await import('../../src/lib/server/language');
 const universePage = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
@@ -125,6 +126,20 @@ describe('the language settings', () => {
 		expect(await save('nope')).toMatchObject({ status: 400 });
 		await save('');
 		expect((await storyLanguage(db, storyId)).native).toBeNull();
+	});
+
+	it("gives a standalone story its universe's language, and says so in Details", async () => {
+		const standalone = await standaloneUniverse(db, user.id);
+		const loose = await createStoryInUniverse(db, user.id, standalone.id, 'Loose Leaf');
+		await universePage.actions.update(
+			post({ name: standalone.name, language: 'en-US' }, { id: standalone.id })
+		);
+		expect((await storyLanguage(db, loose.id)).language).toBe('en-US');
+		const data = (await storySettings.load({
+			params: { id: loose.id },
+			locals: { user, session: null }
+		} as never)) as { universe: { language: string | null } };
+		expect(data.universe.language).toBe('en-US');
 	});
 
 	it("reads nothing of another writer's work", async () => {

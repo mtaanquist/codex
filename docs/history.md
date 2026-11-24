@@ -23,15 +23,17 @@ page now sets the editor's `lang` from the story's effective language and
 falls back to the preference, which is relabelled "Spell-check language", and
 `lang` is set with spell-check off too. The prompt lines live in
 `llm/prompts/language.ts`, each returning '' or the old wording when nothing
-is set, so an unset story sends byte-identical prompts (and arc fingerprints
-do not move). Left on inferring on purpose: the chapter summary (its request
-is its fingerprint, so naming the language would stale every stored one, and
-it is written from scene summaries that follow the setting), the chat summary
-(it follows the conversation's language) and the continuity passes (they
-stage no prose). Arcs do take the universe's language, so changing it marks
-arcs out of date once. The native-language hint compares primary subtags, so
-en-US is not "interference" in en-GB, and with no story language set it is
-phrased to apply only where the text is in another language. MCP prompts
+is set, so an unset story sends byte-identical prompts
+(`unset-language.test.ts` checks them against a fixture taken from the
+release before). Left on inferring on purpose: the chapter summary and the
+character arc (each request is its fingerprint, so naming the language would
+mark every stored one out of date when the setting changed, and both are
+written from scene summaries that follow the setting), the chat summary (it
+follows the conversation's language) and the continuity passes (they stage
+no prose). The native-language hint compares primary subtags, so en-US is not
+"interference" in en-GB, and with no story language set there is no hint at
+all. A standalone story inherits the Standalone universe's language like any
+other, since that universe has its own settings page. MCP prompts
 stay pure builders; the server resolves the language for the connected
 writer's own work (`workLanguage`) and passes it in, and `list_universes` and
 `list_stories` return `language` and `languageName`. Export carries no

@@ -169,7 +169,7 @@
 					{/each}
 				</select>
 				<p class="field-hint">
-					The language you grew up speaking. When you write a story in another language, the
+					The language you grew up speaking. When a story's language is set to another one, the
 					Assistant's copyedit and prose review also look for habits carried over from it, such as
 					idioms translated word for word or false friends.
 				</p>

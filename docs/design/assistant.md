@@ -727,17 +727,18 @@ These cut across the surfaces and the architecture.
   universe) and `llm/prompts/language.ts` writes every line once: the prompts
   that write or edit prose (review, the passes, scene and chapter drafts,
   `/write`, the continuation, the pattern reread) state the language, scene
-  summaries, arcs and the recap say "Write in <language>" in place of "the
+  summaries and the recap say "Write in <language>" in place of "the
   same language as ...", and the mechanics category checks spelling against
   it. Not set, each prompt reads exactly as before and the model infers the
-  language from the text. A native language that is set and not the story's
-  (by primary subtag, so en-US is not interference for en-GB) adds one
+  language from the text. A native language that is set, with a story
+  language that is set and is a different language (by primary subtag, so
+  en-US is not interference for en-GB), adds one
   "interference" line to the mechanics and prose passes and the pattern
-  survey, as a hint of where to look. Two prompts stay on inferring on
-  purpose: the chapter summary, whose request is its currency fingerprint
-  (naming the language would mark every stored one stale when the setting
-  changed) and which is written from scene summaries that already follow the
-  setting, and the chat summary, which follows the conversation's language,
+  survey, as a hint of where to look. Three prompts stay on inferring on
+  purpose: the chapter summary and the character arc, whose requests are
+  their currency fingerprints (naming the language would mark every stored
+  one stale when the setting changed) and which are written from scene
+  summaries that already follow the setting, and the chat summary, which follows the conversation's language,
   not the story's. The editor's `lang` follows the effective language and
   falls back to the `writingLanguage` editor preference. The app interface
   language is a separate matter. Export carries a story's title, author and

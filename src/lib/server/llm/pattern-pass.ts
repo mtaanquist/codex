@@ -1,5 +1,5 @@
 import { storyLanguage } from '../language.ts';
-import type { LanguageSetting } from '../../writing-languages.ts';
+import { NO_LANGUAGE, type LanguageSetting } from '../../writing-languages.ts';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import {
@@ -113,7 +113,8 @@ export function bookPatternUnit(
 export function patternSurveyTokens(
 	units: PatternUnit[],
 	budgetTokens: number,
-	overheadTokens: number
+	overheadTokens: number,
+	language: LanguageSetting = NO_LANGUAGE
 ): number {
 	let total = 0;
 	for (const unit of units) {
@@ -127,6 +128,7 @@ export function patternSurveyTokens(
 						buildPatternSurveyMessage(chunk, {
 							scope: unit.scope,
 							cap,
+							language,
 							...(chunks.length > 1 ? { chunk: { index: i + 1, total: chunks.length } } : {})
 						})
 					);
@@ -178,12 +180,17 @@ export async function planBookPass(
 ): Promise<{ unit: PatternUnit; fit: WholeBookFit; tokens: number }> {
 	const titles = await chapterTitles(db, opts.storyId);
 	const overhead = await patternSurveyOverhead(db, opts.userId, opts.storyId);
+	const language = await storyLanguage(db, opts.storyId, opts.userId);
 	const whole = bookPatternUnit(opts.scenes, titles, true);
-	const wholeTokens = patternSurveyTokens([whole], opts.budgetTokens, overhead);
+	const wholeTokens = patternSurveyTokens([whole], opts.budgetTokens, overhead, language);
 	const fit = wholeBookFit(wholeTokens, opts.contextWindow, opts.replyTokens);
 	if (fit === 'fits') return { unit: whole, fit, tokens: wholeTokens };
 	const unit = bookPatternUnit(opts.scenes, titles, false);
-	return { unit, fit, tokens: patternSurveyTokens([unit], opts.budgetTokens, overhead) };
+	return {
+		unit,
+		fit,
+		tokens: patternSurveyTokens([unit], opts.budgetTokens, overhead, language)
+	};
 }
 
 // The fit alone, from the length of each scene rather than its text, for the
@@ -208,7 +215,12 @@ export async function checkBookFit(
 	);
 	const bodies = opts.scenes.reduce((sum, s) => sum + tokensForChars(s.bodyChars), 0);
 	return wholeBookFit(
-		patternSurveyTokens([skeleton], 0, overhead) + bodies,
+		patternSurveyTokens(
+			[skeleton],
+			0,
+			overhead,
+			await storyLanguage(db, opts.storyId, opts.userId)
+		) + bodies,
 		opts.contextWindow,
 		opts.replyTokens
 	);

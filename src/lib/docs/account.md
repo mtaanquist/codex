@@ -14,8 +14,9 @@ On a large window, the sidebar lists the parts of Security and Assistant under
 
 Set your display name and, if you like, a separate pen name to show on your
 public pages. If you write in a language that is not the one you grew up
-speaking, set "Native language" to it: when you copyedit a story written in
-another language, or review its prose, the Assistant also looks for habits
+speaking, set "Native language" to it: when you copyedit a story whose
+language is set to another language, or review its prose, the Assistant also
+looks for habits
 carried over from your native language, such as idioms translated word for
 word, false friends, or prepositions and word order from it. Leave it on "Not
 set" to skip this. The public-page block is where you claim a handle: a short name
