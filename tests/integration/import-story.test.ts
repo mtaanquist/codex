@@ -15,12 +15,14 @@ import {
 	places,
 	scenes,
 	stories,
+	tags,
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
 import { buildStoryZip, gatherStory } from '../../src/lib/server/export';
 import { parseStoryZip } from '../../src/lib/import-markdown';
 import { previewImport, runImport } from '../../src/lib/server/import-story';
+import { checkTagNames, setStoryList, setStoryTags, storyTagView } from '../../src/lib/server/tags';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 import { zipBytes } from '../../src/lib/server/zip-stream';
@@ -41,7 +43,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-	await pool.query('truncate table scenes, chapters, stories, universes, users cascade');
+	await pool.query('truncate table scenes, chapters, stories, universes, users, tags cascade');
 	const [owner] = await db
 		.insert(users)
 		.values({ email: 'imp@example.com', displayName: 'I', passwordHash: 'x', role: 'user' })
@@ -288,6 +290,40 @@ describe('runImport', () => {
 			.from(loreEntries)
 			.where(eq(loreEntries.title, 'The Silver Tax'));
 		expect(created).toBeTruthy();
+	});
+
+	it('round-trips the reader labels: adult, genres, warnings, tags and fandoms', async () => {
+		const original = await seedStory();
+		await db.update(stories).set({ isAdult: true }).where(eq(stories.id, original.id));
+		const listed = await db
+			.insert(tags)
+			.values([
+				{ kind: 'fandom', name: 'Forgotten Realms', slug: 'forgotten-realms' },
+				{ kind: 'genre', name: 'Fantasy', slug: 'fantasy' },
+				{ kind: 'warning', name: 'Death', slug: 'death' }
+			])
+			.returning();
+		for (const tag of listed) {
+			await setStoryList(db, original.id, tag.kind as 'fandom' | 'genre' | 'warning', [tag.id]);
+		}
+		const checked = checkTagNames(['Found Family']);
+		if (!checked.ok) throw new Error(checked.message);
+		await setStoryTags(db, original.id, checked.tags);
+
+		const [labelled] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const plan = await exportPlan(labelled);
+		// A fandom this site does not list is left off and reported.
+		plan.story.fandoms = [...(plan.story.fandoms ?? []), 'Elsewhere'];
+		const result = await runImport(db, universe, plan);
+
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported.isAdult).toBe(true);
+		const view = await storyTagView(db, result.storyId);
+		expect(view.genres.map((tag) => tag.name)).toEqual(['Fantasy']);
+		expect(view.warnings.map((tag) => tag.name)).toEqual(['Death']);
+		expect(view.tags.map((tag) => tag.name)).toEqual(['Found Family']);
+		expect(view.fandoms.map((tag) => tag.name)).toEqual(['Forgotten Realms']);
+		expect(result.problems.some((problem) => problem.includes('Elsewhere'))).toBe(true);
 	});
 
 	it('imports the same zip twice as two independent stories', async () => {

@@ -223,6 +223,51 @@
 				<span class="lbl">Reports</span>
 				{#if data.openReports > 0}<span class="nav-badge">{data.openReports}</span>{/if}
 			</a>
+			<a class="nav-item" class:active={active === 'tags'} href={resolve('/admin/tags')}>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.7"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					><path d="M20 12 12 20 3 11V3h8z" /><circle cx="7.5" cy="7.5" r="1.5" /></svg
+				>
+				<span class="lbl">Tags</span>
+			</a>
+			<a class="nav-item" class:active={active === 'fandoms'} href={resolve('/admin/fandoms')}>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.7"
+					stroke-linecap="round"
+					stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 3v18M3 12h18" /></svg
+				>
+				<span class="lbl">Fandoms</span>
+			</a>
+			<a class="nav-item" class:active={active === 'genres'} href={resolve('/admin/genres')}>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.7"
+					stroke-linecap="round"
+					stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h10" /></svg
+				>
+				<span class="lbl">Genres</span>
+			</a>
+			<a class="nav-item" class:active={active === 'warnings'} href={resolve('/admin/warnings')}>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.7"
+					stroke-linecap="round"
+					stroke-linejoin="round"><path d="M12 3 2 20h20z" /><path d="M12 10v4M12 17h.01" /></svg
+				>
+				<span class="lbl">Content warnings</span>
+			</a>
 		</nav>
 		{#if data.health}
 			<div class="admin-health">

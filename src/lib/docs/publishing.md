@@ -24,6 +24,17 @@ Each story has a visibility:
 
 Tick "Adult content" in the Publish section of a story's settings if the story is for adults. Readers who open its reading page first see a notice and choose to go on, and search engines are asked to leave the page out. The label is saved with each edition, so after you tick or untick it on a story that is already published, publish again for readers to see the change.
 
+## Genres, content warnings, tags and fandoms
+
+In the Publish section of a story's settings, under "Save tags", you can describe the story for readers:
+
+- **Genres.** Pick up to three from the site's list.
+- **Content warnings.** Tick everything on the site's list that a reader should know about before they start, such as graphic violence or death. If you tick none, the reading page says you added none; it does not call the story safe.
+- **Fandoms.** If the story is set in an existing world, such as a game setting or a series, pick it from the site's list. You can pick up to five. If the world you want is missing, use a tag instead, or ask the people who run the site to add it.
+- **Tags.** Anything else that helps a reader find the story, such as "found family" or "slow burn". Type a tag and press Enter or type a comma. You can add up to 20, each up to 50 characters. Tags that differ only in capitals, spaces, hyphens or underscores count as the same tag.
+
+Genres, fandoms and tags show on the reading page as soon as you save. Content warnings belong to the edition, like the adult flag, so readers see a change after you publish again. The moderators can merge tags that mean the same thing, or remove a tag; a removed tag disappears from your story and cannot be added again.
+
 ## Edition downloads
 
 When you publish, Codex also prepares download files of the edition: a markdown archive, an EPUB, and a PDF. Find them in the story's settings under "Edition downloads". They capture the edition exactly as published, so they do not change when you keep writing. The PDF shows only images you uploaded to Codex; an image linked from another website is left out.
@@ -55,6 +66,8 @@ When at least one story in a universe is published and set to public, the univer
 The reading pages are the outward face of your work, so they are plain and quiet: one column of prose, chapter headings, and nothing between the reader and the words. Until you upload cover art, a cover is the story's own title set in the reading typeface, on the colour you chose under "Cover colour" in the story's settings.
 
 Both pages name you the way you asked to be named: your pen name if you set one on your account page, otherwise your display name. The first time you claim a handle or publish with no pen name set, a dialog asks which name should go on the page, offering your display name to keep; what you choose becomes your pen name, and you can change it on your account page. Your handle stays the address in the link.
+
+Under the title, the reading page lists the story's genres, fandoms, tags and content warnings.
 
 A reader gets two controls in the bar: the theme, which starts in whichever of light or dark their device asks for and remembers a choice they make from its menu (Light, Warm, Dark, or System), and the question mark, which opens these pages. At the end of both pages a footer says the work was written in Codex, who published it, and offers a link for a reader who wants to write something of their own. A story's reading page also has a "Report this story" link.
 

@@ -779,6 +779,7 @@ publications (
   author          text,
   description_md  text,
   is_adult        boolean not null default false,  -- carried from stories.is_adult; lets the reader site filter
+  content_warnings text[] not null default '{}', -- names of the story's warning tags at publish, frozen
   content         jsonb not null,        -- frozen chapters and scenes for this edition
   version_label   text,                  -- optional, e.g. 'Edition 2'
   source_draft_id uuid references story_drafts(id) on delete set null,  -- the saved draft it came from, if any
@@ -791,6 +792,23 @@ publications (
 
 -- index on (handle) for profile lookups
 -- index on (story_id, is_current) for the current edition of a story
+
+tags (
+  id              uuid primary key,
+  kind            text not null,         -- 'tag' (typed by authors) | 'fandom' | 'genre' | 'warning' (curated lists)
+  name            text not null,         -- shown as first typed; admins and moderators can rename
+  slug            text not null,         -- lowercase, spaces/hyphens/underscores as one separator; unique per kind
+  merged_into_id  uuid references tags on delete set null, -- reads follow it to the surviving tag
+  removed_at      timestamptz,           -- hidden everywhere, and cannot be typed again
+  removed_by      uuid references users on delete set null,
+  created_at      timestamptz not null
+)
+
+story_tags (
+  story_id        uuid references stories on delete cascade,
+  tag_id          uuid references tags on delete cascade,
+  primary key (story_id, tag_id)
+)
 
 publication_reports (
   id              uuid primary key,

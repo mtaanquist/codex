@@ -42,4 +42,14 @@ test.describe('signed in with a role', () => {
 		const response = await gotoReady(page, '/admin/users');
 		expect(response?.status()).toBe(404);
 	});
+
+	test('a moderator finds the seeded genre and content warning lists', async ({ page }) => {
+		await signIn(page, 'moderator-e2e@example.com');
+		await gotoReady(page, '/admin/genres');
+		await expect(page.getByRole('heading', { name: 'Genres', level: 1 })).toBeVisible();
+		await expect(page.locator('.list-title', { hasText: 'Fantasy' })).toBeVisible();
+		await page.locator('.admin-nav').getByRole('link', { name: 'Content warnings' }).click();
+		await expect(page).toHaveURL('/admin/warnings');
+		await expect(page.locator('.list-title', { hasText: 'Graphic violence' })).toBeVisible();
+	});
 });

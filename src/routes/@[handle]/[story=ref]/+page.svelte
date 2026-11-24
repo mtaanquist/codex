@@ -5,6 +5,7 @@
 	import { renderMarkdown } from '#lib/markdown';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
+	import StoryLabels from '#lib/components/StoryLabels.svelte';
 	import { pageCrumb } from '#lib/chrome';
 	import { formatLongDate, formatNumber } from '#lib/format';
 	import type { PageData } from './$types';
@@ -67,6 +68,7 @@
 				<p class="reader-kicker">A story by <a href={shelfHref}>{data.author}</a></p>
 				<h1 class="reader-title">{data.title}</h1>
 				<p class="reader-byline">The author marked this story as adult content.</p>
+				<StoryLabels {...data.labels} />
 				<p class="reader-byline">
 					<a
 						href={withQuery(
@@ -74,7 +76,7 @@
 							{ adult: 'ok' }
 						)}
 					>
-						I am an adult; show the story
+						I am of legal age to view this content where I live; show the story
 					</a>
 				</p>
 				<p class="reader-byline"><a href={shelfHref}>Back to the shelf</a></p>
@@ -97,6 +99,7 @@
 					{formatLongDate(data.publishedAt, page.data.timeZone)}{#if data.versionLabel}
 						- {data.versionLabel}{/if}
 				</p>
+				<StoryLabels {...data.labels} />
 
 				{#if data.descriptionMd}
 					<!-- Author markdown; renderMarkdown escapes raw HTML. -->

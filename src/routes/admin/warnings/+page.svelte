@@ -1,0 +1,15 @@
+<script lang="ts">
+	import type { ActionData, PageData } from './$types';
+	import CuratedList from '../CuratedList.svelte';
+
+	let { data, form }: { data: PageData; form: ActionData } = $props();
+</script>
+
+<CuratedList
+	{data}
+	{form}
+	kind="warning"
+	title="Content warnings"
+	lede="The content warnings authors can mark on a story. Readers see them on the story page before they start reading. Authors choose from this list and cannot add to it."
+	placeholder="Animal harm&#10;Body horror"
+/>

@@ -13,6 +13,7 @@
 		title: string;
 		descriptionMd: string | null;
 		isAdult: boolean;
+		genres: string[];
 		publishedAt: Date;
 		coverAssetId: string | null;
 		coverColor: string;
@@ -52,6 +53,11 @@
 					{formatLongDate(book.publishedAt, page.data.timeZone)}{#if book.isAdult}
 						- adult content{/if}
 				</span>
+				{#if book.genres.length > 0}
+					<span class="shelf-item-meta">
+						{book.genres.join(', ')}
+					</span>
+				{/if}
 				{#if book.descriptionMd}
 					<!-- Author markdown; renderMarkdown escapes raw HTML. -->
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
