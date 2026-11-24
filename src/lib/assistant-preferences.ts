@@ -128,6 +128,11 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 export const NOTES_BEGIN = "--- the writer's notes ---";
 export const NOTES_END = '--- end of the notes ---';
 
+// A line compared with the framing lines: case and runs of whitespace ignored,
+// so "--- THE  writer's notes ---" cannot pass as text and close the fence.
+const markerKey = (line: string) => line.trim().replace(/\s+/g, ' ').toLowerCase();
+const MARKER_KEYS = new Set([markerKey(NOTES_BEGIN), markerKey(NOTES_END)]);
+
 // The free text, trimmed, with Windows line ends (a submitted form sends
 // CRLF) as plain newlines, null characters dropped, and any line that reads
 // as one of the framing lines removed; blank is not set.
@@ -137,7 +142,7 @@ export function normaliseNotes(raw: unknown): string | null {
 		.replace(/\r\n?/g, '\n')
 		.replaceAll('\u0000', '')
 		.split('\n')
-		.filter((line) => line.trim() !== NOTES_BEGIN && line.trim() !== NOTES_END)
+		.filter((line) => !MARKER_KEYS.has(markerKey(line)))
 		.join('\n')
 		.trim();
 	return text || null;
