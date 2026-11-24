@@ -1,9 +1,9 @@
 import { and, asc, eq, ilike, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { storyTags, tags } from './db/schema.ts';
+import { storyTags, tags, universes } from './db/schema.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
-import { cleanTagName, MAX_FANDOMS, MAX_TAGS, tagSlug } from '../story-tags.ts';
+import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
 
 // Free-form tags and the curated lists (fandoms, genres, content warnings).
 // Reads always follow a merge to the surviving entry and hide removed ones, so
@@ -12,38 +12,54 @@ import { cleanTagName, MAX_FANDOMS, MAX_TAGS, tagSlug } from '../story-tags.ts';
 export type TagKind = 'tag' | 'fandom' | 'genre' | 'warning';
 // The kinds moderators curate and authors only pick from.
 export type ListKind = Exclude<TagKind, 'tag'>;
-export type ShownTag = { id: string; kind: TagKind; name: string; slug: string };
+export type ShownTag = {
+	id: string;
+	kind: TagKind;
+	name: string;
+	slug: string;
+	// Comes from the story's universe, not the story itself.
+	inherited?: true;
+};
 
 // Follows merged_into_id from each start id to the surviving tag. The depth
 // cap only guards against a cycle that a merge check missed.
 const MAX_MERGE_DEPTH = 8;
 
-// The visible tags and fandoms on each story, by story id.
+// The visible labels on each story, by story id, including the fandom its
+// universe is linked to (marked inherited, unless the story also has it).
 export async function tagsForStories(
 	db: Database,
 	storyIds: string[]
 ): Promise<Map<string, ShownTag[]>> {
 	const result = new Map<string, ShownTag[]>();
 	if (storyIds.length === 0) return result;
+	const ids = sql`(${sql.join(
+		storyIds.map((id) => sql`${id}::uuid`),
+		sql`, `
+	)})`;
 	const rows = await db.execute(sql`
-		with recursive chain as (
-			select st.story_id, t.id as start_id, t.id, t.merged_into_id, 0 as depth
-			from story_tags st join tags t on t.id = st.tag_id
-			where st.story_id in ${sql`(${sql.join(
-				storyIds.map((id) => sql`${id}::uuid`),
-				sql`, `
-			)})`}
+		with recursive base as (
+			select st.story_id, st.tag_id, false as inherited
+			from story_tags st where st.story_id in ${ids}
 			union all
-			select c.story_id, c.start_id, t.id, t.merged_into_id, c.depth + 1
+			select s.id, u.fandom_id, true
+			from stories s join universes u on u.id = s.universe_id
+			where s.id in ${ids} and u.fandom_id is not null
+		), chain as (
+			select b.story_id, b.inherited, t.id as start_id, t.id, t.merged_into_id, 0 as depth
+			from base b join tags t on t.id = b.tag_id
+			union all
+			select c.story_id, c.inherited, c.start_id, t.id, t.merged_into_id, c.depth + 1
 			from chain c join tags t on t.id = c.merged_into_id
 			where c.depth < ${MAX_MERGE_DEPTH}
 		), final as (
-			select distinct on (story_id, start_id) story_id, id
-			from chain order by story_id, start_id, depth desc
+			select distinct on (story_id, inherited, start_id) story_id, inherited, id
+			from chain order by story_id, inherited, start_id, depth desc
 		)
-		select distinct f.story_id, t.id, t.kind, t.name, t.slug
+		select f.story_id, t.id, t.kind, t.name, t.slug, bool_and(f.inherited) as inherited
 		from final f join tags t on t.id = f.id
 		where t.removed_at is null
+		group by f.story_id, t.id, t.kind, t.name, t.slug
 		order by t.name
 	`);
 	for (const row of rows.rows as {
@@ -52,9 +68,16 @@ export async function tagsForStories(
 		kind: TagKind;
 		name: string;
 		slug: string;
+		inherited: boolean;
 	}[]) {
 		const list = result.get(row.story_id) ?? [];
-		list.push({ id: row.id, kind: row.kind, name: row.name, slug: row.slug });
+		list.push({
+			id: row.id,
+			kind: row.kind,
+			name: row.name,
+			slug: row.slug,
+			...(row.inherited && { inherited: true })
+		});
 		result.set(row.story_id, list);
 	}
 	return result;
@@ -150,12 +173,16 @@ export async function listedByName(
 }
 
 // Finds fandoms on the curated list by name. A name not on it is refused;
-// authors cannot add fandoms. Nothing is written.
+// authors cannot add fandoms. inheritedSlugs are the fandoms the story's
+// universe already gives it: they count toward the limit and are not stored
+// on the story again. Nothing is written.
 export async function findFandoms(
 	db: Database,
-	names: string[]
+	typed: string[],
+	inheritedSlugs: string[] = []
 ): Promise<{ ok: true; ids: string[] } | { ok: false; message: string }> {
-	if (new Set(names.map(tagSlug).filter(Boolean)).size > MAX_FANDOMS) {
+	const names = typed.filter((name) => !inheritedSlugs.includes(tagSlug(name)));
+	if (new Set(names.map(tagSlug).filter(Boolean)).size + inheritedSlugs.length > MAX_FANDOMS) {
 		return { ok: false, message: `A story can have up to ${MAX_FANDOMS} fandoms.` };
 	}
 	const { ids, missing } = await listedByName(db, 'fandom', names);
@@ -366,4 +393,78 @@ export async function addListEntries(
 		added: inserted.map((row) => row.name),
 		skipped: [...wanted].filter(([slug]) => !addedSlugs.has(slug)).map(([, name]) => name)
 	};
+}
+
+// ============ Universe fandoms ============
+
+// Fandoms whose name is close to what a writer is typing, for the universe
+// name box: a substring match or a trigram match, best first.
+export async function suggestFandoms(
+	db: Database,
+	query: string
+): Promise<{ id: string; name: string }[]> {
+	const q = query.trim().slice(0, MAX_TAG_LENGTH);
+	if (q.length < 2) return [];
+	const rows = await db.execute(sql`
+		select id, name from tags
+		where kind = 'fandom' and removed_at is null and merged_into_id is null
+			and (name ilike ${pattern(q)} or word_similarity(${q}, name) > 0.4)
+		order by word_similarity(${q}, name) desc, name
+		limit 8
+	`);
+	return rows.rows as { id: string; name: string }[];
+}
+
+// Links a universe to a fandom on the list, or unlinks it with null. Linking
+// also marks the universe a canon setting; unlinking leaves that flag alone.
+// False when the fandom is not a current entry of the list.
+export async function setUniverseFandom(
+	db: Database,
+	universeId: string,
+	fandomId: string | null
+): Promise<boolean> {
+	if (fandomId === null) {
+		await db.update(universes).set({ fandomId: null }).where(eq(universes.id, universeId));
+		return true;
+	}
+	const [fandom] = isUuid(fandomId)
+		? await db
+				.select({ id: tags.id })
+				.from(tags)
+				.where(
+					and(
+						eq(tags.id, fandomId),
+						eq(tags.kind, 'fandom'),
+						isNull(tags.removedAt),
+						isNull(tags.mergedIntoId)
+					)
+				)
+		: [];
+	if (!fandom) return false;
+	await db
+		.update(universes)
+		.set({ fandomId: fandom.id, establishedSetting: true })
+		.where(eq(universes.id, universeId));
+	return true;
+}
+
+// The fandom a universe is linked to, followed through merges, or null when
+// it has none or the fandom was removed.
+export async function universeFandom(
+	db: Database,
+	universeId: string
+): Promise<{ id: string; name: string } | null> {
+	const rows = await db.execute(sql`
+		with recursive chain as (
+			select t.id, t.merged_into_id, 0 as depth
+			from universes u join tags t on t.id = u.fandom_id where u.id = ${universeId}
+			union all
+			select t.id, t.merged_into_id, c.depth + 1 from chain c join tags t on t.id = c.merged_into_id
+			where c.depth < ${MAX_MERGE_DEPTH}
+		)
+		select t.id, t.name, t.removed_at from chain c join tags t on t.id = c.id
+		order by c.depth desc limit 1
+	`);
+	const row = rows.rows[0] as { id: string; name: string; removed_at: unknown } | undefined;
+	return row && !row.removed_at ? { id: row.id, name: row.name } : null;
 }

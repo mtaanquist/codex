@@ -189,6 +189,11 @@ export const universes = pgTable(
 		// setting's canon, with the author's material overriding where they
 		// differ.
 		establishedSetting: boolean('established_setting').notNull().default(false),
+		// The known setting from the curated fandom list this universe is set in.
+		// Every story in it carries the fandom on its public pages and in Browse.
+		fandomId: uuid('fandom_id').references((): AnyPgColumn => tags.id, {
+			onDelete: 'set null'
+		}),
 		// The Assistant models chosen for this universe, laid over the account's
 		// and under a story's own: { models }. Normalised in
 		// #lib/server/llm/config.ts.

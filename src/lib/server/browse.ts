@@ -125,8 +125,17 @@ export async function browseStories(
 			or (not un.standalone and un.name ilike ${like})
 		)`);
 	}
-	for (const tag of [filters.genre, filters.fandom, filters.tag]) {
+	for (const tag of [filters.genre, filters.tag]) {
 		if (tag) conditions.push(hasAny(tag.ids));
+	}
+	if (filters.fandom) {
+		// The story's own fandoms, or the one its universe is linked to.
+		conditions.push(
+			sql`(${hasAny(filters.fandom.ids)} or un.fandom_id in (${sql.join(
+				filters.fandom.ids.map((id) => sql`${id}::uuid`),
+				sql`, `
+			)}))`
+		);
 	}
 	if (filters.hide.length > 0) {
 		// Hidden if the story carries the warning now or its edition did at

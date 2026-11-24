@@ -8,6 +8,7 @@
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
 	import { letterFill } from '#lib/entity-badge';
 	import Icon from '#lib/components/Icon.svelte';
+	import FandomSuggest from '#lib/components/FandomSuggest.svelte';
 	import ImportStoryModal from '#lib/components/ImportStoryModal.svelte';
 	import ExportPanel from '#lib/components/ExportPanel.svelte';
 	import AppBar from '#lib/components/AppBar.svelte';
@@ -19,6 +20,12 @@
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	// The Details form's known setting and the canon flag it ticks.
+	let fandomId = $derived<string | null>(data.universe.fandomId);
+	let fandomName = $derived<string | null>(data.fandom?.name ?? null);
+	let fandomQuery = $state('');
+	let established = $derived(data.universe.establishedSetting);
 
 	// Each section is its own page (/universes/<slug>/categories, ...);
 	// a plain /universes/<slug> is the details. Forms post to the section
@@ -255,12 +262,41 @@
 					<span class="field-hint">Markdown is fine. Shown on the library card.</span>
 				</div>
 				<div class="field">
+					<label for="u-fandom">Known setting</label>
+					<input type="hidden" name="fandomId" value={fandomId ?? ''} />
+					{#if fandomName}
+						<p class="fandom-linked">
+							Set in <strong>{fandomName}</strong>.
+							<button
+								class="btn btn-ghost btn-sm"
+								type="button"
+								onclick={() => {
+									fandomId = null;
+									fandomName = null;
+								}}>Unlink</button
+							>
+						</p>
+					{/if}
+					<FandomSuggest
+						bind:value={fandomQuery}
+						inputId="u-fandom"
+						placeholder={fandomName ? 'Pick a different setting' : 'Search the list'}
+						onPick={(fandom) => {
+							fandomId = fandom.id;
+							fandomName = fandom.name;
+							fandomQuery = '';
+							established = true;
+						}}
+					/>
+					<span class="field-hint">
+						If the universe is set in a known world from the site's list, pick it here. Every story
+						in the universe then shows it as a fandom to readers. Picking one also ticks Established
+						setting.
+					</span>
+				</div>
+				<div class="field">
 					<label class="check-row">
-						<input
-							type="checkbox"
-							name="establishedSetting"
-							checked={data.universe.establishedSetting}
-						/>
+						<input type="checkbox" name="establishedSetting" bind:checked={established} />
 						Established setting
 					</label>
 					<span class="field-hint">
@@ -677,5 +713,12 @@
 		width: 100%;
 		cursor: pointer;
 		font-family: inherit;
+	}
+	.fandom-linked {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		margin: 0 0 var(--space-2);
+		font-size: var(--text-sm);
 	}
 </style>

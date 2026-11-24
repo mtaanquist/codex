@@ -206,6 +206,7 @@ universes (
   owner_id        uuid references users(id) not null,
   name            text not null,
   description_md  text,
+  fandom_id       uuid references tags on delete set null, -- a fandom from the curated list; its stories carry it
   deleted_at      timestamptz,      -- set while in the trash; null means live
   created_at      timestamptz not null,
   updated_at      timestamptz not null

@@ -1026,7 +1026,8 @@ once the drag handlers stop swallowing keyboard events.
 
 ## Component index
 
-Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `TagInput` (chips; optional
+Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `FandomSuggest` (a text box with
+fandom-list suggestions as a combobox; new universe and universe settings), `TagInput` (chips; optional
 `suggestions` for the browser's completion list, used by story fandoms),
 `ModeSwitcher`, `PanelStrip`, `NewMenu`, `ThemePicker`, `CrumbMenu`,
 `SidebarSearch`, `HelpLink`, `FormStatus`, `ReviewAvatar`, `ReviewReplyForm`,

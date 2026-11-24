@@ -21,6 +21,7 @@ import { destroyStory, listTrashedStories, restoreStory } from '#lib/server/stor
 import { instanceType, signupMode } from '#lib/server/settings';
 import { saveLibraryView, userPreferences } from '#lib/server/preferences';
 import { formText } from '#lib/server/validation';
+import { setUniverseFandom } from '#lib/server/tags';
 import { draftsByStory } from '#lib/server/story-drafts';
 import { countProposals } from '#lib/server/proposals';
 
@@ -157,6 +158,10 @@ export const actions: Actions = {
 			if (message === undefined) throw err;
 			return fail(403, { scope: 'universe', message });
 		}
+		// A known setting picked from the suggestions; one no longer on the
+		// list is quietly left off, since the universe itself was made.
+		const fandomId = formText(data, 'fandomId');
+		if (fandomId) await setUniverseFandom(db, universe.id, fandomId);
 		redirect(303, `/universes/${universe.slug}`);
 	},
 	// The dashboard's per-universe new-story card.

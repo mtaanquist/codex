@@ -2,7 +2,7 @@ import { slugify } from '../slug.ts';
 import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { logEvent } from './log.ts';
-import { tagsForStories } from './tags.ts';
+import { tagsForStories, universeFandom } from './tags.ts';
 import {
 	assistantDrafts,
 	assets,
@@ -585,7 +585,7 @@ async function gatherUniverseDocs(
 		docs.push({
 			dir: uDir,
 			name: 'universe.md',
-			front: { name: universe.name },
+			front: { name: universe.name, fandom: (await universeFandom(db, universe.id))?.name ?? null },
 			body: universe.descriptionMd ?? ''
 		});
 
