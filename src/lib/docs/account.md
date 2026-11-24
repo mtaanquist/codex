@@ -14,11 +14,12 @@ On a large window, the sidebar lists the parts of Security and Assistant under
 
 Set your display name and, if you like, a separate pen name to show on your
 public pages. If you write in a language that is not the one you grew up
-speaking, set "Native language" to it: when you copyedit a story whose
-language is set to another language, or review its prose, the Assistant also
-looks for habits
-carried over from your native language, such as idioms translated word for
-word, false friends, or prepositions and word order from it. Leave it on "Not
+speaking, set "Native language" to it. For a story whose language is set to
+another language, the Assistant then also looks for habits carried over from
+your native language, such as idioms translated word for word, false friends,
+or prepositions and word order from it. It does this when a review checks
+"Spelling and grammar" or "Prose and style", and in the pattern pass, but not
+in a review with only "General notes" or "Entities and lore". Leave it on "Not
 set" to skip this. The public-page block is where you claim a handle: a short name
 that becomes your public address at `/@yourhandle`. You can claim a handle once,
 so pick it with care. Add a short bio and, if you take requests, a note that
@@ -262,8 +263,11 @@ Your words are sent only to the endpoint you set here.
 - **Web searches**: with the Claude provider, the list shows how many web
   searches a request ran. The search results count as tokens like the rest of
   the request, and the spend cap allows for the most a request's searches could
-  add before it sends one. Claude also charges a fee for each search on top of
-  tokens; that fee is not in the cost shown here or counted by the spend cap.
+  add before it sends one. That allowance is several times the size of the
+  request itself, so with a low cap a review can stop before it reads its
+  first scene; raise the cap or turn web search off if that happens. Claude
+  also charges a fee for each search on top of tokens; that fee is not in the
+  cost shown here or counted by the spend cap.
 
 ### Which model to pick for each role
 

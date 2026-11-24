@@ -1,5 +1,5 @@
 import { storyLanguage } from '../language.ts';
-import { storyPreferences } from '../assistant-preferences.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantUsage, scenes, stories } from '../db/schema.ts';
@@ -187,7 +187,9 @@ export async function estimateStoryReview(
 	// reads the wording, and the language lines always.
 	const preferenceTokens =
 		(readsWording(categories)
-			? estimateTokens(reviewPreferenceText(await storyPreferences(db, opts.storyId, opts.userId)))
+			? estimateTokens(
+					reviewPreferenceText(await storyAssistantPreferences(db, opts.storyId, opts.userId))
+				)
 			: 0) +
 		estimateTokens(
 			reviewLanguageText(await storyLanguage(db, opts.storyId, opts.userId), categories)
@@ -333,7 +335,7 @@ export async function estimateStoryReview(
 						budgetTokens,
 						await patternSurveyOverhead(db, opts.userId, opts.storyId),
 						await storyLanguage(db, opts.storyId, opts.userId),
-						await storyPreferences(db, opts.storyId, opts.userId)
+						await storyAssistantPreferences(db, opts.storyId, opts.userId)
 					)
 				: 0;
 		}

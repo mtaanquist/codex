@@ -24,7 +24,7 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	pool: pg.Pool;
 };
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
-const { storyPreferences, universePreferences, workPreferences } =
+const { storyAssistantPreferences, universePreferences, workPreferences } =
 	await import('../../src/lib/server/assistant-preferences');
 const universePage = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
@@ -91,7 +91,7 @@ afterAll(async () => {
 
 describe('the assistant preferences', () => {
 	it('starts unset, so nothing is stated', async () => {
-		expect(await storyPreferences(db, storyId)).toEqual(NO_PREFERENCES);
+		expect(await storyAssistantPreferences(db, storyId)).toEqual(NO_PREFERENCES);
 		expect(await universePreferences(db, universeId)).toEqual(NO_PREFERENCES);
 		expect(await stored()).toEqual({ preferences: {}, notes: null });
 	});
@@ -105,7 +105,7 @@ describe('the assistant preferences', () => {
 				assistantNotes: 'Universe habits.'
 			})
 		).toMatchObject({ action: 'assistant-preferences', saved: true });
-		let setting = await storyPreferences(db, storyId);
+		let setting = await storyAssistantPreferences(db, storyId);
 		expect(setting.houseStyle).toMatchObject({ quoteMarks: 'single', tense: 'past' });
 		expect(setting.leaveAlone).toEqual(['filterVerbs']);
 		expect(setting.notes).toBe('Universe habits.');
@@ -113,7 +113,7 @@ describe('the assistant preferences', () => {
 		expect(
 			await saveStory({ tense: 'present', filterVerbs: 'check', epithets: 'leave' })
 		).toMatchObject({ saved: true });
-		setting = await storyPreferences(db, storyId);
+		setting = await storyAssistantPreferences(db, storyId);
 		expect(setting.houseStyle).toMatchObject({ quoteMarks: 'single', tense: 'present' });
 		expect(setting.leaveAlone).toEqual(['epithets']);
 		expect(setting.notes).toBe('Universe habits.');
@@ -125,7 +125,7 @@ describe('the assistant preferences', () => {
 		// A blank form puts the story back on the universe's.
 		await saveStory({ assistantNotes: '  ' });
 		expect(await stored()).toEqual({ preferences: {}, notes: null });
-		expect((await storyPreferences(db, storyId)).houseStyle.tense).toBe('past');
+		expect((await storyAssistantPreferences(db, storyId)).houseStyle.tense).toBe('past');
 	});
 
 	it('refuses a value off its list or notes over the cap, and keeps what was there', async () => {
@@ -168,7 +168,7 @@ describe('the assistant preferences', () => {
 	it('reads nothing of a story in a trashed universe', async () => {
 		await saveStory({ quoteMarks: 'double' });
 		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, universeId));
-		expect(await storyPreferences(db, storyId)).toEqual(NO_PREFERENCES);
+		expect(await storyAssistantPreferences(db, storyId)).toEqual(NO_PREFERENCES);
 	});
 
 	it('gives an app nothing for a story the Assistant is muted on', async () => {
@@ -184,6 +184,8 @@ describe('the assistant preferences', () => {
 		expect(await workPreferences(db, user.id, { storyId })).toEqual(NO_PREFERENCES);
 		expect(await workPreferences(db, user.id, { sceneId: scene.id })).toEqual(NO_PREFERENCES);
 		// The app's own surfaces check the mute themselves.
-		expect((await storyPreferences(db, storyId, user.id)).houseStyle.quoteMarks).toBe('double');
+		expect((await storyAssistantPreferences(db, storyId, user.id)).houseStyle.quoteMarks).toBe(
+			'double'
+		);
 	});
 });

@@ -48,11 +48,27 @@ export function houseStyleLine(setting: PreferenceSetting, mode: 'write' | 'chec
 		})
 		.filter(Boolean);
 	if (parts.length === 0) return '';
-	return `House style for this story: ${parts.join('; ')}. ${
+	const line = `House style for this story: ${parts.join('; ')}. ${
 		mode === 'write'
 			? 'Keep to it.'
 			: 'Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
 	}`;
+	// Dialogue and quoted thoughts keep their own tense and person, so a check
+	// would otherwise flag every "I am" a character says in a past-tense,
+	// third-person story.
+	const { tense, narration } = setting.houseStyle;
+	if (mode === 'check' && (tense || narration)) {
+		return `${line} The ${
+			tense && narration
+				? 'tense and point of view apply'
+				: tense
+					? 'tense applies'
+					: 'point of view applies'
+		} to the narration only: do not flag dialogue, a character's quoted thoughts, or quoted text for ${
+			tense && narration ? 'them' : 'it'
+		}.`;
+	}
+	return line;
 }
 
 const HABIT_PHRASES: Record<HabitCheck, string> = {

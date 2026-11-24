@@ -51,22 +51,15 @@ export const HOUSE_STYLE = [
 	}
 ] as const;
 
-// The habits review and the pattern pass look for, each one a switch. `review`
-// and `pattern` say which prompts name it: the review's prose and mechanics
-// lines, the pattern survey's list of kinds, or both.
+// The habits review and the pattern pass look for, each one a switch.
 export const HABIT_CHECKS = [
-	{ key: 'filterVerbs', label: 'Filter verbs (saw, heard, felt)', review: true, pattern: true },
-	{ key: 'epithets', label: 'Point-of-view epithets ("the elf")', review: true, pattern: true },
-	{ key: 'danglingModifiers', label: 'Dangling modifiers', review: true, pattern: false },
-	{ key: 'repetition', label: 'Close repetition', review: true, pattern: false },
-	{ key: 'commaSplices', label: 'Comma splices', review: true, pattern: false },
-	{ key: 'petPhrases', label: 'Pet words and phrases', review: false, pattern: true },
-	{
-		key: 'sentenceShapes',
-		label: 'Repeated sentence shapes and gestures',
-		review: false,
-		pattern: true
-	}
+	{ key: 'filterVerbs', label: 'Filter verbs (saw, heard, felt)' },
+	{ key: 'epithets', label: 'Point-of-view epithets ("the elf")' },
+	{ key: 'danglingModifiers', label: 'Dangling modifiers' },
+	{ key: 'repetition', label: 'Close repetition' },
+	{ key: 'commaSplices', label: 'Comma splices' },
+	{ key: 'petPhrases', label: 'Pet words and phrases' },
+	{ key: 'sentenceShapes', label: 'Repeated sentence shapes and gestures' }
 ] as const;
 
 export type HouseStyleKey = (typeof HOUSE_STYLE)[number]['key'];

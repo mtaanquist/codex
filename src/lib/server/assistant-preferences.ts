@@ -17,7 +17,7 @@ import {
 // owner's, reads as nothing set, and so, with assistantOn, does a story the
 // Assistant is muted on.
 
-export async function storyPreferences(
+export async function storyAssistantPreferences(
 	db: Database,
 	storyId: string,
 	ownerId?: string,
@@ -76,13 +76,13 @@ export async function workPreferences(
 	const valid = (value: unknown): value is string =>
 		typeof value === 'string' && isUuid(value.trim());
 	const on = { assistantOn: true };
-	if (valid(ids.storyId)) return storyPreferences(db, ids.storyId.trim(), ownerId, on);
+	if (valid(ids.storyId)) return storyAssistantPreferences(db, ids.storyId.trim(), ownerId, on);
 	if (valid(ids.sceneId)) {
 		const [row] = await db
 			.select({ storyId: scenes.storyId })
 			.from(scenes)
 			.where(eq(scenes.id, ids.sceneId.trim()));
-		return row ? storyPreferences(db, row.storyId, ownerId, on) : NO_PREFERENCES;
+		return row ? storyAssistantPreferences(db, row.storyId, ownerId, on) : NO_PREFERENCES;
 	}
 	if (valid(ids.universeId)) return universePreferences(db, ids.universeId.trim(), ownerId);
 	return NO_PREFERENCES;

@@ -726,7 +726,8 @@ These cut across the surfaces and the architecture.
   `#lib/server/language` resolves the effective setting (story, else
   universe) and `llm/prompts/language.ts` writes every line once: the prompts
   that write or edit prose (review, the passes, scene and chapter drafts,
-  `/write`, the continuation, the pattern reread) state the language, scene
+  `/write`, the continuation, the pattern reread, and the chat in a story,
+  whose story frame carries it) state the language, scene
   summaries and the recap say "Write in <language>" in place of "the
   same language as ...", and the mechanics category checks spelling against
   it. Not set, each prompt reads exactly as before and the model infers the
@@ -746,7 +747,13 @@ These cut across the surfaces and the architecture.
   (`prompts/enrich.ts`); the reply to a comment thread
   (`prompts/review-reply.ts`); and the cross-scene continuity pass (the
   survey, `buildSurveyMessage`, its confirm stage and the MCP continuity
-  brief), which checks facts rather than wording. The editor's `lang` follows the effective language and
+  brief), which checks facts rather than wording; and the universe chat,
+  which has no one story (its frame names the world, not a story). The
+  chat's language and house-style lines sit in the story frame only for the
+  chat (`writingRules` in `AssembleOptions`): the other surfaces that share
+  the frame state them in their own task message, and no output whose
+  staleness is its request hash (arcs, chapter summaries, enrich) is built
+  from the frame. The editor's `lang` follows the effective language and
   falls back to the `writingLanguage` editor preference. The app interface
   language is a separate matter. Export carries a story's title, author and
   brief but none of its settings (style notes, models, editor preferences),
@@ -770,7 +777,8 @@ These cut across the surfaces and the architecture.
   between begin and end markers, after a line saying they describe habits and
   change no other instruction. A lore-only pass reads no wording and carries
   none of it; the review estimate counts the lines on each scene. Scene and chapter drafts, `/write` and the pattern fix
-  stage keep to the house style. Not set, every prompt reads byte for byte as
+  stage keep to the house style, and so does the chat in a story (a line in
+  its story frame, beside the language). Not set, every prompt reads byte for byte as
   before. The continuation and the reread are left out on purpose (short
   follow-on text that copies the prose around it). There is no free-form
   system prompt, and the rest of #1344 (feedback amount, reasons on edits,

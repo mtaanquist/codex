@@ -126,10 +126,12 @@
 	level="story"
 	stored={data.story.assistantPreferences}
 	notes={data.story.assistantNotes}
-	inherited={{
-		preferences: data.universe.assistantPreferences,
-		notes: data.universe.assistantNotes
-	}}
+	inherited={data.universe.standalone
+		? null
+		: {
+				preferences: data.universe.assistantPreferences,
+				notes: data.universe.assistantNotes
+			}}
 	saved={form?.action === 'assistant-preferences' && form.saved === true}
 	error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
 	submitted={form?.action === 'assistant-preferences' && 'submitted' in form

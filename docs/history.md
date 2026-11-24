@@ -10,6 +10,29 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 2
+(2026-11-24, `fix/llm-staging-review-2`, into `staging/llm-issues`). The
+chat in a story now gets the story's language and house style (write mode),
+as a connected app already did through `list_stories`: the help told writers
+to move "British or American" out of style notes into Language, which took
+the convention away from the chat. The lines sit in the story frame, but only
+when the caller passes `writingRules` (only the chat does), since the
+review, draft, `/write`, pattern and recap surfaces that share the frame
+state them in their own task message, and a review needs the house style in
+check mode, not write mode. No output whose staleness is its request hash
+(arcs, chapter summaries, enrich) uses the frame, so no hash changed. With
+nothing set the frame is byte-identical; the unset-language fixture now holds
+it. In check mode a set tense or narration applies to the narration only, not
+dialogue or quoted thoughts. `storyPreferences` in
+`#lib/server/assistant-preferences` became `storyAssistantPreferences`, so it
+no longer shares a name with the editor's `storyPreferences` (whose
+arguments run the other way). A standalone story's preference form no longer
+offers the universe's settings, and the unused `review` and `pattern` flags
+on `HABIT_CHECKS` are gone. Help: the editor spell-check override applies
+only with no story or universe language, the native-language hint names the
+passes that use it, and the spend cap's web-search allowance is said to be
+several times a request's size.
+
 Staging review of the language setting and Assistant preferences, round 1
 (2026-11-24, `fix/llm-staging-review-1`, into `staging/llm-issues`). A story
 made from a saved draft now carries the language, preferences and notes, as
