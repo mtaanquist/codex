@@ -1,13 +1,14 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { isUuid } from '../slug.ts';
 import { scenes, stories, universes } from './db/schema.ts';
 import { storyAssistantOn, storyIsLive } from './universe-scope.ts';
+import { mcpAccountEnabled, mcpInstanceEnabled } from './mcp/settings.ts';
 import {
 	effectivePreferences,
 	NO_PREFERENCES,
-	type PreferenceSetting,
-	type StoredPreferences
+	type PreferenceChanges,
+	type PreferenceSetting
 } from '../assistant-preferences.ts';
 
 // The Assistant preferences the prompts state for a piece of work, read the
@@ -81,27 +82,61 @@ export async function workPreferences(
 		const [row] = await db
 			.select({ storyId: scenes.storyId })
 			.from(scenes)
-			.where(eq(scenes.id, ids.sceneId.trim()));
+			.where(and(eq(scenes.id, ids.sceneId.trim()), isNull(scenes.deletedAt)));
 		return row ? storyAssistantPreferences(db, row.storyId, ownerId, on) : NO_PREFERENCES;
 	}
 	if (valid(ids.universeId)) return universePreferences(db, ids.universeId.trim(), ownerId);
 	return NO_PREFERENCES;
 }
 
+// Whether the settings pages show the preferences form: wherever the
+// preferences reach a prompt, so with the Assistant tab on (tabEnabled, from
+// assistantLayout) or with connected apps switched on for the account.
+export async function assistantPreferencesShown(
+	db: Database,
+	userId: string,
+	tabEnabled: boolean
+): Promise<boolean> {
+	if (tabEnabled) return true;
+	return (await mcpInstanceEnabled(db)) && (await mcpAccountEnabled(db, userId));
+}
+
+// The stored object with the form's changes merged over it: a value set, a
+// null removed, a key the form did not carry left as it was. Done in one
+// statement so two saves of different keys cannot undo each other.
+function mergedPreferences(
+	column: typeof stories.assistantPreferences | typeof universes.assistantPreferences,
+	changes: PreferenceChanges
+): SQL {
+	const set = Object.fromEntries(Object.entries(changes).filter(([, value]) => value !== null));
+	const cleared = Object.keys(changes).filter((key) => !(key in set));
+	const merged = sql`(${column} || ${JSON.stringify(set)}::jsonb)`;
+	if (cleared.length === 0) return merged;
+	const keys = sql.join(
+		cleared.map((key) => sql`${key}`),
+		sql`, `
+	);
+	return sql`(${merged} - array[${keys}]::text[])`;
+}
+
 // Saves the preferences form of a story or a universe the caller owns.
-// Returns false when there is no such live row of theirs.
+// Returns false when there is no such live row of theirs. Notes left
+// undefined (the post did not carry the field) are kept.
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
 	target: { storyId: string } | { universeId: string },
-	input: { preferences: StoredPreferences; notes: string | null }
+	input: { changes: PreferenceChanges; notes: string | null | undefined }
 ): Promise<boolean> {
-	const values = { assistantPreferences: input.preferences, assistantNotes: input.notes };
+	const notes = input.notes === undefined ? {} : { assistantNotes: input.notes };
 	const saved =
 		'storyId' in target
 			? await db
 					.update(stories)
-					.set(values)
+					.set({
+						assistantPreferences: mergedPreferences(stories.assistantPreferences, input.changes),
+						...notes
+					})
 					.where(
 						and(
 							eq(stories.id, target.storyId),
@@ -112,7 +147,10 @@ export async function savePreferences(
 					.returning({ id: stories.id })
 			: await db
 					.update(universes)
-					.set(values)
+					.set({
+						assistantPreferences: mergedPreferences(universes.assistantPreferences, input.changes),
+						...notes
+					})
 					.where(
 						and(
 							eq(universes.id, target.universeId),

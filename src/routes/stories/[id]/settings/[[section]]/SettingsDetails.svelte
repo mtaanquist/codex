@@ -126,7 +126,7 @@
 		</div>
 	</form>
 </div>
-{#if data.assistantModels}
+{#if data.assistantPreferencesShown}
 	<AssistantPreferences
 		level="story"
 		stored={data.story.assistantPreferences}

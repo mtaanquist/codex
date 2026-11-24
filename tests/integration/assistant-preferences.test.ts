@@ -4,7 +4,12 @@ import { eq } from 'drizzle-orm';
 import type pg from 'pg';
 import { scenes, stories, universes, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
-import { NO_PREFERENCES, MAX_ASSISTANT_NOTES } from '../../src/lib/assistant-preferences';
+import {
+	HABIT_CHECKS,
+	HOUSE_STYLE,
+	MAX_ASSISTANT_NOTES,
+	NO_PREFERENCES
+} from '../../src/lib/assistant-preferences';
 import { ensureTestDatabase } from './test-db';
 
 // The Assistant preferences on a universe and a story, saved through the
@@ -27,6 +32,7 @@ const { createStoryInUniverse, standaloneUniverse } =
 	await import('../../src/lib/server/story-create');
 const { storyAssistantPreferences, universePreferences, workPreferences } =
 	await import('../../src/lib/server/assistant-preferences');
+const { saveMcpInstanceEnabled } = await import('../../src/lib/server/mcp/settings');
 const universePage = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
 	await import('../../src/routes/stories/[id]/settings/[[section]]/+page.server');
@@ -54,6 +60,11 @@ const saveUniverse = (fields: Record<string, string>) =>
 	universePage.actions.saveAssistantPreferences(post(fields, { id: universeId }));
 const saveStory = (fields: Record<string, string>) =>
 	storySettings.actions.saveAssistantPreferences(post(fields, { id: storyId }));
+
+// Every field as the page posts it with nothing chosen.
+const blankForm = Object.fromEntries(
+	[...HOUSE_STYLE, ...HABIT_CHECKS, { key: 'assistantNotes' }].map(({ key }) => [key, ''])
+);
 
 async function stored() {
 	const [story] = await db
@@ -124,7 +135,7 @@ describe('the assistant preferences', () => {
 		});
 
 		// A blank form puts the story back on the universe's.
-		await saveStory({ assistantNotes: '  ' });
+		await saveStory(blankForm);
 		expect(await stored()).toEqual({ preferences: {}, notes: null });
 		expect((await storyAssistantPreferences(db, storyId)).houseStyle.tense).toBe('past');
 	});
@@ -220,5 +231,72 @@ describe('the assistant preferences', () => {
 		expect((await storyAssistantPreferences(db, storyId, user.id)).houseStyle.quoteMarks).toBe(
 			'double'
 		);
+	});
+
+	it('keeps a setting the post leaves out, and the notes when their field is missing', async () => {
+		await saveStory({
+			quoteMarks: 'single',
+			tense: 'past',
+			epithets: 'leave',
+			assistantNotes: 'Mine.'
+		});
+		expect(await saveStory({ tense: 'present', epithets: '' })).toMatchObject({ saved: true });
+		expect(await stored()).toEqual({
+			preferences: { quoteMarks: 'single', tense: 'present' },
+			notes: 'Mine.'
+		});
+		await saveUniverse({ serialComma: 'no', assistantNotes: 'U.' });
+		await saveUniverse({ thoughts: 'plain' });
+		const [row] = await db
+			.select({ preferences: universes.assistantPreferences, notes: universes.assistantNotes })
+			.from(universes)
+			.where(eq(universes.id, universeId));
+		expect(row).toEqual({ preferences: { serialComma: 'no', thoughts: 'plain' }, notes: 'U.' });
+	});
+
+	it('reads nothing of a trashed scene', async () => {
+		await saveStory({ quoteMarks: 'double' });
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 1, title: 'One', bodyMd: '' })
+			.returning({ id: scenes.id });
+		expect((await workPreferences(db, user.id, { sceneId: scene.id })).houseStyle.quoteMarks).toBe(
+			'double'
+		);
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, scene.id));
+		expect(await workPreferences(db, user.id, { sceneId: scene.id })).toEqual(NO_PREFERENCES);
+	});
+
+	it('shows the form with the Assistant off only when connected apps are on', async () => {
+		const loads = async () => {
+			const story = (await storySettings.load({
+				params: { id: storyId },
+				locals: { user, session: null }
+			} as never)) as { assistantPreferencesShown: boolean; assistantModels: unknown };
+			const universe = (await universePage.load({
+				params: { id: universeId },
+				locals: { user, session: null }
+			} as never)) as { assistantPreferencesShown: boolean; assistantModels: unknown };
+			return [story, universe];
+		};
+		const instanceDefault = () => pool.query("delete from app_settings where key = 'mcp'");
+		await instanceDefault();
+		for (const data of await loads()) {
+			expect(data.assistantModels).toBeNull();
+			expect(data.assistantPreferencesShown).toBe(false);
+		}
+		await db.update(users).set({ mcpEnabled: true }).where(eq(users.id, user.id));
+		for (const data of await loads()) {
+			// The Assistant section stays hidden; the preferences show.
+			expect(data.assistantModels).toBeNull();
+			expect(data.assistantPreferencesShown).toBe(true);
+		}
+		// With external access off for the instance, apps get nothing.
+		await saveMcpInstanceEnabled(db, false);
+		try {
+			for (const data of await loads()) expect(data.assistantPreferencesShown).toBe(false);
+		} finally {
+			await instanceDefault();
+		}
 	});
 });

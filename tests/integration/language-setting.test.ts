@@ -200,4 +200,15 @@ describe('the language settings', () => {
 		// The app's own surfaces check the mute themselves.
 		expect((await storyLanguage(db, storyId, user.id)).language).toBe('en-GB');
 	});
+
+	it('reads nothing of a trashed scene', async () => {
+		await saveUniverse('en-GB');
+		const [scene] = await db
+			.insert(scenes)
+			.values({ storyId, globalPosition: 1, title: 'One', bodyMd: '' })
+			.returning({ id: scenes.id });
+		expect((await workLanguage(db, user.id, { sceneId: scene.id })).language).toBe('en-GB');
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, scene.id));
+		expect((await workLanguage(db, user.id, { sceneId: scene.id })).language).toBeNull();
+	});
 });

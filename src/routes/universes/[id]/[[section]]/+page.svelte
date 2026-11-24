@@ -335,7 +335,7 @@
 			</form>
 		</div>
 
-		{#if data.assistantModels}
+		{#if data.assistantPreferencesShown}
 			<div class="admin-block" id="assistant-preferences">
 				<AssistantPreferences
 					level="universe"

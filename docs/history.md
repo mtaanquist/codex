@@ -10,6 +10,26 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Staging review of the language setting and Assistant preferences, round 6
+(2026-11-24, `fix/llm-staging-review-6`, into `staging/llm-issues`). Round 5
+hid the preference forms unless the Assistant tab was on, but connected apps
+(a separate account switch) still get the preferences through the MCP prompts
+and `list_stories`/`list_universes`, so a writer with only apps on could not
+see settings that applied. The loads now pass `assistantPreferencesShown`
+(`#lib/server/assistant-preferences`): the tab on, or external access on for
+both the instance and the account. A save now changes only the keys the post
+carries, merged in one jsonb statement (`||` then `-` the cleared keys), and
+keeps the notes when their field is missing; a blank select still clears its
+key. Saving no longer drops note lines that read as a framing line (which
+also missed a marker with more text on its line), so the stored notes are
+what the writer typed apart from line ends and null characters. Instead
+`habitNotesLine`, the one place that fences the notes for review, the
+pattern pass and the chat, cuts every run of three or more hyphens to one,
+so nothing in them can match a marker in any case, spacing or position. The
+MCP list tools still return the stored notes as data. A trashed scene's id reads as nothing set in `sceneLanguage` and
+`workPreferences`. The round 4 note on the search bound was corrected to say
+the code prices the whole bound at the cache-write rate.
+
 Staging review of the language setting and Assistant preferences, round 5
 (2026-11-24, `fix/llm-staging-review-5`, into `staging/llm-issues`). Merged
 `main` (#1545, migrations 0115 to 0120) into the branch: staging's three
@@ -43,9 +63,9 @@ only in the rounds after it, which assumed one search per round; nothing
 holds the model to that, and five searches run together in the first round
 put all their results in all nine later rounds. It now counts every search
 in every round after the first: for a 20k prompt and a 4k reply, 686k tokens
-of input (106k written plus 580k plain) rather than 586k. The cache-write
-part is unchanged, since the final conversation is the same length in any
-order. The 10k per-search ceiling assumes what dynamic filtering adds (the
+of input rather than 586k. (Round 4 priced that as 106k written plus 580k
+plain; round 5 found a missed cache lookup writes the prefix again, and the
+code now prices the whole 686k at the cache-write rate.) The 10k per-search ceiling assumes what dynamic filtering adds (the
 filtering code and its output) stays within it, and the comment says so. A
 review-thread reply that may revise its pending suggestion now carries the
 language and the house style in write mode, and the unset-language fixture
