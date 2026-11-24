@@ -35,8 +35,8 @@ test.describe('signed in with a role', () => {
 	test('a moderator sees only the moderation pages', async ({ page }) => {
 		await signIn(page, 'moderator-e2e@example.com');
 		await gotoReady(page, '/admin');
-		await expect(page).toHaveURL('/admin/published');
-		await expect(page.getByRole('heading', { name: 'Published editions' })).toBeVisible();
+		await expect(page).toHaveURL('/admin/reports');
+		await expect(page.getByRole('heading', { name: 'Reports', level: 1 })).toBeVisible();
 		const nav = page.locator('.admin-nav');
 		await expect(nav.getByRole('link', { name: /Users/ })).toHaveCount(0);
 		const response = await gotoReady(page, '/admin/users');

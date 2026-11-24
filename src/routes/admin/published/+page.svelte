@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import type { PageData, ActionData } from './$types';
 	import { formatDate } from '#lib/format';
+	import TakedownForm from '../TakedownForm.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -13,6 +14,7 @@
 	<h1 class="admin-title">Published editions</h1>
 	<p class="admin-lede">
 		Everything writers have made public. Take an edition down to remove it from the public pages.
+		Reports from readers are under Reports.
 	</p>
 </div>
 
@@ -46,12 +48,7 @@
 							</div>
 						</div>
 						<div class="list-actions">
-							<form method="POST" action="?/takedown">
-								<input type="hidden" name="publicationId" value={edition.id} />
-								<button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger-ink);"
-									>Take down</button
-								>
-							</form>
+							<TakedownForm publicationId={edition.id} title={edition.title} />
 						</div>
 					</div>
 				{/each}

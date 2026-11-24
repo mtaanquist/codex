@@ -56,10 +56,14 @@ The reading pages are the outward face of your work, so they are plain and quiet
 
 Both pages name you the way you asked to be named: your pen name if you set one on your account page, otherwise your display name. The first time you claim a handle or publish with no pen name set, a dialog asks which name should go on the page, offering your display name to keep; what you choose becomes your pen name, and you can change it on your account page. Your handle stays the address in the link.
 
-A reader gets two controls in the bar: the theme, which starts in whichever of light or dark their device asks for and remembers a choice they make from its menu (Light, Warm, Dark, or System), and the question mark, which opens these pages. At the end of both pages a footer says the work was written in Codex, who published it, and offers a link for a reader who wants to write something of their own.
+A reader gets two controls in the bar: the theme, which starts in whichever of light or dark their device asks for and remembers a choice they make from its menu (Light, Warm, Dark, or System), and the question mark, which opens these pages. At the end of both pages a footer says the work was written in Codex, who published it, and offers a link for a reader who wants to write something of their own. A story's reading page also has a "Report this story" link.
 
 ## Taking something down
 
-Set a story back to private, or republish after edits. An administrator can also take an edition down if needed.
+Set a story back to private, or republish after edits. An administrator or moderator can also take an edition down if needed. When they do, the Publish section of the story's settings says so and gives the reason they chose.
+
+## Reporting a story
+
+If a story breaks the rules of the site, copies someone else's work, or is missing content warnings or the adult flag, use "Report this story" at the bottom of its reading page. Pick a reason, add a short comment if it helps, and send it. You do not need an account, and the report does not include your name or email address. The people who look after the site read every report and can take the story down.
 
 While an administrator has your account suspended, your public page, your stories' reading pages and universe pages, and their downloads are hidden from readers. They come back as they were when the suspension is lifted.

@@ -83,7 +83,7 @@
 						<a
 							class="avatar-dd-item"
 							role="menuitem"
-							href={resolve('/admin/published')}
+							href={resolve('/admin/reports')}
 							onclick={() => (open = false)}
 						>
 							<Icon name="shield" size={16} />

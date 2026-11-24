@@ -144,7 +144,7 @@ Every page uses exactly one of these five wrappers. Do not build a sixth.
 | Page | `.page-shell` + `AppBar.svelte` | Library, print preview, a saved draft, the error page when signed in |
 | Settings | `SettingsShell.svelte` + `AppBar.svelte` | Account, admin, story settings, universe settings |
 | Reader | `.reader-shell` + `AppBar.svelte` (`shell="reader"`) | The public shelf, the public universe page, and the public story page |
-| Public | `.public-surface` + `AppBar.svelte` (`shell="public"`) + `ReaderFooter.svelte` (`shell="public"`) | The landing page, and `AuthShell.svelte` over it for sign-in, sign-up, every email-flow page, and the error page when signed out |
+| Public | `.public-surface` + `AppBar.svelte` (`shell="public"`) + `ReaderFooter.svelte` (`shell="public"`) | The landing page, and `AuthShell.svelte` over it for sign-in, sign-up, every email-flow page, a story's report form, and the error page when signed out |
 
 **Narrow windows.** At 960px wide and narrower the story editor and the review shell (owner
 and guest) show one pane at a time: a `<nav class="seg full pane-tabs">` sits between

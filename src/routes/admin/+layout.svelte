@@ -211,6 +211,18 @@
 				>
 				<span class="lbl">Published</span>
 			</a>
+			<a class="nav-item" class:active={active === 'reports'} href={resolve('/admin/reports')}>
+				<svg
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.7"
+					stroke-linecap="round"
+					stroke-linejoin="round"><path d="M5 21V4h11l-1.5 4L16 12H5" /></svg
+				>
+				<span class="lbl">Reports</span>
+				{#if data.openReports > 0}<span class="nav-badge">{data.openReports}</span>{/if}
+			</a>
 		</nav>
 		{#if data.health}
 			<div class="admin-health">

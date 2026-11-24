@@ -5,6 +5,7 @@ import { isUuid } from '#lib/slug';
 import { requireModerator } from '#lib/server/roles';
 import { listPublications, takedownPublication } from '#lib/server/publish';
 import { formText } from '#lib/server/validation';
+import { isReportReason } from '#lib/report-reasons';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	requireModerator(locals);
@@ -16,9 +17,13 @@ export const actions: Actions = {
 		requireModerator(locals);
 		const data = await request.formData();
 		const publicationId = formText(data, 'publicationId');
+		const reason = formText(data, 'reason');
+		if (!isReportReason(reason)) {
+			return fail(400, { scope: 'published', message: 'Pick a reason for the takedown.' });
+		}
 		if (
 			!isUuid(publicationId) ||
-			!(await takedownPublication(db, publicationId, locals.user!.id))
+			!(await takedownPublication(db, publicationId, locals.user!.id, reason))
 		) {
 			return fail(400, { scope: 'published', message: 'That edition does not exist.' });
 		}

@@ -3,12 +3,14 @@ import type { Database } from './auth.ts';
 import {
 	assets,
 	publicationAssets,
+	publicationReports,
 	publications,
 	slugHistory,
 	stories,
 	universes,
 	users
 } from './db/schema.ts';
+import type { ReportReason } from '#lib/report-reasons';
 import { gatherStory, type ExportScene } from './export.ts';
 import { getDraft } from './story-drafts.ts';
 import { findAssetReferences } from '#lib/markdown';
@@ -506,18 +508,32 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 	return Boolean(inline);
 }
 
-// Admin takedown: hides the edition without touching the author's source.
+// Takes an edition down (an admin or a moderator) and closes every open
+// report about it. The reason, a REPORT_REASONS key, is shown to the author.
 export async function takedownPublication(
 	db: Database,
 	publicationId: string,
-	removedBy: string | null = null
+	removedBy: string | null = null,
+	reason: ReportReason | null = null
 ): Promise<boolean> {
-	const updated = await db
-		.update(publications)
-		.set({ removedAt: sql`now()`, removedBy })
-		.where(and(eq(publications.id, publicationId), isNull(publications.removedAt)))
-		.returning({ id: publications.id });
-	return updated.length > 0;
+	return await db.transaction(async (tx) => {
+		const updated = await tx
+			.update(publications)
+			.set({ removedAt: sql`now()`, removedBy, removedReason: reason })
+			.where(and(eq(publications.id, publicationId), isNull(publications.removedAt)))
+			.returning({ id: publications.id });
+		if (updated.length === 0) return false;
+		await tx
+			.update(publicationReports)
+			.set({ resolvedAt: sql`now()`, resolvedBy: removedBy, resolution: 'taken_down' })
+			.where(
+				and(
+					eq(publicationReports.publicationId, publicationId),
+					isNull(publicationReports.resolvedAt)
+				)
+			);
+		return true;
+	});
 }
 
 // The admin's view of everything published on this instance.

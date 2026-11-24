@@ -19,7 +19,8 @@ import {
 	stories,
 	universes,
 	users,
-	publications
+	publications,
+	publicationReports
 } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { textHash } from '../../src/lib/text-hash';
@@ -90,6 +91,7 @@ const enrichRoute = await import('../../src/routes/api/assistant/enrich/+server'
 const adminPage = await import('../../src/routes/admin/[[section]]/+page.server');
 const adminLayout = await import('../../src/routes/admin/+layout.server');
 const publishedPage = await import('../../src/routes/admin/published/+page.server');
+const reportsPage = await import('../../src/routes/admin/reports/+page.server');
 const universeSettings = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
 	await import('../../src/routes/stories/[id]/settings/[[section]]/+page.server');
@@ -867,7 +869,27 @@ describe('moderation pages', () => {
 		const mod = await moderator();
 		expect(
 			await adminLayout.load(event(mod, { method: 'GET', path: '/admin/published' }) as never)
-		).toEqual({ health: null });
+		).toEqual({ openReports: 0, health: null });
+	});
+
+	it('the reports queue refuses a plain user and a missing user', async () => {
+		const row = await edition();
+		const [report] = await db
+			.insert(publicationReports)
+			.values({ publicationId: row.id, reason: 'spam' })
+			.returning();
+		for (const [name, action] of Object.entries(reportsPage.actions)) {
+			const f = new FormData();
+			f.set('publicationId', row.id);
+			f.set('reportId', report.id);
+			f.set('reason', 'spam');
+			for (const user of [B, null]) {
+				await expectRefused(
+					action as Handler,
+					event(user, { path: `/admin/reports?/${name}`, form: f })
+				);
+			}
+		}
 	});
 
 	it('takedown refuses a plain user and a missing user', async () => {
@@ -875,6 +897,7 @@ describe('moderation pages', () => {
 		const form = () => {
 			const f = new FormData();
 			f.set('publicationId', row.id);
+			f.set('reason', 'spam');
 			return f;
 		};
 		for (const user of [B, null]) {
@@ -890,6 +913,7 @@ describe('moderation pages', () => {
 		const mod = await moderator();
 		const f = new FormData();
 		f.set('publicationId', row.id);
+		f.set('reason', 'spam');
 		const result = await publishedPage.actions.takedown(
 			event(mod, { path: '/admin/published?/takedown', form: f }) as never
 		);
@@ -897,5 +921,6 @@ describe('moderation pages', () => {
 		const [after] = await db.select().from(publications).where(eq(publications.id, row.id));
 		expect(after.removedAt).not.toBeNull();
 		expect(after.removedBy).toBe(mod.id);
+		expect(after.removedReason).toBe('spam');
 	});
 });

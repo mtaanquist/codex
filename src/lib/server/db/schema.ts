@@ -981,6 +981,8 @@ export const publications = pgTable(
 		// deleting the source. removedBy is who took it down.
 		removedAt: timestamp('removed_at', { withTimezone: true }),
 		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
+		// A key from REPORT_REASONS (#lib/report-reasons), shown to the author.
+		removedReason: text('removed_reason'),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
@@ -989,6 +991,33 @@ export const publications = pgTable(
 		uniqueIndex('publications_one_current_per_story')
 			.on(table.storyId)
 			.where(sql`${table.isCurrent}`)
+	]
+);
+
+// A reader's report about a published edition. Not authored content, so not
+// exported; it goes with the edition. Neither the reporter's address nor an
+// email is kept.
+export const publicationReports = pgTable(
+	'publication_reports',
+	{
+		id: uuid('id').primaryKey().defaultRandom(),
+		publicationId: uuid('publication_id')
+			.references(() => publications.id, { onDelete: 'cascade' })
+			.notNull(),
+		// A key from REPORT_REASONS.
+		reason: text('reason').notNull(),
+		comment: text('comment'),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+		resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+		resolvedBy: uuid('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+		// 'taken_down' or 'dismissed' (and 'removed_from_browse' once Browse lands).
+		resolution: text('resolution')
+	},
+	(table) => [
+		index('publication_reports_open')
+			.on(table.createdAt)
+			.where(sql`${table.resolvedAt} is null`),
+		index('publication_reports_publication').on(table.publicationId)
 	]
 );
 
