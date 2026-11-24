@@ -117,7 +117,7 @@ describe('who appears', () => {
 		const unlisted = await story('Unlisted');
 		await db.update(stories).set({ visibility: 'unlisted' }).where(eq(stories.id, unlisted.id));
 		const down = await story('Taken down');
-		await takedownPublication(db, down.publicationId);
+		await takedownPublication(db, down.publicationId, null, 'other');
 		const blocked = await story('Blocked');
 		await db.update(stories).set({ browseBlockedAt: new Date() }).where(eq(stories.id, blocked.id));
 		const trashed = await story('Trashed');
@@ -290,12 +290,19 @@ describe('listing and moderation', () => {
 		expect(await listed()).toBe(true);
 
 		await createReport(db, s.publicationId, 'spam', '');
-		expect(await removeFromBrowse(db, s.id, mod.id, 'spam')).toBe(true);
+		await createReport(db, s.publicationId, 'illegal', '');
+		const [acted] = await db
+			.select()
+			.from(publicationReports)
+			.where(eq(publicationReports.reason, 'spam'));
+		expect(await removeFromBrowse(db, s.id, mod.id, 'spam', acted.id)).toBe(true);
 		expect(await removeFromBrowse(db, s.id, mod.id, 'spam')).toBe(false);
 		const [row] = await db.select().from(stories).where(eq(stories.id, s.id));
 		expect(row).toMatchObject({ listedInBrowse: false, browseBlockedReason: 'spam' });
-		const [report] = await db.select().from(publicationReports);
-		expect(report.resolution).toBe('removed_from_browse');
+		// Only the report acted on closes; the other may still need a takedown.
+		const reports = await db.select().from(publicationReports);
+		expect(reports.find((r) => r.id === acted.id)?.resolution).toBe('removed_from_browse');
+		expect(reports.find((r) => r.id !== acted.id)?.resolvedAt).toBeNull();
 		// The pages stay up.
 		const [edition] = await db
 			.select()
@@ -320,7 +327,8 @@ describe('the page', () => {
 	const load = (search = '') =>
 		browsePage.load({
 			url: new URL(`http://localhost/browse${search}`),
-			getClientAddress: () => '203.0.113.9'
+			getClientAddress: () => '203.0.113.9',
+			setHeaders: () => {}
 		} as never);
 
 	it('does not exist while Browse is off', async () => {
@@ -342,6 +350,19 @@ describe('the page', () => {
 		expect(((await load('?q=shown')) as { indexable: boolean }).indexable).toBe(false);
 		// A filter naming nothing that exists is an empty page, kept out of search engines.
 		expect(((await load('?tag=no-such-tag')) as { indexable: boolean }).indexable).toBe(false);
+	});
+
+	it('names a filter by the surviving entry when it came in by a merged slug', async () => {
+		await saveBrowseEnabled(db, true);
+		await addListEntries(db, 'genre', 'Sci-fi\nScience fiction');
+		const [{ id }] = (await pool.query("select id from tags where slug = 'sci-fi'")).rows;
+		await mergeTag(db, id, 'Science fiction');
+		const result = (await load('?genre=sci-fi')) as {
+			resolved: { genre: string | null };
+			indexable: boolean;
+		};
+		expect(result.resolved.genre).toBe('science-fiction');
+		expect(result.indexable).toBe(true);
 	});
 
 	it('limits how many pages one address can load', async () => {

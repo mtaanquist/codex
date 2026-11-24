@@ -379,15 +379,18 @@ export const actions: Actions = {
 	saveTags: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);
 		const data = await request.formData();
+		const view = await storyTagView(db, story.id);
 		const genres = await pickListed(db, 'genre', data.getAll('genres'));
-		if (genres.length > MAX_GENRES) {
+		// Like fandoms, a story already over the limit (after an unmerge) may
+		// keep what it has but not add more.
+		if (genres.length > Math.max(MAX_GENRES, view.genres.length)) {
 			return fail(400, { action: 'tags', message: `Pick up to ${MAX_GENRES} genres.` });
 		}
 		const warnings = await pickListed(db, 'warning', data.getAll('contentWarnings'));
 		// Checked before anything is written, so a refused name saves nothing.
 		const checked = checkTagNames(chipValues(data, 'tags'));
 		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
-		const shown = (await storyTagView(db, story.id)).fandoms;
+		const shown = view.fandoms;
 		const fandoms = await findFandoms(
 			db,
 			chipValues(data, 'fandoms'),

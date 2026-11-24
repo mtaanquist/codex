@@ -321,7 +321,10 @@ export async function removeFromBrowse(
 	db: Database,
 	storyId: string,
 	by: string,
-	reason: ReportReason
+	reason: ReportReason,
+	// The report the moderator acted on, which closes. Other reports on the
+	// story stay open: its pages are still up, so they may need a takedown.
+	reportId: string | null = null
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const updated = await tx
@@ -335,11 +338,13 @@ export async function removeFromBrowse(
 			.where(and(eq(stories.id, storyId), isNull(stories.browseBlockedAt)))
 			.returning({ id: stories.id });
 		if (updated.length === 0) return false;
+		if (!reportId) return true;
 		await tx
 			.update(publicationReports)
 			.set({ resolvedAt: sql`now()`, resolvedBy: by, resolution: 'removed_from_browse' })
 			.where(
 				and(
+					eq(publicationReports.id, reportId),
 					isNull(publicationReports.resolvedAt),
 					inArray(
 						publicationReports.publicationId,

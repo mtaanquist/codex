@@ -60,7 +60,8 @@ export async function scheduleAccountDeletion(db: Database, userId: string): Pro
 
 // Cancels a scheduled deletion if the token is valid, reactivating the account
 // unless an admin suspension stands. Editions stay down (the user can
-// republish); restoring them is not automatic.
+// republish, since these removals carry no takedown reason); restoring them
+// is not automatic.
 export async function cancelAccountDeletion(db: Database, token: string): Promise<boolean> {
 	const userId = await consumeToken(db, 'deletion_cancel', token);
 	if (!userId) return false;

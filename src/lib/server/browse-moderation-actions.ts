@@ -15,10 +15,15 @@ export function browseModerationActions(scope: string) {
 			const data = await request.formData();
 			const storyId = formText(data, 'storyId');
 			const reason = formText(data, 'reason');
+			const reportId = formText(data, 'reportId') || null;
 			if (!isReportReason(reason)) {
 				return fail(400, { scope, message: 'Pick a reason.' });
 			}
-			if (!isUuid(storyId) || !(await removeFromBrowse(db, storyId, locals.user!.id, reason))) {
+			if (reportId && !isUuid(reportId)) return fail(400, { scope, message: 'Pick a report.' });
+			if (
+				!isUuid(storyId) ||
+				!(await removeFromBrowse(db, storyId, locals.user!.id, reason, reportId))
+			) {
 				return fail(400, { scope, message: 'That story does not exist or is already off Browse.' });
 			}
 			return { scope, done: true };

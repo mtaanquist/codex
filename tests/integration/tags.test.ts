@@ -146,6 +146,16 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Kept', 'Spoilers']);
 	});
 
+	it('a merged entry whose own row is removed goes when the writer drops its survivor', async () => {
+		await tagStory(storyId, ['Fam']);
+		await tagStory(otherStoryId, ['Found Family']);
+		await mergeTag(db, await tagId('fam'), 'Found Family');
+		await setTagRemoved(db, await tagId('fam'), true, ownerId);
+		expect(await names(storyId)).toEqual(['Found Family']);
+		await tagStory(storyId, []);
+		expect(await names(storyId)).toEqual([]);
+	});
+
 	it('keeps a merged curated entry on a save too', async () => {
 		await addListEntries(db, 'genre', 'Grimdark\nDark fantasy');
 		await setStoryList(db, storyId, 'genre', [await tagId('grimdark')]);

@@ -3,14 +3,19 @@ import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { isUuid } from '#lib/slug';
 import { requireModerator } from '#lib/server/roles';
-import { listPublications, restorePublication, takedownPublication } from '#lib/server/publish';
+import {
+	listPublications,
+	listTakenDown,
+	restorePublication,
+	takedownPublication
+} from '#lib/server/publish';
 import { formText } from '#lib/server/validation';
 import { isReportReason } from '#lib/report-reasons';
 import { browseModerationActions } from '#lib/server/browse-moderation-actions';
 
 export const load: PageServerLoad = async ({ locals }) => {
 	requireModerator(locals);
-	return { published: await listPublications(db, 50) };
+	return { published: await listPublications(db, 50), takenDown: await listTakenDown(db) };
 };
 
 export const actions: Actions = {

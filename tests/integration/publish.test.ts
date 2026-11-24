@@ -165,8 +165,8 @@ describe('takedown and covers', () => {
 	it('an admin takedown hides the edition without touching the source', async () => {
 		await publishStory(db, authorId, storyId);
 		const [current] = (await listPublications(db)).filter((row) => row.isCurrent);
-		expect(await takedownPublication(db, current.id)).toBe(true);
-		expect(await takedownPublication(db, current.id)).toBe(false);
+		expect(await takedownPublication(db, current.id, null, 'other')).toBe(true);
+		expect(await takedownPublication(db, current.id, null, 'other')).toBe(false);
 		expect(await publicEdition(db, 'inkwright', storyId)).toBeNull();
 		expect(await publicShelf(db, 'inkwright')).toHaveLength(0);
 		const [scene] = await db.select().from(scenes).where(eq(scenes.id, sceneId));
@@ -178,7 +178,7 @@ describe('takedown and covers', () => {
 		await db.update(stories).set({ coverAssetId: coverId }).where(eq(stories.id, storyId));
 		const first = await publishStory(db, authorId, storyId);
 		if (!first.ok) throw new Error(first.reason);
-		await takedownPublication(db, first.publicationId);
+		await takedownPublication(db, first.publicationId, null, 'other');
 		// The only current edition is taken down.
 		expect(await isPublicAsset(db, coverId)).toBe(false);
 		await restorePublication(db, first.publicationId);
@@ -223,7 +223,7 @@ describe('takedown and covers', () => {
 		const [current] = (await listPublications(db)).filter(
 			(row) => row.title === 'Illustrated' && row.isCurrent
 		);
-		await takedownPublication(db, current.id);
+		await takedownPublication(db, current.id, null, 'other');
 		expect(await isPublicAsset(db, asset.id)).toBe(false);
 	});
 });
@@ -617,7 +617,7 @@ describe('public universe page', () => {
 		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).not.toBeNull();
 
 		const [current] = (await listPublications(db)).filter((row) => row.isCurrent);
-		await takedownPublication(db, current.id);
+		await takedownPublication(db, current.id, null, 'other');
 		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
 	});
 

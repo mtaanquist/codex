@@ -12,15 +12,18 @@ const SEARCHES_PER_MINUTE = 30;
 // limit of their own.
 const PAGES_PER_MINUTE = 120;
 
-export const load: PageServerLoad = async ({ url, getClientAddress }) => {
+export const load: PageServerLoad = async ({ url, getClientAddress, setHeaders }) => {
 	if (!(await browseEnabled(db))) error(404, 'Not found');
 	const query = parseBrowseQuery(url.searchParams);
 	const ip = getClientAddress();
-	if (
-		!rateLimit(`browse:pages:${ip}`, PAGES_PER_MINUTE, 60_000).allowed ||
-		(query.q && !rateLimit(`browse:ip:${ip}`, SEARCHES_PER_MINUTE, 60_000).allowed)
-	) {
-		error(429, 'Too many searches just now. Wait a minute and try again.');
+	for (const limit of [
+		rateLimit(`browse:pages:${ip}`, PAGES_PER_MINUTE, 60_000),
+		...(query.q ? [rateLimit(`browse:ip:${ip}`, SEARCHES_PER_MINUTE, 60_000)] : [])
+	]) {
+		if (!limit.allowed) {
+			setHeaders({ 'retry-after': String(limit.retryAfterSeconds) });
+			error(429, 'Too many searches just now. Wait a minute and try again.');
+		}
 	}
 	const filters = await resolveFilters(db, query);
 	const [{ books, next }, authors, genres, fandoms, warnings] = await Promise.all([
@@ -36,6 +39,13 @@ export const load: PageServerLoad = async ({ url, getClientAddress }) => {
 			genre: filters.genre?.name ?? null,
 			fandom: filters.fandom?.name ?? null,
 			tag: filters.tag ? { name: filters.tag.name, slug: filters.tag.slug } : null
+		},
+		// The surviving entries' slugs, so the boxes show a filter that came in
+		// by an old slug, and the page has one canonical address per filter.
+		resolved: {
+			genre: filters.genre?.slug ?? null,
+			fandom: filters.fandom?.slug ?? null,
+			tag: filters.tag?.slug ?? null
 		},
 		books,
 		next,

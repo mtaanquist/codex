@@ -131,13 +131,21 @@ export async function publishStory(
 				.from(stories)
 				.where(eq(stories.id, story.id))
 				.for('update');
-			// A takedown holds until a moderator restores the edition, so a new
-			// publish cannot bring the story back on its own.
+			// A moderator's takedown holds until they restore the edition, so a
+			// new publish cannot bring the story back on its own. Editions the
+			// author's own account deletion took down carry no reason and do not
+			// hold: after cancelling the deletion they can publish again.
 			const [current] = await tx
-				.select({ removedAt: publications.removedAt })
+				.select({ removedReason: publications.removedReason })
 				.from(publications)
-				.where(and(eq(publications.storyId, story.id), eq(publications.isCurrent, true)));
-			if (current?.removedAt) return null;
+				.where(
+					and(
+						eq(publications.storyId, story.id),
+						eq(publications.isCurrent, true),
+						isNotNull(publications.removedAt)
+					)
+				);
+			if (current?.removedReason) return null;
 			await tx
 				.update(publications)
 				.set({ isCurrent: false })
@@ -563,8 +571,10 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 export async function takedownPublication(
 	db: Database,
 	publicationId: string,
-	removedBy: string | null = null,
-	reason: ReportReason | null = null
+	removedBy: string | null,
+	// Always set for a moderator's takedown; a null reason marks the removals
+	// account deletion makes (see scheduleAccountDeletion).
+	reason: ReportReason
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const [target] = await tx
@@ -612,13 +622,19 @@ export async function takedownPublication(
 	});
 }
 
-// Lifts a takedown, so the edition is public again and the author can
-// publish new editions.
+// Lifts a moderator's takedown, so the edition is public again and the author
+// can publish new editions. Never an edition account deletion took down.
 export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
 	const restored = await db
 		.update(publications)
 		.set({ removedAt: null, removedBy: null, removedReason: null })
-		.where(and(eq(publications.id, publicationId), isNotNull(publications.removedAt)))
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				isNotNull(publications.removedAt),
+				isNotNull(publications.removedReason)
+			)
+		)
 		.returning({ id: publications.id });
 	return restored.length > 0;
 }
@@ -644,4 +660,26 @@ export async function listPublications(db: Database, limit = 50) {
 		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.orderBy(desc(publications.publishedAt))
 		.limit(limit);
+}
+
+// Current editions a moderator took down, oldest takedown first, for the
+// Restore list. Separate from listPublications so none drop out of view.
+export async function listTakenDown(db: Database) {
+	return await db
+		.select({
+			id: publications.id,
+			handle: publications.handle,
+			title: publications.title,
+			removedAt: publications.removedAt,
+			removedReason: publications.removedReason
+		})
+		.from(publications)
+		.where(
+			and(
+				eq(publications.isCurrent, true),
+				isNotNull(publications.removedAt),
+				isNotNull(publications.removedReason)
+			)
+		)
+		.orderBy(publications.removedAt);
 }
