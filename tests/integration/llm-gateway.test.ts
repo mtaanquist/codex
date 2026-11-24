@@ -512,10 +512,9 @@ describe('gateway gating', () => {
 		// A scene of about 40k tokens, with the reviewer's 16k reply limit. Read
 		// once with every search's results, it fits under $1; every round of the
 		// search loop, with all five searches in every round after the first,
-		// comes to about 1M tokens of input, over $10. Only the final
-		// conversation (about 238k tokens) can be written to the cache, so the
-		// rest is priced at the plain rate and the bound is about $10.58, under
-		// $11; priced all at the cache-write rate it would be about $12.48.
+		// comes to about 1M tokens of input. Each round resends the cached
+		// prefix and a missed lookup writes it again, so all of it is priced at
+		// the cache-write rate: about $12.48, over $12 and under $13.
 		const scene = 'x'.repeat(120_000);
 		const run = (capUsd: number) =>
 			completeDetailed(
@@ -534,9 +533,9 @@ describe('gateway gating', () => {
 				},
 				{ provider: searching, http: noHttp }
 			);
-		await expect(run(10)).rejects.toThrow(SpendCapError);
+		await expect(run(12)).rejects.toThrow(SpendCapError);
 		expect(calls).toBe(0);
-		await run(11);
+		await run(13);
 		expect(calls).toBe(1);
 	});
 

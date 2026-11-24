@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { searchingCacheWriteTokens, searchingPromptTokens } from './gateway.ts';
+import { searchingPromptTokens } from './gateway.ts';
 import { WEB_SEARCH_MAX_USES } from './providers/anthropic.ts';
 
 describe('searchingPromptTokens', () => {
@@ -13,24 +13,5 @@ describe('searchingPromptTokens', () => {
 		const worstCase = 10 * 20_000 + 5 * 10_000 * 9 + 9 * 4000;
 		expect(searchingPromptTokens(20_000, 4000)).toBeGreaterThanOrEqual(worstCase);
 		expect(searchingPromptTokens(20_000, 4000)).toBe(686_000);
-	});
-});
-
-describe('searchingCacheWriteTokens', () => {
-	it('counts the final conversation once: the prompt, every search, and the replies before the last round', () => {
-		expect(searchingCacheWriteTokens(1000, 100)).toBe(1000 + 5 * 10_000 + 9 * 100);
-	});
-
-	it('is never more than the input the loop bills', () => {
-		for (const [prompt, reply] of [
-			[0, 0],
-			[1, 1],
-			[20_000, 4000],
-			[200_000, 32_000]
-		]) {
-			expect(searchingCacheWriteTokens(prompt, reply)).toBeLessThanOrEqual(
-				searchingPromptTokens(prompt, reply)
-			);
-		}
 	});
 });

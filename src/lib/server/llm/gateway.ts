@@ -186,7 +186,10 @@ export function ceilingPromptTokens(
 // prompt, the results so far, and what it wrote so far. Nothing holds the
 // model to one search per round (it can run several in the first), so every
 // search's results are counted in every round after the first, and so is the
-// reply; the prompt is counted once per round.
+// reply; the prompt is counted once per round. All of it is priced at the
+// cache-write rate: the cache markers sit on the system block and the last user
+// block, so each round resends the cached prefix, and a missed lookup writes it
+// again rather than reading it.
 //
 // The 10k ceiling is per search, and with the dated 2026 tool it assumes what
 // dynamic filtering adds to the context (the filtering code and its output, on
@@ -200,20 +203,6 @@ export function searchingPromptTokens(promptTokens: number, maxTokens: number): 
 	const later = SERVER_LOOP_MAX_ROUNDS - 1;
 	const results = WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS * later;
 	return SERVER_LOOP_MAX_ROUNDS * promptTokens + results + later * maxTokens;
-}
-
-// Of that input, the most the loop can write to Claude's cache. Each round only
-// adds to the conversation, so across the loop a token is written at most once
-// and the writes come to at most its final length: the prompt, every search's
-// results, and the reply of each round before the last. The rest of the
-// rounds' input is counted at the plain prompt rate, not the cache-read rate,
-// since a read is not guaranteed.
-export function searchingCacheWriteTokens(promptTokens: number, maxTokens: number): number {
-	return (
-		promptTokens +
-		WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS +
-		(SERVER_LOOP_MAX_ROUNDS - 1) * maxTokens
-	);
 }
 
 // The persona system message the gateway puts at the front of every turn.
@@ -348,9 +337,8 @@ async function respondWithRetry(
 // have billed, a resume, a tool round), so the rule lives here and not in each
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
 // Claude's cache, the dearest way it can be billed. A request that may search
-// is counted as every round of the search loop (searchingPromptTokens), with
-// only what the loop can write to the cache at the write rate
-// (searchingCacheWriteTokens). A caller with its own mayResend hook holds its
+// is counted as every round of the search loop (searchingPromptTokens), all at
+// the write rate. A caller with its own mayResend hook holds its
 // own ceiling (drafting, against the cap in force at each request).
 function wouldPassCap(
 	p: Prepared,
@@ -360,8 +348,7 @@ function wouldPassCap(
 	if (!req.meter || req.mayResend) return false;
 	const prompt = ceilingPromptTokens(request.messages, request.tools);
 	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, request.maxTokens) : prompt;
-	const writable = p.webSearch ? searchingCacheWriteTokens(prompt, request.maxTokens) : prompt;
-	const written = p.claude ? writable : 0;
+	const written = p.claude ? promptTokens : 0;
 	return req.meter.wouldPassCap(p.model, {
 		promptTokens,
 		completionTokens: request.maxTokens,
