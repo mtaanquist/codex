@@ -515,6 +515,7 @@ export function buildRereadMessage(input: {
 	changed: string;
 	note: string;
 	language?: LanguageSetting;
+	preferences?: PreferenceSetting;
 }): string {
 	const title = (input.sceneTitle ?? '').trim() || 'this scene';
 	const changed = input.changed.trim()
@@ -522,7 +523,11 @@ export function buildRereadMessage(input: {
 		: 'The writer just accepted a change that removed some text here.';
 	return [
 		`You are re-reading a passage of the scene "${title}" (id: ${input.sceneId}) after a fix from one of your pattern notes was accepted.`,
-		...[languageRule(input.language ?? NO_LANGUAGE)].filter(Boolean),
+		...[
+			languageRule(input.language ?? NO_LANGUAGE),
+			// The follow-up it may stage is new text, so it keeps to the house style.
+			houseStyleLine(input.preferences ?? NO_PREFERENCES, 'write')
+		].filter(Boolean),
 		changed,
 		'The pattern note it came from:',
 		input.note
@@ -703,6 +708,8 @@ export function buildPatternBrief(options: {
 			? `Run a pattern pass over the chapter "${chapter}" of the story with id ${options.storyId}.`
 			: `Run a pattern pass over the story with id ${options.storyId}, one chapter at a time.`,
 		languageRule(language),
+		// The brief stages fixes as well as notes, like the Assistant's apply stage.
+		houseStyleLine(preferences, 'write'),
 		'Find the scenes with list_scenes and read each one in full with get_scene. Find the habits in the prose that recur across the chapter:',
 		...patternLooksFor(preferences),
 		nativePatternLine(language),

@@ -45,7 +45,9 @@ describe('prompts with no language set', () => {
 			storyId: '22222222-2222-4222-8222-222222222222',
 			sceneId: '33333333-3333-4333-8333-333333333333',
 			brief: 'b',
-			chapter: 'One'
+			chapter: 'One',
+			passage: 'p',
+			instruction: 'i'
 		};
 		const connection = { permissions: ['read', 'suggest'] as const, language: NO_LANGUAGE };
 		const now: Record<string, string> = {
@@ -83,7 +85,9 @@ describe('prompts with no language set', () => {
 			'write',
 			'draft',
 			'draft-chapter',
-			'catchup'
+			'catchup',
+			'rewrite',
+			'continuity-review'
 		]) {
 			now[`mcp-${name}`] = buildMcpPrompt(name, ids, connection);
 		}
@@ -100,7 +104,9 @@ describe('prompts with no language set', () => {
 			storyId: '22222222-2222-4222-8222-222222222222',
 			sceneId: '33333333-3333-4333-8333-333333333333',
 			brief: 'b',
-			chapter: 'One'
+			chapter: 'One',
+			passage: 'p',
+			instruction: 'i'
 		};
 		const none = { language: NO_LANGUAGE, preferences: NO_PREFERENCES };
 		const connection = { permissions: ['read', 'suggest'] as const, ...none };
@@ -131,7 +137,16 @@ describe('prompts with no language set', () => {
 			draft: buildSceneDraftMessage({ brief: 'b', targetWords: 500, ...none }),
 			frame: renderFrame(frameScope, { writingRules: none })
 		};
-		for (const name of ['review', 'copyedit', 'pattern-pass', 'write', 'draft', 'draft-chapter']) {
+		for (const name of [
+			'review',
+			'copyedit',
+			'pattern-pass',
+			'write',
+			'rewrite',
+			'draft',
+			'draft-chapter',
+			'continuity-review'
+		]) {
 			now[`mcp-${name}`] = buildMcpPrompt(name, ids, connection);
 		}
 		for (const [name, text] of Object.entries(now)) {

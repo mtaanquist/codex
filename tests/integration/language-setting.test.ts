@@ -117,6 +117,19 @@ describe('the language settings', () => {
 		expect(story.language).toBeNull();
 	});
 
+	it('keeps the stored languages when a details form leaves the field out', async () => {
+		await saveUniverse('en-GB');
+		await saveStory('en-US');
+		expect(
+			await universePage.actions.update(post({ name: 'Ardenfall' }, { id: universeId }))
+		).toMatchObject({ saved: true });
+		expect(
+			await storySettings.actions.update(post({ title: 'The Toll' }, { id: storyId }))
+		).toMatchObject({ saved: true });
+		expect((await universeLanguage(db, universeId)).language).toBe('en-GB');
+		expect((await storyLanguage(db, storyId)).language).toBe('en-US');
+	});
+
 	it("saves the writer's native language from the profile form", async () => {
 		const save = (nativeLanguage: string) =>
 			accountPage.actions.updateName(post({ displayName: 'L', penName: '', nativeLanguage }, {}));

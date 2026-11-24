@@ -12,6 +12,7 @@ import {
 	buildPatternApplyMessage,
 	buildPatternBrief,
 	buildPatternSurveyMessage,
+	buildRereadMessage,
 	buildReviewMessage
 } from './review.ts';
 import { buildSceneDraftMessage } from './scene-draft.ts';
@@ -206,6 +207,19 @@ describe('the prompts that carry the preferences', () => {
 		expect(buildPatternApplyMessage(pattern, patternScene, 1000, NO_LANGUAGE, STYLE)).toContain(
 			line
 		);
+		// The MCP brief stages fixes too, so it carries the same line.
+		expect(buildPatternBrief({ storyId: 'st', cap: 5, preferences: STYLE })).toContain(line);
+		const reread = (preferences?: PreferenceSetting) =>
+			buildRereadMessage({
+				sceneId: 's1',
+				sceneTitle: null,
+				passage: 'p',
+				changed: 'c',
+				note: 'n',
+				preferences
+			});
+		expect(reread(STYLE)).toContain(line);
+		expect(reread(NO_PREFERENCES)).toBe(reread());
 		// Drafts are not told about habits to leave alone or the notes.
 		const notes = prefs({ leaveAlone: ['filterVerbs'], notes: 'n' });
 		expect(buildSceneDraftMessage({ brief: 'b', targetWords: 500, preferences: notes })).toBe(

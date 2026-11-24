@@ -2,7 +2,7 @@
 	import { NO_PRICE_NOTE, capNotAppliedNote, money, overWarnNote } from '#lib/cost-notes';
 	import { resolve } from '$app/paths';
 	import { modal } from '#lib/modal';
-	import { capStopPhrase, formatNumber } from '#lib/format';
+	import { capContinueAdvice, capStopPhrase, formatNumber } from '#lib/format';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import { reviewModal, closeReviewModal } from '#lib/review-modal.svelte';
 	import {
@@ -105,6 +105,7 @@
 		capUsd?: number;
 		capEnforceable: boolean;
 		wholeBook?: 'fits' | 'chapters' | 'unavailable';
+		webSearch?: true;
 	};
 
 	// The estimate is advisory: anything that does not carry the two figures the
@@ -386,7 +387,7 @@
 								)}.
 							</p>
 							<p class="rm-note">
-								Raise the cap in settings or run the review again to continue.
+								{capContinueAdvice(progress.spentUsd ?? 0, 'run the review again')}
 								<HelpLink topic="account" label="usage and cost" />
 							</p>
 						{:else if progress.state === 'done' || progress.phase === 'done'}
@@ -470,6 +471,14 @@
 						{/if}
 						{#if estimate.capUsd !== undefined && !estimate.capEnforceable}
 							<p class="rm-note">{capNotAppliedNote(estimate.capUsd)}</p>
+						{/if}
+						{#if estimate.webSearch}
+							<p class="rm-note">
+								Web search is on for this story, and these figures do not include it.{estimate.capUsd !==
+									undefined && estimate.capEnforceable
+									? ' Your spend cap keeps extra room for searches, so the review can stop at the cap before it has spent it all. If it does, raise the cap.'
+									: ''}
+							</p>
 						{/if}
 						{#if warned}
 							<p class="rm-note">

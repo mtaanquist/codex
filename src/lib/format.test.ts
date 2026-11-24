@@ -11,6 +11,7 @@ import {
 	relativeShort,
 	dayKey,
 	spentPhrase,
+	capContinueAdvice,
 	capStopPhrase,
 	formatBytes
 } from './format';
@@ -123,6 +124,21 @@ describe('spentPhrase', () => {
 		expect(spentPhrase(1.2)).toBe('about $1.20');
 		expect(spentPhrase(1.2, true)).toBe('about $1.20 (estimated)');
 		expect(spentPhrase(0.01234, false, 4)).toBe('about $0.0123');
+	});
+});
+
+describe('capContinueAdvice', () => {
+	it('offers a rerun when the job spent something', () => {
+		expect(capContinueAdvice(1.5, 'run the review again')).toBe(
+			'Raise the cap in settings or run the review again to continue.'
+		);
+	});
+
+	it('asks for a higher cap first when the job was held before it spent anything', () => {
+		expect(capContinueAdvice(0, 'run the review again')).toBe(
+			'Raise the cap in settings, then run the review again.'
+		);
+		expect(capContinueAdvice(0)).toBe('Raise the cap in settings, then run it again.');
 	});
 });
 

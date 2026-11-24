@@ -126,7 +126,8 @@ export const actions: Actions = {
 		const descriptionMd = formText(data, 'description').trim() || null;
 		const establishedSetting = data.get('establishedSetting') === 'on';
 		const languageRaw = formText(data, 'language');
-		const language = normaliseLanguage(languageRaw);
+		// A post without the field leaves the stored language alone.
+		const language = data.has('language') ? normaliseLanguage(languageRaw) : undefined;
 		if (!name) {
 			return fail(400, { action: 'update', message: 'The universe needs a name.' });
 		}

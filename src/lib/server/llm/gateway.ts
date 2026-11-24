@@ -199,6 +199,20 @@ export function searchingPromptTokens(promptTokens: number, maxTokens: number): 
 	return rounds * promptTokens + results + (rounds - 1) * maxTokens;
 }
 
+// Of that input, the most the loop can write to Claude's cache. Each round only
+// adds to the conversation, so across the loop a token is written at most once
+// and the writes come to at most its final length: the prompt, every search's
+// results, and the reply of each round before the last. The rest of the
+// rounds' input is counted at the plain prompt rate, not the cache-read rate,
+// since a read is not guaranteed.
+export function searchingCacheWriteTokens(promptTokens: number, maxTokens: number): number {
+	return (
+		promptTokens +
+		WEB_SEARCH_MAX_USES * WEB_SEARCH_RESULT_CEILING_TOKENS +
+		(SERVER_LOOP_MAX_ROUNDS - 1) * maxTokens
+	);
+}
+
 // The persona system message the gateway puts at the front of every turn.
 export function personaMessage(config: {
 	assistantName: string;
@@ -330,10 +344,11 @@ async function respondWithRetry(
 // before every send (a first send, a resend after a failure the endpoint may
 // have billed, a resume, a tool round), so the rule lives here and not in each
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
-// Claude's cache, the dearest way it can be billed, and for a request that may
-// search, as every round of the search loop (searchingPromptTokens). A caller
-// with its own mayResend hook holds its own ceiling (drafting, against the cap
-// in force at each request).
+// Claude's cache, the dearest way it can be billed. A request that may search
+// is counted as every round of the search loop (searchingPromptTokens), with
+// only what the loop can write to the cache at the write rate
+// (searchingCacheWriteTokens). A caller with its own mayResend hook holds its
+// own ceiling (drafting, against the cap in force at each request).
 function wouldPassCap(
 	p: Prepared,
 	req: GatewayRequest,
@@ -342,7 +357,8 @@ function wouldPassCap(
 	if (!req.meter || req.mayResend) return false;
 	const prompt = ceilingPromptTokens(request.messages, request.tools);
 	const promptTokens = p.webSearch ? searchingPromptTokens(prompt, request.maxTokens) : prompt;
-	const written = p.claude ? promptTokens : 0;
+	const writable = p.webSearch ? searchingCacheWriteTokens(prompt, request.maxTokens) : prompt;
+	const written = p.claude ? writable : 0;
 	return req.meter.wouldPassCap(p.model, {
 		promptTokens,
 		completionTokens: request.maxTokens,
@@ -542,10 +558,10 @@ const WEB_SEARCH_ROLES: readonly AssistantRole[] = ['reviewer', 'chat'];
 // keeps a search off every turn about a world the writer invented, where there
 // is nothing to look up. The scope loaders check ownership, so a universe the
 // user does not own answers false.
-async function webSearchAllowed(
+export async function webSearchAllowed(
 	db: Database,
 	config: ResolvedConfig,
-	req: GatewayRequest
+	req: Pick<GatewayRequest, 'userId' | 'storyId' | 'universeId' | 'role'>
 ): Promise<boolean> {
 	if (!config.webSearch || adapterKind(config.provider) !== 'anthropic') return false;
 	if (!WEB_SEARCH_ROLES.includes(req.role)) return false;

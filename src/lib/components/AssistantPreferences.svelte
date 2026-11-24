@@ -1,13 +1,15 @@
 <script lang="ts">
 	// The "Assistant preferences" group of a story's or a universe's Details:
 	// the house style, the habit checks, and the writer's own notes. On a
-	// story in a universe, a blank choice uses the universe's; on a universe or
-	// a standalone story (no inherited), the Assistant's default (infer from the
-	// text, check everything).
+	// story, a blank choice uses its universe's; on a universe, the Assistant's
+	// default (infer from the text, check everything). Standalone stories share
+	// a hidden universe, whose settings the writer sees as the defaults for all
+	// standalone stories, so standalone words it that way.
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import {
 		HABIT_CHECKS,
 		HOUSE_STYLE,
+		inheritedChoiceLabel,
 		MAX_ASSISTANT_NOTES,
 		normaliseNotes,
 		normalisePreferences
@@ -18,6 +20,7 @@
 		stored,
 		notes,
 		inherited = null,
+		standalone = false,
 		saved = false,
 		error = null,
 		submitted = null
@@ -25,9 +28,10 @@
 		level: 'story' | 'universe';
 		stored: unknown;
 		notes: string | null;
-		// The universe's preferences, for a story in a universe; null for a
-		// universe or a standalone story.
+		// The universe's preferences, for a story; null for a universe.
 		inherited?: { preferences: unknown; notes: string | null } | null;
+		// A standalone story, or the universe that holds them.
+		standalone?: boolean;
 		saved?: boolean;
 		error?: string | null;
 		// What a refused save sent, shown again so nothing typed is lost.
@@ -41,6 +45,10 @@
 	const universeNotes = $derived(inherited ? normaliseNotes(inherited.notes) : null);
 	const id = (key: string) => `${level}-pref-${key}`;
 
+	const useInherited = $derived(inheritedChoiceLabel(standalone));
+
+	// An unset house style shows the plain choice; an unset habit check is
+	// checked, so it says so.
 	function blankLabel(key: string, fallback: string): string {
 		if (!fromUniverse) return fallback;
 		const value = (fromUniverse as Record<string, string | undefined>)[key];
@@ -50,17 +58,25 @@
 			: value === 'leave'
 				? 'Leave alone'
 				: 'Check';
-		return `Use the universe's (${label ?? fallback})`;
+		return label ? `${useInherited}: ${label}` : useInherited;
 	}
 </script>
 
 {#snippet intro()}
-	{#if level === 'universe'}
+	{#if level === 'universe' && standalone}
+		The defaults for all your standalone stories: how the Assistant reviews and drafts them. Leave a
+		house style setting on "Not set" and the Assistant works it out from your prose. A story can
+		change any of these in its own settings.
+	{:else if level === 'universe'}
 		How the Assistant reviews and drafts the stories in this universe. Leave a house style setting
 		on "Not set" and the Assistant works it out from your prose. A story can change any of these in
 		its own settings.
+	{:else if inherited && standalone}
+		How the Assistant reviews and drafts this story. A setting on "{useInherited}" follows the
+		settings for all your standalone stories (in your library, open Settings under Standalone
+		stories); where those are not set either, the Assistant works it out from your prose.
 	{:else if inherited}
-		How the Assistant reviews and drafts this story. A setting on "Use the universe's" follows the
+		How the Assistant reviews and drafts this story. A setting on "{useInherited}" follows the
 		universe's settings; where the universe has not set it either, the Assistant works it out from
 		your prose.
 	{:else}
@@ -136,7 +152,9 @@
 				are on purpose, leave them". Review and the pattern pass check these first. Up to {MAX_ASSISTANT_NOTES}
 				characters.
 				{#if universeNotes}
-					Left blank, the universe's notes are used.
+					Left blank, the {standalone
+						? 'notes for all your standalone stories'
+						: "universe's notes"} are used.
 				{/if}
 			</p>
 		</div>
