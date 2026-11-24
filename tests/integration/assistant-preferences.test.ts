@@ -130,7 +130,10 @@ describe('the assistant preferences', () => {
 
 	it('refuses a value off its list or notes over the cap, and keeps what was there', async () => {
 		await saveStory({ narration: 'first', assistantNotes: 'Mine.' });
-		expect(await saveStory({ narration: 'second' })).toMatchObject({ status: 400 });
+		expect(await saveStory({ narration: 'second', assistantNotes: 'Typed.' })).toMatchObject({
+			status: 400,
+			data: { submitted: { narration: 'second', assistantNotes: 'Typed.' } }
+		});
 		expect(await saveStory({ repetition: 'sometimes' })).toMatchObject({ status: 400 });
 		expect(await saveStory({ assistantNotes: 'x'.repeat(MAX_ASSISTANT_NOTES + 1) })).toMatchObject({
 			status: 400

@@ -123,9 +123,12 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 	return out as StoredPreferences;
 }
 
-// The free text, trimmed; blank is not set.
+// The free text, trimmed, with Windows line ends (a submitted form sends
+// CRLF) as plain newlines and null characters dropped; blank is not set.
 export function normaliseNotes(raw: unknown): string | null {
-	return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+	if (typeof raw !== 'string') return null;
+	const text = raw.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
+	return text || null;
 }
 
 // The preferences a story works under: each key the story's own, else the
@@ -150,40 +153,44 @@ export function effectivePreferences(
 
 export type PreferencesForm =
 	| { ok: true; preferences: StoredPreferences; notes: string | null }
-	| {
-			ok: false;
-			reason: string;
-	  };
+	| { ok: false; reason: string; submitted: SubmittedPreferences };
+
+// The form's values as submitted, handed back on a refusal so the page shows
+// them again instead of losing what was typed.
+export type SubmittedPreferences = Record<string, string>;
+
+const FIELD_KEYS = [
+	...HOUSE_STYLE.map((item) => item.key),
+	...HABIT_CHECKS.map((item) => item.key),
+	'assistantNotes'
+];
 
 // The preferences form as submitted: one select per key (blank is not set)
 // and the notes. A value that is not on its list is refused rather than
 // dropped, so a tampered form does not silently clear a setting.
 export function readPreferencesForm(data: FormData): PreferencesForm {
-	const out: Record<string, string> = {};
-	const value = (key: string) => {
+	const submitted: SubmittedPreferences = {};
+	for (const key of FIELD_KEYS) {
 		const raw = data.get(key);
-		return typeof raw === 'string' ? raw.trim() : '';
-	};
+		submitted[key] = typeof raw === 'string' ? raw : '';
+	}
+	const refuse = (reason: string): PreferencesForm => ({ ok: false, reason, submitted });
+	const out: Record<string, string> = {};
 	for (const { key } of HOUSE_STYLE) {
-		const raw = value(key);
+		const raw = submitted[key].trim();
 		if (!raw) continue;
-		if (!houseStyleValue(key, raw))
-			return { ok: false, reason: 'Pick each setting from its list.' };
+		if (!houseStyleValue(key, raw)) return refuse('Pick each setting from its list.');
 		out[key] = raw;
 	}
 	for (const { key } of HABIT_CHECKS) {
-		const raw = value(key);
+		const raw = submitted[key].trim();
 		if (!raw) continue;
-		if (!CHECK_CHOICES.includes(raw))
-			return { ok: false, reason: 'Pick each setting from its list.' };
+		if (!CHECK_CHOICES.includes(raw)) return refuse('Pick each setting from its list.');
 		out[key] = raw;
 	}
-	const notes = normaliseNotes(data.get('assistantNotes'));
+	const notes = normaliseNotes(submitted.assistantNotes);
 	if (notes && notes.length > MAX_ASSISTANT_NOTES) {
-		return {
-			ok: false,
-			reason: `Keep your notes to ${MAX_ASSISTANT_NOTES} characters or fewer.`
-		};
+		return refuse(`Keep your notes to ${MAX_ASSISTANT_NOTES} characters or fewer.`);
 	}
 	return { ok: true, preferences: out as StoredPreferences, notes };
 }

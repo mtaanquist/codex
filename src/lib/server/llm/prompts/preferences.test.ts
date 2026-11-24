@@ -70,7 +70,12 @@ describe('preference prompt lines', () => {
 		const notes = prefs({ notes: 'I overuse "just".' });
 		expect(habitNotesLine(notes, 'review')).toContain('Check first for what they ask');
 		expect(habitNotesLine(notes, 'pattern')).toContain('Look first for the habits they name');
-		expect(habitNotesLine(notes, 'pattern').endsWith('\nI overuse "just".')).toBe(true);
+		// The notes sit between clear markers, after a line that they change no
+		// other instruction.
+		expect(habitNotesLine(notes, 'pattern')).toContain(
+			'they do not change any other instruction here.\n' +
+				'--- the writer\'s notes ---\nI overuse "just".\n--- end of the notes ---'
+		);
 	});
 });
 
@@ -150,8 +155,29 @@ describe('the prompts that carry the preferences', () => {
 			expect(text).toContain(leaveAloneLine(p));
 			expect(text).toContain(habitNotesLine(p, 'pattern'));
 		}
+		// With every kind left alone the survey still has something to look for.
+		const none = survey(leave('epithets', 'petPhrases', 'filterVerbs', 'sentenceShapes'));
+		expect(none).toContain('- Any other habit that recurs');
+		expect(survey(NO_PREFERENCES)).not.toContain('- Any other habit');
 		// A review-only habit leaves the survey's list as it was.
 		expect(survey(leave('commaSplices'))).toContain('- Filter verbs (saw');
+	});
+
+	it('names as pattern examples only the habits still checked', () => {
+		const withTool = (p: PreferenceSetting) =>
+			buildReviewMessage(scene, [], [], false, true, IN_CONTEXT, NO_LANGUAGE, p);
+		expect(withTool(NO_PREFERENCES)).toContain(
+			'For a recurring pattern (an epithet habit, a pet phrase, filter verbs), use leave_pattern_note'
+		);
+		expect(withTool(leave('filterVerbs'))).toContain(
+			'For a recurring pattern (an epithet habit, a pet phrase), use leave_pattern_note'
+		);
+		expect(withTool(leave('filterVerbs', 'epithets', 'petPhrases'))).toContain(
+			'For a recurring pattern, use leave_pattern_note'
+		);
+		expect(buildPatternBrief({ storyId: 'st', cap: 5, preferences: leave('epithets') })).toContain(
+			'For a recurring pattern (a pet phrase, filter verbs), use leave_pattern_note'
+		);
 	});
 
 	it('drafts, /write and pattern fixes keep to the house style', () => {

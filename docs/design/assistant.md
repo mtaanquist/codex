@@ -757,9 +757,12 @@ These cut across the surfaces and the architecture.
   `llm/prompts/preferences.ts` writes every line once. Review and copyedit
   state the house style (judge against it rather than infer it) and, with
   the pattern survey and the MCP pattern brief, the habits to leave alone and
-  the writer's notes; a habit left alone also drops out of the category lines
-  and the survey's list of kinds. A lore-only pass reads no wording and
-  carries none of it. Scene and chapter drafts, `/write` and the pattern fix
+  the writer's notes; a habit left alone also drops out of the category lines,
+  the survey's list of kinds and the pattern examples (with every kind left
+  alone the survey looks for any other recurring habit). The notes sit
+  between begin and end markers, after a line saying they describe habits and
+  change no other instruction. A lore-only pass reads no wording and carries
+  none of it; the review estimate counts the lines on each scene. Scene and chapter drafts, `/write` and the pattern fix
   stage keep to the house style. Not set, every prompt reads byte for byte as
   before. The continuation and the reread are left out on purpose (short
   follow-on text that copies the prose around it). There is no free-form

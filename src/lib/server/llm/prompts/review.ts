@@ -124,7 +124,7 @@ function focusInstruction(
 
 // Whether a review reads the wording (the sparing review, or a pass with
 // mechanics or prose), so the lines about how the prose is written apply.
-function readsWording(categories: ReviewCategory[]): boolean {
+export function readsWording(categories: ReviewCategory[]): boolean {
 	return (
 		categories.length === 0 || categories.includes('mechanics') || categories.includes('prose')
 	);
@@ -140,8 +140,18 @@ const ONE_THEME_PER_NOTE =
 // note and its fixes stage together and linked, which the writer then works
 // through in order; without it (the minimal tool profile) the note and its
 // edits go separately.
-const PATTERN_WITH_TOOL =
-	'For a recurring pattern (an epithet habit, a pet phrase, filter verbs), use leave_pattern_note: one call with a note opening "Pattern note (<the pattern>):" and an edit for every instance you would change, each with a one-sentence reason specific to that spot. Keep some variety on purpose: leave an instance alone where it helps the rhythm or clarity, and list it under kept with the reason. A pacing or structure observation is not a pattern; use leave_comment for it.';
+// The examples name only habits the writer has not left alone.
+const PATTERN_EXAMPLES: [HabitCheck, string][] = [
+	['epithets', 'an epithet habit'],
+	['petPhrases', 'a pet phrase'],
+	['filterVerbs', 'filter verbs']
+];
+const patternWithTool = (preferences: PreferenceSetting) => {
+	const examples = PATTERN_EXAMPLES.filter(([habit]) => checks(preferences, habit)).map(
+		([, phrase]) => phrase
+	);
+	return `For a recurring pattern${examples.length ? ` (${examples.join(', ')})` : ''}, use leave_pattern_note: one call with a note opening "Pattern note (<the pattern>):" and an edit for every instance you would change, each with a one-sentence reason specific to that spot. Keep some variety on purpose: leave an instance alone where it helps the rhythm or clarity, and list it under kept with the reason. A pacing or structure observation is not a pattern; use leave_comment for it.`;
+};
 const PATTERN_WITHOUT_TOOL =
 	'When a comment describes a recurring pattern, open it with "Pattern note (<the pattern>):" and give the line edits for it as separate suggest_edit calls, each with a one-sentence reason.';
 
@@ -174,7 +184,7 @@ export function buildReviewMessage(
 		'- leave_comment for an observation about continuity, characterisation, pacing, or clarity; quote the passage you mean.',
 		"- suggest_edit for a concrete line edit: replace an exact passage with an improved version, keeping the change minimal and faithful to the author's voice. Give it a one-sentence reason the author can learn from, unless the fix is obvious (a typo, a spelling slip, missing punctuation).",
 		ONE_THEME_PER_NOTE,
-		patternTool ? PATTERN_WITH_TOOL : PATTERN_WITHOUT_TOOL,
+		patternTool ? patternWithTool(preferences) : PATTERN_WITHOUT_TOOL,
 		sparing
 			? `Be specific and sparing; a few high-value notes beat many shallow ones. Splitting your observations into one comment per theme does not count against being sparing. Check the scene against the established world and entity details ${source.where}. Do not rewrite the scene wholesale or change the meaning of the prose.`
 			: focusInstruction(categories, source, language, preferences),
@@ -589,11 +599,20 @@ const PATTERN_KINDS: [HabitCheck, string][] = [
 	]
 ];
 
-const patternLooksFor = (preferences: PreferenceSetting) => [
-	...PATTERN_KINDS.filter(([habit]) => checks(preferences, habit)).map(([, line]) => line),
-	leaveAloneLine(preferences),
-	habitNotesLine(preferences, 'pattern')
-];
+// With every kind left alone the survey still looks for any other habit.
+const OTHER_HABITS =
+	'- Any other habit that recurs often enough to register: a word, a construction, or a gesture used again and again.';
+
+const patternLooksFor = (preferences: PreferenceSetting) => {
+	const kinds = PATTERN_KINDS.filter(([habit]) => checks(preferences, habit)).map(
+		([, line]) => line
+	);
+	return [
+		...(kinds.length ? kinds : [OTHER_HABITS]),
+		leaveAloneLine(preferences),
+		habitNotesLine(preferences, 'pattern')
+	];
+};
 
 export const PATTERN_FORMAT = [
 	'Reply with a JSON array and nothing else: no prose before or after it, no code fence, no explanation.',
@@ -676,7 +695,7 @@ export function buildPatternBrief(options: {
 		...patternLooksFor(preferences),
 		nativePatternLine(language),
 		patternReportRule(options.cap),
-		PATTERN_WITH_TOOL,
+		patternWithTool(preferences),
 		'One leave_pattern_note call carries the edits of one scene: make it on the first scene where the pattern shows. For the same pattern in another scene, stage each fix with suggest_edit and pass the id of the note as patternNoteId, so the writer goes through every fix from the one note.'
 	]
 		.filter(Boolean)

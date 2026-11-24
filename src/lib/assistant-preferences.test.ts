@@ -5,6 +5,7 @@ import {
 	HOUSE_STYLE,
 	MAX_ASSISTANT_NOTES,
 	NO_PREFERENCES,
+	normaliseNotes,
 	normalisePreferences,
 	readPreferencesForm
 } from './assistant-preferences.ts';
@@ -92,5 +93,31 @@ describe('assistant preferences', () => {
 		expect(
 			readPreferencesForm(form({ assistantNotes: 'x'.repeat(MAX_ASSISTANT_NOTES) }))
 		).toMatchObject({ ok: true });
+	});
+
+	it('counts a submitted line break as one character, as the browser does', () => {
+		// The browser caps the field counting each line break once, then sends
+		// it as CRLF; a note at the cap must still save.
+		const lines = Array.from({ length: 10 }, () => 'x'.repeat(99)).join('\r\n');
+		expect(lines.replace(/\r\n/g, '\n').length).toBe(MAX_ASSISTANT_NOTES - 1);
+		const read = readPreferencesForm(form({ assistantNotes: lines }));
+		expect(read).toMatchObject({ ok: true });
+		expect(read.ok && read.notes).toBe(lines.replace(/\r\n/g, '\n'));
+		expect(normaliseNotes('a\rb\r\nc')).toBe('a\nb\nc');
+	});
+
+	it('drops null characters from the notes', () => {
+		expect(normaliseNotes('a\u0000b')).toBe('ab');
+		expect(normaliseNotes('\u0000')).toBeNull();
+	});
+
+	it('hands back what was submitted on a refusal', () => {
+		const read = readPreferencesForm(
+			form({ tense: 'past', narration: 'second', assistantNotes: 'Keep me.' })
+		);
+		expect(read).toMatchObject({
+			ok: false,
+			submitted: { tense: 'past', narration: 'second', assistantNotes: 'Keep me.', quoteMarks: '' }
+		});
 	});
 });

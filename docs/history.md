@@ -45,7 +45,13 @@ so is the summary family, so no summary or arc fingerprint moves.
 Every prompt builder was checked byte for byte against #1343's output with
 nothing set, across every review category mix, both world sources, with and
 without prior notes, and all the MCP prompts, besides the unit tests that
-pin it. The export does not carry the preferences, the same as style notes
+pin it. Review of the PR then had the pattern examples follow the switches,
+the survey fall back to "any other habit" when every kind is left alone
+(rather than refusing the run, since that still looks for something), the
+notes fenced, CRLF counted as one character (the browser's own count, so a
+note at the cap saves) with null characters dropped, a refused save show the
+typed values again, and the estimate count the lines. The export does not
+carry the preferences, the same as style notes
 and the language; adding settings to the export is its own change. Items 4
 to 8 (feedback amount, reasons on edits, summary lengths, draft length,
 content limits) remain open on #1344.

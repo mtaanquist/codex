@@ -107,7 +107,13 @@ export const actions: Actions = {
 	saveAssistantPreferences: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
 		const read = readPreferencesForm(await request.formData());
-		if (!read.ok) return fail(400, { action: 'assistant-preferences', message: read.reason });
+		if (!read.ok) {
+			return fail(400, {
+				action: 'assistant-preferences',
+				message: read.reason,
+				submitted: read.submitted
+			});
+		}
 		if (!(await savePreferences(db, locals.user!.id, { universeId: universe.id }, read))) {
 			error(404, 'Not found');
 		}
