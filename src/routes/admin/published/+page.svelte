@@ -3,10 +3,12 @@
 	import type { PageData, ActionData } from './$types';
 	import { formatDate } from '#lib/format';
 	import TakedownForm from '../TakedownForm.svelte';
+	import { reportReasonLabel } from '#lib/report-reasons';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
 	const liveEditions = $derived(data.published.filter((e) => !e.removedAt));
+	const takenDown = $derived(data.published.filter((e) => e.removedAt && e.isCurrent));
 </script>
 
 <div class="admin-head">
@@ -70,3 +72,40 @@
 		</div>
 	{/if}
 </div>
+
+{#if takenDown.length > 0}
+	<div class="admin-block">
+		<div class="admin-block-head">
+			<h2 class="admin-block-title">Taken down</h2>
+			<p class="admin-block-sub">
+				The writer cannot publish these stories again until you restore the edition.
+			</p>
+		</div>
+		<div class="admin-card tight">
+			<div class="attn-list">
+				{#each takenDown as edition (edition.id)}
+					<div class="list-row">
+						<div class="list-main">
+							<div class="list-title">@{edition.handle}/{edition.title}</div>
+							<div class="list-sub">
+								taken down {formatDate(edition.removedAt!, page.data.timeZone)}, reason: {reportReasonLabel(
+									edition.removedReason
+								)}
+							</div>
+						</div>
+						<div class="list-actions">
+							<form method="POST" action="?/restore">
+								<input type="hidden" name="publicationId" value={edition.id} />
+								<button
+									type="submit"
+									class="btn btn-ghost btn-sm"
+									aria-label="Restore {edition.title}">Restore</button
+								>
+							</form>
+						</div>
+					</div>
+				{/each}
+			</div>
+		</div>
+	</div>
+{/if}

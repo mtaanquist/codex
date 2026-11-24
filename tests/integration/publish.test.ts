@@ -32,6 +32,7 @@ import {
 	publishStory,
 	readingPageRef,
 	takedownPublication,
+	restorePublication,
 	type EditionContent
 } from '../../src/lib/server/publish';
 import type { Database } from '../../src/lib/server/auth';
@@ -180,7 +181,7 @@ describe('takedown and covers', () => {
 		await takedownPublication(db, first.publicationId);
 		// The only current edition is taken down.
 		expect(await isPublicAsset(db, coverId)).toBe(false);
-		await publishStory(db, authorId, storyId);
+		await restorePublication(db, first.publicationId);
 		expect(await isPublicAsset(db, coverId)).toBe(true);
 
 		// Making the story private must stop the cover serving, matching

@@ -85,7 +85,7 @@ A reader gets two controls in the bar: the theme, which starts in whichever of l
 
 ## Taking something down
 
-Set a story back to private, or republish after edits. An administrator or moderator can also take an edition down if needed. When they do, the Publish section of the story's settings says so and gives the reason they chose.
+Set a story back to private, or republish after edits. An administrator or moderator can also take an edition down if needed. When they do, the Publish section of the story's settings says so and gives the reason they chose. You cannot publish the story again until they restore it.
 
 ## Reporting a story
 

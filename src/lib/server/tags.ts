@@ -415,6 +415,26 @@ export async function suggestFandoms(
 	return rows.rows as { id: string; name: string }[];
 }
 
+// A current entry of the fandom list (not removed or merged away), or null.
+export async function pickableFandom(
+	db: Database,
+	fandomId: string
+): Promise<{ id: string } | null> {
+	if (!isUuid(fandomId)) return null;
+	const [fandom] = await db
+		.select({ id: tags.id })
+		.from(tags)
+		.where(
+			and(
+				eq(tags.id, fandomId),
+				eq(tags.kind, 'fandom'),
+				isNull(tags.removedAt),
+				isNull(tags.mergedIntoId)
+			)
+		);
+	return fandom ?? null;
+}
+
 // Links a universe to a fandom on the list, or unlinks it with null. Linking
 // also marks the universe a canon setting; unlinking leaves that flag alone.
 // False when the fandom is not a current entry of the list.
@@ -427,19 +447,7 @@ export async function setUniverseFandom(
 		await db.update(universes).set({ fandomId: null }).where(eq(universes.id, universeId));
 		return true;
 	}
-	const [fandom] = isUuid(fandomId)
-		? await db
-				.select({ id: tags.id })
-				.from(tags)
-				.where(
-					and(
-						eq(tags.id, fandomId),
-						eq(tags.kind, 'fandom'),
-						isNull(tags.removedAt),
-						isNull(tags.mergedIntoId)
-					)
-				)
-		: [];
+	const fandom = await pickableFandom(db, fandomId);
 	if (!fandom) return false;
 	await db
 		.update(universes)

@@ -114,8 +114,8 @@
 						</div>
 					{/if}
 					{#if data.filters.tag}
-						<div class="field">
-							<span class="field-label">Tag</span>
+						<div class="field" role="group" aria-labelledby="browse-tag-label">
+							<span class="field-label" id="browse-tag-label">Tag</span>
 							<label class="check-row">
 								<input type="checkbox" name="tag" value={data.filters.tag.slug} checked />
 								{data.filters.tag.name}

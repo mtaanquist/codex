@@ -104,6 +104,10 @@ export type BrowseBook = {
 	universe: { name: string; slug: string } | null;
 };
 
+// The author's public name, as authorName picks it: the pen name when set,
+// so a search never ties a pen name to the account's own name.
+const shownName = sql`coalesce(nullif(trim(u.pen_name), ''), u.display_name)`;
+
 export async function browseStories(
 	db: Database,
 	query: BrowseQuery,
@@ -121,7 +125,7 @@ export async function browseStories(
 		const like = pattern(query.q);
 		conditions.push(sql`(
 			p.title ilike ${like} or p.author ilike ${like} or p.description_md ilike ${like}
-			or u.pen_name ilike ${like} or u.display_name ilike ${like}
+			or ${shownName} ilike ${like}
 			or (not un.standalone and un.name ilike ${like})
 		)`);
 	}
@@ -222,7 +226,9 @@ export async function browseStories(
 }
 
 // Authors whose name matches a search, with at least one listed story.
-export async function browseAuthors(db: Database, q: string) {
+// Only the name readers see (see shownName). Adult-only authors are left out
+// unless the reader asked for adult work.
+export async function browseAuthors(db: Database, q: string, adult = false) {
 	if (!q) return [];
 	const like = pattern(q);
 	const result = await db.execute(sql`
@@ -231,7 +237,8 @@ export async function browseAuthors(db: Database, q: string) {
 		join stories s on s.id = p.story_id
 		join users u on u.id = p.owner_id
 		where ${listed}
-			and (u.pen_name ilike ${like} or u.display_name ilike ${like})
+			and ${shownName} ilike ${like}
+			${adult ? sql`` : sql`and not p.is_adult`}
 		group by p.handle, u.pen_name, u.display_name
 		order by count(distinct p.story_id) desc, p.handle
 		limit 6

@@ -21,7 +21,7 @@ export const load: PageServerLoad = async ({ url, getClientAddress }) => {
 	const filters = await resolveFilters(db, query);
 	const [{ books, next }, authors, genres, fandoms, warnings] = await Promise.all([
 		browseStories(db, query, filters),
-		query.after ? Promise.resolve([]) : browseAuthors(db, query.q),
+		query.after ? Promise.resolve([]) : browseAuthors(db, query.q, query.adult),
 		listEntries(db, 'genre'),
 		listEntries(db, 'fandom'),
 		listEntries(db, 'warning')

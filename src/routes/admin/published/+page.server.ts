@@ -3,7 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
 import { isUuid } from '#lib/slug';
 import { requireModerator } from '#lib/server/roles';
-import { listPublications, takedownPublication } from '#lib/server/publish';
+import { listPublications, restorePublication, takedownPublication } from '#lib/server/publish';
 import { formText } from '#lib/server/validation';
 import { isReportReason } from '#lib/report-reasons';
 import { browseModerationActions } from '#lib/server/browse-moderation-actions';
@@ -28,6 +28,14 @@ export const actions: Actions = {
 			!(await takedownPublication(db, publicationId, locals.user!.id, reason))
 		) {
 			return fail(400, { scope: 'published', message: 'That edition does not exist.' });
+		}
+		return { scope: 'published', done: true };
+	},
+	restore: async ({ request, locals }) => {
+		requireModerator(locals);
+		const publicationId = formText(await request.formData(), 'publicationId');
+		if (!isUuid(publicationId) || !(await restorePublication(db, publicationId))) {
+			return fail(400, { scope: 'published', message: 'That edition is not taken down.' });
 		}
 		return { scope: 'published', done: true };
 	}

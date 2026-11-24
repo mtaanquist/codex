@@ -174,6 +174,26 @@ describe('search and filters', () => {
 		expect(await browseAuthors(db, 'bea')).toEqual([{ handle: 'bea', name: 'Bea', stories: 1 }]);
 	});
 
+	it('does not match the account name of an author who uses a pen name', async () => {
+		await story('The Bell');
+		// The author's display name is "author"; readers only see "Ada Teller".
+		expect(await titles('q=author')).toEqual([]);
+		expect(await browseAuthors(db, 'author')).toEqual([]);
+		expect(await browseAuthors(db, 'ada')).toEqual([
+			{ handle: 'teller', name: 'Ada Teller', stories: 1 }
+		]);
+	});
+
+	it('leaves authors with only adult stories out of Writers unless adult work is shown', async () => {
+		const grown = await story('Grown');
+		await db
+			.update(publications)
+			.set({ isAdult: true })
+			.where(eq(publications.id, grown.publicationId));
+		expect(await browseAuthors(db, 'ada')).toEqual([]);
+		expect(await browseAuthors(db, 'ada', true)).toHaveLength(1);
+	});
+
 	it('filters by genre, following merges, and hides chosen warnings', async () => {
 		await addListEntries(db, 'genre', 'Fantasy\nHigh fantasy\nHorror');
 		await addListEntries(db, 'warning', 'Death');

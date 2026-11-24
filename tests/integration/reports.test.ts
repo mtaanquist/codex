@@ -36,7 +36,8 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 };
 const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
-const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
+const { publishStory, restorePublication, takedownPublication } =
+	await import('../../src/lib/server/publish');
 const { createReport, dismissReport, listOpenReports, countOpenReports } =
 	await import('../../src/lib/server/reports');
 const reportPage = await import('../../src/routes/@[handle]/[story=ref]/report/+page.server');
@@ -143,6 +144,41 @@ describe('the queue', () => {
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		expect(edition).toMatchObject({ removedBy: mod.id, removedReason: 'copyright' });
+	});
+
+	it('taking down a superseded edition also takes down the current one', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		await createReport(db, publicationId, 'copyright', '');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const again = await publishStory(db, author.id, storyId);
+		if (!again.ok) throw new Error(again.reason);
+
+		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
+		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
+		expect(rows.every((row) => row.removedAt !== null && row.removedReason === 'copyright')).toBe(
+			true
+		);
+		expect(await countOpenReports(db)).toBe(0);
+	});
+
+	it('publishing again after a takedown is refused until the edition is restored', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		await takedownPublication(db, publicationId, mod.id, 'spam');
+
+		const refused = await publishStory(db, author.id, storyId);
+		expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/taken down/) });
+		expect(await db.select().from(publications)).toHaveLength(1);
+
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
 
 	it('dismissing closes one report, once', async () => {
