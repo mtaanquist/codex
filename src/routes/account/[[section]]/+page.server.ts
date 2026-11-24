@@ -70,7 +70,7 @@ import {
 	sanitiseFontName
 } from '#lib/page-setup';
 import { isAccentColor, isConcreteTheme, isTheme, normaliseAccent } from '#lib/appearance';
-import { ADMIN_KINDS, NOTIFICATION_KINDS, type NotificationMatrix } from '#lib/notifications';
+import { notificationKindsFor, type NotificationMatrix } from '#lib/notifications';
 import { secretsAvailable } from '#lib/server/crypto';
 import {
 	beginEnrollment,
@@ -197,6 +197,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		maxImageBytes:
 			params.section === undefined ? imageLimit(await accountLimits(db, user.id)) : MAX_IMAGE_BYTES,
 		isAdmin: user.role === 'admin',
+		role: user.role,
 		origin: publicOrigin(url),
 		profile,
 		preferences: await userPreferences(db, user.id),
@@ -754,11 +755,9 @@ export const actions: Actions = {
 	},
 	saveNotifications: async ({ request, locals }) => {
 		const data = await request.formData();
-		// Only the rows the form showed are written; the admin-only kind keeps
-		// its stored value for everyone else.
-		const visible = NOTIFICATION_KINDS.filter(
-			(kind) => locals.user!.role === 'admin' || !ADMIN_KINDS.includes(kind)
-		);
+		// Only the rows the form showed are written; a row the role does not
+		// see keeps its stored value.
+		const visible = notificationKindsFor(locals.user!.role);
 		const matrix: NotificationMatrix = {
 			...(await userPreferences(db, locals.user!.id)).notifications
 		};

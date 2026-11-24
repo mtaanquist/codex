@@ -5,6 +5,7 @@
 	import { tick } from 'svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
+	import { reportReasonLabel } from '#lib/report-reasons';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -46,6 +47,19 @@
 	</h2>
 	<p class="admin-block-sub">Who can find this story, and the frozen editions readers see.</p>
 </div>
+{#if data.edition?.removedAt}
+	<div
+		class="status-banner"
+		role="status"
+		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
+	>
+		<span class="x">
+			The people who look after this site took this edition down, so readers cannot open it. Reason: {reportReasonLabel(
+				data.edition.removedReason
+			)}.
+		</span>
+	</div>
+{/if}
 <div class="settings-group">
 	<form method="POST" action="?/setVisibility">
 		{#if form?.action === 'publish' && form.message}

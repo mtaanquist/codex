@@ -5,6 +5,7 @@ export const NOTIFICATION_KINDS = [
 	'review_activity',
 	'review_reply',
 	'account_pending',
+	'publication_report',
 	'assistant_review',
 	'assistant_summaries',
 	'assistant_enrich',
@@ -17,6 +18,7 @@ export const NOTIFICATION_LABELS: Record<NotificationKind, string> = {
 	review_activity: 'Review activity on your stories',
 	review_reply: 'Replies to your review comments',
 	account_pending: 'New accounts awaiting approval',
+	publication_report: 'Reports about published stories',
 	assistant_review: 'Assistant reviews you asked for',
 	assistant_summaries: 'Assistant summaries you asked for',
 	assistant_enrich: 'Assistant entry suggestions and character arcs you asked for',
@@ -26,6 +28,17 @@ export const NOTIFICATION_LABELS: Record<NotificationKind, string> = {
 
 // Only admins approve accounts, so only they see that row.
 export const ADMIN_KINDS: NotificationKind[] = ['account_pending'];
+// Reports go to admins and moderators, so only they see that row.
+export const MODERATOR_KINDS: NotificationKind[] = ['publication_report'];
+
+// The rows of the preference matrix a role sees.
+export function notificationKindsFor(role: string | undefined): NotificationKind[] {
+	return NOTIFICATION_KINDS.filter((kind) => {
+		if (ADMIN_KINDS.includes(kind)) return role === 'admin';
+		if (MODERATOR_KINDS.includes(kind)) return role === 'admin' || role === 'moderator';
+		return true;
+	});
+}
 
 export type NotificationChannels = { inApp: boolean; email: boolean };
 export type NotificationMatrix = Record<NotificationKind, NotificationChannels>;

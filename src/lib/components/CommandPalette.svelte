@@ -277,6 +277,12 @@
 					run: navigate(resolve('/admin/published'))
 				},
 				{
+					label: 'Admin: reports',
+					sublabel: null,
+					kind: 'Go to',
+					run: navigate(resolve('/admin/reports'))
+				},
+				{
 					label: 'Admin: usage & storage',
 					sublabel: null,
 					kind: 'Go to',
@@ -296,12 +302,20 @@
 				}
 			);
 		} else if (page.data.user?.isModerator) {
-			list.push({
-				label: 'Moderation: published',
-				sublabel: null,
-				kind: 'Go to',
-				run: navigate(resolve('/admin/published'))
-			});
+			list.push(
+				{
+					label: 'Moderation: reports',
+					sublabel: null,
+					kind: 'Go to',
+					run: navigate(resolve('/admin/reports'))
+				},
+				{
+					label: 'Moderation: published',
+					sublabel: null,
+					kind: 'Go to',
+					run: navigate(resolve('/admin/published'))
+				}
+			);
 		}
 		return list;
 	});

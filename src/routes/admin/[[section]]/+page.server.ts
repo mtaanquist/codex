@@ -78,7 +78,7 @@ const MAX_STORAGE_MB = 100_000_000;
 export const load: PageServerLoad = async ({ locals, params, url }) => {
 	// A moderator's way in is the moderation pages; plain /admin sends them there.
 	if (locals.user?.role === 'moderator' && params.section === undefined) {
-		redirect(303, '/admin/published');
+		redirect(303, '/admin/reports');
 	}
 	requireAdmin(locals);
 	// Older links carried the section as a query string; send them to the

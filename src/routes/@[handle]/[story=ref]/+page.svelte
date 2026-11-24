@@ -12,6 +12,9 @@
 	let { data }: { data: PageData } = $props();
 
 	const shelfHref = $derived(resolve('/@[handle]', { handle: data.handle }));
+	const reportHref = $derived(
+		resolve('/@[handle]/[story=ref]/report', { handle: data.handle, story: data.story })
+	);
 	// One address for search engines whether the reader came by id or by slug.
 	const canonical = $derived(
 		page.url.origin + resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story })
@@ -137,5 +140,5 @@
 		{/if}
 	</main>
 
-	<ReaderFooter author={data.author} {shelfHref} />
+	<ReaderFooter author={data.author} {shelfHref} {reportHref} />
 </div>

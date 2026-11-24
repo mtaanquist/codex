@@ -11,6 +11,7 @@
 		shell = 'reader',
 		author = '',
 		shelfHref,
+		reportHref,
 		belongs = 'story'
 	}: {
 		// reader: a published story or an author's shelf. public: the landing
@@ -19,6 +20,8 @@
 		// The author's name for the reader (pen name, else display name).
 		author?: string;
 		shelfHref?: ResolvedPathname;
+		// A published story's report form.
+		reportHref?: ResolvedPathname;
 		// 'story' says who published this story; 'shelf' says whose shelf this is.
 		belongs?: 'story' | 'shelf';
 	} = $props();
@@ -49,6 +52,7 @@
 				<a href={resolve('/docs')}>About Codex</a>
 				<!-- The library for a signed-in reader, the sign-in page otherwise. -->
 				<a href={resolve('/')}>Write your own</a>
+				{#if reportHref}<a href={reportHref}>Report this story</a>{/if}
 			</span>
 		{:else}
 			<span class="reader-foot-links">

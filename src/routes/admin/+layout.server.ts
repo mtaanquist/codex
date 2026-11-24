@@ -5,6 +5,7 @@ import { instanceStats } from '#lib/server/admin';
 import { effectiveBackupConfig } from '#lib/server/backups';
 import { smtpView } from '#lib/server/settings';
 import { appVersion } from '#lib/server/app-version';
+import { countOpenReports } from '#lib/server/reports';
 
 // A compact uptime for the sidebar footer: minutes, then hours, then days.
 function formatUptime(seconds: number): string {
@@ -17,8 +18,10 @@ function formatUptime(seconds: number): string {
 // as well, because a layout load does not guard the actions.
 export const load: LayoutServerLoad = async ({ locals }) => {
 	requireModerator(locals);
-	if (locals.user!.role !== 'admin') return { health: null };
+	const openReports = await countOpenReports(db);
+	if (locals.user!.role !== 'admin') return { openReports, health: null };
 	return {
+		openReports,
 		// The sidebar's badges and health box, for admins only.
 		health: {
 			stats: await instanceStats(db),

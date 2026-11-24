@@ -785,11 +785,25 @@ publications (
   is_current      boolean not null default true,
   removed_at      timestamptz,           -- set by a takedown (admin or moderator); hides the edition without deleting the source
   removed_by      uuid references users on delete set null, -- who took it down
+  removed_reason  text,                  -- a REPORT_REASONS key (#lib/report-reasons), shown to the author
   published_at    timestamptz not null
 )
 
 -- index on (handle) for profile lookups
 -- index on (story_id, is_current) for the current edition of a story
+
+publication_reports (
+  id              uuid primary key,
+  publication_id  uuid references publications on delete cascade not null,
+  reason          text not null,         -- a REPORT_REASONS key
+  comment         text,                  -- optional, up to 500 characters
+  created_at      timestamptz not null,
+  resolved_at     timestamptz,           -- null while open
+  resolved_by     uuid references users on delete set null,
+  resolution      text                   -- 'taken_down' | 'dismissed'
+)
+
+-- partial index on (created_at) where resolved_at is null, for the queue
 ```
 
 Key points:
@@ -800,7 +814,7 @@ Key points:
 - **Adult content.** `is_adult` is carried from the story so the reader site can keep adult work out of default listings and behind a confirmation. It marks content, it does not ban it.
 - **Addresses.** A public story is read at `/@handle/<stories.slug>`, any readable one at `/@handle/<story id>`, and a universe with a listed story at `/@handle/universes/<universes.slug>`.
 - **Old slugs.** `slug_history (owner_id, kind 'story' | 'universe', slug, story_id, universe_id, created_at)`, unique on `(owner_id, kind, slug)`, with a check that `kind` is one of the two (migration 0114), records each slug a rename moved off: always for a universe, and for a story once it has been published. The public pages redirect an old slug (308) to the current one while the target is readable at its slug, and `uniqueSlug` treats the rows as taken, so no other story (or universe) of the account picks one up; a rename (or a restore) back to its own old slug removes that row. A save locks the row first and compares the name it holds now, so a form that read an older name cannot leave the slug behind; a rename or a restore then takes a per-account advisory lock (`slugs:<owner id>`), so two at once cannot lose a slug. A trashed story's current slug is not reserved: the trash frees it, as before. Purging the target sets its id to null and keeps the reservation; deleting the account deletes the rows. Not authored content: left out of exports and imports.
-- **Hosted vs self-host.** On a self-hosted instance these rows are read directly. On the hosted service the worker syncs them to a central reader site keyed by `handle`. Either way the rows have the same shape.
+- **Reports.** `publication_reports` holds readers' reports about an edition. Nothing about the reporter is stored. Not authored content: not exported, and deleted with the edition.
 
 ---
 
