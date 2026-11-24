@@ -632,6 +632,11 @@ export async function newStoryFromDraft(
 					})
 				})
 				.returning({ id: stories.id, slug: stories.slug });
+			// The genres, warnings, tags and fandoms come along, like the adult flag.
+			await tx.execute(sql`
+				insert into story_tags (story_id, tag_id)
+				select ${created.id}, tag_id from story_tags where story_id = ${story.id}
+			`);
 
 			const sceneIds = new Map<string, string>();
 			const stamp = await dbNow(tx);

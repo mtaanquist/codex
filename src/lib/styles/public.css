@@ -96,6 +96,13 @@
 	font-size: var(--text-lg);
 }
 
+/* The short (private instance) face: who can get an account, under the buttons. */
+.hero-note {
+	color: var(--text-muted);
+	margin: var(--space-6) 0 0;
+	max-width: 72ch;
+}
+
 /* ============ THE FIGURE: one workspace, three postures ============ */
 .figure {
 	margin-top: var(--space-10);

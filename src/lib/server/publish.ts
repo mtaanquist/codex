@@ -1,20 +1,35 @@
-import { and, desc, eq, exists, inArray, isNull, ne, sql, type AnyColumn } from 'drizzle-orm';
+import {
+	and,
+	desc,
+	eq,
+	exists,
+	inArray,
+	isNotNull,
+	isNull,
+	ne,
+	or,
+	sql,
+	type AnyColumn
+} from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import {
 	assets,
 	publicationAssets,
+	publicationReports,
 	publications,
 	slugHistory,
 	stories,
 	universes,
 	users
 } from './db/schema.ts';
+import type { ReportReason } from '#lib/report-reasons';
 import { gatherStory, type ExportScene } from './export.ts';
 import { getDraft } from './story-drafts.ts';
 import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import { tagsForStories } from './tags.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
@@ -103,8 +118,34 @@ export async function publishStory(
 			...content.unfiled.flatMap((scene) => findAssetReferences(scene.bodyMd))
 		])
 	];
+	const shownLabels = (await tagsForStories(db, [story.id])).get(story.id) ?? [];
+	const contentWarnings = shownLabels
+		.filter((tag) => tag.kind === 'warning')
+		.map((tag) => tag.name);
 	try {
 		const publicationId = await db.transaction(async (tx) => {
+			// Locked so a takedown running at the same moment waits for this
+			// publish (see takedownPublication).
+			await tx
+				.select({ id: stories.id })
+				.from(stories)
+				.where(eq(stories.id, story.id))
+				.for('update');
+			// A moderator's takedown holds until they restore the edition, so a
+			// new publish cannot bring the story back on its own. Editions the
+			// author's own account deletion took down carry no reason and do not
+			// hold: after cancelling the deletion they can publish again.
+			const [current] = await tx
+				.select({ removedReason: publications.removedReason })
+				.from(publications)
+				.where(
+					and(
+						eq(publications.storyId, story.id),
+						eq(publications.isCurrent, true),
+						isNotNull(publications.removedAt)
+					)
+				);
+			if (current?.removedReason) return null;
 			await tx
 				.update(publications)
 				.set({ isCurrent: false })
@@ -117,6 +158,8 @@ export async function publishStory(
 					handle: user.handle!,
 					...frontMatter,
 					isAdult: story.isAdult,
+					// Like the adult flag, the author's current choice, by name.
+					contentWarnings,
 					content,
 					versionLabel: versionLabel?.trim() || null,
 					sourceDraftId: draftId || null
@@ -141,6 +184,13 @@ export async function publishStory(
 			}
 			return edition.id;
 		});
+		if (publicationId === null) {
+			return {
+				ok: false,
+				reason:
+					'This story was taken down, so it cannot be published again until the people who look after this site restore it.'
+			};
+		}
 		return { ok: true, publicationId };
 	} catch (error) {
 		// The partial unique index caught a concurrent publish of the same
@@ -223,8 +273,15 @@ export async function publicShelf(db: Database, handle: string, universeId?: str
 			)
 		)
 		.orderBy(desc(publications.publishedAt));
+	const labels = await tagsForStories(
+		db,
+		rows.map((row) => row.storyId)
+	);
 	return rows.map((row) => ({
 		...row,
+		genres: (labels.get(row.storyId) ?? [])
+			.filter((tag) => tag.kind === 'genre')
+			.map((tag) => tag.name),
 		coverColor: storyCoverColor({ id: row.storyId, coverColor: row.coverColor })
 	}));
 }
@@ -314,6 +371,7 @@ export async function publicEdition(db: Database, handle: string, ref: string) {
 			author: publications.author,
 			descriptionMd: publications.descriptionMd,
 			isAdult: publications.isAdult,
+			contentWarnings: publications.contentWarnings,
 			content: publications.content,
 			versionLabel: publications.versionLabel,
 			downloadsPublic: publications.downloadsPublic,
@@ -506,14 +564,87 @@ export async function isPublicAsset(db: Database, assetId: string): Promise<bool
 	return Boolean(inline);
 }
 
-// Admin takedown: hides the edition without touching the author's source.
-export async function takedownPublication(db: Database, publicationId: string): Promise<boolean> {
-	const updated = await db
+// Takes an edition down (an admin or a moderator) and closes every open
+// report about it. The reason, a REPORT_REASONS key, is shown to the author.
+// Taking down a superseded edition also takes down the story's current one,
+// since a report can be about an edition the author has since replaced.
+export async function takedownPublication(
+	db: Database,
+	publicationId: string,
+	removedBy: string | null,
+	// A takedown always has a reason. Account deletion hides editions by
+	// setting removed_at alone (see scheduleAccountDeletion).
+	reason: ReportReason
+): Promise<boolean> {
+	return await db.transaction(async (tx) => {
+		const [target] = await tx
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		if (!target) return false;
+		// The same lock publishStory takes, so a publish running at the same
+		// moment either finishes first (and its edition is taken down here)
+		// or waits and then sees the takedown.
+		await tx
+			.select({ id: stories.id })
+			.from(stories)
+			.where(eq(stories.id, target.storyId))
+			.for('update');
+		const updated = await tx
+			.update(publications)
+			// An edition already down with its author's account deletion gets
+			// the reason too, so the takedown holds if the deletion is cancelled.
+			.set({
+				removedAt: sql`coalesce(${publications.removedAt}, now())`,
+				removedBy,
+				removedReason: reason
+			})
+			.where(
+				and(
+					eq(publications.storyId, target.storyId),
+					isNull(publications.removedReason),
+					or(eq(publications.id, publicationId), eq(publications.isCurrent, true))
+				)
+			)
+			.returning({ id: publications.id });
+		if (updated.length === 0) return false;
+		await tx
+			.update(publicationReports)
+			.set({ resolvedAt: sql`now()`, resolvedBy: removedBy, resolution: 'taken_down' })
+			.where(
+				and(
+					// Every edition of the story, so a report on an older one closes too.
+					inArray(
+						publicationReports.publicationId,
+						tx
+							.select({ id: publications.id })
+							.from(publications)
+							.where(eq(publications.storyId, target.storyId))
+					),
+					isNull(publicationReports.resolvedAt)
+				)
+			);
+		return true;
+	});
+}
+
+// Lifts a moderator's takedown, so the edition is public again and the author
+// can publish new editions. Never an edition account deletion took down, and
+// never while the author's account is waiting to be deleted.
+export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
+	const restored = await db
 		.update(publications)
-		.set({ removedAt: sql`now()` })
-		.where(and(eq(publications.id, publicationId), isNull(publications.removedAt)))
+		.set({ removedAt: null, removedBy: null, removedReason: null })
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				isNotNull(publications.removedAt),
+				isNotNull(publications.removedReason),
+				sql`not exists (select 1 from users du where du.id = ${publications.ownerId} and du.deletion_scheduled_at is not null)`
+			)
+		)
 		.returning({ id: publications.id });
-	return updated.length > 0;
+	return restored.length > 0;
 }
 
 // The admin's view of everything published on this instance.
@@ -526,9 +657,37 @@ export async function listPublications(db: Database, limit = 50) {
 			isAdult: publications.isAdult,
 			isCurrent: publications.isCurrent,
 			removedAt: publications.removedAt,
-			publishedAt: publications.publishedAt
+			removedReason: publications.removedReason,
+			publishedAt: publications.publishedAt,
+			storyId: publications.storyId,
+			listedInBrowse: stories.listedInBrowse,
+			browseBlockedAt: stories.browseBlockedAt,
+			browseBlockedReason: stories.browseBlockedReason
 		})
 		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.orderBy(desc(publications.publishedAt))
 		.limit(limit);
+}
+
+// Current editions a moderator took down, oldest takedown first, for the
+// Restore list. Separate from listPublications so none drop out of view.
+export async function listTakenDown(db: Database) {
+	return await db
+		.select({
+			id: publications.id,
+			handle: publications.handle,
+			title: publications.title,
+			removedAt: publications.removedAt,
+			removedReason: publications.removedReason
+		})
+		.from(publications)
+		.where(
+			and(
+				eq(publications.isCurrent, true),
+				isNotNull(publications.removedAt),
+				isNotNull(publications.removedReason)
+			)
+		)
+		.orderBy(publications.removedAt);
 }

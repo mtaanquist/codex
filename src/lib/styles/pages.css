@@ -572,7 +572,9 @@
 .field {
 	margin-bottom: var(--space-4);
 }
-.field > label {
+.field > label,
+/* The heading of a group of checkboxes, which has no single control to label. */
+.field > .field-label {
 	display: block;
 	font-size: var(--text-sm);
 	font-weight: 600;
@@ -619,7 +621,8 @@
 	.admin-main-inner .field:not(.modal-panel *, .invite-create *) > * {
 		grid-column: 2;
 	}
-	.admin-main-inner .field:not(.modal-panel *, .invite-create *) > label:not(.check-row) {
+	.admin-main-inner .field:not(.modal-panel *, .invite-create *) > label:not(.check-row),
+	.admin-main-inner .field:not(.modal-panel *, .invite-create *) > .field-label {
 		grid-column: 1;
 		grid-row: 1 / span 9;
 		/* Level with the first line of a control's text. */

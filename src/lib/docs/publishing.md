@@ -20,9 +20,32 @@ Each story has a visibility:
 - **Unlisted** is reachable by direct link but is not listed on your public page or on a universe page.
 - **Public** is listed on your page at your handle.
 
+## Listing a story in Browse
+
+If the site has a Browse page (a link to it shows in the bar of the public pages), readers can find stories from every writer on the site there. A public story only shows on Browse if you choose to list it: in the Publish section of the story's settings, tick "List in Browse" and save. Untick it to take the story off Browse at once. Setting the story to private or unlisted takes it off too.
+
+To keep all your stories and your name off Browse, turn on "Stay off Browse" on your account page. Your own page and your stories stay reachable as before.
+
+A moderator can remove a story from Browse. When they do, the Publish section of the story's settings says so and gives the reason, and you cannot list it again until they allow it. The story's own pages stay up.
+
+## Finding stories on Browse
+
+On the Browse page, search by title, writer, description or world, or pick a genre or fandom. Under "Hide stories with", tick any content warning you want to avoid. Adult stories are left out unless you tick "Include adult content"; your choice is remembered on this device. On a story's reading page, a genre, fandom or tag links to Browse with that filter.
+
 ## Adult content
 
 Tick "Adult content" in the Publish section of a story's settings if the story is for adults. Readers who open its reading page first see a notice and choose to go on, and search engines are asked to leave the page out. The label is saved with each edition, so after you tick or untick it on a story that is already published, publish again for readers to see the change.
+
+## Genres, content warnings, tags and fandoms
+
+In the Publish section of a story's settings, under "Save tags", you can describe the story for readers:
+
+- **Genres.** Pick up to three from the site's list.
+- **Content warnings.** Tick everything on the site's list that a reader should know about before they start, such as graphic violence or death. If you tick none, the reading page says you added none; it does not call the story safe.
+- **Fandoms.** If the story is set in an existing world, such as a game setting or a series, pick it from the site's list. You can pick up to five. If the world you want is missing, use a tag instead, or ask the people who run the site to add it.
+- **Tags.** Anything else that helps a reader find the story, such as "found family" or "slow burn". Type a tag and press Enter or type a comma. When the site has a Browse page, the box suggests tags already used on stories listed there. You can add up to 20, each up to 50 characters. Tags that differ only in capitals, spaces, hyphens or underscores count as the same tag.
+
+Genres, fandoms and tags show on the reading page as soon as you save. Content warnings belong to the edition, like the adult flag, so readers see a change after you publish again. The moderators can merge tags that mean the same thing, or remove a tag; a removed tag disappears from your story and cannot be added again.
 
 ## Edition downloads
 
@@ -56,10 +79,16 @@ The reading pages are the outward face of your work, so they are plain and quiet
 
 Both pages name you the way you asked to be named: your pen name if you set one on your account page, otherwise your display name. The first time you claim a handle or publish with no pen name set, a dialog asks which name should go on the page, offering your display name to keep; what you choose becomes your pen name, and you can change it on your account page. Your handle stays the address in the link.
 
-A reader gets two controls in the bar: the theme, which starts in whichever of light or dark their device asks for and remembers a choice they make from its menu (Light, Warm, Dark, or System), and the question mark, which opens these pages. At the end of both pages a footer says the work was written in Codex, who published it, and offers a link for a reader who wants to write something of their own.
+Under the title, the reading page lists the story's genres, fandoms, tags and content warnings. When the site has a Browse page, each genre, fandom and tag links to the other stories there that share it.
+
+A reader gets two controls in the bar: the theme, which starts in whichever of light or dark their device asks for and remembers a choice they make from its menu (Light, Warm, Dark, or System), and the question mark, which opens these pages. At the end of both pages a footer says the work was written in Codex, who published it, and offers a link for a reader who wants to write something of their own. A story's reading page also has a "Report this story" link.
 
 ## Taking something down
 
-Set a story back to private, or republish after edits. An administrator can also take an edition down if needed.
+Set a story back to private, or republish after edits. An administrator or moderator can also take an edition down if needed. When they do, the Publish section of the story's settings says so and gives the reason they chose. You cannot publish the story again until they restore it.
+
+## Reporting a story
+
+If a story breaks the rules of the site, copies someone else's work, or is missing content warnings or the adult flag, use "Report this story" at the bottom of its reading page. Pick a reason, add a short comment if it helps, and send it. You do not need an account, and the report does not include your name or email address. The people who look after the site read every report and can take the story down or remove it from Browse.
 
 While an administrator has your account suspended, your public page, your stories' reading pages and universe pages, and their downloads are hidden from readers. They come back as they were when the suspension is lifted.

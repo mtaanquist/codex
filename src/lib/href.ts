@@ -1,11 +1,11 @@
 import type { ResolvedPathname } from '$app/types';
 
-export type QueryValue = string | number | boolean | null | undefined;
+export type QueryValue = string | number | boolean | null | undefined | readonly string[];
 
 /**
  * A path from resolve() with query parameters (and an optional hash) added.
- * Null, undefined and empty values are left out, and a path that already has
- * a query string is extended. The result keeps the ResolvedPathname type, so
+ * Null, undefined and empty values are left out, a list repeats its key once
+ * per item, and a path that already has a query string is extended. The result keeps the ResolvedPathname type, so
  * links and goto() built from it pass the navigation lint.
  */
 export function withQuery(
@@ -19,7 +19,12 @@ export function withQuery(
 	const params = new URLSearchParams(queryAt === -1 ? '' : base.slice(queryAt + 1));
 	for (const [key, value] of Object.entries(query)) {
 		if (value === null || value === undefined || value === '') continue;
-		params.set(key, String(value));
+		if (Array.isArray(value)) {
+			params.delete(key);
+			for (const item of value) params.append(key, item);
+		} else {
+			params.set(key, String(value));
+		}
 	}
 	const search = params.toString();
 	const pathname = queryAt === -1 ? base : base.slice(0, queryAt);

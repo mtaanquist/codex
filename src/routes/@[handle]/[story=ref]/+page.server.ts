@@ -13,6 +13,7 @@ import { authorName } from '#lib/author-name';
 import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
 import { OLD_SLUG_REDIRECT_HEADERS } from '#lib/server/slugs';
+import { storyTagView } from '#lib/server/tags';
 
 // The reader view of one frozen edition, at /@handle/<story slug> or, for
 // links made before slugs, /@handle/<story id>. Adult work sits behind a
@@ -41,6 +42,15 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 	// gave one, else the name on their account. Never the raw handle.
 	const author = edition.author?.trim() || authorName(edition);
 
+	// Genres and tags are the story's live choice; warnings are the edition's.
+	const shownTags = await storyTagView(db, edition.storyId);
+	const labels = {
+		genres: shownTags.genres.map(({ name, slug }) => ({ name, slug })),
+		fandoms: shownTags.fandoms.map(({ name, slug }) => ({ name, slug })),
+		tags: shownTags.tags.map(({ name, slug }) => ({ name, slug })),
+		contentWarnings: edition.contentWarnings
+	};
+
 	const confirmed = url.searchParams.get('adult') === 'ok';
 	if (edition.isAdult && !confirmed) {
 		return {
@@ -49,7 +59,8 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 			gate: true as const,
 			listed,
 			title: edition.title,
-			author
+			author,
+			labels
 		};
 	}
 	// Reader-facing downloads, only when the author switched them on. The
@@ -86,6 +97,7 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 		words,
 		descriptionMd: edition.descriptionMd,
 		isAdult: edition.isAdult,
+		labels,
 		versionLabel: edition.versionLabel,
 		publishedAt: edition.publishedAt,
 		coverAssetId: edition.coverAssetId,

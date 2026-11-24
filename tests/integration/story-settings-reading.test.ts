@@ -81,7 +81,7 @@ describe('the reading link in story settings', () => {
 		expect(await reading()).toBeNull();
 		await db.update(users).set({ suspendedAt: null }).where(eq(users.id, user.id));
 
-		expect(await takedownPublication(db, published.publicationId)).toBe(true);
+		expect(await takedownPublication(db, published.publicationId, null, 'other')).toBe(true);
 		expect(await reading()).toBeNull();
 	});
 });

@@ -5,9 +5,12 @@ import type { Database } from './auth.ts';
 import { appSettings } from './db/schema.ts';
 import { decryptSecret, encryptSecret, secretsAvailable } from './crypto.ts';
 import { SIGNUP_MODES, type SignupMode } from '../signup-mode.ts';
+import { parseInstanceType, type InstanceType } from '../instance-type.ts';
 
 const SMTP_KEY = 'smtp';
 const SIGNUP_KEY = 'signup';
+const INSTANCE_TYPE_KEY = 'instance_type';
+const BROWSE_KEY = 'browse';
 
 // Generic accessors for one app_settings row; the callers shape the value.
 export async function readSetting<T>(db: Database, key: string): Promise<T | null> {
@@ -171,6 +174,25 @@ export async function signupMode(db: Database): Promise<SignupMode> {
 
 export async function saveSignupMode(db: Database, mode: SignupMode): Promise<void> {
 	await writeSetting(db, SIGNUP_KEY, { mode });
+}
+
+// Personal or service; a Codex that never saved one is personal.
+export async function instanceType(db: Database): Promise<InstanceType> {
+	return parseInstanceType(await readSetting(db, INSTANCE_TYPE_KEY));
+}
+
+export async function saveInstanceType(db: Database, type: InstanceType): Promise<void> {
+	await writeSetting(db, INSTANCE_TYPE_KEY, { type });
+}
+
+// Whether the public Browse page is on. Off unless an admin turns it on.
+export async function browseEnabled(db: Database): Promise<boolean> {
+	const value = await readSetting<{ enabled?: unknown }>(db, BROWSE_KEY);
+	return value?.enabled === true;
+}
+
+export async function saveBrowseEnabled(db: Database, enabled: boolean): Promise<void> {
+	await writeSetting(db, BROWSE_KEY, { enabled });
 }
 
 // What the worker needs to actually send: the password is decrypted here.

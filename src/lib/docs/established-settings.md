@@ -8,6 +8,8 @@ Codex handles this in two parts. Tick a switch so the Assistant knows the settin
 
 Open the universe's settings and tick "Established setting". The Assistant then treats the world as one it may already know, and checks your manuscript against that knowledge as well as against your own notes. Where the two disagree, your material wins: a story that deliberately breaks canon is a choice, not a mistake, and the Assistant is told as much.
 
+If the site keeps a list of known settings, you can link the universe to one. When you create a universe, start typing its name and pick a matching setting from the suggestions under the box; the name fills in, and you can still change it. To link, change or unlink later, use "Known setting" in the universe's settings. Linking ticks "Established setting" for you, and unlinking leaves it as it is. Every story in a linked universe shows the setting as one of its fandoms to readers, so you do not need to pick it again on each story. It counts toward the story's five fandoms.
+
 Leave the switch off for a world you invented. The Assistant then trusts nothing but what you have written down, which is what you want when the setting is yours.
 
 ## Put the canon you care about into your lore

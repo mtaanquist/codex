@@ -18,10 +18,14 @@ import {
 	scenes,
 	stories,
 	universes,
-	users
+	users,
+	publications,
+	publicationReports,
+	tags
 } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import { textHash } from '../../src/lib/text-hash';
+import { storyTagView } from '../../src/lib/server/tags';
 import { ensureBuiltInRelationTypes, ensureTestDatabase } from './test-db';
 
 // Authorization lives in the route handlers, so these tests call the real
@@ -87,11 +91,18 @@ const reviewRoute = await import('../../src/routes/api/assistant/review/+server'
 const recapRoute = await import('../../src/routes/api/assistant/recap/+server');
 const enrichRoute = await import('../../src/routes/api/assistant/enrich/+server');
 const adminPage = await import('../../src/routes/admin/[[section]]/+page.server');
+const adminLayout = await import('../../src/routes/admin/+layout.server');
+const publishedPage = await import('../../src/routes/admin/published/+page.server');
+const reportsPage = await import('../../src/routes/admin/reports/+page.server');
+const tagsPage = await import('../../src/routes/admin/tags/+page.server');
+const fandomsPage = await import('../../src/routes/admin/fandoms/+page.server');
+const genresPage = await import('../../src/routes/admin/genres/+page.server');
+const warningsPage = await import('../../src/routes/admin/warnings/+page.server');
 const universeSettings = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
 	await import('../../src/routes/stories/[id]/settings/[[section]]/+page.server');
 
-type TestUser = { id: string; email: string; role: 'user' | 'admin' };
+type TestUser = { id: string; email: string; role: 'user' | 'moderator' | 'admin' };
 type Seed = Awaited<ReturnType<typeof seed>>;
 
 let s: Seed;
@@ -811,12 +822,184 @@ describe('admin actions refuse a non-admin', () => {
 	});
 
 	for (const [name, action] of Object.entries(adminPage.actions)) {
-		it(`${name} refuses a signed-in non-admin and a missing user`, async () => {
-			for (const user of [B, null]) {
+		it(`${name} refuses a signed-in non-admin, a moderator and a missing user`, async () => {
+			const [mod] = await db
+				.insert(users)
+				.values({
+					email: 'mod@example.com',
+					displayName: 'M',
+					passwordHash: 'x',
+					role: 'moderator'
+				})
+				.returning();
+			const moderator: TestUser = { id: mod.id, email: mod.email, role: 'moderator' };
+			for (const user of [B, moderator, null]) {
 				await expectRefused(
 					action as Handler,
 					event(user, { path: `/admin?/${name}`, form: adminForm(A.id) })
 				);
+			}
+		});
+	}
+});
+
+describe('moderation pages', () => {
+	async function moderator(): Promise<TestUser> {
+		const [mod] = await db
+			.insert(users)
+			.values({ email: 'mod@example.com', displayName: 'M', passwordHash: 'x', role: 'moderator' })
+			.returning();
+		return { id: mod.id, email: mod.email, role: 'moderator' };
+	}
+
+	async function edition() {
+		const [row] = await db
+			.insert(publications)
+			.values({
+				storyId: s.storyA.id,
+				ownerId: A.id,
+				handle: 'a',
+				title: 'SA',
+				content: { chapters: [] }
+			})
+			.returning();
+		return row;
+	}
+
+	it('the admin layout refuses a plain user and a missing user, and lets a moderator in', async () => {
+		for (const user of [B, null]) {
+			await expect(
+				adminLayout.load(event(user, { method: 'GET', path: '/admin' }) as never)
+			).rejects.toMatchObject({ status: 404 });
+		}
+		const mod = await moderator();
+		expect(
+			await adminLayout.load(event(mod, { method: 'GET', path: '/admin/published' }) as never)
+		).toEqual({ openReports: 0, health: null });
+	});
+
+	it('the reports queue refuses a plain user and a missing user', async () => {
+		const row = await edition();
+		const [report] = await db
+			.insert(publicationReports)
+			.values({ publicationId: row.id, reason: 'spam' })
+			.returning();
+		for (const [name, action] of Object.entries(reportsPage.actions)) {
+			const f = new FormData();
+			f.set('publicationId', row.id);
+			f.set('reportId', report.id);
+			f.set('storyId', row.storyId);
+			f.set('reason', 'spam');
+			for (const user of [B, null]) {
+				await expectRefused(
+					action as Handler,
+					event(user, { path: `/admin/reports?/${name}`, form: f })
+				);
+			}
+		}
+	});
+
+	it("the published page's actions refuse a plain user and a missing user", async () => {
+		const row = await edition();
+		const form = () => {
+			const f = new FormData();
+			f.set('publicationId', row.id);
+			f.set('storyId', row.storyId);
+			f.set('reason', 'spam');
+			return f;
+		};
+		for (const [name, action] of Object.entries(publishedPage.actions)) {
+			for (const user of [B, null]) {
+				await expectRefused(
+					action as Handler,
+					event(user, { path: `/admin/published?/${name}`, form: form() })
+				);
+			}
+		}
+	});
+
+	it('a moderator can take an edition down, and is recorded as the one who did', async () => {
+		const row = await edition();
+		const mod = await moderator();
+		const f = new FormData();
+		f.set('publicationId', row.id);
+		f.set('reason', 'spam');
+		const result = await publishedPage.actions.takedown(
+			event(mod, { path: '/admin/published?/takedown', form: f }) as never
+		);
+		expect(result).toEqual({ scope: 'published', done: true });
+		const [after] = await db.select().from(publications).where(eq(publications.id, row.id));
+		expect(after.removedAt).not.toBeNull();
+		expect(after.removedBy).toBe(mod.id);
+		expect(after.removedReason).toBe('spam');
+	});
+});
+
+describe('story tags and their moderation', () => {
+	function tagForm(genreId: string) {
+		const form = new FormData();
+		form.append('genres', genreId);
+		form.set('tags', 'Found Family');
+		form.set('fandoms', '');
+		return form;
+	}
+
+	it("a story's tags are saved by its owner and by no one else", async () => {
+		const [genre] = await db
+			.insert(tags)
+			.values({ kind: 'genre', name: 'Fantasy', slug: 'fantasy-authz' })
+			.returning();
+		await expectRefused(
+			storySettings.actions.saveTags as Handler,
+			event(B, { params: { id: s.storyA.id }, form: tagForm(genre.id) })
+		);
+		const result = await storySettings.actions.saveTags(
+			event(A, { params: { id: s.storyA.id }, form: tagForm(genre.id) }) as never
+		);
+		expect(result).toMatchObject({ saved: true });
+		const view = await storyTagView(db, s.storyA.id);
+		expect(view.genres.map((tag) => tag.id)).toEqual([genre.id]);
+	});
+
+	it('keeps a picked name that contains a comma whole', async () => {
+		await db
+			.insert(tags)
+			.values({ kind: 'fandom', name: 'Love, Death & Robots', slug: 'love,-death-&-robots' });
+		const form = new FormData();
+		form.append('fandoms', 'Love, Death & Robots');
+		form.append('tags', 'Hurt, comfort');
+		const result = await storySettings.actions.saveTags(
+			event(A, { params: { id: s.storyA.id }, form }) as never
+		);
+		expect(result).toMatchObject({ saved: true });
+		const view = await storyTagView(db, s.storyA.id);
+		expect(view.fandoms.map((tag) => tag.name)).toContain('Love, Death & Robots');
+		expect(view.tags.map((tag) => tag.name)).toEqual(['Hurt, comfort']);
+	});
+
+	for (const [page, kind, actions] of [
+		['tags', 'tag', tagsPage.actions],
+		['fandoms', 'fandom', fandomsPage.actions],
+		['genres', 'genre', genresPage.actions],
+		['warnings', 'warning', warningsPage.actions]
+	] as const) {
+		it(`the ${page} page's actions refuse a plain user and a missing user`, async () => {
+			const [tag] = await db
+				.insert(tags)
+				.values({ kind, name: 'X', slug: `x-${kind}` })
+				.returning();
+			for (const [name, action] of Object.entries(actions)) {
+				for (const user of [B, null]) {
+					const form = new FormData();
+					form.set('id', tag.id);
+					form.set('name', 'Y');
+					form.set('target', 'Z');
+					form.set('names', 'New');
+					await expectRefused(
+						action as Handler,
+						event(user, { path: `/admin/${page}?/${name}`, form })
+					);
+				}
 			}
 		});
 	}

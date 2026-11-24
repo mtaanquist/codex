@@ -47,11 +47,31 @@ import {
 	TEXT_ALIGNS
 } from '#lib/page-setup';
 import { ownedStory } from '#lib/server/story-access';
+import { browseTagSuggestions, saveStoryVisibility } from '#lib/server/browse';
+import { browseEnabled } from '#lib/server/settings';
 import { assistantLayout, saveStoryLlmOverride } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
+import {
+	checkTagNames,
+	findFandoms,
+	listEntries,
+	pickListed,
+	setStoryList,
+	setStoryTags,
+	storyTagView
+} from '#lib/server/tags';
+import { MAX_GENRES } from '#lib/story-tags';
 import { ASSETS_OFF_MESSAGE } from '#lib/server/asset-storage-message';
+
+// One form field per chip, so a name that contains a comma stays whole.
+function chipValues(data: FormData, name: string): string[] {
+	return data
+		.getAll(name)
+		.map((value) => (typeof value === 'string' ? value.trim() : ''))
+		.filter(Boolean);
+}
 
 // The current edition, if the story has been published.
 async function currentEdition(storyId: string) {
@@ -61,7 +81,10 @@ async function currentEdition(storyId: string) {
 			versionLabel: publications.versionLabel,
 			downloadsPublic: publications.downloadsPublic,
 			publishedAt: publications.publishedAt,
-			artifactErrors: publications.artifactErrors
+			artifactErrors: publications.artifactErrors,
+			// A takedown, and the reason the author is told.
+			removedAt: publications.removedAt,
+			removedReason: publications.removedReason
 		})
 		.from(publications)
 		.where(and(eq(publications.storyId, storyId), eq(publications.isCurrent, true)));
@@ -105,7 +128,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 			.select({
 				handle: users.handle,
 				enabled: users.publicArchiveEnabled,
-				penName: users.penName
+				penName: users.penName,
+				hiddenFromBrowse: users.hiddenFromBrowse
 			})
 			.from(users)
 			.where(eq(users.id, locals.user!.id)),
@@ -158,7 +182,19 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		accountPageSetup,
 		// Whether to offer "Review this story" in the Review section.
 		assistant,
-		drafts
+		drafts,
+		// The Publish section's labels and the curated lists to pick from.
+		storyTags: params.section === 'publish' ? await storyTagView(db, story.id) : null,
+		lists:
+			params.section === 'publish'
+				? {
+						genres: await listEntries(db, 'genre'),
+						warnings: await listEntries(db, 'warning'),
+						fandoms: (await listEntries(db, 'fandom')).map((entry) => entry.name),
+						// Only tags readers can already find on Browse.
+						tags: (await browseEnabled(db)) ? await browseTagSuggestions(db) : []
+					}
+				: { genres: [], warnings: [], fandoms: [], tags: [] }
 	};
 };
 
@@ -331,8 +367,44 @@ export const actions: Actions = {
 			return fail(400, { action: 'publish', message: 'Pick a visibility.' });
 		}
 		const isAdult = data.get('isAdult') === 'on';
-		await db.update(stories).set({ visibility, isAdult }).where(eq(stories.id, story.id));
+		await saveStoryVisibility(
+			db,
+			story.id,
+			visibility,
+			isAdult,
+			(await browseEnabled(db)) ? data.get('listedInBrowse') === 'on' : null
+		);
 		return { action: 'publish', saved: true };
+	},
+	saveTags: async ({ request, params, locals }) => {
+		const { story } = await ownedStory(params.id, locals.user!.id);
+		const data = await request.formData();
+		const view = await storyTagView(db, story.id);
+		// Checked before anything is written, so a refused name saves nothing.
+		const checked = checkTagNames(chipValues(data, 'tags'), view.tags.length);
+		const genres = await pickListed(db, 'genre', data.getAll('genres'));
+		// Like fandoms, a story already over the limit (after an unmerge) may
+		// keep what it has but not add more.
+		if (genres.length > Math.max(MAX_GENRES, view.genres.length)) {
+			return fail(400, { action: 'tags', message: `Pick up to ${MAX_GENRES} genres.` });
+		}
+		const warnings = await pickListed(db, 'warning', data.getAll('contentWarnings'));
+		if (!checked.ok) return fail(400, { action: 'tags', message: checked.message });
+		const shown = view.fandoms;
+		const fandoms = await findFandoms(
+			db,
+			chipValues(data, 'fandoms'),
+			shown.filter((tag) => tag.inherited).map((tag) => tag.slug),
+			shown.length
+		);
+		if (!fandoms.ok) return fail(400, { action: 'tags', message: fandoms.message });
+		const { skipped } = await db.transaction(async (tx) => {
+			await setStoryList(tx, story.id, 'fandom', fandoms.ids);
+			await setStoryList(tx, story.id, 'genre', genres);
+			await setStoryList(tx, story.id, 'warning', warnings);
+			return await setStoryTags(tx, story.id, checked.tags);
+		});
+		return { action: 'tags', saved: true, skipped };
 	},
 	publish: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);

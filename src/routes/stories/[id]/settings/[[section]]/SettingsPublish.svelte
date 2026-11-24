@@ -3,11 +3,25 @@
 	import { resolve } from '$app/paths';
 	import { formatDateTime } from '#lib/format';
 	import { tick } from 'svelte';
+	import { enhance } from '#lib/enhance';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
+	import { reportReasonLabel } from '#lib/report-reasons';
+	import TagInput from '#lib/components/TagInput.svelte';
+	import { MAX_FANDOMS, MAX_GENRES, MAX_TAG_LENGTH, MAX_TAGS } from '#lib/story-tags';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
+
+	// The tag form's live state, reset from the page data after each save.
+	let genres = $state<string[]>([]);
+	let fandoms = $state<string[]>([]);
+	let tags = $state<string[]>([]);
+	$effect.pre(() => {
+		genres = data.storyTags?.genres.map((tag) => tag.id) ?? [];
+		fandoms = data.storyTags?.fandoms.filter((tag) => !tag.inherited).map((tag) => tag.name) ?? [];
+		tags = data.storyTags?.tags.map((tag) => tag.name) ?? [];
+	});
 
 	// The first publish with no pen name set asks what name goes public; the
 	// chosen name rides the publish form as a hidden field.
@@ -46,6 +60,24 @@
 	</h2>
 	<p class="admin-block-sub">Who can find this story, and the frozen editions readers see.</p>
 </div>
+{#if data.edition?.removedReason}
+	<div
+		class="status-banner"
+		role="status"
+		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
+	>
+		<span class="x">
+			The people who look after this site took this edition down, so readers cannot open it. Reason: {reportReasonLabel(
+				data.edition.removedReason
+			)}. You cannot publish it again until they restore it.
+		</span>
+	</div>
+{:else if data.edition?.removedAt}
+	<p class="field-hint" role="status">
+		This edition came down when you asked to delete your account. Publish an edition to put the
+		story back up.
+	</p>
+{/if}
 <div class="settings-group">
 	<form method="POST" action="?/setVisibility">
 		{#if form?.action === 'publish' && form.message}
@@ -62,6 +94,33 @@
 				<option value="public">Public - listed on your shelf</option>
 			</select>
 		</div>
+		{#if page.data.browse}
+			<div class="field">
+				<label class="check-row">
+					<input
+						type="checkbox"
+						name="listedInBrowse"
+						checked={data.story.listedInBrowse}
+						disabled={!!data.story.browseBlockedAt}
+					/>
+					List in Browse
+				</label>
+				{#if data.story.browseBlockedAt}
+					<p class="field-hint">
+						The people who look after this site removed this story from Browse, so you cannot list
+						it there. Reason: {reportReasonLabel(data.story.browseBlockedReason)}. Its pages are
+						still up.
+					</p>
+				{:else}
+					<p class="field-hint">
+						Lets readers find a public story on the site's <a href={resolve('/browse')}>Browse</a>
+						page.{#if data.archive?.hiddenFromBrowse}
+							Your account is set to stay off Browse, so it will not appear there until you change
+							that in your account settings.{/if}
+					</p>
+				{/if}
+			</div>
+		{/if}
 		<div class="field">
 			<label class="check-row">
 				<input type="checkbox" name="isAdult" checked={data.story.isAdult} />
@@ -81,6 +140,96 @@
 		{/if}
 		<div class="settings-actions">
 			<button class="btn btn-primary" type="submit">Save visibility</button>
+		</div>
+	</form>
+	<!-- Enhanced so a refused save keeps what the writer picked and typed. -->
+	<form
+		method="POST"
+		action="?/saveTags"
+		use:enhance={() =>
+			async ({ update }) => {
+				await update({ reset: false });
+			}}
+	>
+		{#if form?.action === 'tags' && form.message}
+			<p class="form-error" role="alert">{form.message}</p>
+		{/if}
+		{#if form?.action === 'tags' && 'saved' in form && form.saved}
+			<p class="field-hint" role="status" style="color:var(--status-final-ink);">
+				Saved.{#if form.skipped?.length}
+					Not added, because the moderators removed them: {form.skipped.join(', ')}.{/if}
+			</p>
+		{/if}
+		<div class="field" role="group" aria-labelledby="st-genres-label">
+			<span class="field-label" id="st-genres-label">Genres</span>
+			{#each data.lists.genres as genre (genre.id)}
+				<label class="check-row">
+					<input
+						type="checkbox"
+						name="genres"
+						value={genre.id}
+						bind:group={genres}
+						disabled={genres.length >= MAX_GENRES && !genres.includes(genre.id)}
+					/>
+					{genre.name}
+				</label>
+			{:else}
+				<p class="field-hint">This site has no genres to pick from yet.</p>
+			{/each}
+			{#if data.lists.genres.length > 0}<p class="field-hint">Pick up to {MAX_GENRES}.</p>{/if}
+		</div>
+		<div class="field" role="group" aria-labelledby="st-warnings-label">
+			<span class="field-label" id="st-warnings-label">Content warnings</span>
+			{#each data.lists.warnings as warning (warning.id)}
+				<label class="check-row">
+					<input
+						type="checkbox"
+						name="contentWarnings"
+						value={warning.id}
+						checked={data.storyTags?.warnings.some((tag) => tag.id === warning.id)}
+					/>
+					{warning.name}
+				</label>
+			{:else}
+				<p class="field-hint">This site has no content warnings to pick from yet.</p>
+			{/each}
+			<p class="field-hint">
+				Tick everything a reader should know about before they start.{#if data.edition}
+					Readers see a change here after you publish again.{/if}
+			</p>
+		</div>
+		<div class="field">
+			<label for="st-fandoms">Fandoms</label>
+			{#each fandoms as fandom (fandom)}<input type="hidden" name="fandoms" value={fandom} />{/each}
+			<TagInput
+				values={fandoms}
+				onChange={(next) => (fandoms = next)}
+				addLabel="Add fandom"
+				suggestions={data.lists.fandoms}
+				inputId="st-fandoms"
+			/>
+			<p class="field-hint">
+				For a story set in an existing world. Pick up to {MAX_FANDOMS} from the site's list.{#each data.storyTags?.fandoms.filter((tag) => tag.inherited) ?? [] as fandom (fandom.id)}
+					{fandom.name} comes from the universe and counts toward the {MAX_FANDOMS}.{/each}
+			</p>
+		</div>
+		<div class="field">
+			<label for="st-tags">Tags</label>
+			{#each tags as tag (tag)}<input type="hidden" name="tags" value={tag} />{/each}
+			<TagInput
+				values={tags}
+				onChange={(next) => (tags = next)}
+				addLabel="Add tag"
+				suggestions={data.lists.tags}
+				inputId="st-tags"
+			/>
+			<p class="field-hint">
+				Anything else that helps a reader find the story, such as "found family". Up to {MAX_TAGS},
+				each up to {MAX_TAG_LENGTH} characters. Press Enter or type a comma after each one.
+			</p>
+		</div>
+		<div class="settings-actions">
+			<button class="btn btn-primary" type="submit">Save tags</button>
 		</div>
 	</form>
 	<form method="POST" action="?/publish" bind:this={publishForm} onsubmit={onPublishSubmit}>
