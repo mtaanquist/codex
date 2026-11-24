@@ -202,7 +202,10 @@
 								<div>
 									<div class="cell-name">
 										{account.displayName}
-										{#if account.role === 'admin'}<span class="role-tag admin">Admin</span>{/if}
+										{#if account.role === 'admin'}<span class="role-tag admin">Admin</span>
+										{:else if account.role === 'moderator'}<span class="role-tag moderator"
+												>Moderator</span
+											>{/if}
 										{#if account.id === data.meId}<span class="pill">You</span>{/if}
 									</div>
 									<div class="cell-mail">{account.email}</div>

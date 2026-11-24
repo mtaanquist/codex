@@ -1,6 +1,6 @@
 {
-	"id": "8a0f77a7-46a4-464b-aa1d-ef8a6cfd5356",
-	"prevId": "f6cf8f2d-3f08-47bd-a619-7949574c0da8",
+	"id": "31a2c90e-d23a-47b1-a22a-04576a060c07",
+	"prevId": "069aa1b5-3ba6-4655-b500-b169bec0eba6",
 	"version": "7",
 	"dialect": "postgresql",
 	"tables": {
@@ -1212,12 +1212,6 @@
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true
-				},
-				"provider": {
-					"name": "provider",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				},
 				"prompt_tokens": {
 					"name": "prompt_tokens",
@@ -4484,6 +4478,120 @@
 			"checkConstraints": {},
 			"isRLSEnabled": false
 		},
+		"public.publication_reports": {
+			"name": "publication_reports",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "uuid",
+					"primaryKey": true,
+					"notNull": true,
+					"default": "gen_random_uuid()"
+				},
+				"publication_id": {
+					"name": "publication_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"reason": {
+					"name": "reason",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"comment": {
+					"name": "comment",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "now()"
+				},
+				"resolved_at": {
+					"name": "resolved_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"resolved_by": {
+					"name": "resolved_by",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"resolution": {
+					"name": "resolution",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
+				}
+			},
+			"indexes": {
+				"publication_reports_open": {
+					"name": "publication_reports_open",
+					"columns": [
+						{
+							"expression": "created_at",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"where": "\"publication_reports\".\"resolved_at\" is null",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				},
+				"publication_reports_publication": {
+					"name": "publication_reports_publication",
+					"columns": [
+						{
+							"expression": "publication_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
+			"foreignKeys": {
+				"publication_reports_publication_id_publications_id_fk": {
+					"name": "publication_reports_publication_id_publications_id_fk",
+					"tableFrom": "publication_reports",
+					"tableTo": "publications",
+					"columnsFrom": ["publication_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"publication_reports_resolved_by_users_id_fk": {
+					"name": "publication_reports_resolved_by_users_id_fk",
+					"tableFrom": "publication_reports",
+					"tableTo": "users",
+					"columnsFrom": ["resolved_by"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
 		"public.publications": {
 			"name": "publications",
 			"schema": "",
@@ -4538,6 +4646,13 @@
 					"notNull": true,
 					"default": false
 				},
+				"content_warnings": {
+					"name": "content_warnings",
+					"type": "text[]",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "'{}'::text[]"
+				},
 				"content": {
 					"name": "content",
 					"type": "jsonb",
@@ -4580,6 +4695,18 @@
 				"removed_at": {
 					"name": "removed_at",
 					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"removed_by": {
+					"name": "removed_by",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"removed_reason": {
+					"name": "removed_reason",
+					"type": "text",
 					"primaryKey": false,
 					"notNull": false
 				},
@@ -4633,6 +4760,15 @@
 					"tableFrom": "publications",
 					"tableTo": "story_drafts",
 					"columnsFrom": ["source_draft_id"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"publications_removed_by_users_id_fk": {
+					"name": "publications_removed_by_users_id_fk",
+					"tableFrom": "publications",
+					"tableTo": "users",
+					"columnsFrom": ["removed_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"
@@ -6610,25 +6746,6 @@
 					"primaryKey": false,
 					"notNull": false
 				},
-				"language": {
-					"name": "language",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"assistant_preferences": {
-					"name": "assistant_preferences",
-					"type": "jsonb",
-					"primaryKey": false,
-					"notNull": true,
-					"default": "'{}'::jsonb"
-				},
-				"assistant_notes": {
-					"name": "assistant_notes",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"position_in_series": {
 					"name": "position_in_series",
 					"type": "integer",
@@ -6885,6 +7002,175 @@
 			"checkConstraints": {},
 			"isRLSEnabled": false
 		},
+		"public.story_tags": {
+			"name": "story_tags",
+			"schema": "",
+			"columns": {
+				"story_id": {
+					"name": "story_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"tag_id": {
+					"name": "tag_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": true
+				}
+			},
+			"indexes": {
+				"story_tags_tag": {
+					"name": "story_tags_tag",
+					"columns": [
+						{
+							"expression": "tag_id",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": false,
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
+			"foreignKeys": {
+				"story_tags_story_id_stories_id_fk": {
+					"name": "story_tags_story_id_stories_id_fk",
+					"tableFrom": "story_tags",
+					"tableTo": "stories",
+					"columnsFrom": ["story_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				},
+				"story_tags_tag_id_tags_id_fk": {
+					"name": "story_tags_tag_id_tags_id_fk",
+					"tableFrom": "story_tags",
+					"tableTo": "tags",
+					"columnsFrom": ["tag_id"],
+					"columnsTo": ["id"],
+					"onDelete": "cascade",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {
+				"story_tags_story_id_tag_id_pk": {
+					"name": "story_tags_story_id_tag_id_pk",
+					"columns": ["story_id", "tag_id"]
+				}
+			},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
+		"public.tags": {
+			"name": "tags",
+			"schema": "",
+			"columns": {
+				"id": {
+					"name": "id",
+					"type": "uuid",
+					"primaryKey": true,
+					"notNull": true,
+					"default": "gen_random_uuid()"
+				},
+				"kind": {
+					"name": "kind",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"name": {
+					"name": "name",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"slug": {
+					"name": "slug",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": true
+				},
+				"merged_into_id": {
+					"name": "merged_into_id",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"removed_at": {
+					"name": "removed_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"removed_by": {
+					"name": "removed_by",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"created_at": {
+					"name": "created_at",
+					"type": "timestamp with time zone",
+					"primaryKey": false,
+					"notNull": true,
+					"default": "now()"
+				}
+			},
+			"indexes": {
+				"tags_kind_slug": {
+					"name": "tags_kind_slug",
+					"columns": [
+						{
+							"expression": "kind",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						},
+						{
+							"expression": "slug",
+							"isExpression": false,
+							"asc": true,
+							"nulls": "last"
+						}
+					],
+					"isUnique": true,
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				}
+			},
+			"foreignKeys": {
+				"tags_merged_into_id_tags_id_fk": {
+					"name": "tags_merged_into_id_tags_id_fk",
+					"tableFrom": "tags",
+					"tableTo": "tags",
+					"columnsFrom": ["merged_into_id"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"tags_removed_by_users_id_fk": {
+					"name": "tags_removed_by_users_id_fk",
+					"tableFrom": "tags",
+					"tableTo": "users",
+					"columnsFrom": ["removed_by"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				}
+			},
+			"compositePrimaryKeys": {},
+			"uniqueConstraints": {},
+			"policies": {},
+			"checkConstraints": {},
+			"isRLSEnabled": false
+		},
 		"public.totp_recovery_codes": {
 			"name": "totp_recovery_codes",
 			"schema": "",
@@ -6998,25 +7284,6 @@
 					"primaryKey": false,
 					"notNull": true,
 					"default": false
-				},
-				"language": {
-					"name": "language",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"assistant_preferences": {
-					"name": "assistant_preferences",
-					"type": "jsonb",
-					"primaryKey": false,
-					"notNull": true,
-					"default": "'{}'::jsonb"
-				},
-				"assistant_notes": {
-					"name": "assistant_notes",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				},
 				"llm_config": {
 					"name": "llm_config",
@@ -7497,12 +7764,6 @@
 					"primaryKey": false,
 					"notNull": true,
 					"default": false
-				},
-				"native_language": {
-					"name": "native_language",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				}
 			},
 			"indexes": {},

@@ -154,6 +154,9 @@
 				<span class="tool-search-label">Search <kbd>{mod} K</kbd></span>
 			</button>
 		{/if}
+		{#if (shell === 'public' || shell === 'reader') && page.data.browse}
+			<a class="appbar-link" href={resolve('/browse')} data-sveltekit-preload-data="tap">Browse</a>
+		{/if}
 		<!-- The author's theme lives in the account menu; the other bars have
 		     no account menu, so they keep a picker of their own. -->
 		{#if shell !== 'author'}
@@ -185,6 +188,16 @@
 </header>
 
 <style>
+	.appbar-link {
+		font-size: var(--text-sm);
+		font-weight: 500;
+		color: var(--text-muted);
+		text-decoration: none;
+		padding: 0 var(--space-2);
+	}
+	.appbar-link:hover {
+		color: var(--text);
+	}
 	/* The reader shell names the author beside the story; the rest of the path
 	   is the shared crumb machinery. */
 	.appbar-by {

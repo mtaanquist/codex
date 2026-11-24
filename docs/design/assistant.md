@@ -721,7 +721,7 @@ These cut across the surfaces and the architecture.
   No new delivery machinery.
 - **Language and spelling convention.** A universe has a `language` and a
   story may override it (`universes.language`, `stories.language`, migration
-  0116), each a tag from the one list in `#lib/writing-languages` or null for
+  0122), each a tag from the one list in `#lib/writing-languages` or null for
   not set. The writer's own `users.native_language` comes from the same list.
   `#lib/server/language` resolves the effective setting (story, else
   universe) and `llm/prompts/language.ts` writes every line once: the prompts
@@ -762,7 +762,7 @@ These cut across the surfaces and the architecture.
 - **Assistant preferences (#1344, items 1 to 3).** A universe and a story each
   carry `assistant_preferences`, a jsonb object of known keys from
   `#lib/assistant-preferences` (absent is not set), and `assistant_notes`, one
-  markdown field capped at 1,000 characters (migration 0117). The keys are a
+  markdown field capped at 1,000 characters (migration 0123). The keys are a
   house style (quote marks, serial comma, thoughts, tense, narration, each a
   fixed choice) and seven habit checks (filter verbs, point-of-view epithets,
   dangling modifiers, close repetition, comma splices, pet phrases, repeated
@@ -1434,11 +1434,11 @@ context assembly and the cross-scene pass read them.
   whose job was never queued is told from one still waiting. Indexed by
   story, job and chapter.
 - Language: `universes.language`, `stories.language` and
-  `users.native_language` (migration 0116), nullable text holding a tag from
+  `users.native_language` (migration 0122), nullable text holding a tag from
   `#lib/writing-languages`. See "Language and spelling convention" above.
 - Assistant preferences: `universes.assistant_preferences` and
   `stories.assistant_preferences` (jsonb, not null, default `{}`) with
-  `assistant_notes` text beside each (migration 0117). See "Assistant
+  `assistant_notes` text beside each (migration 0123). See "Assistant
   preferences" above.
 - Persisted chats: `assistant_chats`, with `chat_id` on
   `assistant_chat_messages` and `assistant_chat_summaries` (migration 0080,

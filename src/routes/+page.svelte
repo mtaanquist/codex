@@ -5,6 +5,7 @@
 	import ImportStoryModal from '#lib/components/ImportStoryModal.svelte';
 	import Landing from '#lib/components/Landing.svelte';
 	import NewMenu from '#lib/components/NewMenu.svelte';
+	import FandomSuggest from '#lib/components/FandomSuggest.svelte';
 	import StoryDraftsMenu from '#lib/components/StoryDraftsMenu.svelte';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import { libraryCrumb } from '#lib/chrome';
@@ -26,6 +27,9 @@
 	// inline title form. The standalone section uses the 'standalone' sentinel,
 	// since that universe may not exist yet.
 	let creatingUniverse = $state(false);
+	// The new universe's name, and the known setting picked for it, if any.
+	let newUniverseName = $state('');
+	let newUniverseFandom = $state<{ id: string; name: string } | null>(null);
 	let newStoryFor = $state<string | null>(null);
 
 	// A failed submit reloads the page; reopen the form it came from.
@@ -90,7 +94,7 @@
 </svelte:head>
 
 {#if !data.user}
-	<Landing mode={data.signupMode ?? 'approval'} />
+	<Landing mode={data.signupMode ?? 'approval'} type={data.instanceType ?? 'personal'} />
 {:else}
 	{@render library()}
 {/if}
@@ -254,19 +258,23 @@
 						{#if data.stories.length > 0}{@render viewSwitch()}{/if}
 						{#if creatingUniverse}
 							<form class="new-inline" method="POST" action="?/createUniverse">
-								<!-- svelte-ignore a11y_autofocus (the field only appears on the menu choice) -->
-								<input
-									class="input"
-									type="text"
+								<FandomSuggest
+									bind:value={newUniverseName}
 									name="name"
-									aria-label="New universe"
+									inputId="new-universe-name"
+									ariaLabel="New universe"
 									placeholder="Universe name"
 									required
 									autofocus
-									onkeydown={(e) => {
-										if (e.key === 'Escape') creatingUniverse = false;
+									onPick={(fandom) => {
+										newUniverseFandom = fandom;
+										newUniverseName = fandom.name;
 									}}
+									onEscape={() => (creatingUniverse = false)}
 								/>
+								{#if newUniverseFandom}
+									<input type="hidden" name="fandomId" value={newUniverseFandom.id} />
+								{/if}
 								<button class="btn btn-primary" type="submit">Create universe</button>
 								<button
 									class="btn btn-ghost"
@@ -275,6 +283,16 @@
 								>
 									Cancel
 								</button>
+								{#if newUniverseFandom}
+									<p class="field-hint new-inline-note">
+										Set in {newUniverseFandom.name}, from the site's list of known settings.
+										<button
+											class="btn btn-ghost btn-sm"
+											type="button"
+											onclick={() => (newUniverseFandom = null)}>Not that one</button
+										>
+									</p>
+								{/if}
 							</form>
 						{:else}
 							<NewMenu
@@ -673,8 +691,16 @@
 		gap: 8px;
 		align-items: center;
 	}
-	.new-inline .input {
+	.new-inline {
+		flex-wrap: wrap;
+		max-width: 36rem;
+	}
+	.new-inline :global(.input) {
 		width: 220px;
+	}
+	.new-inline-note {
+		flex-basis: 100%;
+		margin: 0;
 	}
 	.card-add-form {
 		display: flex;

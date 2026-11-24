@@ -7,6 +7,7 @@ import { isUniqueViolation } from './db-errors.ts';
 import { EMAIL_RE } from './signup.ts';
 import { MAX_DISPLAY_NAME } from './validation.ts';
 import { revokeAllGrants } from './mcp/oauth.ts';
+import type { Role } from '#lib/roles';
 import { MIN_PASSWORD } from '#lib/password';
 import { normaliseLanguage } from '#lib/writing-languages';
 
@@ -181,7 +182,7 @@ export async function claimHandle(
 // regular user still has to be granted publishing by an admin.
 export async function enableOwnPublishing(
 	db: Database,
-	user: { id: string; role: 'admin' | 'user' }
+	user: { id: string; role: Role }
 ): Promise<AccountResult> {
 	if (user.role !== 'admin') {
 		return { ok: false, reason: 'Only an admin can enable publishing.' };

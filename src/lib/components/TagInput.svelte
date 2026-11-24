@@ -6,13 +6,21 @@
 		values,
 		onChange,
 		addLabel = 'Add',
-		ariaLabel
+		ariaLabel,
+		suggestions = [],
+		inputId
 	}: {
 		values: string[];
 		onChange: (values: string[]) => void;
 		addLabel?: string;
 		ariaLabel?: string;
+		// Offered as the browser's own completion list while typing.
+		suggestions?: string[];
+		// For a <label for> outside; the add button carries it until the
+		// input opens.
+		inputId?: string;
 	} = $props();
+	const listId = $props.id();
 
 	let adding = $state(false);
 	let draft = $state('');
@@ -70,6 +78,8 @@
 	{#if adding}
 		<input
 			class="chip-input"
+			id={inputId}
+			list={suggestions.length > 0 ? `${listId}-list` : undefined}
 			bind:this={inputEl}
 			bind:value={draft}
 			onkeydown={onKeydown}
@@ -77,7 +87,16 @@
 			aria-label={ariaLabel ?? addLabel}
 		/>
 	{:else}
-		<button type="button" class="chip dashed" onclick={startAdding}>+ {addLabel}</button>
+		<button type="button" id={inputId} class="chip dashed" onclick={startAdding}
+			>+ {addLabel}</button
+		>
+	{/if}
+	{#if suggestions.length > 0}
+		<datalist id="{listId}-list">
+			{#each suggestions as suggestion (suggestion)}
+				<option value={suggestion}></option>
+			{/each}
+		</datalist>
 	{/if}
 </div>
 

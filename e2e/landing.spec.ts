@@ -1,8 +1,43 @@
 import { expect, test } from '@playwright/test';
+import pg from 'pg';
+import { e2eDatabaseUrl } from './database';
 import { gotoReady } from './navigate';
 
 // These journeys start signed out; skip the shared session.
 test.use({ storageState: { cookies: [], origins: [] } });
+// The instance type is one setting for the whole instance, so this file's
+// tests take turns with it.
+test.describe.configure({ mode: 'serial' });
+
+async function setInstanceType(type: 'personal' | 'service' | null) {
+	const pool = new pg.Pool({ connectionString: e2eDatabaseUrl() });
+	try {
+		if (type === null) {
+			await pool.query(`delete from app_settings where key = 'instance_type'`);
+		} else {
+			await pool.query(
+				`insert into app_settings (key, value) values ('instance_type', $1)
+				 on conflict (key) do update set value = excluded.value`,
+				[JSON.stringify({ type })]
+			);
+		}
+	} finally {
+		await pool.end();
+	}
+}
+
+test.afterAll(async () => {
+	await setInstanceType(null);
+});
+
+// A private instance (the default) shows only the short face.
+test('a private instance shows the short landing page', async ({ page }) => {
+	await setInstanceType(null);
+	await gotoReady(page, '/');
+	await expect(page.getByRole('heading', { name: /Write the story/ })).toBeVisible();
+	await expect(page.getByText('Ask for an account, and the person who runs')).toBeVisible();
+	await expect(page.getByRole('tablist', { name: 'Who is at the desk' })).toHaveCount(0);
+});
 
 // The public face: signed-out visitors get the landing page, its calls to
 // action lead into the styled auth screens, and signing in lands in the
@@ -32,6 +67,7 @@ test('landing page greets signed-out visitors and leads to sign-in', async ({ pa
 
 // One figure, three postures: the switch changes the panel and nothing else.
 test('the posture switch is a real tablist over the one figure', async ({ page }) => {
+	await setInstanceType('service');
 	await gotoReady(page, '/');
 
 	const strip = page.getByRole('tablist', { name: 'Who is at the desk' });
@@ -63,6 +99,7 @@ test('the posture switch is a real tablist over the one figure', async ({ page }
 // Every signed-out page wears the one public shell, and its handbook links go
 // to articles that exist.
 test('the public shell carries the brand, the tools and the footer', async ({ page }) => {
+	await setInstanceType('service');
 	await gotoReady(page, '/');
 
 	await expect(page.getByRole('link', { name: 'Codex, home' })).toBeVisible();

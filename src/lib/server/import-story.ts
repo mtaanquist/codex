@@ -28,6 +28,15 @@ import { accountLimits, holdCountQuota, holdStoryQuota, quotaFailure } from './q
 import { imageLimit } from '../quota';
 import { formatBytes } from '../format';
 import { errorFields, logEvent } from './log';
+import {
+	checkTagNames,
+	listedByName,
+	setStoryList,
+	setStoryTags,
+	universeFandom,
+	type ListKind
+} from './tags';
+import { cleanTagName, MAX_FANDOMS, MAX_GENRES, MAX_TAGS, tagSlug } from '../story-tags';
 
 // Turns a parsed story zip into a new story in the chosen universe. The
 // preview names every collision and how it will resolve; the commit follows
@@ -239,6 +248,41 @@ export async function runImport(
 		// placeholder slug (the column default) and takes the picked one after the
 		// quota lock, the order a create takes them in, since a create holding the
 		// quota lock may be waiting on the same slug.
+		// Labels from a Codex export: genres, warnings and fandoms this site's
+		// lists do not have are left off and reported.
+		const listed = async (kind: ListKind, names: string[], noun: string) => {
+			const { ids, missing } = await listedByName(db, kind, names);
+			for (const name of missing) {
+				problems.push(`The ${noun} "${name}" is not on this site's list, so it was left off.`);
+			}
+			return ids;
+		};
+		const genreIds = (await listed('genre', plan.story.genres ?? [], 'genre')).slice(0, MAX_GENRES);
+		if ((plan.story.genres?.length ?? 0) > MAX_GENRES) {
+			problems.push(`Only the first ${MAX_GENRES} genres were kept.`);
+		}
+		const warningIds = await listed('warning', plan.story.contentWarnings ?? [], 'content warning');
+		const tagNames = (plan.story.tags ?? []).filter((name) => {
+			const cleaned = cleanTagName(name);
+			if (!cleaned.ok && !cleaned.empty) problems.push(`The tag was left off: ${cleaned.reason}`);
+			return cleaned.ok;
+		});
+		const checkedTags = checkTagNames(tagNames.slice(0, MAX_TAGS));
+		if ((plan.story.tags?.length ?? 0) > MAX_TAGS) {
+			problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
+		}
+		// The universe's own fandom counts toward the limit and is not stored on
+		// the story again.
+		const fromUniverse = await universeFandom(db, universe.id);
+		const ownFandoms = (plan.story.fandoms ?? []).filter(
+			(name) => !fromUniverse || tagSlug(name) !== tagSlug(fromUniverse.name)
+		);
+		const fandomRoom = MAX_FANDOMS - (fromUniverse ? 1 : 0);
+		const fandomIds = (await listed('fandom', ownFandoms, 'fandom')).slice(0, fandomRoom);
+		if (ownFandoms.length > fandomRoom) {
+			problems.push(`A story can have up to ${MAX_FANDOMS} fandoms, so some were left off.`);
+		}
+
 		const problemsBefore = problems.length;
 		const write = (slug: string) =>
 			db.transaction(async (tx) => {
@@ -262,6 +306,17 @@ export async function runImport(
 						isAdult: plan.story.isAdult ?? false
 					})
 					.returning({ id: stories.id });
+				if (checkedTags.ok) {
+					const { skipped } = await setStoryTags(tx, story.id, checkedTags.tags);
+					for (const name of skipped) {
+						problems.push(
+							`The tag "${name}" was removed by this site's moderators, so it was left off.`
+						);
+					}
+				}
+				await setStoryList(tx, story.id, 'fandom', fandomIds);
+				await setStoryList(tx, story.id, 'genre', genreIds);
+				await setStoryList(tx, story.id, 'warning', warningIds);
 				let globalPosition = 0;
 				const insertScene = async (
 					scene: ImportPlan['unfiled'][number],

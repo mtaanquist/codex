@@ -105,6 +105,7 @@ const PUBLIC = [
 	'/api/passkeys/signin-options',
 	'/api/passkeys/signin',
 	'/docs',
+	'/browse',
 	'/healthz',
 	'/@writer',
 	'/@writer/a-story',

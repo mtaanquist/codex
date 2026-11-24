@@ -1,16 +1,14 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
-	import { ADMIN_KINDS, NOTIFICATION_KINDS, NOTIFICATION_LABELS } from '#lib/notifications';
+	import { NOTIFICATION_LABELS, notificationKindsFor } from '#lib/notifications';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	// Only admins approve accounts, so only they see that notification row.
-	const visibleKinds = $derived(
-		NOTIFICATION_KINDS.filter((kind) => data.user?.isAdmin || !ADMIN_KINDS.includes(kind))
-	);
+	// Account approvals are for admins, reports for admins and moderators.
+	const visibleKinds = $derived(notificationKindsFor(data.role));
 </script>
 
 <div class="admin-head">

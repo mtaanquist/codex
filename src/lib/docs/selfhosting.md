@@ -21,7 +21,7 @@ People with an account can connect an AI app they use, such as Claude, so it can
 
 ## Running it for other people
 
-A Codex you run can hold accounts for other people, each with their own writing. Whoever runs it decides who gets in: nobody, invited people only, people who ask and get approved, or anybody who signs up. If you are the one running it, that setting is in the admin panel.
+A Codex you run can hold accounts for other people, each with their own writing. Whoever runs it decides who gets in: nobody, invited people only, people who ask and get approved, or anybody who signs up. If you are the one running it, that setting is in the admin panel. The front page visitors see before signing in is short by default; to show the full introduction, set the type to Public service under Instance in the admin panel.
 
 Nobody has limits unless you set them. To limit how many universes and stories an account can have, how much space its uploaded images take, or how large one image can be (never more than 10 MB), set the limits on a plan under Plans in the admin panel, then pick that plan for the account under Usage & storage. Usage & storage also shows what each account uses.
 

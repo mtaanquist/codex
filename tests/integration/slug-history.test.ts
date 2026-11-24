@@ -314,7 +314,7 @@ describe('public redirects from old slugs', () => {
 		await restoreStory(db, ownerId, storyId);
 		expect(await publicStoryRedirect(db, 'inkwright', 'ember')).toBe('ember-rising');
 
-		await takedownPublication(db, published.publicationId);
+		await takedownPublication(db, published.publicationId, null, 'other');
 		expect(await publicStoryRedirect(db, 'inkwright', 'ember')).toBeNull();
 	});
 

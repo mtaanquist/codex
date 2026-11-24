@@ -1,5 +1,5 @@
 {
-	"id": "45fbd3d6-c965-4e48-b584-884d025db7ea",
+	"id": "15e83c19-e353-49a6-91d4-6ce3e85f15e4",
 	"prevId": "0d817c53-02a5-4cde-a4cd-262a4c0d68c9",
 	"version": "7",
 	"dialect": "postgresql",
@@ -1212,12 +1212,6 @@
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true
-				},
-				"provider": {
-					"name": "provider",
-					"type": "text",
-					"primaryKey": false,
-					"notNull": false
 				},
 				"prompt_tokens": {
 					"name": "prompt_tokens",
@@ -4583,6 +4577,12 @@
 					"primaryKey": false,
 					"notNull": false
 				},
+				"removed_by": {
+					"name": "removed_by",
+					"type": "uuid",
+					"primaryKey": false,
+					"notNull": false
+				},
 				"published_at": {
 					"name": "published_at",
 					"type": "timestamp with time zone",
@@ -4633,6 +4633,15 @@
 					"tableFrom": "publications",
 					"tableTo": "story_drafts",
 					"columnsFrom": ["source_draft_id"],
+					"columnsTo": ["id"],
+					"onDelete": "set null",
+					"onUpdate": "no action"
+				},
+				"publications_removed_by_users_id_fk": {
+					"name": "publications_removed_by_users_id_fk",
+					"tableFrom": "publications",
+					"tableTo": "users",
+					"columnsFrom": ["removed_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"

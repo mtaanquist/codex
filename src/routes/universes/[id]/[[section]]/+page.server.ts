@@ -23,6 +23,7 @@ import { isUuid } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
 import { savePreferences } from '#lib/server/assistant-preferences';
+import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/tags';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
@@ -72,6 +73,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 		categories,
 		// Entries and scene splits the Assistant or a connected app proposed.
 		proposals: await listProposals(db, locals.user!.id, universe.id),
+		// The known setting the universe is linked to, if any.
+		fandom: await universeFandom(db, universe.id),
 		timeline,
 		revisionCount,
 		trashDays: UNIVERSE_TRASH_DAYS,
@@ -134,6 +137,17 @@ export const actions: Actions = {
 		if (languageRaw && !language) {
 			return fail(400, { action: 'update', message: 'Pick a language from the list.' });
 		}
+		// The known setting: an empty field unlinks it. Linking ticks
+		// Established setting. Checked first, so a fandom no longer on the list
+		// refuses the whole save rather than half of it.
+		const fandomId = data.has('fandomId') ? formText(data, 'fandomId') || null : universe.fandomId;
+		const fandomChanged = fandomId !== universe.fandomId;
+		if (fandomChanged && fandomId !== null && !(await pickableFandom(db, fandomId))) {
+			return fail(400, {
+				action: 'update',
+				message: 'That setting is no longer on the list. Pick another.'
+			});
+		}
 		const slug = await saveUniverseDetails(db, locals.user!.id, universe, {
 			name,
 			descriptionMd,
@@ -141,6 +155,7 @@ export const actions: Actions = {
 			language
 		});
 		if (!slug) error(404, 'Not found');
+		if (fandomChanged) await setUniverseFandom(db, universe.id, fandomId);
 		// A changed slug moves this page's own URL.
 		if (slug !== universe.slug) redirect(303, `/universes/${slug}`);
 		return { action: 'update', saved: true };

@@ -30,7 +30,7 @@ const MIN_PASSAGE_QUERY = 3;
 
 // % and _ are wildcards inside ILIKE patterns; a literal search means
 // escaping them.
-function pattern(query: string): string {
+export function pattern(query: string): string {
 	return `%${query.replace(/[\\%_]/g, '\\$&')}%`;
 }
 

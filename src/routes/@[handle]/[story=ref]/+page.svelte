@@ -5,6 +5,7 @@
 	import { renderMarkdown } from '#lib/markdown';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
+	import StoryLabels from '#lib/components/StoryLabels.svelte';
 	import { pageCrumb } from '#lib/chrome';
 	import { formatLongDate, formatNumber } from '#lib/format';
 	import type { PageData } from './$types';
@@ -12,6 +13,9 @@
 	let { data }: { data: PageData } = $props();
 
 	const shelfHref = $derived(resolve('/@[handle]', { handle: data.handle }));
+	const reportHref = $derived(
+		resolve('/@[handle]/[story=ref]/report', { handle: data.handle, story: data.story })
+	);
 	// One address for search engines whether the reader came by id or by slug.
 	const canonical = $derived(
 		page.url.origin + resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story })
@@ -64,6 +68,7 @@
 				<p class="reader-kicker">A story by <a href={shelfHref}>{data.author}</a></p>
 				<h1 class="reader-title">{data.title}</h1>
 				<p class="reader-byline">The author marked this story as adult content.</p>
+				<StoryLabels {...data.labels} />
 				<p class="reader-byline">
 					<a
 						href={withQuery(
@@ -71,7 +76,7 @@
 							{ adult: 'ok' }
 						)}
 					>
-						I am an adult; show the story
+						I am of legal age to view this content where I live; show the story
 					</a>
 				</p>
 				<p class="reader-byline"><a href={shelfHref}>Back to the shelf</a></p>
@@ -94,6 +99,7 @@
 					{formatLongDate(data.publishedAt, page.data.timeZone)}{#if data.versionLabel}
 						- {data.versionLabel}{/if}
 				</p>
+				<StoryLabels {...data.labels} />
 
 				{#if data.descriptionMd}
 					<!-- Author markdown; renderMarkdown escapes raw HTML. -->
@@ -137,5 +143,5 @@
 		{/if}
 	</main>
 
-	<ReaderFooter author={data.author} {shelfHref} />
+	<ReaderFooter author={data.author} {shelfHref} {reportHref} />
 </div>

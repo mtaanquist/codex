@@ -111,7 +111,7 @@ setting and in the shape Mads agreed on 2026-11-21: fixed choices plus one
 capped free-text field, "Not set" keeping today's behaviour, no free-form
 system prompt. Storage is one jsonb object of known keys per story and per
 universe (`assistant_preferences`, not null, default `{}`) and an
-`assistant_notes` text beside each (migration 0117, additive, no row
+`assistant_notes` text beside each (migration 0123, additive, no row
 rewrite). Columns per key were the other option; twelve nullable columns on
 two tables for settings that are always read together, and only ever by the
 app, read worse than one validated object, and the object is what
@@ -155,7 +155,7 @@ content limits) remain open on #1344.
 Language and spelling convention per universe and story (2026-11-24,
 `feat/language-setting-1343`, #1343). `universes.language` and
 `stories.language` (the story's wins; null on both keeps inferring) and
-`users.native_language`, all nullable text from migration 0116, no data
+`users.native_language`, all nullable text from migration 0122, no data
 rewrite. The choices are one list in `$lib/writing-languages`, which already
 fed the editor's spell-check language preference; it gained English
 (Australia) and (Canada) and a prompt name per entry, and its labels moved
@@ -201,7 +201,7 @@ shorter request and would make the pass report a cut-off it never sent.
 
 The provider on usage rows (2026-11-24, `feat/usage-provider-1373` on
 `staging/llm-issues`, #1373). `assistant_usage` gains a nullable `provider`
-column (migration 0115), written by the gateway's `recordUsage` from the
+column (migration 0121), written by the gateway's `recordUsage` from the
 resolved config, so the usage list prices each row's cache reads at the rate
 of the provider it went to rather than the one saved now. Existing rows stay
 null and fall back to the saved provider, as before. The thirty-day sums now
@@ -247,6 +247,46 @@ round 4 counts all five searches in all nine later rounds instead, since
 nothing holds the model to one search per round.) It is pessimistic on
 purpose (cache reads would make the later rounds cheaper), so a review that
 may search is held earlier near the cap.
+
+Remaining Phase 10 features (2026-11-24, `staging/public-browse`, lanes
+#1506 to #1512, review rounds #1513, #1514, #1516, #1521). Built in the order
+#857, #1439, #1440, #856, #855, plus #1460 and #1510.
+
+- Instance type (#1460): a setting with a short landing page for a public
+  service.
+- Moderators (#1439): a role between writer and admin with its own pages
+  (reports, published editions, tag lists). Admins cannot be changed by it, and
+  an admin cannot change their own role.
+- Reports and takedowns (#1440): a report form on public reading pages and a
+  queue. A takedown always carries a reason; account deletion hides editions
+  with no reason, so those do not hold after a cancel and can still be taken
+  down. Publish and takedown lock the stories row FOR UPDATE, so a publish that
+  races a takedown either lands first and is taken down, or is refused. A
+  takedown of a superseded edition also takes down the current one, since the
+  text is mostly the same. Restore is refused while the author's deletion is
+  pending.
+- Labels (#857): genres, content warnings, tags and fandoms on stories. Genres
+  and warnings are admin-editable lists seeded with suggestions (Mads did not
+  want them in code). Merges keep the writer's own row and resolve to the
+  survivor on read, so an unmerge or restore brings it back; a form save keeps
+  rows the form cannot show (merged or removed). Limits let a story already
+  over them keep what it has rather than dropping labels on the next save.
+  Warnings are frozen by name on the edition at publish.
+- Browse (#856): off by default; lists current, public, listed editions of
+  authors who did not opt out, with filters, search and paging. Every load is
+  rate limited per IP (pages 120/min, searches 30/min on top). Empty pages,
+  searches, adult pages and unresolved filters are noindex; the canonical link
+  uses merged survivor slugs. A free-form tag filter resolves only when a listed
+  story carries it, so private tags are not revealed. Moderators can remove a
+  story from Browse; the block is checked inside the visibility update so a
+  save cannot relist it.
+- Universe fandoms (#855): a universe links to a known setting from the fandom
+  list, inherited by its stories.
+
+Review: five fresh three-reviewer rounds (moderation, labels, Browse). The
+fifth found only lows, filed as #1523 to #1543. #1444 (similar stories) was
+left for later: it waits for tags to be in use.
+
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut
 short or waiting when unsaved edits partly cancel out in one combined change)
