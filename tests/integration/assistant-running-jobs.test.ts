@@ -22,9 +22,7 @@ import {
 	ASSISTANT_ENRICH_QUEUE,
 	ASSISTANT_QUEUE_OPTIONS,
 	ASSISTANT_REVIEW_QUEUE,
-	ASSISTANT_SUMMARIES_QUEUE,
-	LEGACY_ASSISTANT_REVIEW_QUEUE,
-	LEGACY_ASSISTANT_SUMMARIES_QUEUE
+	ASSISTANT_SUMMARIES_QUEUE
 } from '../../src/lib/server/queues';
 
 // Against a real pg-boss, because the list reads its job table directly: this
@@ -68,16 +66,10 @@ beforeAll(async () => {
 		await boss.deleteQueue(queue);
 		await boss.createQueue(queue, ASSISTANT_QUEUE_OPTIONS);
 	}
-	await boss.createQueue(LEGACY_ASSISTANT_REVIEW_QUEUE);
-	await boss.createQueue(LEGACY_ASSISTANT_SUMMARIES_QUEUE);
 });
 
 beforeEach(async () => {
-	for (const queue of [
-		...ASSISTANT_QUEUES,
-		LEGACY_ASSISTANT_REVIEW_QUEUE,
-		LEGACY_ASSISTANT_SUMMARIES_QUEUE
-	]) {
+	for (const queue of ASSISTANT_QUEUES) {
 		await boss.deleteAllJobs(queue);
 	}
 	await pool.query('truncate table chapters, stories, universes, users cascade');
@@ -332,20 +324,6 @@ describe('findRunningAssistantJobs', () => {
 		await boss.fail(ASSISTANT_SUMMARIES_QUEUE, failed!);
 
 		expect(await findRunningAssistantJobs(db, userId)).toEqual([]);
-	});
-
-	// LEGACY (#1041): jobs queued on the old queues before the upgrade.
-	it('lists review and summary jobs still on the old queues', async () => {
-		const review = await boss.send(LEGACY_ASSISTANT_REVIEW_QUEUE, {
-			userId,
-			storyId,
-			categories: []
-		});
-		const summaries = await boss.send(LEGACY_ASSISTANT_SUMMARIES_QUEUE, { userId, storyId });
-
-		const jobs = await findRunningAssistantJobs(db, userId);
-		expect(jobs.find((j) => j.id === review)).toMatchObject({ kind: 'review', storyId });
-		expect(jobs.find((j) => j.id === summaries)).toMatchObject({ kind: 'summaries', storyId });
 	});
 
 	it("leaves out another writer's jobs, and jobs over deleted work", async () => {
