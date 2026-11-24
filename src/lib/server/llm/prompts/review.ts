@@ -196,7 +196,7 @@ export function buildReviewMessage(
 		'- leave_comment for an observation about continuity, characterisation, pacing, or clarity; quote the passage you mean.',
 		"- suggest_edit for a concrete line edit: replace an exact passage with an improved version, keeping the change minimal and faithful to the author's voice. Give it a one-sentence reason the author can learn from, unless the fix is obvious (a typo, a spelling slip, missing punctuation).",
 		ONE_THEME_PER_NOTE,
-		patternTool ? patternWithTool(preferences) : PATTERN_WITHOUT_TOOL,
+		patternTool ? patternWithTool(wording ? preferences : NO_PREFERENCES) : PATTERN_WITHOUT_TOOL,
 		sparing
 			? `Be specific and sparing; a few high-value notes beat many shallow ones. Splitting your observations into one comment per theme does not count against being sparing. Check the scene against the established world and entity details ${source.where}. Do not rewrite the scene wholesale or change the meaning of the prose.`
 			: focusInstruction(categories, source, language, preferences),

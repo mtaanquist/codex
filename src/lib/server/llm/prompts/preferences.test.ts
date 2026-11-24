@@ -166,6 +166,11 @@ describe('the prompts that carry the preferences', () => {
 		expect(lore).not.toContain('House style');
 		expect(lore).not.toContain('Leave them alone');
 		expect(lore).not.toContain('suddenly');
+		// The pattern tool line drops a habit left alone only where wording is read.
+		const withTool = (categories: Parameters<typeof buildReviewMessage>[2]) =>
+			buildReviewMessage(scene, [], categories, false, true, IN_CONTEXT, NO_LANGUAGE, p);
+		expect(withTool(['prose'])).toContain('(an epithet habit, a pet phrase)');
+		expect(withTool(['lore'])).toContain('(an epithet habit, a pet phrase, filter verbs)');
 	});
 
 	it('the pattern survey and brief follow the switches and the notes', () => {
