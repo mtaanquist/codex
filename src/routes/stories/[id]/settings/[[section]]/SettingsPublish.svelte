@@ -60,7 +60,7 @@
 	</h2>
 	<p class="admin-block-sub">Who can find this story, and the frozen editions readers see.</p>
 </div>
-{#if data.edition?.removedAt}
+{#if data.edition?.removedReason}
 	<div
 		class="status-banner"
 		role="status"
@@ -72,6 +72,11 @@
 			)}. You cannot publish it again until they restore it.
 		</span>
 	</div>
+{:else if data.edition?.removedAt}
+	<p class="field-hint" role="status">
+		This edition came down when you asked to delete your account. Publish an edition to put the
+		story back up.
+	</p>
 {/if}
 <div class="settings-group">
 	<form method="POST" action="?/setVisibility">

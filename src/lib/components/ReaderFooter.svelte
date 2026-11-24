@@ -50,7 +50,9 @@
 			{/if}
 			<span class="reader-foot-links">
 				<a href={resolve('/docs/[topic]', { topic: 'publishing' })}>Reading in Codex</a>
-				{#if page.data.browse}<a href={resolve('/browse')}>Browse stories</a>{/if}
+				{#if page.data.browse}<a href={resolve('/browse')} data-sveltekit-preload-data="tap"
+						>Browse stories</a
+					>{/if}
 				<a href={resolve('/docs')}>About Codex</a>
 				<!-- The library for a signed-in reader, the sign-in page otherwise. -->
 				<a href={resolve('/')}>Write your own</a>
@@ -60,7 +62,9 @@
 			<span class="reader-foot-links">
 				<a href={resolve('/docs')}>Handbook</a>
 				<a href={resolve('/docs/[topic]', { topic: 'publishing' })}>Reading in Codex</a>
-				{#if page.data.browse}<a href={resolve('/browse')}>Browse stories</a>{/if}
+				{#if page.data.browse}<a href={resolve('/browse')} data-sveltekit-preload-data="tap"
+						>Browse stories</a
+					>{/if}
 			</span>
 		{/if}
 	</div>

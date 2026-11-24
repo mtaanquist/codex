@@ -572,8 +572,8 @@ export async function takedownPublication(
 	db: Database,
 	publicationId: string,
 	removedBy: string | null,
-	// Always set for a moderator's takedown; a null reason marks the removals
-	// account deletion makes (see scheduleAccountDeletion).
+	// A takedown always has a reason. Account deletion hides editions by
+	// setting removed_at alone (see scheduleAccountDeletion).
 	reason: ReportReason
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
@@ -592,11 +592,17 @@ export async function takedownPublication(
 			.for('update');
 		const updated = await tx
 			.update(publications)
-			.set({ removedAt: sql`now()`, removedBy, removedReason: reason })
+			// An edition already down with its author's account deletion gets
+			// the reason too, so the takedown holds if the deletion is cancelled.
+			.set({
+				removedAt: sql`coalesce(${publications.removedAt}, now())`,
+				removedBy,
+				removedReason: reason
+			})
 			.where(
 				and(
 					eq(publications.storyId, target.storyId),
-					isNull(publications.removedAt),
+					isNull(publications.removedReason),
 					or(eq(publications.id, publicationId), eq(publications.isCurrent, true))
 				)
 			)
@@ -623,7 +629,8 @@ export async function takedownPublication(
 }
 
 // Lifts a moderator's takedown, so the edition is public again and the author
-// can publish new editions. Never an edition account deletion took down.
+// can publish new editions. Never an edition account deletion took down, and
+// never while the author's account is waiting to be deleted.
 export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
 	const restored = await db
 		.update(publications)
@@ -632,7 +639,8 @@ export async function restorePublication(db: Database, publicationId: string): P
 			and(
 				eq(publications.id, publicationId),
 				isNotNull(publications.removedAt),
-				isNotNull(publications.removedReason)
+				isNotNull(publications.removedReason),
+				sql`not exists (select 1 from users du where du.id = ${publications.ownerId} and du.deletion_scheduled_at is not null)`
 			)
 		)
 		.returning({ id: publications.id });

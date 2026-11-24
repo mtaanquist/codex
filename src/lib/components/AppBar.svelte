@@ -155,7 +155,7 @@
 			</button>
 		{/if}
 		{#if (shell === 'public' || shell === 'reader') && page.data.browse}
-			<a class="appbar-link" href={resolve('/browse')}>Browse</a>
+			<a class="appbar-link" href={resolve('/browse')} data-sveltekit-preload-data="tap">Browse</a>
 		{/if}
 		<!-- The author's theme lives in the account menu; the other bars have
 		     no account menu, so they keep a picker of their own. -->

@@ -96,7 +96,10 @@ export async function storyTagView(db: Database, storyId: string) {
 // Cleans typed tag names, keyed by slug (the first spelling wins), or says
 // why one cannot be used. Nothing is written.
 export function checkTagNames(
-	names: string[]
+	names: string[],
+	// How many the story shows now. A story already over the limit (after an
+	// unmerge or a restore) may keep them but not add more.
+	currentCount = 0
 ): { ok: true; tags: Map<string, string> } | { ok: false; message: string } {
 	const cleaned = new Map<string, string>();
 	for (const raw of names) {
@@ -108,7 +111,7 @@ export function checkTagNames(
 		const slug = tagSlug(result.name);
 		if (!cleaned.has(slug)) cleaned.set(slug, result.name);
 	}
-	if (cleaned.size > MAX_TAGS) {
+	if (cleaned.size > Math.max(MAX_TAGS, currentCount)) {
 		return { ok: false, message: `A story can have up to ${MAX_TAGS} tags.` };
 	}
 	return { ok: true, tags: cleaned };

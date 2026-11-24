@@ -40,7 +40,10 @@ export const actions: Actions = {
 		requireModerator(locals);
 		const publicationId = formText(await request.formData(), 'publicationId');
 		if (!isUuid(publicationId) || !(await restorePublication(db, publicationId))) {
-			return fail(400, { scope: 'published', message: 'That edition is not taken down.' });
+			return fail(400, {
+				scope: 'published',
+				message: 'That edition is not taken down, or its author has asked to delete their account.'
+			});
 		}
 		return { scope: 'published', done: true };
 	}

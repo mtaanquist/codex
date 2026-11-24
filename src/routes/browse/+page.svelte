@@ -178,7 +178,7 @@
 			</section>
 
 			{#if nextHref || data.query.after}
-				<nav class="browse-pages" aria-label="More stories">
+				<nav class="browse-pages" aria-label="More stories" data-sveltekit-preload-data="tap">
 					{#if data.query.after}
 						<a href={firstHref}>Back to the newest</a>
 					{/if}

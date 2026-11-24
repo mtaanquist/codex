@@ -16,13 +16,24 @@ export const load: PageServerLoad = async ({ url, getClientAddress, setHeaders }
 	if (!(await browseEnabled(db))) error(404, 'Not found');
 	const query = parseBrowseQuery(url.searchParams);
 	const ip = getClientAddress();
-	for (const limit of [
-		rateLimit(`browse:pages:${ip}`, PAGES_PER_MINUTE, 60_000),
-		...(query.q ? [rateLimit(`browse:ip:${ip}`, SEARCHES_PER_MINUTE, 60_000)] : [])
-	]) {
-		if (!limit.allowed) {
-			setHeaders({ 'retry-after': String(limit.retryAfterSeconds) });
-			error(429, 'Too many searches just now. Wait a minute and try again.');
+	const limits = [
+		{
+			result: rateLimit(`browse:pages:${ip}`, PAGES_PER_MINUTE, 60_000),
+			message: 'Too many pages opened from this address just now. Wait a minute and try again.'
+		},
+		...(query.q
+			? [
+					{
+						result: rateLimit(`browse:ip:${ip}`, SEARCHES_PER_MINUTE, 60_000),
+						message: 'Too many searches just now. Wait a minute and try again.'
+					}
+				]
+			: [])
+	];
+	for (const { result, message } of limits) {
+		if (!result.allowed) {
+			setHeaders({ 'retry-after': String(result.retryAfterSeconds) });
+			error(429, message);
 		}
 	}
 	const filters = await resolveFilters(db, query);
@@ -58,6 +69,7 @@ export const load: PageServerLoad = async ({ url, getClientAddress, setHeaders }
 		// A filter naming nothing that exists is an empty page; keep it out of
 		// search engines.
 		indexable:
+			books.length > 0 &&
 			browseIndexable(query) &&
 			Boolean(query.genre) === Boolean(filters.genre) &&
 			Boolean(query.fandom) === Boolean(filters.fandom) &&
