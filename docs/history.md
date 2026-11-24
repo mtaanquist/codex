@@ -23,7 +23,9 @@ capped run now carries that key and the step adopts it under the current key
 only. The #1113 test, which made adoption throw through the legacy job lookup,
 now throws through a stored review time Postgres cannot read. An install
 upgrading straight from before v3.21.3 loses any review or summary job still
-queued on the old names; the writer runs it again.
+queued on the old names, and a copyedit capped under the old key before
+v3.21.3 starts over (re-reviewing its done scenes) rather than continuing; the
+writer runs it again.
 
 New markers wait for the save (2026-11-23, `fix/marker-wait-for-save-1477`
 on `staging/bug-fixes-4`, #1477). The rest of #1477 item 1 (a new marker cut

@@ -1264,9 +1264,9 @@ newest run over the scope is looked at, it is adopted only if it was capped
 before it finished), and it starts again with the whole ceiling, minus the
 scenes whose pass failed and those edited since their pass read them, which
 are reviewed again. A failure to read or adopt the earlier run fails the
-attempt for pg-boss to retry rather than starting over. A copyedit capped before the
-categories joined the key is continued only when its job (still on the legacy
-queue) shows it checked the same categories; otherwise it starts over. The rows are
+attempt for pg-boss to retry rather than starting over. A copyedit capped
+under the key from before v3.21.3 (no categories in it) is not continued; it
+starts over. The rows are
 disposable, and a daily worker sweep drops those older than 30 days. The
 review enqueue holds one unfinished job per scope (and the summaries enqueue one
 per story), so a duplicate request cannot start a second pass over the same
