@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -246,6 +247,43 @@ describe('reviewStoryScenes categories', () => {
 		expect(survey).toContain('survey stage of the cross-scene continuity pass');
 		expect(survey).toContain('Scene 1');
 		expect(survey).toContain('Scene 3');
+	});
+
+	// #1684: the cross-scene pass uses the style notes the run read when it
+	// opened, like the scene reviews before it.
+	it('keeps the style notes read at open for the cross-scene pass', async () => {
+		const storyId = await seedStory(3);
+		await db.update(stories).set({ styleNotes: 'Spare and terse.' }).where(eq(stories.id, storyId));
+		const seen: ChatMessage[][] = [];
+		const provider: Provider = {
+			async *chatStream() {
+				yield { type: 'done' };
+			},
+			async respond(req) {
+				seen.push(req.messages);
+				// The writer edits Genre and style while the first scene is reviewed.
+				if (seen.length === 1)
+					await db
+						.update(stories)
+						.set({ styleNotes: 'Lush and ornate.' })
+						.where(eq(stories.id, storyId));
+				return { content: '[]', toolCalls: [] };
+			},
+			async listModels() {
+				return [];
+			}
+		};
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, categories: ['mechanics', 'prose', 'lore'] },
+			{ provider }
+		);
+		expect(seen).toHaveLength(4);
+		expect(userText(seen[3])).toContain('survey stage of the cross-scene continuity pass');
+		for (const messages of seen) {
+			expect(systemText(messages)).toContain('Spare and terse.');
+			expect(systemText(messages)).not.toContain('Lush and ornate.');
+		}
 	});
 
 	it('a single category sweeps each scene without the cross-scene pass', async () => {
