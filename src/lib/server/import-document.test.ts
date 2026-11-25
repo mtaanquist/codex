@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import TurndownService from 'turndown';
 import mammoth from 'mammoth';
-import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { parseDocument, parseDocumentInWorker, DocumentImportError } from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
@@ -73,6 +73,64 @@ describe('parseDocument (docx)', () => {
 		const close = '</w:tc></w:tr></w:tbl>'.repeat(depth);
 		const docx = buildDocx(open + paragraph('Deep.') + close);
 		await expect(parseDocument(docx, 'deep.docx')).rejects.toThrow(/nested too deeply/);
+	});
+
+	// mammoth finds the main document and its styles through relationships, so
+	// a part can have any name.
+	function renamePart(docx: Uint8Array, from: string, to: string, rels: string): Uint8Array {
+		const files = unzipSync(docx);
+		files[to] = files[from];
+		delete files[from];
+		const relsXml = strFromU8(files[rels]).replace(
+			from.slice(rels.startsWith('word/') ? 5 : 0),
+			to.slice(rels.startsWith('word/') ? 5 : 0)
+		);
+		files[rels] = strToU8(relsXml);
+		return zipSync(files);
+	}
+
+	it('refuses a document too large to convert whatever its parts are named', async () => {
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const huge = buildDocx(paragraph('word '.repeat(2_200_000)));
+			const renamed = renamePart(huge, 'word/document.xml', 'word/main.bin', '_rels/.rels');
+			await expect(parseDocument(renamed, 'huge.docx')).rejects.toThrow(/too large to import/);
+
+			// A styles part named by a relationship, with an escaped target.
+			const files = unzipSync(buildDocx(paragraph('Short.')));
+			files['word/s.dat'] = strToU8(`<w:styles>${' '.repeat(11 * 1024 * 1024)}</w:styles>`);
+			files['word/_rels/document.xml.rels'] = strToU8(
+				strFromU8(files['word/_rels/document.xml.rels']).replace(
+					'</Relationships>',
+					'<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="s&#46;dat"/></Relationships>'
+				)
+			);
+			await expect(parseDocument(zipSync(files), 'styles.docx')).rejects.toThrow(
+				/too large to import/
+			);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('imports a renamed main part and does not count images toward the size limit', async () => {
+		const files = unzipSync(
+			renamePart(
+				buildDocx(paragraph('Renamed.') + imageParagraph()),
+				'word/document.xml',
+				'word/main.bin',
+				'_rels/.rels'
+			)
+		);
+		files['word/_rels/main.bin.rels'] = files['word/_rels/document.xml.rels'];
+		delete files['word/_rels/document.xml.rels'];
+		const bigImage = new Uint8Array(12 * 1024 * 1024);
+		bigImage.set(PNG);
+		files['word/media/image1.png'] = bigImage;
+		const plan = await parseDocument(zipSync(files), 'renamed.docx');
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Renamed.');
+		expect(plan.assets).toHaveLength(1);
 	});
 
 	it('reads the title and author and splits chapters and scenes', async () => {
