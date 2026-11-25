@@ -105,7 +105,7 @@ describe('createReport', () => {
 		const mod = await user('mod@example.com', 'moderator');
 		const gone = await user('gone@example.com', 'moderator', { suspendedAt: new Date() });
 
-		await createReport(db, publicationId, 'spam', '  It is an advert.  ');
+		expect(await createReport(db, publicationId, 'spam', '  It is an advert.  ')).toBe(true);
 
 		const open = await listOpenReports(db);
 		expect(open).toHaveLength(1);
@@ -118,6 +118,47 @@ describe('createReport', () => {
 		expect(told).toEqual([admin.id, mod.id].sort());
 		expect(told).not.toContain(gone.id);
 		expect(told).not.toContain(author.id);
+	});
+
+	it('files nothing and tells nobody once the edition is taken down', async () => {
+		await user('mod@example.com', 'moderator');
+		await takedownPublication(db, publicationId, null, 'spam');
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(false);
+		expect(await db.select().from(publicationReports)).toHaveLength(0);
+		expect(await db.select().from(notifications)).toHaveLength(0);
+	});
+
+	it('a report filed while a takedown runs waits for it and files nothing', async () => {
+		await user('mod@example.com', 'moderator');
+		const client = await pool.connect();
+		try {
+			// The takedown's own steps: the story lock, the edition, its reports.
+			await client.query('begin');
+			await client.query(
+				'select id from stories where id = (select story_id from publications where id = $1) for update',
+				[publicationId]
+			);
+			await client.query(
+				`update publications set removed_at = now(), removed_reason = 'spam' where id = $1`,
+				[publicationId]
+			);
+			await client.query(
+				`update publication_reports set resolved_at = now(), resolution = 'taken_down' where resolved_at is null`
+			);
+			let settled = false;
+			const filing = createReport(db, publicationId, 'copyright', '').then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await filing).toBe(false);
+		} finally {
+			client.release();
+		}
+		expect(await countOpenReports(db)).toBe(0);
+		expect(await db.select().from(notifications)).toHaveLength(0);
 	});
 
 	it('keeps an empty comment as null and caps a long one', async () => {
