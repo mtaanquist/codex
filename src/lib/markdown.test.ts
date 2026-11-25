@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	findAssetReferences,
 	markdownToPlainText,
+	renderEpubMarkdown,
 	renderMarkdown,
 	renderPublicMarkdown,
 	renderReplyBlocks,
@@ -39,6 +40,31 @@ describe('renderMarkdown', () => {
 		const html = renderMarkdown('The \\page marker mid-sentence.');
 		expect(html).not.toContain('page-break');
 		expect(html).toContain('\\page marker');
+	});
+});
+
+describe('renderEpubMarkdown', () => {
+	const bundled = 'images/0f8fad5b-d9cb-469f-a165-70867728950e.png';
+
+	it('keeps a bundled image as self-closed XHTML', () => {
+		expect(renderEpubMarkdown(`![A map](${bundled})`)).toContain(
+			`<img src="${bundled}" alt="A map" />`
+		);
+	});
+
+	it('turns a remote or server-path image into a link', () => {
+		for (const src of [
+			'https://tracker.example/p.gif',
+			'/assets/0f8fad5b-d9cb-469f-a165-70867728950e'
+		]) {
+			const html = renderEpubMarkdown(`![x](${src})`);
+			expect(html).not.toContain('<img');
+			expect(html).toContain(`<a href="${src}" rel="noopener noreferrer nofollow">x</a>`);
+		}
+	});
+
+	it('shows only the alt text for an image whose file was not bundled', () => {
+		expect(renderEpubMarkdown('![lost]()')).toBe('<p>lost</p>\n');
 	});
 });
 
