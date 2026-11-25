@@ -2,6 +2,7 @@ import type { SubmitFunction } from '$app/forms';
 import type { BeforeNavigate } from '$app/navigation';
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
+import { tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { focusIsBeingRestored } from '#lib/enhance';
 
@@ -28,6 +29,7 @@ import { focusIsBeingRestored } from '#lib/enhance';
 // writer's next blur in the form tries again. Leaving the page tries again
 // too, and waits for it (see flushBeforeNavigate).
 export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
+	const startedAt = browser ? window.location.href : null;
 	failedSaves.delete(formElement);
 	formElement.removeEventListener('focusout', retryOnBlur);
 	const save = (lastSave.get(formElement) ?? 0) + 1;
@@ -39,12 +41,14 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		if (renaming) renamesInFlight -= 1;
 		savesInFlight -= 1;
 		if (result.type === 'error') {
+			const held = leavingTo !== null;
 			leavingTo = null;
 			// A later save posts every field again, so only the latest one counts.
 			if (lastSave.get(formElement) === save) {
 				failedSaves.add(formElement);
 				unsaved.add(formElement);
 				formElement.addEventListener('focusout', retryOnBlur, { once: true });
+				if (held) await showNotSaved(formElement, startedAt);
 			}
 			return;
 		}
@@ -77,6 +81,19 @@ const lastSave = new WeakMap<HTMLFormElement, number>();
 // is being tried again.
 const unsaved = new Set<HTMLFormElement>();
 export const NOT_SAVED = 'Your change was not saved. Check your connection and try again.';
+
+// The writer tried to leave and was held, so show them why: back on the
+// section the form sits on, if they have since moved off it, with the message
+// scrolled into view.
+async function showNotSaved(form: HTMLFormElement, startedAt: string | null) {
+	if (!form.isConnected) return;
+	if (startedAt && startedAt !== window.location.href && form.checkVisibility?.() === false) {
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the page the save started on
+		await goto(startedAt, { reset: false });
+	}
+	await tick();
+	form.querySelector('.fs-error')?.scrollIntoView({ block: 'nearest' });
+}
 
 function retryOnBlur(event: FocusEvent) {
 	const form = event.currentTarget as HTMLFormElement;
@@ -119,7 +136,9 @@ function isTypedField(el: Element | null): el is HTMLInputElement | HTMLTextArea
 // The reset's focusout comes after the change event in the same task, so a
 // microtask sees whether this blur is the writer's or the reset's.
 function saveUnlessRefocused(form: HTMLFormElement, field: Element) {
+	savesStarting += 1;
 	queueMicrotask(() => {
+		savesStarting -= 1;
 		if (!focusIsBeingRestored(field)) {
 			form.requestSubmit();
 			return;
@@ -146,9 +165,11 @@ function hasUnsavedRename(form: HTMLFormElement): boolean {
 
 let renamesInFlight = 0;
 let savesInFlight = 0;
+// Saves a blur has asked for, which start in a microtask (saveUnlessRefocused).
+let savesStarting = 0;
 // Rename redirects still being followed.
 let redirecting = 0;
-// Where the writer was going when a rename was still saving.
+// Where the writer was going when a save was still in flight.
 let leavingTo: URL | null = null;
 
 function continueLeaving() {
@@ -188,15 +209,16 @@ function unsavedForms(): HTMLFormElement[] {
 
 // flushFocusedField for an autosaving settings page, wired to `beforeNavigate`.
 //
-// Leaving while a save has failed would lose the change, so the navigation
-// waits while the save is tried again, and goes on only if it lands. If it
-// fails again the page stays with its message. Closing the tab or leaving the
-// app cannot wait, so the browser asks first.
+// Leaving while a save is in flight, or about to start (a link clicked
+// straight from an edited field saves it on the way), would lose the change
+// if that save failed, so the navigation waits for it and goes on only if it
+// lands. If it fails the page stays with its message. A save that moves the
+// page's own address (a rename) goes on to the target at the new address
+// (see autosaveSubmit).
 //
-// A form can also move the page's own address (see hasUnsavedRename). Leaving
-// while a rename is unsaved or still saving would load the target at the old
-// address, which the rename removes, so the navigation waits for the save and
-// then goes on to the target at the new address.
+// Leaving while a save has already failed waits too, while the save is tried
+// again. Closing the tab or leaving the app cannot wait, so the browser asks
+// first.
 export function flushBeforeNavigate(navigation: BeforeNavigate) {
 	// The rename's own redirect, or going on after a held navigation (see
 	// autosaveSubmit). A field the writer has moved on to keeps focus, and
@@ -204,15 +226,11 @@ export function flushBeforeNavigate(navigation: BeforeNavigate) {
 	if (navigation.type === 'goto' && navigation.from?.route.id === navigation.to?.route.id) return;
 	if (!browser) return;
 	const failed = unsavedForms().length > 0;
-	if (navigation.type === 'leave' || !navigation.to) {
-		if (failed) navigation.cancel();
-		flushFocusedField();
-		return;
-	}
 	if (failed) {
 		navigation.cancel();
-		leavingTo = navigation.to.url;
 		flushFocusedField();
+		if (navigation.type === 'leave' || !navigation.to) return;
+		leavingTo = navigation.to.url;
 		// A form whose retry is already saving (the blur that started this
 		// navigation retries its form) is waited for; the rest are sent again.
 		queueMicrotask(() =>
@@ -222,23 +240,16 @@ export function flushBeforeNavigate(navigation: BeforeNavigate) {
 		);
 		return;
 	}
-	const active = document.activeElement;
-	const renameField =
-		active instanceof HTMLInputElement && 'renames' in active.dataset && active.form
-			? active.form
-			: null;
-	if (renamesInFlight > 0 || (renameField && hasUnsavedRename(renameField))) {
-		navigation.cancel();
-		leavingTo = navigation.to.url;
-		flushFocusedField();
-		// The blur's save starts in a microtask (autosubmitForm). If none
-		// started (nothing changed since the last save), go on now.
-		queueMicrotask(() =>
-			queueMicrotask(() => {
-				if (renamesInFlight === 0) continueLeaving();
-			})
-		);
-		return;
-	}
 	flushFocusedField();
+	if (savesInFlight === 0 && savesStarting === 0) return;
+	navigation.cancel();
+	if (navigation.type === 'leave' || !navigation.to) return;
+	leavingTo = navigation.to.url;
+	// The blur's save starts in a microtask (saveUnlessRefocused). If none
+	// started (a field held for its next blur), go on now.
+	queueMicrotask(() =>
+		queueMicrotask(() => {
+			if (savesInFlight === 0 && savesStarting === 0) continueLeaving();
+		})
+	);
 }

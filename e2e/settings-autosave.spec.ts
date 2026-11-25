@@ -143,27 +143,22 @@ test('a settings page reached by id moves to its slug address', async ({ page })
 	await expect(page.getByLabel('Editing mode')).toBeVisible();
 });
 
-// A Details save that lands after the writer has moved to Publish refreshes the
-// page data; a genre ticked meanwhile, not yet saved, must stay ticked (#1651).
-test('a genre ticked on Publish while a Details save lands stays ticked', async ({ page }) => {
+// A Details save refreshes the page data; a genre ticked on Publish, not yet
+// saved, must stay ticked (#1651).
+test('a genre ticked on Publish stays ticked when a Details save lands', async ({ page }) => {
 	await newStory(page);
-	await page.route(/\?\/update$/, async (route) => {
-		await new Promise((resolve) => setTimeout(resolve, 1500));
-		await route.continue();
-	});
-	await page.locator('#st-description').fill('A courier races the ash north.');
-	const saved = page.waitForResponse(/\?\/update$/);
-	// Leaving the field for Publish starts its save.
-	await page
-		.getByRole('navigation', { name: 'Story settings' })
-		.getByRole('link', { name: 'Publish' })
-		.click();
+	const sections = page.getByRole('navigation', { name: 'Story settings' });
+	await sections.getByRole('link', { name: 'Publish' }).click();
 	await expect(page).toHaveURL(/\/settings\/publish$/);
 	const fantasy = page.getByRole('checkbox', { name: 'Fantasy' });
 	await fantasy.check();
+	await sections.getByRole('link', { name: 'Details' }).click();
+	const description = page.locator('#st-description');
+	await description.fill('A courier races the ash north.');
 	const refreshed = page.waitForResponse(/__data\.json/);
-	await saved;
+	await description.press('Tab');
 	await refreshed;
+	await sections.getByRole('link', { name: 'Publish' }).click();
 	await expect(fantasy).toBeChecked();
 });
 
@@ -342,6 +337,72 @@ test('leaving after a failed save waits for the save, and stays if it fails', as
 	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
 	await gotoReady(page, `/stories/${slug}/settings`);
 	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});
+
+// A link clicked straight from an edited field (no Tab first) starts the save
+// on the way; the navigation waits for it, and stays if it fails (#1697).
+test('a link clicked straight from a field whose save fails stays on the page', async ({
+	page
+}) => {
+	const { slug } = await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-description');
+	await field.fill('A courier races the ash north.');
+	const libraryLink = page.getByRole('banner').getByRole('link', { name: 'Library', exact: true });
+	await libraryLink.click();
+	const alert = page.getByRole('alert');
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	await expect(alert).toBeInViewport();
+	await page.waitForTimeout(300);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await expect(field).toHaveValue('A courier races the ash north.');
+	await page.unroute(/\?\/update$/);
+	await libraryLink.click();
+	await expect(page).not.toHaveURL(/\/settings/);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});
+
+test('a sidebar link clicked straight from a field whose save fails keeps the section', async ({
+	page
+}) => {
+	const { slug } = await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-style-notes');
+	await field.fill('Omniscient narrator, formal prose.');
+	const editorLink = page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' });
+	await editorLink.click();
+	const alert = page.getByRole('alert');
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	await expect(alert).toBeInViewport();
+	await page.waitForTimeout(300);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await expect(field).toBeVisible();
+	await expect(field).toHaveValue('Omniscient narrator, formal prose.');
+	await page.unroute(/\?\/update$/);
+	await editorLink.click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-style-notes')).toHaveValue('Omniscient narrator, formal prose.');
+});
+
+// A link clicked straight from an edited field while the save is slow goes on
+// once the save lands.
+test('a link clicked straight from a field waits for a slow save, then goes on', async ({
+	page
+}) => {
+	const { slug } = await newStory(page);
+	await slowSaves(page);
+	await page.locator('#st-brief').fill('Ash and bells.');
+	await page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' })
+		.click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-brief')).toHaveValue('Ash and bells.');
 });
 
 test('closing the tab after a failed save asks first', async ({ page }) => {
