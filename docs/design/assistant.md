@@ -1365,7 +1365,9 @@ A review job writes its progress to `assistant_review_runs` (one row per
 pg-boss job id, a jsonb state: phase, scenes completed, current scene, counts,
 and the failure list). The job-status endpoint reads it while the job runs, so
 the review window can show where the pass is; a retry of the same job after a
-worker restart reads it too and skips the scenes already handled. The state
+worker restart reads it too and skips the scenes already handled, unless the
+settings key recorded in it (see below) differs from the retry's, in which case
+the run starts over. The state
 also records the scope the run was over (the same key the queue holds one
 unfinished job per: the mode, the target and, for a copyedit, the categories
 it checks), so a run that stopped at the spend cap is picked up by the
@@ -1384,7 +1386,12 @@ wording, and the native language where the prompts hint at it), kept beside the
 scope rather than in it so the queue key is unchanged; a capped run with a
 different hash is not continued, so a changed setting starts over instead of
 counting notes made under the old one as done. A row saved before the hash
-was recorded has none and is continued as before. The rows are
+was recorded has none and is continued as before. A run reads the
+language, the preferences and the style notes once when it opens
+(`readReviewSettings`) and uses those values for every scene review, the
+pattern pass and the story frame, so an edit made while the run is going
+cannot split it between two sets of settings; the edit applies from the next
+run. The rows are
 disposable, and a daily worker sweep drops those older than 30 days. The
 review enqueue holds one unfinished job per scope (and the summaries enqueue one
 per story), so a duplicate request cannot start a second pass over the same

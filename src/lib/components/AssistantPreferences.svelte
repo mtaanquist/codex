@@ -129,8 +129,9 @@
 			<legend>Habits to check</legend>
 			<p class="field-hint prefs-lead">
 				Reviews and copyedits look for each of these habits, and so does "Look for habits that
-				repeat in the prose" in the review window. Choose "Leave alone" for one you use on purpose,
-				and the chat in a story leaves it alone too.
+				repeat in the prose" in the review window. Choose "Leave alone" for one you use on purpose.
+				Reviews and copyedits then skip it, and the chat in a story does not point it out or change
+				it unless you ask about it.
 			</p>
 			{#each HABIT_CHECKS as item (item.key)}
 				<div class="field">
