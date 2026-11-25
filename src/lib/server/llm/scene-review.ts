@@ -440,6 +440,8 @@ async function runConsistencyPass(
 		userId: string;
 		scope: ConsistencyScope;
 		scenes: SurveyScene[];
+		// A story run's style notes as read when it opened; read now when unset.
+		styleNotes?: string | null;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -453,7 +455,8 @@ async function runConsistencyPass(
 		? await assembleStoryFrame(db, {
 				userId: opts.userId,
 				storyId: story,
-				includeTiers: CONSISTENCY_TIERS
+				includeTiers: CONSISTENCY_TIERS,
+				styleNotes: opts.styleNotes
 			})
 		: await assembleContext(db, {
 				userId: opts.userId,
@@ -623,6 +626,7 @@ export async function reviewStoryConsistency(
 	opts: {
 		userId: string;
 		storyId: string;
+		styleNotes?: string | null;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -636,6 +640,7 @@ export async function reviewStoryConsistency(
 			userId: opts.userId,
 			scope: { storyId: opts.storyId },
 			scenes: surveyScenes,
+			styleNotes: opts.styleNotes,
 			meter: opts.meter,
 			signal: opts.signal
 		},
@@ -1335,7 +1340,13 @@ export async function reviewStoryScenes(
 		try {
 			const pass = await reviewStoryConsistency(
 				db,
-				{ userId: opts.userId, storyId: opts.storyId, meter, signal: opts.signal },
+				{
+					userId: opts.userId,
+					storyId: opts.storyId,
+					styleNotes: settings.styleNotes,
+					meter,
+					signal: opts.signal
+				},
 				deps
 			);
 			notes += pass.notes;
