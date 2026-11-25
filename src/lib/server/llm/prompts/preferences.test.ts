@@ -58,6 +58,16 @@ describe('preference prompt lines', () => {
 			'House style for this story: double quotation marks for dialogue ("Like this."). Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
 		);
 		expect(houseStyleLine(STYLE, 'write')).not.toContain('narration only');
+		// Writing keeps dialogue and quoted thoughts in their own tense and person.
+		expect(houseStyleLine(prefs({ houseStyle: { tense: 'past' } as never }), 'write')).toBe(
+			"House style for this story: past tense. Keep to it. Dialogue and a character's quoted thoughts keep their own tense and person."
+		);
+		expect(houseStyleLine(prefs({ houseStyle: { narration: 'first' } as never }), 'write')).toMatch(
+			/Keep to it\. Dialogue and a character's quoted thoughts keep their own tense and person\.$/
+		);
+		expect(houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'write')).toBe(
+			'House style for this story: double quotation marks for dialogue ("Like this."). Keep to it.'
+		);
 		// The chat keeps to the style and comments on prose, so it gets both.
 		const chat = houseStyleLine(STYLE, 'chat');
 		expect(chat).toContain('Keep to it.');
@@ -82,7 +92,7 @@ describe('preference prompt lines', () => {
 
 	it('states each house-style choice that is set', () => {
 		expect(houseStyleLine(STYLE, 'write')).toBe(
-			"House style for this story: single quotation marks for dialogue ('Like this.'); no serial comma (red, white and blue); a character's direct thoughts in italics; present tense; third-person limited narration, one viewpoint character at a time. Keep to it."
+			"House style for this story: single quotation marks for dialogue ('Like this.'); no serial comma (red, white and blue); a character's direct thoughts in italics; present tense; third-person limited narration, one viewpoint character at a time. Keep to it. Dialogue and a character's quoted thoughts keep their own tense and person."
 		);
 		expect(houseStyleLine(STYLE, 'check')).toContain('flag text that strays from it.');
 		const each: [Partial<PreferenceSetting['houseStyle']>, string][] = [
