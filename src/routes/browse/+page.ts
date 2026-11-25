@@ -1,16 +1,13 @@
 import { redirect } from '@sveltejs/kit';
-import { BROWSE_ADULT_KEY, withRememberedAdult } from '#lib/browse';
+import { withRememberedAdult } from '#lib/browse';
+import { browseAdultRemembered } from '#lib/browse-adult.svelte';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = ({ url, data }) => {
 	if (typeof window !== 'undefined') {
-		let remembered = false;
-		try {
-			remembered = localStorage.getItem(BROWSE_ADULT_KEY) === 'show';
-		} catch {
-			// Storage can be blocked; nothing is remembered then.
-		}
-		const target = withRememberedAdult(url, remembered);
+		// The root layout rewrites navigations inside the app before they load;
+		// this catches the rest, such as going back to an older entry.
+		const target = withRememberedAdult(url, browseAdultRemembered());
 		if (target) redirect(307, target);
 	}
 	return data;

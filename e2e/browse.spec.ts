@@ -101,9 +101,28 @@ test('Browse includes adult work on load once a reader searched with it', async 
 	await gotoReady(reader, '/browse?q=bell');
 	await expect(reader).toHaveURL('/browse?q=bell&adult=show');
 	await expect(adultBox).toBeChecked();
+	// Inside the app, the page without adult work is never fetched first.
+	const unfiltered: string[] = [];
+	reader.on('request', (request) => {
+		const url = new URL(request.url());
+		if (url.pathname === '/browse/__data.json' && url.searchParams.get('adult') !== 'show') {
+			unfiltered.push(url.href);
+		}
+	});
 	await gotoReady(reader, '/');
 	await reader.getByRole('banner').getByRole('link', { name: 'Browse' }).click();
 	await expect(reader).toHaveURL('/browse?adult=show');
+	// A link that does not carry the choice is sent there before it loads.
+	await reader.evaluate(() => {
+		const link = document.createElement('a');
+		link.href = '/browse?q=bell';
+		link.textContent = 'Plain link';
+		link.dataset.sveltekitPreloadData = 'off';
+		document.getElementById('main')!.append(link);
+	});
+	await reader.getByRole('link', { name: 'Plain link' }).click();
+	await expect(reader).toHaveURL('/browse?q=bell&adult=show');
+	expect(unfiltered).toEqual([]);
 
 	// Unticking and searching leaves adult work out from then on.
 	await adultBox.uncheck();

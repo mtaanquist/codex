@@ -81,8 +81,10 @@ export function browseIndexable(query: BrowseQuery): boolean {
 
 // A reader who includes adult work has that choice remembered on this device
 // (localStorage, which the server cannot read). Browse applies it on load: the
-// pre-paint script in app.html does it for a full page load, and the page's
-// universal load for a navigation inside the app. Both read this key.
+// pre-paint script in app.html does it for a full page load, and the root
+// layout (links and beforeNavigate, src/lib/browse-adult.svelte.ts) for a
+// navigation inside the app, with the page's universal load as a fallback.
+// All of them read this key.
 export const BROWSE_ADULT_KEY = 'codex:browse-adult';
 
 // Where a Browse address should go when the reader has the adult choice

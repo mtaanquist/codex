@@ -2,7 +2,8 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { withQuery } from '#lib/href';
-	import { BROWSE_ADULT_KEY, browseHeading } from '#lib/browse';
+	import { browseHeading } from '#lib/browse';
+	import { rememberBrowseAdult } from '#lib/browse-adult.svelte';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
 	import ShelfGrid from '#lib/components/ShelfGrid.svelte';
@@ -13,16 +14,11 @@
 	const browse = resolve('/browse');
 
 	// The choice to include adult work is remembered on this device when the
-	// reader searches with it, and applied whenever Browse opens (+page.ts and
-	// the pre-paint script in app.html).
+	// reader searches with it, and applied whenever Browse opens (the root
+	// layout, +page.ts and the pre-paint script in app.html).
 	let adult = $derived(data.query.adult);
 	function rememberAdult() {
-		try {
-			if (adult) localStorage.setItem(BROWSE_ADULT_KEY, 'show');
-			else localStorage.removeItem(BROWSE_ADULT_KEY);
-		} catch {
-			// Nothing to remember it in.
-		}
+		rememberBrowseAdult(adult);
 	}
 
 	// The same search from its first page, and with one more page.
