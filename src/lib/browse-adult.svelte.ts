@@ -25,8 +25,18 @@ export function browseHomeHref(): ResolvedPathname {
 	return withQuery(resolve('/browse'), { adult: browseAdult.remembered ? 'show' : null });
 }
 
-export function syncBrowseAdult() {
+// Reads the choice now and keeps it in step when another tab changes it.
+// Returns the cleanup that stops listening.
+export function syncBrowseAdult(): () => void {
 	browseAdult.remembered = browseAdultRemembered();
+	const onStorage = (event: StorageEvent) => {
+		// A null key means another tab cleared all of storage.
+		if (event.key === BROWSE_ADULT_KEY || event.key === null) {
+			browseAdult.remembered = browseAdultRemembered();
+		}
+	};
+	window.addEventListener('storage', onStorage);
+	return () => window.removeEventListener('storage', onStorage);
 }
 
 export function rememberBrowseAdult(show: boolean) {
