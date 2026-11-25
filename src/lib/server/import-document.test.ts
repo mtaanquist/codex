@@ -714,6 +714,18 @@ describe('parseDocument (AO3 epub)', () => {
 		]);
 	});
 
+	it('refuses a chapter spread over files too large together, before converting any', async () => {
+		const part = `<div id="chapters"><div class="userstuff2"><p>${'word '.repeat(800_000)}</p></div></div>`;
+		const spy = vi.spyOn(TurndownService.prototype, 'turndown');
+		try {
+			const epub = buildAo3Epub([...ao3Preface('General Audiences'), part, part, part]);
+			await expect(parseDocument(epub, 'w.epub')).rejects.toThrow(/section too large/);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
 	it('keeps headings and chapter lines inside the prose', async () => {
 		const chapter = `<div id="chapters"><div><h2 class="heading">Chapter 1: One</h2></div><div><p>Chapter 1</p><h3>Part A</h3><p>Text.</p><p>* * *</p><h3>Part B</h3><p>More.</p></div></div>`;
 		const plan = await parseDocument(buildAo3Epub([...ao3Preface('Explicit'), chapter]), 'w.epub');
