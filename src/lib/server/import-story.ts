@@ -69,7 +69,7 @@ export type ImportPreview = {
 // kind. One candidate attaches, none creates, two or more skips: picking one
 // silently would be the only wrong answer. Entity names are not unique, so
 // two notes ("Ann" and "ann") can find the same entity, which holds one note
-// per story: the later one's text is appended to the first, and a problem
+// per story: their texts are combined into the first one's, and a problem
 // says so.
 async function resolveNotes(
 	db: Database,
@@ -93,7 +93,9 @@ async function resolveNotes(
 		const map = new Map<string, { id: string; name: string }[]>();
 		for (const row of rows) {
 			const key = row.name.trim().toLowerCase();
-			map.set(key, [...(map.get(key) ?? []), row]);
+			const same = map.get(key);
+			if (same) same.push(row);
+			else map.set(key, [row]);
 		}
 		return map;
 	};
@@ -103,8 +105,12 @@ async function resolveNotes(
 		lore: byName(lists.lore)
 	};
 	const resolutions: NoteResolution[] = [];
-	const problems: string[] = [];
-	const matched = new Map<string, NoteResolution>();
+	// Texts are gathered per entity and joined once, since appending to the
+	// combined text note by note is quadratic in the number of notes.
+	const matched = new Map<
+		string,
+		{ resolution: NoteResolution; entityName: string; texts: string[] }
+	>();
 	for (const note of notes) {
 		const candidates = maps[note.kind].get(note.name.trim().toLowerCase()) ?? [];
 		if (candidates.length === 0) {
@@ -114,18 +120,23 @@ async function resolveNotes(
 		} else {
 			const entity = candidates[0];
 			const first = matched.get(entity.id);
-			if (!first) {
-				const resolution: NoteResolution = { ...note, outcome: 'match', entityId: entity.id };
-				matched.set(entity.id, resolution);
-				resolutions.push(resolution);
+			if (first) {
+				first.texts.push(note.notesMd);
 				continue;
 			}
-			first.notesMd = [first.notesMd, note.notesMd].filter((text) => text !== '').join('\n\n');
-			const kind = note.kind === 'lore' ? 'lore entry' : note.kind;
-			problems.push(
-				`The notes for "${first.name}" and "${note.name}" both belong to the ${kind} "${entity.name}", so they were combined into one note.`
-			);
+			const resolution: NoteResolution = { ...note, outcome: 'match', entityId: entity.id };
+			matched.set(entity.id, { resolution, entityName: entity.name, texts: [note.notesMd] });
+			resolutions.push(resolution);
 		}
+	}
+	const problems: string[] = [];
+	for (const { resolution, entityName, texts } of matched.values()) {
+		if (texts.length === 1) continue;
+		resolution.notesMd = texts.filter((text) => text !== '').join('\n\n');
+		const kind = resolution.kind === 'lore' ? 'lore entry' : resolution.kind;
+		problems.push(
+			`${texts.length} notes belong to the ${kind} "${entityName}", so they were combined into one note.`
+		);
 	}
 	return { resolutions, problems };
 }

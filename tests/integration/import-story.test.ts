@@ -280,7 +280,7 @@ describe('runImport', () => {
 		const preview = await previewImport(db, universe, plan);
 		expect(preview.notes).toEqual([{ kind: 'character', name: 'Alice Vane', outcome: 'match' }]);
 		expect(preview.problems).toEqual([
-			'The notes for "Alice Vane" and "alice vane" both belong to the character "Alice Vane", so they were combined into one note.'
+			'2 notes belong to the character "Alice Vane", so they were combined into one note.'
 		]);
 
 		const result = await runImport(db, universe, plan);
@@ -291,6 +291,23 @@ describe('runImport', () => {
 			.from(characterStoryNotes)
 			.where(eq(characterStoryNotes.storyId, result.storyId));
 		expect(noteRows.map((row) => row.notesMd)).toEqual(['Limps in this book.\n\nHates the rain.']);
+	});
+
+	// Each extra note for an entity used to copy everything combined so far,
+	// which is quadratic in the number of notes.
+	it('combines many notes for one entity in linear time, with one problem line', async () => {
+		const plan = await exportPlan(await seedStory());
+		const text = 'x'.repeat(10_000);
+		for (let i = 0; i < 2000; i++) {
+			plan.notes.push({ kind: 'character', name: 'alice vane', notesMd: text });
+		}
+		const started = performance.now();
+		const preview = await previewImport(db, universe, plan);
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(preview.notes).toEqual([{ kind: 'character', name: 'Alice Vane', outcome: 'match' }]);
+		expect(preview.problems).toEqual([
+			'2001 notes belong to the character "Alice Vane", so they were combined into one note.'
+		]);
 	});
 
 	it('round-trips chapter summaries', async () => {
