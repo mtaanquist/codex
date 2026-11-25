@@ -56,3 +56,18 @@ export function splitTags(text: string, suggestions: string[] = []): string[] {
 		.map((part) => part.trim())
 		.filter(Boolean);
 }
+
+type ShownTag = { id: string; name: string; inherited?: boolean };
+
+// What the Publish tag form edits, from the story's saved labels: genres by
+// id, and the story's own fandoms and tags by name (a fandom from the
+// universe is shown apart and cannot be removed here).
+export function savedLabels(
+	view: { genres: ShownTag[]; fandoms: ShownTag[]; tags: ShownTag[] } | null | undefined
+): { genres: string[]; fandoms: string[]; tags: string[] } {
+	return {
+		genres: view?.genres.map((tag) => tag.id) ?? [],
+		fandoms: view?.fandoms.filter((tag) => !tag.inherited).map((tag) => tag.name) ?? [],
+		tags: view?.tags.map((tag) => tag.name) ?? []
+	};
+}
