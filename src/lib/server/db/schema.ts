@@ -1046,6 +1046,13 @@ export const publications = pgTable(
 			.array()
 			.notNull()
 			.default(sql`'{}'::text[]`),
+		// The same warnings' tag ids, frozen beside the names so the Browse hide
+		// filter still matches after a rename. Empty on editions from before ids
+		// were frozen, which match by name instead.
+		contentWarningIds: uuid('content_warning_ids')
+			.array()
+			.notNull()
+			.default(sql`'{}'::uuid[]`),
 		// Frozen chapters and scenes for this edition, as markdown.
 		content: jsonb('content').notNull(),
 		// Optional, e.g. 'Edition 2'.

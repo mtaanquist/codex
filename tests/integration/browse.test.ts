@@ -38,7 +38,7 @@ const { createStoryInUniverse } = await import('../../src/lib/server/story-creat
 const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
 const { createReport } = await import('../../src/lib/server/reports');
 const { saveBrowseEnabled } = await import('../../src/lib/server/settings');
-const { addListEntries, checkTagNames, mergeTag, setStoryList, setStoryTags } =
+const { addListEntries, checkTagNames, mergeTag, renameTag, setStoryList, setStoryTags } =
 	await import('../../src/lib/server/tags');
 const {
 	allowInBrowse,
@@ -275,6 +275,28 @@ describe('search and filters', () => {
 		expect(await titles('hide=death')).toEqual([]);
 		// The old slug resolves to the survivor and hides it too.
 		expect(await titles('hide=character-death')).toEqual([]);
+	});
+
+	it('hides a story whose edition carried a warning since renamed', async () => {
+		await addListEntries(db, 'warning', 'Gore');
+		const { rows } = await pool.query("select id from tags where slug = 'gore'");
+		const s = await story('Frozen');
+		await setStoryList(db, s.id, 'warning', [rows[0].id]);
+		await publishStory(db, author.id, s.id);
+		await renameTag(db, 'warning', rows[0].id, 'Graphic violence');
+		await setStoryList(db, s.id, 'warning', []);
+		expect(await titles('hide=graphic-violence')).toEqual([]);
+	});
+
+	it('matches an edition from before warning ids were frozen by name', async () => {
+		await addListEntries(db, 'warning', 'Death');
+		const s = await story('Older');
+		// An older edition carries the names alone.
+		await pool.query(
+			`update publications set content_warnings = '{Death}', content_warning_ids = '{}' where story_id = $1`,
+			[s.id]
+		);
+		expect(await titles('hide=death')).toEqual([]);
 	});
 
 	it('pages newest first with a keyset cursor', async () => {

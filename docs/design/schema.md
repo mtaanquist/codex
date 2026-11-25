@@ -786,6 +786,7 @@ publications (
   description_md  text,
   is_adult        boolean not null default false,  -- carried from stories.is_adult; lets the reader site filter
   content_warnings text[] not null default '{}', -- names of the story's warning tags at publish, frozen
+  content_warning_ids uuid[] not null default '{}', -- the same warnings' tag ids, frozen; empty on editions from before #1596, which match by name
   content         jsonb not null,        -- frozen chapters and scenes for this edition
   version_label   text,                  -- optional, e.g. 'Edition 2'
   source_draft_id uuid references story_drafts(id) on delete set null,  -- the saved draft it came from, if any
