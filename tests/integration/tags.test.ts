@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -298,6 +299,67 @@ describe('story tags', () => {
 			ok: false,
 			message: 'Another entry already has that name. Merge them instead.'
 		});
+	});
+});
+
+// Data from before every merge was kept one step deep can hold a loop or a
+// chain longer than reads follow. Migration 0125 repairs those rows once.
+describe('broken merges (migration 0125)', () => {
+	const repairSql = readFileSync('drizzle/0125_flatten-tag-merges.sql', 'utf8');
+
+	// Inserts tags named by slug, oldest first, then points each at the next.
+	async function chain(slugs: string[], loop = false) {
+		for (const [i, slug] of slugs.entries()) {
+			await db.insert(tags).values({
+				kind: 'tag',
+				name: slug.toUpperCase(),
+				slug,
+				createdAt: new Date(Date.UTC(2020, 0, 1 + i))
+			});
+		}
+		const ids = await Promise.all(slugs.map(tagId));
+		for (const [i, id] of ids.entries()) {
+			const next = ids[i + 1] ?? (loop ? ids[0] : null);
+			if (next) await db.update(tags).set({ mergedIntoId: next }).where(eq(tags.id, id));
+		}
+		return ids;
+	}
+
+	it('says why a merge into a loop or a long chain fails, instead of asking to try again', async () => {
+		await chain(['a', 'b'], true);
+		await chain(Array.from({ length: 12 }, (_, i) => `c${i}`));
+		await db.insert(tags).values({ kind: 'tag', name: 'X', slug: 'x' });
+		for (const target of ['B', 'c0']) {
+			const result = await mergeTag(db, 'tag', await tagId('x'), target);
+			expect(result.ok).toBe(false);
+			if (!result.ok) expect(result.message).toMatch(/loop or a chain too long/);
+		}
+	});
+
+	it('gives a loop its oldest entry as survivor and points long chains at the end', async () => {
+		const loop = await chain(['b', 'a', 'z'], true);
+		const long = await chain(Array.from({ length: 12 }, (_, i) => `c${i}`));
+		// A fine chain of two steps, and a plain merge, stay as they are.
+		const fine = await chain(['f0', 'f1', 'f2']);
+		await tagStory(storyId, ['a', 'c0', 'f0']);
+		await pool.query(repairSql);
+
+		expect(await mergedInto('b')).toBeNull();
+		expect(await mergedInto('a')).toBe(await tagId('z'));
+		expect(await mergedInto('z')).toBe(loop[0]);
+		// c0 to c2 were more than 8 steps from c11; c3 to c10 still reach it.
+		for (let i = 0; i < 11; i++) {
+			expect(await mergedInto(`c${i}`)).toBe(i < 3 ? long[11] : long[i + 1]);
+		}
+		expect(await mergedInto('f0')).toBe(fine[1]);
+		expect(await mergedInto('f1')).toBe(fine[2]);
+		expect(await names(storyId)).toEqual(['B', 'C11', 'F2']);
+
+		await db.insert(tags).values({ kind: 'tag', name: 'X', slug: 'x' });
+		expect(await mergeTag(db, 'tag', await tagId('x'), 'a')).toEqual({ ok: true });
+		expect(await mergedInto('x')).toBe(loop[0]);
+		expect(await mergeTag(db, 'tag', await tagId('f2'), 'c0')).toEqual({ ok: true });
+		expect(await mergedInto('f2')).toBe(long[11]);
 	});
 });
 
