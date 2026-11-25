@@ -793,6 +793,7 @@ publications (
   removed_at      timestamptz,           -- set by a takedown (admin or moderator); hides the edition without deleting the source
   removed_by      uuid references users on delete set null, -- who took it down
   removed_reason  text,                  -- a REPORT_REASONS key (#lib/report-reasons), shown to the author
+  hidden_by_account_deletion boolean not null default false, -- set when the author schedules deletion; a restore then leaves the edition down
   published_at    timestamptz not null
 )
 

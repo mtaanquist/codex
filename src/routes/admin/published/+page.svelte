@@ -156,6 +156,12 @@
 									edition.removedReason
 								)}
 							</div>
+							{#if edition.hiddenByAccountDeletion}
+								<div class="list-sub">
+									The writer asked to delete their account. Restoring lets them publish again but
+									keeps this edition hidden.
+								</div>
+							{/if}
 						</div>
 						<div class="list-actions">
 							<form method="POST" action="?/restore">

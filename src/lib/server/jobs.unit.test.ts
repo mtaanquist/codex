@@ -19,7 +19,9 @@ vi.mock('pg-boss', () => ({
 const { queueAssistantReview, queueAssistantSummaries, reviewJobState, ASSISTANT_REVIEW_QUEUE } =
 	await import('./jobs');
 const { ASSISTANT_JOB_EXPIRY_SECONDS } = await import('./queues');
-const { reviewScopeKey } = await import('./review-runs');
+const { reviewScopeKey, reviewSettingsKey } = await import('./review-runs');
+const { NO_PREFERENCES } = await import('../assistant-preferences');
+const { NO_LANGUAGE } = await import('../writing-languages');
 
 beforeEach(() => {
 	sends.length = 0;
@@ -104,6 +106,38 @@ describe('reviewScopeKey', () => {
 		// The continuity pass ignores categories, so they do not split its key.
 		expect(reviewScopeKey({ storyId: 's', mode: 'continuity', categories: ['prose'] })).toBe(
 			'continuity:s'
+		);
+	});
+});
+
+describe('reviewSettingsKey', () => {
+	const notes = { ...NO_PREFERENCES, notes: 'Splices on purpose.' };
+
+	it('changes with the language or the preferences', () => {
+		const plain = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES);
+		expect(plain).toBe(reviewSettingsKey(NO_LANGUAGE, { ...NO_PREFERENCES }));
+		expect(reviewSettingsKey(NO_LANGUAGE, notes)).not.toBe(plain);
+		expect(reviewSettingsKey({ language: 'da', native: null }, NO_PREFERENCES)).not.toBe(plain);
+		expect(reviewSettingsKey({ language: null, native: 'da' }, NO_PREFERENCES)).not.toBe(plain);
+		expect(
+			reviewSettingsKey(NO_LANGUAGE, {
+				...NO_PREFERENCES,
+				houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' }
+			})
+		).not.toBe(plain);
+	});
+
+	it('ignores the order the habits were left alone in', () => {
+		expect(
+			reviewSettingsKey(NO_LANGUAGE, {
+				...NO_PREFERENCES,
+				leaveAlone: ['epithets', 'commaSplices']
+			})
+		).toBe(
+			reviewSettingsKey(NO_LANGUAGE, {
+				...NO_PREFERENCES,
+				leaveAlone: ['commaSplices', 'epithets']
+			})
 		);
 	});
 });

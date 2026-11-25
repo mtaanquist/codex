@@ -718,6 +718,92 @@ describe('per-run spend cap (#549)', () => {
 		expect(result.reviewed).toBe(3);
 	});
 
+	// #1552: the notes already left followed the old settings, so a changed
+	// language or preference starts the review over rather than counting them done.
+	it('does not adopt a capped run made under other preferences or another language', async () => {
+		for (const change of [
+			{ assistantNotes: 'Comma splices are on purpose.' },
+			{ language: 'da' }
+		]) {
+			const storyId = await seedStory(3);
+			await priceModel();
+			await configure({ spendCapUsd: 1.5 });
+			const first = await reviewStoryScenes(
+				db,
+				{ userId, storyId, jobId: `set-${storyId}-1` },
+				{ provider: provider().provider }
+			);
+			expect(first.capped).toBe(true);
+
+			await db.update(stories).set(change).where(eq(stories.id, storyId));
+			await configure({ spendCapUsd: 10 });
+			const second = provider();
+			const result = await reviewStoryScenes(
+				db,
+				{ userId, storyId, jobId: `set-${storyId}-2` },
+				{ provider: second.provider }
+			);
+
+			expect(second.seen).toHaveLength(3);
+			expect(result.reviewed).toBe(3);
+		}
+	});
+
+	it('continues a lore-only capped run after a preference change it does not read', async () => {
+		const storyId = await seedStory(3);
+		await priceModel();
+		await configure({ spendCapUsd: 1.5 });
+		const first = await reviewStoryScenes(
+			db,
+			{ userId, storyId, categories: ['lore'], jobId: 'lore-pref-1' },
+			{ provider: provider().provider }
+		);
+		expect(first.capped).toBe(true);
+
+		await db
+			.update(stories)
+			.set({ assistantNotes: 'Comma splices are on purpose.' })
+			.where(eq(stories.id, storyId));
+		await configure({ spendCapUsd: 10 });
+		const second = provider();
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, categories: ['lore'], jobId: 'lore-pref-2' },
+			{ provider: second.provider }
+		);
+
+		expect(second.seen).toHaveLength(1);
+	});
+
+	it('continues a capped run saved before the settings were recorded', async () => {
+		const storyId = await seedStory(3);
+		await priceModel();
+		await configure({ spendCapUsd: 1.5 });
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, jobId: 'legacy-1' },
+			{ provider: provider().provider }
+		);
+		// What a row written by the previous release holds: no settings key.
+		await pool.query(
+			`update assistant_review_runs set state = state - 'settings' where job_id = 'legacy-1'`
+		);
+		await db
+			.update(stories)
+			.set({ assistantNotes: 'Comma splices are on purpose.' })
+			.where(eq(stories.id, storyId));
+
+		await configure({ spendCapUsd: 10 });
+		const second = provider();
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, jobId: 'legacy-2' },
+			{ provider: second.provider }
+		);
+
+		expect(second.seen).toHaveLength(1);
+	});
+
 	it('does not adopt a capped run that a later run already finished', async () => {
 		const storyId = await seedStory(3);
 		await priceModel();
