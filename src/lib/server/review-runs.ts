@@ -5,6 +5,7 @@ import { assistantReviewRuns, scenes, type ReviewRunState } from './db/schema.ts
 import { parseCategories, type PatternScope, type ReviewCategory } from '../review-shape.ts';
 import type { PreferenceSetting } from '../assistant-preferences.ts';
 import type { LanguageSetting } from '../writing-languages.ts';
+import { hintedNative } from './llm/prompts/language.ts';
 
 // Progress storage for the background review job. The job writes its state as
 // it advances (one row per pg-boss job id), so the status endpoint can report
@@ -45,19 +46,21 @@ export function reviewScopeKey(input: ScopeInput): string {
 	return input.patterns ? `${base}:patterns-${input.patterns}` : base;
 }
 
-// A short hash of the settings a review's prompts read: the story language and,
-// for a pass that reads the wording, the Assistant preferences (null for one
-// that does not, so changing them does not restart a lore-only review). Kept
+// A short hash of the settings a review's prompts read: the story language,
+// for a pass that reads the wording the Assistant preferences (null for one
+// that does not, so changing them does not restart a lore-only review), and
+// the native language only where the prompts hint at it (see readsNative). Kept
 // on the run state rather than in the scope key, so the queue still holds one
 // job per scope, and compared when a capped run is adopted: a changed setting
 // starts a fresh run instead of carrying the old notes forward as done.
 export function reviewSettingsKey(
 	language: LanguageSetting,
-	preferences: PreferenceSetting | null
+	preferences: PreferenceSetting | null,
+	readsNative: boolean
 ): string {
 	const input = JSON.stringify({
 		language: language.language,
-		native: language.native,
+		native: readsNative ? hintedNative(language) : null,
 		preferences: preferences && {
 			houseStyle: Object.entries(preferences.houseStyle).sort(([a], [b]) => a.localeCompare(b)),
 			leaveAlone: [...preferences.leaveAlone].sort(),

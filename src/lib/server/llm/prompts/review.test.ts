@@ -12,10 +12,37 @@ import {
 	parseCandidates,
 	parsePatterns,
 	patternNoteBody,
+	readsNative,
 	splitPatternChunks,
 	splitSurveyChunks,
 	type SurveyScene
 } from './review';
+import type { ReviewCategory } from '../../../review-shape';
+
+// The capped-run settings key keys on the native language only where this
+// says the prompts read it, so it must match what a scene's review says.
+describe('readsNative', () => {
+	it('is true exactly where a scene review hints at the native language', () => {
+		const language = { language: 'en-GB', native: 'da' } as const;
+		const cases: ReviewCategory[][] = [[], ['lore'], ['mechanics'], ['prose'], ['lore', 'prose']];
+		for (const categories of cases) {
+			const message = buildReviewMessage(
+				{ id: 'scene-1', title: null },
+				[],
+				categories,
+				false,
+				false,
+				undefined,
+				language
+			);
+			expect(message.includes('native language is Danish')).toBe(
+				readsNative(categories, undefined)
+			);
+		}
+		// A pattern pass hints at it whatever the scene passes check.
+		expect(readsNative([], 'book')).toBe(true);
+	});
+});
 
 // The briefs an outside agent gets over MCP say what the staged prompts say,
 // in the same sentences.
