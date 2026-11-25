@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import { isHttpError } from '@sveltejs/kit';
@@ -280,6 +281,56 @@ describe('the queue', () => {
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
 		expect(await restorePublication(db, publicationId)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+	});
+
+	// Editions hidden by a deletion scheduled before migration 0124 have the
+	// flag false: it was added with no backfill.
+	async function legacyDeletionHide() {
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		await db
+			.update(publications)
+			.set({ hiddenByAccountDeletion: false })
+			.where(eq(publications.id, publicationId));
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+	}
+
+	it('a takedown of an edition hidden by a deletion from before 0124 keeps it down on restore', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		await legacyDeletionHide();
+		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+	});
+
+	it('migration 0127 marks only editions down without a takedown reason', async () => {
+		const repairSql = readFileSync('drizzle/0127_mark-legacy-deletion-hides.sql', 'utf8');
+		const mod = await user('mod@example.com', 'moderator');
+		await legacyDeletionHide();
+		// A second story, taken down by a moderator while it was up.
+		const [universe] = await db
+			.insert(universes)
+			.values({ ownerId: author.id, name: 'Second', slug: 'second' })
+			.returning();
+		const story = await createStoryInUniverse(db, author.id, universe.id, 'The Ferry');
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, story.id));
+		await pool.query(
+			`insert into scenes (story_id, global_position, body_md) values ($1, 1, 'The oars.')`,
+			[story.id]
+		);
+		const second = await publishStory(db, author.id, story.id);
+		if (!second.ok) throw new Error(second.reason);
+		await takedownPublication(db, second.publicationId, mod.id, 'spam');
+
+		await pool.query(repairSql);
+		await takedownPublication(db, publicationId, mod.id, 'copyright');
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+		expect(await restorePublication(db, second.publicationId)).toBe(true);
+		const [up] = await db
+			.select()
+			.from(publications)
+			.where(eq(publications.id, second.publicationId));
+		expect(up).toMatchObject({ removedAt: null, hiddenByAccountDeletion: false });
 	});
 
 	it('a restore waits for a deletion being scheduled, then refuses', async () => {
