@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import { inheritedChoiceLabel } from '#lib/assistant-preferences';
@@ -28,7 +29,13 @@
 	</p>
 </div>
 <div class="settings-group">
-	<form method="POST" action="?/update" use:enhance={autosaveSubmit} onchange={autosubmitForm}>
+	<!-- Posted by id: a save made while a rename is in flight must not use the old slug. -->
+	<form
+		method="POST"
+		action="{resolve('/stories/[id]/settings/[[section]]', { id: data.story.id })}?/update"
+		use:enhance={autosaveSubmit}
+		onchange={autosubmitForm}
+	>
 		<div class="field">
 			<label for="st-title">Title</label>
 			<input
