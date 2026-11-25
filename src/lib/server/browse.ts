@@ -28,7 +28,9 @@ const listed = sql`
 // An edition's publish time in whole microseconds, for the page cursor.
 const MICROS = sql.raw('(extract(epoch from p.published_at) * 1000000)::bigint');
 
-type FilterTag = { name: string; slug: string; ids: string[] };
+// ids and names cover the entry and every entry merged into it; names match
+// the warnings an edition froze by name at publish.
+type FilterTag = { name: string; slug: string; ids: string[]; names: string[] };
 
 // A filter's tag by slug, followed through merges to the entry that survives,
 // with every entry merged into it, so a story tagged with an old spelling
@@ -48,14 +50,16 @@ export async function resolveFilterTag(
 	if (!tag || tag.removedAt || tag.mergedIntoId) return null;
 	const closure = await db.execute(sql`
 		with recursive closure as (
-			select id, 0 as depth from tags where id = ${tag.id}
+			select id, name, 0 as depth from tags where id = ${tag.id}
 			union all
-			select t.id, c.depth + 1 from tags t join closure c on t.merged_into_id = c.id
+			select t.id, t.name, c.depth + 1 from tags t join closure c on t.merged_into_id = c.id
 			where c.depth < ${MAX_MERGE_DEPTH}
 		)
-		select distinct id from closure
+		select distinct id, name from closure
 	`);
-	const ids = (closure.rows as { id: string }[]).map((row) => row.id);
+	const rows = closure.rows as { id: string; name: string }[];
+	const ids = rows.map((row) => row.id);
+	const names = [...new Set(rows.map((row) => row.name))];
 	// A free-form tag only counts once a listed story carries it, so a tag
 	// that lives on private stories alone is not revealed by its name.
 	if (kind === 'tag') {
@@ -72,7 +76,7 @@ export async function resolveFilterTag(
 		`);
 		if (used.rows.length === 0) return null;
 	}
-	return { name: tag.name, slug: tag.slug, ids };
+	return { name: tag.name, slug: tag.slug, ids, names };
 }
 
 function hasAny(ids: string[]): SQL {
@@ -146,11 +150,13 @@ function filterConditions(query: BrowseQuery, filters: BrowseFilters): SQL[] | n
 	}
 	if (filters.hide.length > 0) {
 		// Hidden if the story carries the warning now or its edition did at
-		// publish, so a reader is not shown a warning they asked to avoid.
+		// publish, so a reader is not shown a warning they asked to avoid. The
+		// edition froze names, so an entry since merged into the warning
+		// matches by its own name.
 		conditions.push(sql`not ${hasAny(filters.hide.flatMap((tag) => tag.ids))}`);
 		conditions.push(
 			sql`not (p.content_warnings && array[${sql.join(
-				filters.hide.map((tag) => sql`${tag.name}`),
+				filters.hide.flatMap((tag) => tag.names.map((name) => sql`${name}`)),
 				sql`, `
 			)}]::text[])`
 		);
