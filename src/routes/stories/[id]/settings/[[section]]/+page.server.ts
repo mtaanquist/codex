@@ -95,6 +95,7 @@ async function currentEdition(storyId: string) {
 }
 
 const SECTIONS = [
+	'preferences',
 	'editor',
 	'pagesetup',
 	'goals',
@@ -151,17 +152,19 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	if (params.section === 'publish' && !(archive?.enabled && archive?.handle))
 		error(404, 'Not found');
 	if (params.section === 'assistant' && !assistant.tabEnabled) error(404, 'Not found');
+	// The Assistant preferences section, shown wherever the preferences apply.
+	const preferencesShown = await assistantPreferencesShown(
+		db,
+		locals.user!.id,
+		assistant.tabEnabled
+	);
+	if (params.section === 'preferences' && !preferencesShown) error(404, 'Not found');
 	return {
 		// The model pickers of the Assistant section; null hides the section.
 		assistantModels: assistant.tabEnabled
 			? await scopeModelSettings(db, locals.user!.id, { storyId: story.id })
 			: null,
-		// The Assistant preferences form, shown wherever the preferences apply.
-		assistantPreferencesShown: await assistantPreferencesShown(
-			db,
-			locals.user!.id,
-			assistant.tabEnabled
-		),
+		assistantPreferencesShown: preferencesShown,
 		story,
 		universe,
 		timeline,

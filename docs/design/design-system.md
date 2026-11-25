@@ -228,7 +228,8 @@ the nav. Each group's `.admin-block` carries the anchor id (with a
 `scroll-margin-top` that clears the sticky bar). The list is hidden below
 820px wide or 640px tall; the headings are a scroll away. Split a section
 into its own sidebar item instead when its groups are independent and it
-keeps growing.
+keeps growing, as Assistant preferences was split out of story and universe
+Details (#1548).
 
 ## Chrome
 

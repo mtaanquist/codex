@@ -685,11 +685,14 @@ export async function listLiveEditions(
 ) {
 	const safePage = pageIndex(page);
 	const text = query.trim();
-	const pattern = likePattern(text);
+	// Handles are stored without the '@' the pages show before them.
+	const handlePattern = likePattern(text.replace(/^@/, ''));
 	const where = and(
 		eq(publications.isCurrent, true),
 		isNull(publications.removedAt),
-		text ? or(ilike(publications.handle, pattern), ilike(publications.title, pattern)) : undefined
+		text
+			? or(ilike(publications.handle, handlePattern), ilike(publications.title, likePattern(text)))
+			: undefined
 	);
 	const [{ total }] = await db.select({ total: count() }).from(publications).where(where);
 	// One row past the page says whether a next page exists.
@@ -745,9 +748,11 @@ export async function listTakenDown(db: Database) {
 			title: publications.title,
 			removedAt: publications.removedAt,
 			removedReason: publications.removedReason,
-			hiddenByAccountDeletion: publications.hiddenByAccountDeletion
+			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
 		})
 		.from(publications)
+		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(
 			and(
 				eq(publications.isCurrent, true),

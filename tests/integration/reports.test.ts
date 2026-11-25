@@ -37,7 +37,7 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 };
 const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
-const { publishStory, restorePublication, takedownPublication } =
+const { listTakenDown, publishStory, restorePublication, takedownPublication } =
 	await import('../../src/lib/server/publish');
 const { createReport, dismissReport, listOpenReports, countOpenReports } =
 	await import('../../src/lib/server/reports');
@@ -331,6 +331,19 @@ describe('the queue', () => {
 			.from(publications)
 			.where(eq(publications.id, second.publicationId));
 		expect(up).toMatchObject({ removedAt: null, hiddenByAccountDeletion: false });
+	});
+
+	it('says whether the deletion of a taken-down edition is still pending', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		await takedownPublication(db, publicationId, mod.id, 'spam');
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: publicationId, hiddenByAccountDeletion: true, ownerDeletionPending: true }
+		]);
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: publicationId, hiddenByAccountDeletion: true, ownerDeletionPending: false }
+		]);
 	});
 
 	it('a restore waits for a deletion being scheduled, then refuses', async () => {

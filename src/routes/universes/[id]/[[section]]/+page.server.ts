@@ -50,7 +50,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	// their own page.
 	if (
 		params.section !== undefined &&
-		!['categories', 'suggestions', 'assistant', 'history', 'export'].includes(params.section)
+		!['preferences', 'categories', 'suggestions', 'assistant', 'history', 'export'].includes(
+			params.section
+		)
 	)
 		error(404, 'Not found');
 	const universe = await ownedUniverse(params.id, locals.user!.id);
@@ -63,17 +65,19 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	]);
 	// The section shows only with the Assistant set up, so its page does too.
 	if (params.section === 'assistant' && !assistant.tabEnabled) error(404, 'Not found');
+	// The Assistant preferences section, shown wherever the preferences apply.
+	const preferencesShown = await assistantPreferencesShown(
+		db,
+		locals.user!.id,
+		assistant.tabEnabled
+	);
+	if (params.section === 'preferences' && !preferencesShown) error(404, 'Not found');
 	return {
 		// The model pickers of the Assistant section; null hides the section.
 		assistantModels: assistant.tabEnabled
 			? await scopeModelSettings(db, locals.user!.id, { universeId: universe.id })
 			: null,
-		// The Assistant preferences form, shown wherever the preferences apply.
-		assistantPreferencesShown: await assistantPreferencesShown(
-			db,
-			locals.user!.id,
-			assistant.tabEnabled
-		),
+		assistantPreferencesShown: preferencesShown,
 		universe,
 		contents,
 		categories,

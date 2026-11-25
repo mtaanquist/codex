@@ -91,9 +91,10 @@
 	});
 
 	// Browse includes adult work when the reader chose that on this device.
-	// Links to it read the choice once mounted; any other navigation into
-	// Browse is sent to adult=show here, before its data loads, so the page
-	// is not fetched (and counted against its rate limit) twice.
+	// Links to it read the choice once mounted, and again whenever another tab
+	// changes it; any other navigation into Browse is sent to adult=show here,
+	// before its data loads, so the page is not fetched (and counted against
+	// its rate limit) twice.
 	$effect(() => syncBrowseAdult());
 	beforeNavigate((navigation) => {
 		const to = navigation.to;
