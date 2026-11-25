@@ -75,6 +75,15 @@ export function reviewSettingsKey(
 	return createHash('sha256').update(input).digest('hex').slice(0, 16);
 }
 
+// The settings a review run reads once when it opens: what it keys itself on
+// (reviewSettingsKey) and what every scene review and the pattern pass state,
+// so an edit made while the run is going cannot split it between two sets.
+export type ReviewSettings = {
+	language: LanguageSetting;
+	preferences: PreferenceSetting;
+	styleNotes: string | null;
+};
+
 // The earlier progress of a review could not be read. The review does not
 // start over in its place (that would bill every scene again); the attempt
 // fails so pg-boss can retry it.

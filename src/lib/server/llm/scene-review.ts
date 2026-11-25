@@ -21,7 +21,8 @@ import {
 	ReviewRunLoadError,
 	reviewScopeKey,
 	reviewSettingsKey,
-	saveReviewRun
+	saveReviewRun,
+	type ReviewSettings
 } from '../review-runs.ts';
 import { needsSummary, summariseStory } from './summaries.ts';
 import {
@@ -268,6 +269,9 @@ export async function reviewOneScene(
 		// Notes from the same run that cover this scene but sit elsewhere (a
 		// chapter pattern noted on another scene), carried like its own.
 		extraPrior?: PriorNote[];
+		// The run's language and preferences, read once when it opened; read
+		// here when unset (a single inline review).
+		settings?: ReviewSettings;
 	},
 	deps: GatewayDeps = {}
 ): Promise<ScenePassResult> {
@@ -320,8 +324,9 @@ export async function reviewOneScene(
 				sceneTextIncluded,
 				patternTool,
 				IN_CONTEXT,
-				await storyLanguage(db, opts.storyId, opts.userId),
-				await storyAssistantPreferences(db, opts.storyId, opts.userId)
+				opts.settings?.language ?? (await storyLanguage(db, opts.storyId, opts.userId)),
+				opts.settings?.preferences ??
+					(await storyAssistantPreferences(db, opts.storyId, opts.userId))
 			)
 	};
 	const messages: ChatMessage[] = system ? [system, task] : [task];
@@ -745,14 +750,22 @@ export type ContinuityReviewResult = {
 	overCap?: boolean;
 };
 
-// The story's style notes, which the review frame asks the reviewer to judge
-// the prose against, so a wording pass keys its run on them.
-async function storyStyleNotes(db: Database, storyId: string): Promise<string | null> {
+// The settings a review run states, read once when it opens. The style notes
+// are what the review frame asks the reviewer to judge the prose against.
+async function readReviewSettings(
+	db: Database,
+	storyId: string,
+	userId: string
+): Promise<ReviewSettings> {
 	const [row] = await db
 		.select({ styleNotes: stories.styleNotes })
 		.from(stories)
 		.where(eq(stories.id, storyId));
-	return row?.styleNotes ?? null;
+	return {
+		language: await storyLanguage(db, storyId, userId),
+		preferences: await storyAssistantPreferences(db, storyId, userId),
+		styleNotes: row?.styleNotes ?? null
+	};
 }
 
 // The run state a review writes as it advances, when it was queued with a job
@@ -778,6 +791,10 @@ async function openRun(
 	if (opts.jobId) {
 		try {
 			state = await loadReviewRun(db, opts.jobId);
+			// A retry of the same job after a settings change starts over: the
+			// scenes it already did followed the old settings, and keeping them
+			// under either key would let a continuation carry them forward wrongly.
+			if (state?.settings && opts.settings && state.settings !== opts.settings) state = null;
 			// A capped run completes its job, so the writer's "run the review again
 			// to continue" arrives as a new job with no row of its own. The capped
 			// run over the same scope is adopted under the new id, so the scenes it
@@ -1077,15 +1094,16 @@ export async function reviewStoryScenes(
 		patterns
 	};
 	const wording = readsWording(parseCategories(opts.categories));
+	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
 		scope: reviewScopeKey(scope),
 		settings: reviewSettingsKey(
-			await storyLanguage(db, opts.storyId, opts.userId),
-			wording ? await storyAssistantPreferences(db, opts.storyId, opts.userId) : null,
+			settings.language,
+			wording ? settings.preferences : null,
 			readsNative(parseCategories(opts.categories), patterns),
-			wording ? await storyStyleNotes(db, opts.storyId) : null
+			wording ? settings.styleNotes : null
 		)
 	});
 	const done = new Set(run.state.completed);
@@ -1141,7 +1159,8 @@ export async function reviewStoryScenes(
 			? ((await assembleStoryFrame(db, {
 					userId: opts.userId,
 					storyId: opts.storyId,
-					includeTiers: reviewTiers(opts.categories ?? [])
+					includeTiers: reviewTiers(opts.categories ?? []),
+					styleNotes: settings.styleNotes
 				})) ?? undefined)
 			: undefined;
 
@@ -1176,7 +1195,8 @@ export async function reviewStoryScenes(
 									scenes: targets,
 									contextWindow,
 									budgetTokens,
-									replyTokens: reviewerReplyTokens(resolved.config, contextWindow)
+									replyTokens: reviewerReplyTokens(resolved.config, contextWindow),
+									settings
 								})
 							).unit
 						]
@@ -1206,7 +1226,8 @@ export async function reviewStoryScenes(
 							await run.save();
 						},
 						meter,
-						signal: opts.signal
+						signal: opts.signal,
+						settings
 					},
 					deps
 				);
@@ -1260,7 +1281,8 @@ export async function reviewStoryScenes(
 					meter,
 					signal: opts.signal,
 					patternTool: offersPatternTool(resolved.config),
-					extraPrior: scenePrior.get(scene.id)
+					extraPrior: scenePrior.get(scene.id),
+					settings
 				},
 				deps
 			);

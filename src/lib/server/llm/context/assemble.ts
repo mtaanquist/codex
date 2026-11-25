@@ -322,10 +322,15 @@ export async function assembleStoryFrame(
 		storyId: string;
 		budgetTokens?: number;
 		includeTiers?: readonly string[];
+		// The style notes a review run read once and keyed itself on, so the
+		// frame cannot follow an edit made after the run started.
+		styleNotes?: string | null;
 	}
 ): Promise<AssembledContext | null> {
-	const scope = await loadStoryScope(db, options.userId, options.storyId);
-	if (!scope) return null;
+	const loaded = await loadStoryScope(db, options.userId, options.storyId);
+	if (!loaded) return null;
+	const scope =
+		options.styleNotes === undefined ? loaded : { ...loaded, storyStyleNotes: options.styleNotes };
 	const budgetTokens = stableBudget(options.budgetTokens ?? DEFAULT_BUDGET_TOKENS);
 
 	const stable = await gatherStableTiers(db, options.userId, scope, options.includeTiers);
