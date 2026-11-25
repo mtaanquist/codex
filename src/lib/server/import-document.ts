@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { unzipSync, zipSync, strFromU8 } from 'fflate';
 import TurndownService from 'turndown';
+import HTMLParser from '@mixmark-io/domino/lib/HTMLParser.js';
 import mammoth from 'mammoth';
 import {
 	detectStructure,
@@ -125,8 +126,10 @@ export function parseDocumentInWorker(
 
 // Turndown's time grows with the square of the nesting depth (a blockquote
 // prefixes every line inside it once per level), so markup deeper than real
-// books go is refused before conversion. Word lists stop at nine levels, and
-// AO3 and Calibre output nests a handful of elements deep.
+// books go is refused before conversion. Every element counts, so a list item
+// is two levels (list and item) and a table cell four (table, body, row,
+// cell). Word lists stop at nine levels, and AO3 and Calibre output nests a
+// handful of elements deep.
 const MAX_NESTING_DEPTH = 64;
 // Markdown one document may produce, in characters: as much as the largest
 // file Codex accepts, far beyond any real manuscript.
@@ -135,121 +138,57 @@ const MAX_MARKDOWN_CHARS = MAX_INPUT_BYTES;
 const NESTED_TOO_DEEPLY =
 	'This file has formatting nested too deeply to import. Try saving it again from another program.';
 
-// Elements that never hold others, those whose end tag HTML lets a writer
-// leave out (an unclosed <p> or <li> ends at the next one, it does not nest),
-// and links, which close the one before them. Inside SVG or MathML these
-// rules do not apply: every element there nests unless self-closed.
-const NON_NESTING_TAGS = new Set(
-	(
-		'area base br col embed hr img input link meta param source track wbr a ' +
-		'p li dt dd option optgroup tr td th thead tbody tfoot colgroup caption rt rp html head body'
-	).split(' ')
-);
-const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
-// HTML elements that end the SVG or MathML they appear in, as a parser reads
-// them, so they and their content are read as HTML.
-const FOREIGN_BREAKOUT_TAGS = new Set(
-	(
-		'b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr i ' +
-		'img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var'
-	).split(' ')
-);
-// Elements inside SVG or MathML whose content is read as HTML again.
-const HTML_INSIDE_FOREIGN = new Set([
-	'foreignobject',
-	'desc',
-	'title',
-	'mi',
-	'mo',
-	'mn',
-	'ms',
-	'mtext'
-]);
-const TAG_NAME = /<(\/?)([a-zA-Z][\w:-]*)/y;
+// Turndown's own parser, used directly so the nesting can be measured on the
+// tree it will convert and the markup is parsed only once.
+type ElementStack = { elements: unknown[]; push(element: unknown): void };
+const ElementStackBase = HTMLParser.ElementStack as unknown as new () => ElementStack;
 
-type Content = 'html' | 'foreign';
+class TooDeep extends Error {}
 
-// How the content of a newly opened element is read.
-function contentOf(name: string, parent: Content): Content {
-	if (parent === 'html') return name === 'svg' || name === 'math' ? 'foreign' : 'html';
-	return HTML_INSIDE_FOREIGN.has(name) ? 'html' : 'foreign';
+// The parser checks its stack of open elements on most tags, so markup tens of
+// thousands of levels deep takes minutes to parse. A stack deeper than this
+// stops the parse early. Open elements are normally the ancestors of the next
+// one, so this is past the nesting limit plus the three wrapping elements; a
+// table can leave a few more open than the tree is deep, hence the margin.
+const MAX_OPEN_ELEMENTS = 2 * MAX_NESTING_DEPTH + 3;
+
+class BoundedElementStack extends ElementStackBase {
+	push(element: unknown) {
+		if (this.elements.length >= MAX_OPEN_ELEMENTS) throw new TooDeep();
+		super.push(element);
+	}
 }
 
-// Where an HTML comment opened at i ends (just past it), or -1 when it never
-// does. As in an HTML parser, "<!-->" and "<!--->" end at once, and "--!>"
-// ends a comment as well as "-->".
-function commentEnd(html: string, i: number): number {
-	const dashes = html.indexOf('-->', i + 2);
-	const bang = html.indexOf('--!>', i + 4);
-	if (bang !== -1 && (dashes === -1 || bang < dashes)) return bang + 4;
-	return dashes === -1 ? -1 : dashes + 3;
+// Parses an HTML fragment the way Turndown does (inside its own wrapper, so
+// the result converts exactly as the string would) and returns the wrapper.
+function parseHtml(html: string): HTMLElement {
+	HTMLParser.ElementStack = BoundedElementStack;
+	let parser: InstanceType<typeof HTMLParser>;
+	try {
+		parser = new HTMLParser();
+	} finally {
+		HTMLParser.ElementStack = ElementStackBase;
+	}
+	try {
+		parser.parse(`<x-turndown id="turndown-root">${html}</x-turndown>`, true);
+	} catch (err) {
+		if (err instanceof TooDeep) throw new DocumentImportError(NESTED_TOO_DEEPLY);
+		throw err;
+	}
+	return parser.document().getElementById('turndown-root')!;
 }
 
-// The deepest element nesting in an HTML fragment, in one pass. A stack of
-// open tags rather than a parse, so it can overstate sloppy markup a little,
-// but it must never understate what Turndown's HTML parser builds. As in an
-// HTML parser, an end tag closes the nearest open element of its name and any
-// left open inside it, and an end tag with no open element of its name is
-// ignored. Outside SVG and MathML, "<span/>" opens a span that stays open, so
-// a trailing slash does not close a tag there.
-export function nestingDepth(html: string): number {
-	const open: string[] = [];
-	// How the content of each open element is read, in step with open.
-	const contents: Content[] = [];
-	// How many of each name are on the stack, so a stray end tag is found
-	// without searching it.
-	const openCounts = new Map<string, number>();
-	const pop = () => {
-		const popped = open.pop()!;
-		contents.pop();
-		openCounts.set(popped, openCounts.get(popped)! - 1);
-		return popped;
-	};
+// The deepest element nesting under root, its children being at depth 1.
+// Iterative, so markup of any depth cannot overflow the stack.
+function nestingDepth(root: Element): number {
 	let max = 0;
-	const push = (name: string, content: Content) => {
-		open.push(name);
-		contents.push(content);
-		openCounts.set(name, (openCounts.get(name) ?? 0) + 1);
-		if (open.length > max) max = open.length;
-	};
-	let i = html.indexOf('<');
-	while (i !== -1) {
-		if (html.startsWith('<!--', i)) {
-			const end = commentEnd(html, i);
-			if (end === -1) break;
-			i = html.indexOf('<', end);
-			continue;
+	const pending: [Element, number][] = [[root, 0]];
+	while (pending.length > 0) {
+		const [element, depth] = pending.pop()!;
+		if (depth > max) max = depth;
+		for (let child = element.firstElementChild; child; child = child.nextElementSibling) {
+			pending.push([child, depth + 1]);
 		}
-		TAG_NAME.lastIndex = i;
-		const match = TAG_NAME.exec(html);
-		if (!match) {
-			i = html.indexOf('<', i + 1);
-			continue;
-		}
-		const end = html.indexOf('>', TAG_NAME.lastIndex);
-		if (end === -1) break;
-		const closing = match[1] === '/';
-		const name = match[2].toLowerCase();
-		let next = end + 1;
-		if (closing) {
-			if (openCounts.get(name)) while (pop() !== name);
-			i = html.indexOf('<', next);
-			continue;
-		}
-		let content: Content = contents.at(-1) ?? 'html';
-		// A parser closes the SVG first; staying inside it only overstates.
-		if (content === 'foreign' && FOREIGN_BREAKOUT_TAGS.has(name)) content = 'html';
-		if (content === 'foreign' || name === 'svg' || name === 'math') {
-			if (html[end - 1] !== '/') push(name, contentOf(name, content));
-		} else if (RAW_TEXT_TAGS.has(name)) {
-			const close = new RegExp(`</${name}`, 'gi');
-			close.lastIndex = next;
-			if (!close.exec(html)) break;
-			next = close.lastIndex - name.length - 2;
-		} else if (!NON_NESTING_TAGS.has(name)) {
-			push(name, 'html');
-		}
-		i = html.indexOf('<', next);
 	}
 	return max;
 }
@@ -265,7 +204,8 @@ function newBudget(): MarkdownBudget {
 // Manuscripts rarely contain deliberate markdown syntax, so leaving text
 // verbatim is both safer for break detection and more faithful to the source.
 function htmlToMarkdown(html: string, budget: MarkdownBudget): string {
-	if (nestingDepth(html) > MAX_NESTING_DEPTH) throw new DocumentImportError(NESTED_TOO_DEEPLY);
+	const root = parseHtml(html);
+	if (nestingDepth(root) > MAX_NESTING_DEPTH) throw new DocumentImportError(NESTED_TOO_DEEPLY);
 	const service = new TurndownService({
 		headingStyle: 'atx',
 		bulletListMarker: '-',
@@ -277,10 +217,10 @@ function htmlToMarkdown(html: string, budget: MarkdownBudget): string {
 	service.remove(['script', 'style', 'title']);
 	let markdown: string;
 	try {
-		markdown = service.turndown(html);
+		markdown = service.turndown(root);
 	} catch (err) {
-		// Turndown recurses once per nesting level, so a stack overflow means
-		// markup nested deeper than the scan above could tell.
+		// Turndown recurses once per nesting level, so a stack overflow is
+		// reported as nesting.
 		if (err instanceof RangeError) throw new DocumentImportError(NESTED_TOO_DEEPLY);
 		throw err;
 	}

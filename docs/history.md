@@ -46,7 +46,10 @@ first attempt did, since keeping either key would mix settings (#1658).
 Later rounds moved document conversion (EPUB, DOCX, AO3) into a worker thread
 with a 30 s limit, after a 5 MB flat chapter took 28 s of blocking Turndown time
 (#1693, Mads's call to fix it in this round); before Turndown, nesting deeper
-than 64 elements is refused and output is capped at 25 MB (#1685). Settings
+than 64 elements is refused and output is capped at 25 MB (#1685). The depth is measured on the tree Turndown's
+parser (domino) builds, parsed once and handed to Turndown, after three review
+rounds found markup a hand-written tokenizer scan read differently (#1724);
+domino's parse is quadratic in depth, so it stops once 131 elements are open. Settings
 autosave now posts Details by id so a field saved during a rename lands
 (#1667), keeps the page on a failed save and holds navigation until a retry
 succeeds (#1681, #1692), and an id address redirects to the slug (#1691).
