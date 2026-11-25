@@ -141,6 +141,32 @@ describe('parseStoryZip', () => {
 		);
 	});
 
+	it('reports saved drafts at the top of a re-zipped story folder and review comments', () => {
+		const plan = parseStoryZip(
+			zip({
+				'story.md': '---\ntitle: "Halden"\n---\n',
+				'reviews.md': '# Review comments\n',
+				'drafts/first/story.md': '---\ntitle: "Halden, then"\n---\n'
+			})
+		);
+		expect(plan.story.title).toBe('Halden');
+		expect(plan.problems).toEqual([
+			'The saved drafts in this archive were not imported, only the working draft.',
+			'The review comments in this archive were not imported.'
+		]);
+	});
+
+	it('reads a story folder named drafts as the story, not as saved drafts', () => {
+		const plan = parseStoryZip(
+			zip({
+				'drafts/story.md': '---\ntitle: "Drafts"\n---\n',
+				'drafts/unfiled/01-a.md': '---\ntitle: "A"\n---\nNow.'
+			})
+		);
+		expect(plan.unfiled.map((scene) => scene.bodyMd)).toEqual(['Now.']);
+		expect(plan.problems).toEqual([]);
+	});
+
 	it('rebuilds the story plan in NN order with notes and assets', () => {
 		const plan = parseStoryZip(full());
 		expect(plan.story).toEqual({
