@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAo3Bodies } from './import-ao3';
+import { decodeCharRefs, parseAo3Bodies } from './import-ao3';
 
 describe('parseAo3Bodies', () => {
 	it('returns null for markup that is not an AO3 download', () => {
@@ -67,5 +67,14 @@ describe('parseAo3Bodies', () => {
 			'<div id="chapters"><!-- never closed<div class="userstuff2"><p>Prose.</p></div></div>'
 		]);
 		expect(unclosed?.chapters[0].proseHtml).toContain('<p>Prose.</p>');
+	});
+});
+
+describe('decodeCharRefs', () => {
+	it('decodes character references and reads impossible code points as U+FFFD', () => {
+		expect(decodeCharRefs('&#x41;&#66;&#x1F600;')).toBe('AB\u{1F600}');
+		expect(decodeCharRefs('&#x110000;&#xD800;&#57343;&#0;&#99999999999999999999;')).toBe(
+			'\ufffd'.repeat(5)
+		);
 	});
 });

@@ -13,7 +13,7 @@ import {
 } from '../import-document-structure';
 import type { ImportedAsset, ImportedFreeformNote, ImportPlan } from '../import-markdown';
 import { extensionFor } from './media-types';
-import { parseAo3Bodies, type Ao3Work } from './import-ao3';
+import { decodeCharRefs, parseAo3Bodies, type Ao3Work } from './import-ao3';
 
 // Builds an ImportPlan from a Word (.docx) or EPUB (.epub) manuscript: convert
 // the document to markdown blocks, let detectStructure guess chapters and
@@ -612,9 +612,7 @@ function unzipGuarded(
 }
 
 function decodeEntities(text: string): string {
-	return text
-		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-		.replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+	return decodeCharRefs(text)
 		.replace(/&lt;/g, '<')
 		.replace(/&gt;/g, '>')
 		.replace(/&quot;/g, '"')

@@ -328,6 +328,16 @@ describe('parseDocument (epub)', () => {
 		expect(plan.chapters[0].scenes[0].bodyMd).toBe('Once upon a time.');
 	});
 
+	it('reads a character reference to an impossible code point as a replacement character', async () => {
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: '<p>Text.</p>' }], {
+			title: '&#x110000;',
+			author: 'A&#xD800;&#0;&#99999999999;'
+		});
+		const plan = await parseDocument(epub, 'odd.epub');
+		expect(plan.story.title).toBe('\ufffd');
+		expect(plan.story.author).toBe('A\ufffd\ufffd\ufffd');
+	});
+
 	it('falls back to one chapter per spine document when there are no headings', async () => {
 		const epub = buildEpub([
 			{ name: 'a.xhtml', xhtml: '<p>Chapter without a heading.</p>' },
