@@ -96,7 +96,13 @@ publicRenderer.renderer.rules.image = (tokens, index, options, env, self) => {
 	const escape = publicRenderer.utils.escapeHtml;
 	// renderInlineAsText returns raw token content, so it must be escaped here.
 	const label = self.renderInlineAsText(token.children ?? [], options, env) || src;
-	if (!src) return escape(label);
+	// Inside a link the label alone stands in, since anchors cannot nest.
+	let linkDepth = 0;
+	for (const sibling of tokens.slice(0, index)) {
+		if (sibling.type === 'link_open') linkDepth++;
+		else if (sibling.type === 'link_close') linkDepth--;
+	}
+	if (!src || linkDepth > 0) return escape(label);
 	return `<a href="${escape(src)}" rel="noopener noreferrer nofollow">${escape(label)}</a>`;
 };
 

@@ -65,6 +65,11 @@ describe('renderPublicMarkdown', () => {
 		expect(html).toContain('>https://tracker.example/p.gif</a>');
 	});
 
+	it('does not nest a link when a remote image sits inside one', () => {
+		const html = renderPublicMarkdown('[![Cover](https://x.example/c.png)](https://example.com)');
+		expect(html).toContain('<a href="https://example.com">Cover</a>');
+	});
+
 	it('does not load an asset path on another host or with extra segments', () => {
 		expect(renderPublicMarkdown(`![x](https://elsewhere.example${asset})`)).not.toContain('<img');
 		expect(renderPublicMarkdown(`![x](${asset}/../../p.gif)`)).not.toContain('<img');
