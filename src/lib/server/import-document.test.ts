@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { strToU8, zipSync, type Zippable } from 'fflate';
+import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import { parseDocument, DocumentImportError } from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
@@ -188,6 +188,46 @@ describe('parseDocument (epub)', () => {
 			.map((s) => s.bodyMd)
 			.join('\n');
 		expect(body).toContain(`assets/${asset.id}.png`);
+	});
+
+	it('bundles an image used several times only once', async () => {
+		const img = '<img src="images/pic.png" alt="x"/>';
+		const epub = buildEpub(
+			[
+				{ name: 'ch1.xhtml', xhtml: `<h1>One</h1><p>${img} and ${img}</p>` },
+				{ name: 'ch2.xhtml', xhtml: `<h1>Two</h1><p>${img.replace('images/', './images/')}</p>` }
+			],
+			{ withImage: true }
+		);
+		const plan = await parseDocument(epub, 'book.epub');
+		expect(plan.assets).toHaveLength(1);
+		const body = plan.chapters
+			.flatMap((c) => c.scenes)
+			.map((s) => s.bodyMd)
+			.join('\n');
+		expect(body.split(`assets/${plan.assets[0].id}.png`)).toHaveLength(4);
+	});
+
+	it('reads paths with a malformed percent escape as written', async () => {
+		const epub = buildEpub([
+			{ name: 'ch%E0.xhtml', xhtml: '<h1>One</h1><p>See <img src="images/a%E0.png" alt="x"/></p>' }
+		]);
+		const plan = await parseDocument(
+			zip({ ...unzipSync(epub), 'OEBPS/images/a%E0.png': new Uint8Array(PNG) }),
+			'book.epub'
+		);
+		expect(plan.assets).toHaveLength(1);
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain(`assets/${plan.assets[0].id}.png`);
+	});
+
+	it('rejects markup nested too deeply to convert with a plain message', async () => {
+		const depth = 2500;
+		const epub = buildEpub([
+			{ name: 'ch1.xhtml', xhtml: '<div>'.repeat(depth) + '<p>Deep.</p>' + '</div>'.repeat(depth) }
+		]);
+		const outcome = parseDocument(epub, 'deep.epub');
+		await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
+		await expect(outcome).rejects.toThrow(/nested too deeply/);
 	});
 });
 
