@@ -158,6 +158,27 @@ describe('parseDocument (docx)', () => {
 		);
 	});
 
+	// "./__proto__" tidies to "__proto__", which as a plain object key would
+	// replace the object's prototype, so the rezip would write one entry per byte.
+	it.each(['./__proto__', 'a/../__proto__', '../__proto__'])(
+		'ignores an entry stored as %s',
+		async (name) => {
+			const files = unzipSync(buildDocx(paragraph('Kept.')));
+			files[name] = new Uint8Array(200 * 1024);
+			const spy = vi.spyOn(mammoth, 'convertToHtml');
+			try {
+				const plan = await parseDocument(zipSync(files), 'proto.docx');
+				expect(plan.chapters[0].scenes[0].bodyMd).toContain('Kept.');
+				const passed = unzipSync(
+					new Uint8Array((spy.mock.calls[0][0] as { buffer: Buffer }).buffer)
+				);
+				expect(Object.keys(passed).length).toBeLessThan(10);
+			} finally {
+				spy.mockRestore();
+			}
+		}
+	);
+
 	it('ignores a style map stored inside the document', async () => {
 		const files = unzipSync(buildDocx(paragraph('Kept.')));
 		files['mammoth/style-map'] = strToU8('p => !');
@@ -353,6 +374,33 @@ describe('parseDocument (epub)', () => {
 		expect(body.split(`assets/${plan.assets[0].id}.png`)).toHaveLength(4);
 	});
 
+	it.each(['constructor', '__proto__', 'toString'])(
+		'leaves an image pointing at a missing file named %s alone',
+		async (name) => {
+			const epub = buildEpub([
+				{ name: 'ch1.xhtml', xhtml: `<h1>One</h1><p>See <img src="../${name}" alt="x"/></p>` }
+			]);
+			const plan = await parseDocument(epub, 'book.epub');
+			expect(plan.assets).toHaveLength(0);
+		}
+	);
+
+	it('ignores an entry named __proto__', async () => {
+		// Zipped under a stand-in name of the same length, then renamed in the
+		// archive bytes, since building it from an object would hit the same key.
+		const files = unzipSync(
+			buildEpub([{ name: 'ch1.xhtml', xhtml: '<h1>One</h1><p>See <img src="../1" alt="x"/></p>' }])
+		);
+		files['zzproto__'] = new Uint8Array([7, 7, 7]);
+		const archive = Buffer.from(zipSync(files));
+		for (let at = archive.indexOf('zzproto__'); at !== -1; at = archive.indexOf('zzproto__', at)) {
+			archive.write('__proto__', at);
+		}
+		const plan = await parseDocument(new Uint8Array(archive), 'book.epub');
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('See');
+		expect(plan.assets).toHaveLength(0);
+	});
+
 	it('reads paths with a malformed percent escape as written', async () => {
 		const epub = buildEpub([
 			{ name: 'ch%E0.xhtml', xhtml: '<h1>One</h1><p>See <img src="images/a%E0.png" alt="x"/></p>' }
@@ -522,10 +570,12 @@ describe('parseDocumentInWorker limits', () => {
 
 	it('reports a worker out of memory as a file too large, and other failures as they are', async () => {
 		// A fake worker that fails the way Node reports the heap limit.
+		const options: { resourceLimits?: { maxOldGenerationSizeMb?: number } }[] = [];
 		const failWith = (error: Error) => {
 			class FailingWorker extends EventEmitter {
-				constructor() {
+				constructor(_entry: string, opts: (typeof options)[number]) {
 					super();
+					options.push(opts);
 					setImmediate(() => this.emit('error', error));
 				}
 				terminate() {
@@ -545,6 +595,8 @@ describe('parseDocumentInWorker limits', () => {
 			const outcome = fresh.parseDocumentInWorker(small(), 'big.epub');
 			await expect(outcome).rejects.toBeInstanceOf(fresh.DocumentImportError);
 			await expect(outcome).rejects.toThrow(/too large to read/);
+			// The heap cap is what makes Node stop a runaway conversion this way.
+			expect(options[0].resourceLimits?.maxOldGenerationSizeMb).toBeGreaterThan(0);
 
 			vi.resetModules();
 			vi.doMock('node:worker_threads', () => ({ Worker: failWith(other) }));

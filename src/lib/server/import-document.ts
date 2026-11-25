@@ -65,6 +65,12 @@ const SECTION_TOO_LARGE =
 // turned away rather than queued.
 const MAX_RUNNING_CONVERSIONS = 2;
 let runningConversions = 0;
+// Each worker's heap is capped so one hostile file cannot take the whole
+// machine's memory; Node then stops it with ERR_WORKER_OUT_OF_MEMORY. A Word
+// document at the 10 MB XML limit made of short formatted runs needed about
+// 850 MB of heap (about 1.1 GB of process memory), so the cap leaves more than
+// twice that for real files.
+const WORKER_HEAP_LIMIT_MB = 2048;
 
 type WorkerReply = { plan: ImportPlan } | { importError: string };
 
@@ -78,7 +84,10 @@ export function parseDocumentInWorker(
 	}
 	let worker: Worker;
 	try {
-		worker = new Worker(WORKER_ENTRY, { workerData: { bytes, filename } });
+		worker = new Worker(WORKER_ENTRY, {
+			workerData: { bytes, filename },
+			resourceLimits: { maxOldGenerationSizeMb: WORKER_HEAP_LIMIT_MB }
+		});
 	} catch (err) {
 		return Promise.reject(err);
 	}
@@ -312,10 +321,14 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 // read as "word/document.xml". Renaming the entries the same way before
 // counting and rezipping means the size check and mammoth see the same files.
 // Two entries that tidy to one name are refused rather than letting one hide.
+// A name that tidies to "__proto__" is dropped: mammoth never reads it, and
+// fflate's zipSync and JSZip both collect entries on plain objects, where that
+// key replaces the prototype instead of adding an entry.
 function jszipNames(entries: Record<string, Uint8Array>): Record<string, Uint8Array> {
-	const tidied: Record<string, Uint8Array> = {};
+	const tidied: Record<string, Uint8Array> = Object.create(null);
 	for (const [name, data] of Object.entries(entries)) {
 		const tidy = jszipResolve(name);
+		if (tidy === '__proto__') continue;
 		if (Object.hasOwn(tidied, tidy)) {
 			throw new DocumentImportError('This file could not be read as a Word document.');
 		}
@@ -564,8 +577,9 @@ function unzipGuarded(
 ): Record<string, Uint8Array> {
 	let count = 0;
 	let total = 0;
+	let files: Record<string, Uint8Array>;
 	try {
-		return unzipSync(bytes, {
+		files = unzipSync(bytes, {
 			filter(file) {
 				if (++count > MAX_ENTRIES) {
 					throw new DocumentImportError(`This ${kind} has too many files to import.`);
@@ -590,6 +604,11 @@ function unzipGuarded(
 		const article = kind === 'EPUB' ? 'an' : 'a';
 		throw new DocumentImportError(`This file could not be read as ${article} ${kind}.`);
 	}
+	// Entry names are untrusted, so they are copied onto an object with no
+	// prototype: a lookup by name then finds only real entries, never an
+	// inherited "constructor" or "__proto__". fflate has already dropped an
+	// entry named "__proto__" by assigning it as the prototype of its result.
+	return Object.assign(Object.create(null), files);
 }
 
 function decodeEntities(text: string): string {
