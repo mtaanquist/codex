@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -524,7 +525,7 @@ describe('runImport', () => {
 				if (prop !== 'execute') return value.bind(target);
 				return async (query: Parameters<Database['execute']>[0]) => {
 					const result = await value.call(target, query);
-					const text = target.dialect.sqlToQuery(query as never).sql;
+					const text = new PgDialect().sqlToQuery(query as SQL).sql;
 					if (text.includes('with recursive chain') && ++counts === 1) {
 						await pool.query(`update tags set merged_into_id = null where slug = 'm'`);
 					}
