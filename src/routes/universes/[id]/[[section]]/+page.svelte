@@ -278,26 +278,27 @@
 				use:enhance={autosaveSubmit}
 				onchange={onDetailsChange}
 			>
-				<div class="field">
-					<label for="u-name">Name</label>
-					<input
-						id="u-name"
-						class="input"
-						type="text"
-						name="name"
-						defaultValue={data.universe.name}
-						data-renames
-					/>
-					<span class="field-hint">
-						The web address follows the name: /universes/{data.universe.slug}. Renaming moves the
-						address; the old one stops working.
-					</span>
-				</div>
-				<!-- The text box starts from the stored text, read once per universe: a
-				value renders on the server, unlike defaultValue, and reading it once
-				keeps a refresh from writing over newer typing. -->
+				<!-- Keyed by universe, so moving to another universe's settings starts
+				its fields afresh. The text box starts from the stored text, read once
+				per universe: a value renders on the server, unlike defaultValue, and
+				reading it once keeps a refresh from writing over newer typing. -->
 				{#key data.universe.id}
 					{@const initialDescription = untrack(() => data.universe.descriptionMd ?? '')}
+					<div class="field">
+						<label for="u-name">Name</label>
+						<input
+							id="u-name"
+							class="input"
+							type="text"
+							name="name"
+							defaultValue={data.universe.name}
+							data-renames
+						/>
+						<span class="field-hint">
+							The web address follows the name: /universes/{data.universe.slug}. Renaming moves the
+							address; the old one stops working.
+						</span>
+					</div>
 					<div class="field">
 						<label for="u-description">Description</label>
 						<textarea

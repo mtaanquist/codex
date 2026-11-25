@@ -228,6 +228,36 @@ test('a universe field saved while a rename is still saving is kept', async ({ p
 	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
 });
 
+// Moving to another universe's settings in the app starts its fields afresh,
+// so a name typed on the first is not saved as a rename of the second (#1699).
+test("moving to another universe's settings shows that universe's name", async ({ page }) => {
+	const stamp = Date.now();
+	const create = async (name: string) => {
+		await gotoReady(page, '/');
+		await pickFromLibraryMenu(page, 'New universe');
+		await page.getByLabel('New universe').fill(name);
+		await page.getByRole('button', { name: 'Create universe' }).click();
+		await expect(page).toHaveURL(/\/universes\//);
+		return new URL(page.url()).pathname;
+	};
+	const other = await create(`Other world ${stamp}`);
+	await gotoReady(page, await create(`First world ${stamp}`));
+	await page.locator('#u-name').fill(`Renamed world ${stamp}`);
+	await page.locator('#u-name').press('Tab');
+	await expect(page).toHaveURL(`/universes/renamed-world-${stamp}`);
+	// No link in the app reaches another universe's settings yet.
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'to-other-universe';
+		link.textContent = 'Other';
+		document.body.append(link);
+	}, other);
+	await page.locator('#to-other-universe').click();
+	await expect(page).toHaveURL(other);
+	await expect(page.locator('#u-name')).toHaveValue(`Other world ${stamp}`);
+});
+
 // The text boxes hold the stored text before the page's script runs, so they
 // never show empty and a save from that state does not post them empty (#1683).
 test('the Details text boxes hold the stored text before the script runs', async ({
