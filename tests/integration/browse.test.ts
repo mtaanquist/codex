@@ -238,6 +238,21 @@ describe('search and filters', () => {
 		expect(await titles('hide=death')).toEqual([]);
 	});
 
+	it('hides a story whose edition froze the name of a warning since merged into the hidden one', async () => {
+		await addListEntries(db, 'warning', 'Death\nCharacter death');
+		const { rows } = await pool.query("select id, slug from tags where kind = 'warning'");
+		const id = (slug: string) => rows.find((row) => row.slug === slug).id as string;
+		const s = await story('Frozen');
+		await setStoryList(db, s.id, 'warning', [id('character-death')]);
+		await publishStory(db, author.id, s.id);
+		await mergeTag(db, id('character-death'), 'Death');
+		await setStoryList(db, s.id, 'warning', []);
+		expect(await titles()).toEqual(['Frozen']);
+		expect(await titles('hide=death')).toEqual([]);
+		// The old slug resolves to the survivor and hides it too.
+		expect(await titles('hide=character-death')).toEqual([]);
+	});
+
 	it('pages newest first with a keyset cursor', async () => {
 		for (let i = 0; i < BROWSE_PAGE_SIZE + 2; i++) await story(`S${i}`);
 		const first = parseBrowseQuery(new URLSearchParams(''));
