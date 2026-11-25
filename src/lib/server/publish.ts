@@ -598,10 +598,14 @@ export async function takedownPublication(
 			.update(publications)
 			// An edition already down with its author's account deletion gets
 			// the reason too, so the takedown holds if the deletion is cancelled.
+			// Down without a reason (the where clause) means account deletion
+			// hid it, so the flag is set here too: one hidden before migration
+			// 0124 has it false.
 			.set({
 				removedAt: sql`coalesce(${publications.removedAt}, now())`,
 				removedBy,
-				removedReason: reason
+				removedReason: reason,
+				hiddenByAccountDeletion: sql`${publications.hiddenByAccountDeletion} or ${publications.removedAt} is not null`
 			})
 			.where(
 				and(
