@@ -60,8 +60,7 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 			try {
 				// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect, or where the writer was going with its slug swapped
 				if (target) await goto(target);
-				// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect
-				else await goto(result.location, { reset: false, replace: true, refreshAll: true });
+				else await gotoOwn(result.location, { reset: false, replace: true, refreshAll: true });
 			} finally {
 				redirecting -= 1;
 			}
@@ -88,8 +87,7 @@ export const NOT_SAVED = 'Your change was not saved. Check your connection and t
 async function showNotSaved(form: HTMLFormElement, startedAt: string | null) {
 	if (!form.isConnected) return;
 	if (startedAt && startedAt !== window.location.href && form.checkVisibility?.() === false) {
-		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the page the save started on
-		await goto(startedAt, { reset: false });
+		await gotoOwn(startedAt, { reset: false });
 	}
 	await tick();
 	form.querySelector('.fs-error')?.scrollIntoView({ block: 'nearest' });
@@ -171,6 +169,19 @@ let savesStarting = 0;
 let redirecting = 0;
 // Where the writer was going when a save was still in flight.
 let leavingTo: URL | null = null;
+// Navigations this module makes on the same page (the rename's redirect, back
+// to the section a failed form sits on), which flushBeforeNavigate lets through.
+let ownNavigations = 0;
+
+async function gotoOwn(url: string, opts: Parameters<typeof goto>[1]) {
+	ownNavigations += 1;
+	try {
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect, or the page the save started on
+		await goto(url, opts);
+	} finally {
+		ownNavigations -= 1;
+	}
+}
 
 function continueLeaving() {
 	const target = leavingTo;
@@ -220,10 +231,11 @@ function unsavedForms(): HTMLFormElement[] {
 // again. Closing the tab or leaving the app cannot wait, so the browser asks
 // first.
 export function flushBeforeNavigate(navigation: BeforeNavigate) {
-	// The rename's own redirect, or going on after a held navigation (see
-	// autosaveSubmit). A field the writer has moved on to keeps focus, and
-	// saves when they leave it, to the new address.
-	if (navigation.type === 'goto' && navigation.from?.route.id === navigation.to?.route.id) return;
+	// The rename's own redirect, or back to a failed form (see gotoOwn). A
+	// field the writer has moved on to keeps focus, and saves when they leave
+	// it, to the new address. Any other goto is held like a link, even on the
+	// same route: the command palette can open another universe's page there.
+	if (navigation.type === 'goto' && ownNavigations > 0) return;
 	if (!browser) return;
 	const failed = unsavedForms().length > 0;
 	if (failed) {
