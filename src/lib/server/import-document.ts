@@ -50,7 +50,15 @@ function htmlToMarkdown(html: string): string {
 	});
 	service.escape = (text) => text;
 	service.remove(['script', 'style', 'title']);
-	return service.turndown(html);
+	// Turndown recurses once per nesting level and overflows the stack on
+	// markup nested a couple of thousand elements deep.
+	try {
+		return service.turndown(html);
+	} catch {
+		throw new DocumentImportError(
+			'This file has formatting nested too deeply to import. Try saving it again from another program.'
+		);
+	}
 }
 
 function htmlToBlocks(html: string): DocBlock[] {
@@ -157,15 +165,16 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 	}
 
 	const assets: ImportedAsset[] = [];
+	const assetPaths = new Map<string, string>();
 	const files: { title: string | null; blocks: DocBlock[] }[] = [];
 	const bodies: string[] = [];
 	for (const idref of spine) {
 		const href = manifest.get(idref);
 		if (!href) continue;
-		const path = posixResolve(opfDir, decodeURIComponent(href.split('#')[0]));
+		const path = posixResolve(opfDir, decodePath(href));
 		const data = entries[path];
 		if (!data || !/\.x?html?$/i.test(path)) continue;
-		const rewritten = rewriteEpubImages(strFromU8(data), path, entries, assets);
+		const rewritten = rewriteEpubImages(strFromU8(data), path, entries, assets, assetPaths);
 		const body = extractBody(rewritten);
 		bodies.push(body);
 		const blocks = htmlToBlocks(body);
@@ -252,19 +261,25 @@ function rewriteEpubImages(
 	html: string,
 	filePath: string,
 	entries: Record<string, Uint8Array>,
-	assets: ImportedAsset[]
+	assets: ImportedAsset[],
+	assetPaths: Map<string, string>
 ): string {
 	const dir = posixDirname(filePath);
 	return html.replace(/<img\b[^>]*>/gi, (tag) => {
 		const src = attr(tag, 'src');
 		if (!src) return tag;
-		const resolved = posixResolve(dir, decodeURIComponent(src.split('#')[0]));
+		const resolved = posixResolve(dir, decodePath(src));
 		const data = entries[resolved];
 		if (!data) return tag;
-		const ext = resolved.slice(resolved.lastIndexOf('.') + 1).toLowerCase() || 'bin';
-		const id = randomUUID();
-		const path = `${id}.${ext}`;
-		assets.push({ id, path, bytes: data });
+		// One stored copy per image file, however often the book shows it.
+		let path = assetPaths.get(resolved);
+		if (!path) {
+			const ext = resolved.slice(resolved.lastIndexOf('.') + 1).toLowerCase() || 'bin';
+			const id = randomUUID();
+			path = `${id}.${ext}`;
+			assets.push({ id, path, bytes: data });
+			assetPaths.set(resolved, path);
+		}
 		return tag.replace(/\bsrc\s*=\s*("[^"]*"|'[^']*')/i, `src="assets/${path}"`);
 	});
 }
@@ -334,6 +349,17 @@ function tagText(xml: string, tag: string): string | null {
 function extractBody(html: string): string {
 	const match = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
 	return match ? match[1] : html;
+}
+
+// An EPUB href without its fragment, percent-decoded. A malformed escape is
+// read as written, which is also how a zip stores a name containing "%".
+function decodePath(href: string): string {
+	const path = href.split('#')[0];
+	try {
+		return decodeURIComponent(path);
+	} catch {
+		return path;
+	}
 }
 
 function posixDirname(path: string): string {
