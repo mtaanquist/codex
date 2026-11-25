@@ -433,7 +433,7 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 		if (!data || !/\.x?html?$/i.test(path)) continue;
 		if (data.length > MAX_SPINE_FILE_BYTES) throw new DocumentImportError(SECTION_TOO_LARGE);
 		const rewritten = rewriteEpubImages(strFromU8(data), path, entries, assets, assetPaths);
-		bodies.push(extractBody(rewritten));
+		bodies.push(closeSelfClosedTags(extractBody(rewritten)));
 	}
 
 	const title = tagText(opf, 'dc:title') ?? fileStem(filename);
@@ -613,6 +613,114 @@ function tagText(xml: string, tag: string): string | null {
 	if (!match) return null;
 	const text = decodeEntities(match[1].replace(/<[^>]+>/g, '')).trim();
 	return text === '' ? null : text;
+}
+
+// EPUB bodies are XHTML, where "<span/>" is an empty element, but they are
+// parsed as HTML, which ignores the slash: the element stays open and wraps
+// everything after it. Page-break markers written that way between paragraphs
+// would nest the rest of the chapter one level deeper each. This rewrites a
+// self-closed tag that is not void in HTML as an open and close pair. Comments,
+// declarations, and the inside of script, style and other raw-text elements
+// are left as they are, since their content is not markup. Attribute values
+// holding a raw "<" are not well-formed XHTML and are not handled.
+const HTML_VOID_TAGS = new Set([
+	'area',
+	'base',
+	'br',
+	'col',
+	'embed',
+	'hr',
+	'img',
+	'input',
+	'keygen',
+	'link',
+	'meta',
+	'param',
+	'source',
+	'track',
+	'wbr'
+]);
+const RAW_TEXT_TAGS = new Set([
+	'script',
+	'style',
+	'title',
+	'textarea',
+	'xmp',
+	'iframe',
+	'noembed',
+	'noframes'
+]);
+// Attribute text with "<" excluded, so an unterminated tag or quote cannot make
+// every later match scan to the end.
+const START_TAG = /<([a-zA-Z][^\s/<>]*)((?:[^<>"']|"[^"<]*"|'[^'<]*')*)>/y;
+const COMMENT_END = /-->|--!>/g;
+
+// Whether a start tag's attribute text ends in a self-closing slash. A slash
+// at the end of an unquoted value ("<a href=x/>") belongs to the value.
+function selfClosed(attrs: string): boolean {
+	if (!attrs.endsWith('/')) return false;
+	let j = attrs.length - 2;
+	while (j >= 0 && !/[\s"']/.test(attrs[j])) j--;
+	if (
+		attrs
+			.slice(j + 1, -1)
+			.slice(1)
+			.includes('=')
+	)
+		return false;
+	while (j >= 0 && /\s/.test(attrs[j])) j--;
+	return attrs[j] !== '=';
+}
+
+export function closeSelfClosedTags(html: string): string {
+	let out = '';
+	let copied = 0;
+	let i = html.indexOf('<');
+	while (i !== -1) {
+		let next: number;
+		if (html.startsWith('<!--', i)) {
+			// As in an HTML parser, "<!-->" and "<!--->" end at once.
+			if (html.startsWith('>', i + 4)) next = i + 5;
+			else if (html.startsWith('->', i + 4)) next = i + 6;
+			else {
+				COMMENT_END.lastIndex = i + 4;
+				const end = COMMENT_END.exec(html);
+				if (!end) break;
+				next = end.index + end[0].length;
+			}
+		} else if (html.startsWith('<!', i) || html.startsWith('<?', i) || html.startsWith('</', i)) {
+			// A declaration, a processing instruction, or an end tag.
+			const end = html.indexOf('>', i);
+			if (end === -1) break;
+			next = end + 1;
+		} else {
+			START_TAG.lastIndex = i;
+			const m = START_TAG.exec(html);
+			if (!m) {
+				i = html.indexOf('<', i + 1);
+				continue;
+			}
+			next = START_TAG.lastIndex;
+			const tag = m[1].toLowerCase();
+			const attrs = m[2];
+			if (selfClosed(attrs)) {
+				if (!HTML_VOID_TAGS.has(tag)) {
+					out += html.slice(copied, i) + `<${m[1]}${attrs.slice(0, -1)}></${m[1]}>`;
+					copied = next;
+				}
+			} else if (tag === 'plaintext') {
+				break;
+			} else if (RAW_TEXT_TAGS.has(tag)) {
+				const close = new RegExp(`</${tag}[\\s/>]`, 'gi');
+				close.lastIndex = next;
+				const end = close.exec(html);
+				if (!end) break;
+				next = end.index;
+			}
+		}
+		i = html.indexOf('<', next);
+	}
+	return out + html.slice(copied);
 }
 
 function extractBody(html: string): string {
