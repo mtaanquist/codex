@@ -75,6 +75,32 @@ test('a listed public story shows on Browse until it is made private', async ({
 	await expect(reader.locator('.shelf-item-title')).toHaveText([title]);
 	expect(await violations(reader)).toEqual([]);
 
+	// On a confirmed adult story, the label links include adult work in Browse,
+	// so they do not leave out the story they came from.
+	await page.getByLabel('Adult content').check();
+	await page.getByRole('button', { name: 'Save visibility' }).click();
+	await expect(page.getByRole('status')).toHaveText('Saved.');
+	await gotoReady(page, `${storyPath}/settings/publish`);
+	await page.getByRole('checkbox', { name: 'Fantasy' }).check();
+	await page.getByRole('button', { name: 'Save tags' }).click();
+	await expect(page.getByRole('status')).toHaveText(/Saved\./);
+	await page.getByRole('button', { name: 'Publish edition' }).click();
+	const published = page.getByRole('status').filter({ hasText: 'Edition published.' });
+	await expect(published.or(penPrompt)).toBeVisible();
+	if (await penPrompt.isVisible()) {
+		await penPrompt.getByRole('button', { name: 'Continue' }).click();
+	}
+	const readingPath = await published.getByRole('link').getAttribute('href');
+	const storyPage = await anonymous.newPage();
+	await gotoReady(storyPage, readingPath!);
+	await storyPage.getByRole('link', { name: /I am of legal age/ }).click();
+	await expect(storyPage).toHaveURL(/adult=ok/);
+	await expect(storyPage.getByRole('link', { name: 'Fantasy' })).toHaveAttribute(
+		'href',
+		/[?&]genre=fantasy&adult=show$/
+	);
+	await storyPage.close();
+
 	await gotoReady(page, `${storyPath}/settings/publish`);
 	await page.getByLabel('Visibility').selectOption('private');
 	await page.getByRole('button', { name: 'Save visibility' }).click();
