@@ -211,7 +211,7 @@ describe('search and filters', () => {
 		await setStoryList(db, b.id, 'genre', [high]);
 		await setStoryList(db, b.id, 'warning', [death]);
 		expect(await titles('genre=fantasy')).toEqual(['A']);
-		await mergeTag(db, high, 'Fantasy');
+		await mergeTag(db, 'genre', high, 'Fantasy');
 		expect((await titles('genre=fantasy')).sort()).toEqual(['A', 'B']);
 		// The old slug lands on the surviving genre too.
 		expect((await titles('genre=high-fantasy')).sort()).toEqual(['A', 'B']);
@@ -357,7 +357,7 @@ describe('the page', () => {
 		await saveBrowseEnabled(db, true);
 		await addListEntries(db, 'genre', 'Sci-fi\nScience fiction');
 		const [{ id }] = (await pool.query("select id from tags where slug = 'sci-fi'")).rows;
-		await mergeTag(db, id, 'Science fiction');
+		await mergeTag(db, 'genre', id, 'Science fiction');
 		const shown = await story('Far Off');
 		await setStoryList(db, shown.id, 'genre', [id]);
 		const result = (await load('?genre=sci-fi')) as {
