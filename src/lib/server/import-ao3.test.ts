@@ -30,4 +30,28 @@ describe('parseAo3Bodies', () => {
 		expect(Date.now() - started).toBeLessThan(1000);
 		expect(work?.summaryHtml).toBe('<p>Deep.</p>');
 	});
+
+	// Each comment, CDATA section, or processing instruction that never closed
+	// used to be searched for to the end of the input, which is quadratic.
+	it('reads a run of unclosed comments in linear time', () => {
+		for (const opener of ['<!--x', '<![CDATA[x', '<?x']) {
+			const junk = opener.repeat(500_000 / opener.length);
+			const started = Date.now();
+			parseAo3Bodies([`<div id="chapters"><div><p>${junk}</p></div></div>`]);
+			expect(Date.now() - started).toBeLessThan(2000);
+		}
+	});
+
+	it('reads past an unclosed comment and ends comments as an HTML parser does', () => {
+		const chapter = (comment: string) =>
+			`<div id="chapters">${comment}<div class="userstuff2"><p>Prose.</p></div><!-- end --></div>`;
+		for (const comment of ['<!-->', '<!--->', '<!-- a --!>']) {
+			const work = parseAo3Bodies([chapter(comment)]);
+			expect(work?.chapters[0].proseHtml).toContain('<p>Prose.</p>');
+		}
+		const unclosed = parseAo3Bodies([
+			'<div id="chapters"><!-- never closed<div class="userstuff2"><p>Prose.</p></div></div>'
+		]);
+		expect(unclosed?.chapters[0].proseHtml).toContain('<p>Prose.</p>');
+	});
 });

@@ -28,6 +28,31 @@ type El = { tag: string; attrs: string; inner: string; outer: string };
 
 const VOID_TAGS = new Set(['br', 'hr', 'img', 'meta', 'link', 'input', 'col', 'wbr', 'area']);
 
+// Where a comment opened at i ends (just past it), or -1 when it never does.
+// As in an HTML parser, "<!-->" and "<!--->" end at once, and "--!>" ends a
+// comment as well as "-->".
+function commentEnd(html: string, i: number): number {
+	const dashes = html.indexOf('-->', i + 2);
+	const bang = html.indexOf('--!>', i + 4);
+	if (bang !== -1 && (dashes === -1 || bang < dashes)) return bang + 4;
+	return dashes === -1 ? -1 : dashes + 3;
+}
+
+function endsAt(opener: string, terminator: string) {
+	return (html: string, i: number) => {
+		const end = html.indexOf(terminator, i + opener.length);
+		return end === -1 ? -1 : end + terminator.length;
+	};
+}
+
+// Markup skipped while reading: comments, CDATA, and processing instructions.
+// An opener that is never closed is read past as text.
+const SKIPPED = [
+	{ opener: '<!--', end: commentEnd },
+	{ opener: '<![CDATA[', end: endsAt('<![CDATA[', ']]>') },
+	{ opener: '<?', end: endsAt('<?', '?>') }
+];
+
 // The top-level elements of an XHTML fragment, in order. Text between them is
 // ignored; comments, CDATA, and processing instructions are skipped. With
 // throughDivs, a div is a wrapper rather than an element: its children count
@@ -39,13 +64,25 @@ function elements(html: string, throughDivs = false, firstOnly = false): El[] {
 	const out: El[] = [];
 	// Attribute text never contains "<" in well-formed XHTML; excluding it keeps
 	// a stray unterminated tag from making every match scan to the end.
-	const re =
-		/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(\/?)([a-zA-Z][\w:-]*)((?:[^<>"']|"[^"<]*"|'[^'<]*')*?)(\/?)>/g;
+	const re = /<(\/?)([a-zA-Z][\w:-]*)((?:[^<>"']|"[^"<]*"|'[^'<]*')*?)(\/?)>/y;
+	// Once a kind of skipped markup has no terminator after some point, no
+	// later opener of that kind has one either, so it is not searched for again.
+	const unterminated = SKIPPED.map(() => false);
 	// The element being read, and how deep inside it the walk is.
 	let open: { tag: string; attrs: string; start: number; innerStart: number } | null = null;
 	let depth = 0;
-	for (let m = re.exec(html); m; m = re.exec(html)) {
-		if (!m[2]) continue;
+	for (let i = html.indexOf('<'); i !== -1;) {
+		const skip = SKIPPED.findIndex(({ opener }) => html.startsWith(opener, i));
+		if (skip !== -1) {
+			const end = unterminated[skip] ? -1 : SKIPPED[skip].end(html, i);
+			if (end === -1) unterminated[skip] = true;
+			i = html.indexOf('<', end === -1 ? i + 1 : end);
+			continue;
+		}
+		re.lastIndex = i;
+		const m = re.exec(html);
+		i = html.indexOf('<', m ? re.lastIndex : i + 1);
+		if (!m) continue;
 		const closing = m[1] === '/';
 		const tag = m[2].toLowerCase();
 		// "<br></br>" is legal XHTML; the opening tag already counted as complete.
