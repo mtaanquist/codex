@@ -99,7 +99,7 @@
 					{formatLongDate(data.publishedAt, page.data.timeZone)}{#if data.versionLabel}
 						- {data.versionLabel}{/if}
 				</p>
-				<StoryLabels {...data.labels} />
+				<StoryLabels {...data.labels} adult={data.isAdult} />
 
 				{#if data.descriptionMd}
 					<!-- Author markdown; renderMarkdown escapes raw HTML. -->
