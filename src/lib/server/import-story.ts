@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import {
 	assistantDrafts,
@@ -399,6 +399,9 @@ export async function runImport(
 							storyId: story.id,
 							title: chapter.title,
 							summaryMd: chapter.summaryMd ? rewrite(chapter.summaryMd) : null,
+							// The Assistant's summary, stamped with no fingerprint so it
+							// counts as out of date and the next summary pass rewrites it.
+							summaryGeneratedAt: chapter.summaryByAssistant ? sql`now()` : null,
 							position: chapterIndex + 1
 						})
 						.returning({ id: chapters.id });

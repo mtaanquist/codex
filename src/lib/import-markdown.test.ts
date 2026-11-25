@@ -240,6 +240,22 @@ describe('parseStoryZip', () => {
 		expect(plan.waitingDrafts![0].textMd).toBe(code);
 	});
 
+	it("reads a chapter summary marked as the Assistant's, and only a non-blank one", () => {
+		const plan = parseStoryZip(
+			zip({
+				'h/story.md': '---\ntitle: "H"\n---\n',
+				'h/chapters/01-a/chapter.md': '---\ntitle: "A"\nsummary-by: "assistant"\n---\nIt ends.',
+				'h/chapters/02-b/chapter.md': '---\ntitle: "B"\n---\nMine.',
+				'h/chapters/03-c/chapter.md': '---\ntitle: "C"\nsummary-by: "assistant"\n---\n'
+			})
+		);
+		expect(plan.chapters.map((c) => [c.summaryMd, c.summaryByAssistant ?? false])).toEqual([
+			['It ends.', true],
+			['Mine.', false],
+			[null, false]
+		]);
+	});
+
 	it('trims a body with a long whitespace run inside it in linear time', () => {
 		const run = ' \t\n'.repeat(30_000);
 		const body = `a${run}x${run}`;

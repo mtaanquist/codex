@@ -21,6 +21,8 @@ export type ImportedChapter = {
 	// From chapter.md's body, or a document import that carries summaries
 	// (AO3); absent from document plans without them.
 	summaryMd?: string | null;
+	// Set when chapter.md marks the summary as the Assistant's (summary-by).
+	summaryByAssistant?: boolean;
 	scenes: ImportedScene[];
 };
 export type ImportedNote = {
@@ -390,7 +392,9 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					scenePositions.set(rel, { chapter: chapterIndex, index });
 					return parseScene(f.path, rel);
 				});
-			return { title, summaryMd, scenes };
+			const summaryByAssistant =
+				!!summaryMd && !!meta && scalar(meta.fields, 'summary-by') === 'assistant';
+			return { title, summaryMd, ...(summaryByAssistant && { summaryByAssistant }), scenes };
 		});
 
 	const unfiledScenes = unfiled
