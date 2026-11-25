@@ -1032,7 +1032,10 @@ once the drag handlers stop swallowing keyboard events.
 
 Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `FandomSuggest` (a text box with
 fandom-list suggestions as a combobox; new universe and universe settings), `TagInput` (chips; optional
-`suggestions` for the browser's completion list, used by story fandoms),
+`suggestions` for the browser's completion list, used by story fandoms and tags; optional
+`splitOnComma`, off by default so a comma stays part of a value such as an alias "Smith, John",
+on for story tags so a typed or pasted comma ends a chip while a picked suggestion stays whole;
+`inputId` for a `<label for>` outside),
 `ModeSwitcher`, `PanelStrip`, `NewMenu`, `ThemePicker`, `CrumbMenu`,
 `SidebarSearch`, `HelpLink`, `FormStatus`, `ReviewAvatar`, `ReviewReplyForm`,
 `ReviewReplyRow`, `ReviewMarginRail`, `ReviewSelectionToolbar`.
