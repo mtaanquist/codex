@@ -54,13 +54,19 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		}
 		if (lastSave.get(formElement) === save) unsaved.delete(formElement);
 		if (result.type === 'redirect') {
-			const target = leavingTo && retarget(leavingTo, result.location);
+			const leaving = leavingTo;
+			const target = leaving && retarget(leaving.url, result.location);
 			leavingTo = null;
 			redirecting += 1;
 			try {
-				// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect, or where the writer was going with its slug swapped
-				if (target) await goto(target);
-				else await gotoOwn(result.location, { reset: false, replace: true, refreshAll: true });
+				await gotoOwn(result.location, { reset: false, replace: true, refreshAll: true });
+				// A Back or Forward press goes on through the history, unless the
+				// entry it was going to is under the old address too.
+				if (leaving && target)
+					await goOn({
+						url: target,
+						delta: target.href === leaving.url.href ? leaving.delta : undefined
+					});
 			} finally {
 				redirecting -= 1;
 			}
@@ -167,8 +173,13 @@ let savesInFlight = 0;
 let savesStarting = 0;
 // Rename redirects still being followed.
 let redirecting = 0;
-// Where the writer was going when a save was still in flight.
-let leavingTo: URL | null = null;
+// Where the writer was going when a save was still in flight, and for a Back
+// or Forward press, how far through the history.
+type Leaving = { url: URL; delta?: number };
+let leavingTo: Leaving | null = null;
+// Kit undoes a held Back or Forward press with a history step of its own,
+// which has to land before the press is replayed.
+let historyRestored: Promise<void> = Promise.resolve();
 // Navigations this module makes on the same page (the rename's redirect, back
 // to the section a failed form sits on), which flushBeforeNavigate lets through.
 let ownNavigations = 0;
@@ -184,10 +195,29 @@ async function gotoOwn(url: string, opts: Parameters<typeof goto>[1]) {
 }
 
 function continueLeaving() {
-	const target = leavingTo;
+	const leaving = leavingTo;
 	leavingTo = null;
+	if (leaving) void goOn(leaving);
+}
+
+async function goOn({ url, delta }: Leaving) {
+	if (delta) {
+		await historyRestored;
+		history.go(delta);
+		return;
+	}
 	// eslint-disable-next-line svelte/no-navigation-without-resolve -- where the writer was going
-	if (target) void goto(target);
+	await goto(url);
+}
+
+function holdLeaving(navigation: BeforeNavigate, url: URL) {
+	const delta = navigation.type === 'popstate' ? navigation.delta : undefined;
+	leavingTo = { url, delta };
+	if (delta) {
+		historyRestored = new Promise((resolve) =>
+			window.addEventListener('popstate', () => resolve(), { once: true })
+		);
+	}
 }
 
 // The target with the page's old slug swapped for the new one: the first path
@@ -224,8 +254,9 @@ function unsavedForms(): HTMLFormElement[] {
 // straight from an edited field saves it on the way), would lose the change
 // if that save failed, so the navigation waits for it and goes on only if it
 // lands. If it fails the page stays with its message. A save that moves the
-// page's own address (a rename) goes on to the target at the new address
-// (see autosaveSubmit).
+// page's own address (a rename) first replaces the old address in the
+// history, then goes on to the target at the new address (see autosaveSubmit).
+// A held Back or Forward press goes on as a history step, not a new entry.
 //
 // Leaving while a save has already failed waits too, while the save is tried
 // again. Closing the tab or leaving the app cannot wait, so the browser asks
@@ -242,7 +273,7 @@ export function flushBeforeNavigate(navigation: BeforeNavigate) {
 		navigation.cancel();
 		flushFocusedField();
 		if (navigation.type === 'leave' || !navigation.to) return;
-		leavingTo = navigation.to.url;
+		holdLeaving(navigation, navigation.to.url);
 		// A form whose retry is already saving (the blur that started this
 		// navigation retries its form) is waited for; the rest are sent again.
 		queueMicrotask(() =>
@@ -256,7 +287,7 @@ export function flushBeforeNavigate(navigation: BeforeNavigate) {
 	if (savesInFlight === 0 && savesStarting === 0) return;
 	navigation.cancel();
 	if (navigation.type === 'leave' || !navigation.to) return;
-	leavingTo = navigation.to.url;
+	holdLeaving(navigation, navigation.to.url);
 	// The blur's save starts in a microtask (saveUnlessRefocused). If none
 	// started (a field held for its next blur), go on now.
 	queueMicrotask(() =>

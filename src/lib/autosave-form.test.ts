@@ -98,6 +98,7 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		};
 		return {
 			type,
+			...(type === 'popstate' ? { delta: -1 } : {}),
 			from: { route: { id: 'a' } },
 			to: type === 'leave' ? null : to,
 			cancel: vi.fn()
@@ -106,6 +107,22 @@ describe('flushBeforeNavigate holding a navigation', () => {
 
 	const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+	// Kit undoes a cancelled Back press with a history step of its own.
+	let popstateListeners: (() => void)[];
+	function stubWindow(location: object) {
+		popstateListeners = [];
+		vi.stubGlobal('window', {
+			location,
+			addEventListener: (type: string, listener: () => void) => {
+				if (type === 'popstate') popstateListeners.push(listener);
+			}
+		});
+	}
+	async function historyRestored() {
+		for (const listener of popstateListeners.splice(0)) listener();
+		await settle();
+	}
+
 	beforeEach(() => {
 		env.browser = true;
 		retries = [];
@@ -113,7 +130,8 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		goto.mockReset();
 		goto.mockImplementation(async () => {});
 		vi.stubGlobal('document', { activeElement: null });
-		vi.stubGlobal('window', { location: { href: 'http://localhost/stories/s/settings' } });
+		stubWindow({ href: 'http://localhost/stories/s/settings' });
+		vi.stubGlobal('history', { go: vi.fn() });
 		vi.stubGlobal('HTMLInputElement', class {});
 		vi.stubGlobal('HTMLTextAreaElement', class {});
 	});
@@ -301,5 +319,88 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		);
 		expect(redirect.cancel).not.toHaveBeenCalled();
 		await retries[1]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+	});
+
+	// A held Back press goes back once the save lands, instead of pushing the
+	// page it was going to as a new entry (#1710).
+	it('goes back through the history after holding a Back press', async () => {
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = navigation('popstate');
+		flushBeforeNavigate(nav);
+		expect(nav.cancel).toHaveBeenCalled();
+		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+		expect(history.go).not.toHaveBeenCalled();
+		await historyRestored();
+		expect(history.go).toHaveBeenCalledWith(-1);
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('goes back through the history after a failed save is retried', async () => {
+		const form = await failedForm();
+		flushBeforeNavigate(navigation('popstate'));
+		await settle();
+		expect(form.requestSubmit).toHaveBeenCalledTimes(1);
+		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+		expect(history.go).not.toHaveBeenCalled();
+		await historyRestored();
+		expect(history.go).toHaveBeenCalledWith(-1);
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('moves to the renamed address before going back after a rename', async () => {
+		stubWindow({
+			href: 'http://localhost/universes/old/categories',
+			pathname: '/universes/old/categories',
+			origin: 'http://localhost'
+		});
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = {
+			type: 'popstate',
+			delta: -1,
+			from: { route: { id: 'a' } },
+			to: { url: new URL('http://localhost/universes'), route: { id: 'b' } },
+			cancel: vi.fn()
+		} as unknown as BeforeNavigate;
+		flushBeforeNavigate(nav);
+		const landed = retries[0]({
+			result: { type: 'redirect', location: '/universes/new/categories' },
+			update: vi.fn()
+		});
+		await settle();
+		expect(goto).toHaveBeenCalledTimes(1);
+		expect(goto).toHaveBeenCalledWith(
+			'/universes/new/categories',
+			expect.objectContaining({ replace: true })
+		);
+		expect(history.go).not.toHaveBeenCalled();
+		await historyRestored();
+		await landed;
+		expect(history.go).toHaveBeenCalledWith(-1);
+	});
+
+	it('goes to the renamed address of a held Back press into the same page', async () => {
+		stubWindow({
+			href: 'http://localhost/universes/old/categories',
+			pathname: '/universes/old/categories',
+			origin: 'http://localhost'
+		});
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = {
+			type: 'popstate',
+			delta: -1,
+			from: { route: { id: 'a' } },
+			to: { url: new URL('http://localhost/universes/old'), route: { id: 'a' } },
+			cancel: vi.fn()
+		} as unknown as BeforeNavigate;
+		flushBeforeNavigate(nav);
+		await retries[0]({
+			result: { type: 'redirect', location: '/universes/new/categories' },
+			update: vi.fn()
+		});
+		expect(goto).toHaveBeenLastCalledWith(new URL('http://localhost/universes/new'));
+		expect(history.go).not.toHaveBeenCalled();
 	});
 });
