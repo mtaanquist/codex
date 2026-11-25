@@ -30,8 +30,6 @@ const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 // times its size in memory, so this keeps a conversion well under a gigabyte.
 // A whole novel in a single file is a few megabytes.
 const MAX_SPINE_FILE_BYTES = 10 * 1024 * 1024;
-const SECTION_TOO_LARGE =
-	'This EPUB has a section too large to import. Try splitting it into smaller files.';
 
 export async function parseDocument(bytes: Uint8Array, filename: string): Promise<ImportPlan> {
 	if (bytes.length === 0) throw new DocumentImportError('This file is empty.');
@@ -55,6 +53,8 @@ const PARSE_TIME_LIMIT_MS = 30_000;
 const TOO_SLOW = 'This file took too long to read. Try splitting it into smaller files.';
 const TOO_LARGE = 'This file is too large to read. Try splitting it into smaller files.';
 const BUSY = 'Another file is being read. Try again in a minute.';
+const SECTION_TOO_LARGE =
+	'This EPUB has a section too large to import. Try splitting it into smaller files.';
 // Each conversion can hold hundreds of megabytes and a core for the full time
 // limit, so only this many run at once across the whole server; more are
 // turned away rather than queued.
