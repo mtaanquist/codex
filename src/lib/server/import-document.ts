@@ -332,11 +332,7 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 	// declares, so unpack with the size guards first (fflate never writes past
 	// the declared size) and hand mammoth an uncompressed copy of what survived.
 	const entries = unzipGuarded(bytes, 'Word document');
-	let xmlBytes = 0;
-	for (const [name, data] of Object.entries(entries)) {
-		if (/\.(xml|rels)$/i.test(name)) xmlBytes += data.length;
-	}
-	if (xmlBytes > MAX_DOCX_XML_BYTES) {
+	if (docxXmlBytes(entries) > MAX_DOCX_XML_BYTES) {
 		throw new DocumentImportError(
 			'This Word document is too large to import. Try splitting it into smaller files.'
 		);
@@ -366,6 +362,59 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 	const { chapters, problems } = detectStructure(htmlToBlocks(html, newBudget()));
 	const core = docxCoreProperties(entries['docProps/core.xml']);
 	return buildPlan(core.title ?? fileStem(filename), core.author, chapters, assets, problems);
+}
+
+// The parts mammoth reads as XML: the content types, every relationships
+// file, and the main document with its styles, numbering, notes and comments.
+// Those are found through relationships, so they can have any name. Every
+// target of a relationship of those types counts, from any relationships file,
+// as do the default paths mammoth falls back to, so whichever part mammoth
+// picks is counted.
+const DOCX_PART_TYPES = [
+	'officeDocument',
+	'comments',
+	'endnotes',
+	'footnotes',
+	'numbering',
+	'styles'
+];
+const DOCX_DEFAULT_PARTS = DOCX_PART_TYPES.map((type) =>
+	type === 'officeDocument' ? 'word/document.xml' : `word/${type}.xml`
+);
+// Excludes "<" outside quotes, so an unclosed tag cannot make every later
+// match scan to the end.
+const RELATIONSHIP_TAG = /<[\w:.-]*Relationship\b((?:[^<>"']|"[^"<]*"|'[^'<]*')*)>/g;
+
+function attrValues(attrs: string, name: string): string[] {
+	const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, 'g');
+	// An XML parser reads tabs and line breaks in an attribute as spaces.
+	return [...attrs.matchAll(re)].map((m) => decodeEntities(m[1] ?? m[2]).replace(/[\t\n\r]/g, ' '));
+}
+
+function docxXmlBytes(entries: Record<string, Uint8Array>): number {
+	const relsFiles = Object.keys(entries).filter((name) => /\.rels$/i.test(name));
+	const parts = new Set(['[Content_Types].xml', ...DOCX_DEFAULT_PARTS, ...relsFiles]);
+	const size = () => [...parts].reduce((sum, part) => sum + (entries[part]?.length ?? 0), 0);
+	// Too large already without the parts they point at.
+	if (size() > MAX_DOCX_XML_BYTES) return size();
+	for (const name of relsFiles) {
+		// mammoth reads a part's relationships from "<dir>/_rels/<part>.rels",
+		// and resolves their targets against <dir>.
+		const source = name.match(/^(?:(.*)\/)?_rels\/[^/]*$/i);
+		if (!source) continue;
+		const dir = source[1] ?? '';
+		for (const [, attrs] of strFromU8(entries[name]).matchAll(RELATIONSHIP_TAG)) {
+			const types = attrValues(attrs, 'Type');
+			if (!types.some((type) => DOCX_PART_TYPES.some((part) => type.endsWith(`/${part}`)))) {
+				continue;
+			}
+			for (const target of attrValues(attrs, 'Target')) {
+				const path = target.startsWith('/') || dir === '' ? target : `${dir}/${target}`;
+				parts.add(path.replace(/^\//, ''));
+			}
+		}
+	}
+	return size();
 }
 
 // Word stores its title and author in docProps/core.xml.
