@@ -30,6 +30,8 @@ import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 import { zipBytes } from '../../src/lib/server/zip-stream';
 import { isCoverColor } from '../../src/lib/entity-color';
 import { MAX_ASSISTANT_NOTES } from '../../src/lib/assistant-preferences';
+import { needsSummary } from '../../src/lib/server/llm/summaries';
+import { generatedChapterSummaryIsCurrent } from '../../src/lib/server/llm/chapter-summary-request';
 
 let pool: pg.Pool;
 let db: Database;
@@ -319,6 +321,50 @@ describe('runImport', () => {
 			.orderBy(asc(chapters.position));
 		expect(chapterRows[0].summaryMd).toMatch(/^They leave at dawn\.\n\n!\[map\]/);
 		expect(chapterRows[1].summaryMd).toBeNull();
+	});
+
+	it('imports an Assistant summary as out of date and keeps the writer summary as theirs', async () => {
+		const original = await seedStory();
+		await db
+			.update(chapters)
+			.set({
+				summaryMd: 'The Assistant wrote this.',
+				summaryGeneratedAt: new Date('2026-01-01'),
+				summaryInput: 'some-fingerprint'
+			})
+			.where(eq(chapters.title, 'The Caravan'));
+		await db
+			.update(chapters)
+			.set({ summaryMd: 'The writer wrote this.' })
+			.where(eq(chapters.title, 'The Toll'));
+		const plan = await exportPlan(original);
+		expect(plan.chapters.map((chapter) => chapter.summaryByAssistant ?? false)).toEqual([
+			true,
+			false
+		]);
+
+		const result = await runImport(db, universe, plan);
+		const [assistant, writer] = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(assistant.summaryMd).toBe('The Assistant wrote this.');
+		expect(assistant.summaryGeneratedAt).not.toBeNull();
+		expect(assistant.summaryInput).toBeNull();
+		expect(
+			needsSummary({
+				summaryMd: assistant.summaryMd,
+				summaryGeneratedAt: assistant.summaryGeneratedAt,
+				changedSince: !generatedChapterSummaryIsCurrent(assistant, {
+					input: 'any',
+					inputAtUpgrade: 'any-at-upgrade',
+					messages: []
+				})
+			})
+		).toBe(true);
+		expect(writer.summaryMd).toBe('The writer wrote this.');
+		expect(writer.summaryGeneratedAt).toBeNull();
 	});
 
 	it('creates missing entities, skips ambiguous ones, and reports both', async () => {

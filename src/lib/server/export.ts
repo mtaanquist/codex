@@ -42,6 +42,13 @@ import {
 // links rewritten. Markdown in, markdown out; nothing is trapped.
 // Runs in the worker too (artifact generation).
 
+// chapter.md's fields. A summary the Assistant wrote is marked so an import
+// keeps refreshing it instead of taking it as the writer's own.
+function chapterFront(chapter: StoryContent['chapters'][number]) {
+	const byAssistant = !!chapter.summaryGeneratedAt && !!chapter.summaryMd?.trim();
+	return { title: chapter.title, 'summary-by': byAssistant ? 'assistant' : null };
+}
+
 function frontMatter(fields: Record<string, string | string[] | null | undefined>): string {
 	const lines = ['---'];
 	for (const [key, value] of Object.entries(fields)) {
@@ -215,7 +222,12 @@ export type ExportFreeformNote = {
 };
 export type StoryContent = {
 	// Summaries are absent for frozen editions, which keep none.
-	chapters: { id: string; title: string | null; summaryMd?: string | null }[];
+	chapters: {
+		id: string;
+		title: string | null;
+		summaryMd?: string | null;
+		summaryGeneratedAt?: Date | null;
+	}[];
 	scenes: ExportScene[];
 	// Both absent for frozen editions: notes are working material, not manuscript.
 	notes?: ExportNote[];
@@ -289,7 +301,12 @@ export async function gatherDrafts(db: Database, storyId: string): Promise<Expor
 
 export async function gatherStory(db: Database, story: ExportStory): Promise<StoryContent> {
 	const chapterList = await db
-		.select({ id: chapters.id, title: chapters.title, summaryMd: chapters.summaryMd })
+		.select({
+			id: chapters.id,
+			title: chapters.title,
+			summaryMd: chapters.summaryMd,
+			summaryGeneratedAt: chapters.summaryGeneratedAt
+		})
 		.from(chapters)
 		.where(eq(chapters.storyId, story.id))
 		.orderBy(asc(chapters.position));
@@ -447,7 +464,7 @@ export async function buildStoryZip(
 			assetPath.has(id) ? `${up}${assetPath.get(id)}` : `/assets/${id}`
 		);
 		entries.push(
-			textEntry(`${root}/${dir}/chapter.md`, frontMatter({ title: chapter.title }) + summary)
+			textEntry(`${root}/${dir}/chapter.md`, frontMatter(chapterFront(chapter)) + summary)
 		);
 		sceneList
 			.filter((scene) => scene.chapterId === chapter.id)
@@ -722,7 +739,7 @@ async function gatherUniverseDocs(
 				docs.push({
 					dir,
 					name: 'chapter.md',
-					front: { title: chapter.title },
+					front: chapterFront(chapter),
 					body: chapter.summaryMd ?? ''
 				});
 				sceneList
