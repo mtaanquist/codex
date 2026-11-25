@@ -69,9 +69,15 @@ export function parseDocumentInWorker(
 	if (runningConversions >= MAX_RUNNING_CONVERSIONS) {
 		return Promise.reject(new DocumentImportError(BUSY));
 	}
+	let worker: Worker;
+	try {
+		worker = new Worker(WORKER_ENTRY, { workerData: { bytes, filename } });
+	} catch (err) {
+		return Promise.reject(err);
+	}
+	// Counted only once the worker exists, so a failed start holds no slot.
 	runningConversions++;
 	return new Promise((resolvePlan, reject) => {
-		const worker = new Worker(WORKER_ENTRY, { workerData: { bytes, filename } });
 		// The slot is freed once the worker has stopped, before the caller hears
 		// back, so a caller that settles can start another conversion at once.
 		const settle = (outcome: () => void) => {
