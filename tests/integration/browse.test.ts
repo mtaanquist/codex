@@ -269,7 +269,7 @@ describe('search and filters', () => {
 		const s = await story('Frozen');
 		await setStoryList(db, s.id, 'warning', [id('character-death')]);
 		await publishStory(db, author.id, s.id);
-		await mergeTag(db, id('character-death'), 'Death');
+		await mergeTag(db, 'warning', id('character-death'), 'Death');
 		await setStoryList(db, s.id, 'warning', []);
 		expect(await titles()).toEqual(['Frozen']);
 		expect(await titles('hide=death')).toEqual([]);
