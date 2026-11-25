@@ -5,7 +5,8 @@ sections are Profile, Security, Connected apps, Assistant, Display, Editor,
 Notifications, and Page setup, plus Invites once an admin has given you invites.
 Connected apps is missing when the person who runs your Codex has turned it off. Changes save on their own:
 a choice saves as soon as you make it, and a text field saves when you leave it.
-A "Saved." note confirms each save.
+A "Saved." note confirms each save. If a save fails, for example because you lost your connection, a note says
+your change was not saved; what you typed stays in the field, and leaving a field again tries the save once more.
 
 On a large window, the sidebar lists the parts of Security and Assistant under
 "On this page". Pick one to jump to it.
