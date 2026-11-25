@@ -2,26 +2,31 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { formatDateTime } from '#lib/format';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { enhance } from '#lib/enhance';
 	import { browseHomeHref } from '#lib/browse-adult.svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
 	import { reportReasonLabel } from '#lib/report-reasons';
 	import TagInput from '#lib/components/TagInput.svelte';
-	import { MAX_FANDOMS, MAX_GENRES, MAX_TAG_LENGTH, MAX_TAGS } from '#lib/story-tags';
+	import { MAX_FANDOMS, MAX_GENRES, MAX_TAG_LENGTH, MAX_TAGS, savedLabels } from '#lib/story-tags';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
-	// The tag form's live state, reset from the page data after each save.
+	// The tag form's live state, reset from the saved labels after this form
+	// saves or when the saved labels change. Any other data refresh (such as a
+	// late Details autosave) leaves unsaved picks alone.
 	let genres = $state<string[]>([]);
 	let fandoms = $state<string[]>([]);
 	let tags = $state<string[]>([]);
+	function resetLabels() {
+		({ genres, fandoms, tags } = savedLabels(data.storyTags));
+	}
+	const savedLabelsKey = $derived(JSON.stringify(savedLabels(data.storyTags)));
 	$effect.pre(() => {
-		genres = data.storyTags?.genres.map((tag) => tag.id) ?? [];
-		fandoms = data.storyTags?.fandoms.filter((tag) => !tag.inherited).map((tag) => tag.name) ?? [];
-		tags = data.storyTags?.tags.map((tag) => tag.name) ?? [];
+		void savedLabelsKey;
+		untrack(resetLabels);
 	});
 
 	// The first publish with no pen name set asks what name goes public; the
@@ -148,8 +153,14 @@
 		method="POST"
 		action="?/saveTags"
 		use:enhance={() =>
-			async ({ update }) => {
+			async ({ update, result }) => {
 				await update({ reset: false });
+				// A save can leave the labels as they were (a skipped tag), so the
+				// key above may not change; show what was kept either way.
+				if (result.type === 'success') {
+					await tick();
+					resetLabels();
+				}
 			}}
 	>
 		{#if form?.action === 'tags' && form.message}
