@@ -11,11 +11,13 @@ vi.mock('$app/env', () => ({
 vi.mock('$app/navigation', () => ({ goto }));
 vi.mock('#lib/enhance', () => ({ focusIsBeingRestored: () => false }));
 
-const { autosaveSubmit, failedSaves, flushBeforeNavigate } = await import('./autosave-form');
+const { autosaveSubmit, autosubmitForm, failedSaves, flushBeforeNavigate } =
+	await import('./autosave-form');
 
 function fakeForm() {
 	return {
 		querySelectorAll: () => [],
+		querySelector: () => null,
 		addEventListener: vi.fn(),
 		removeEventListener: vi.fn()
 	} as unknown as HTMLFormElement;
@@ -72,7 +74,7 @@ describe('autosaveSubmit with overlapping saves', () => {
 });
 
 // Leaving a page while a save has failed would lose the change (#1692).
-describe('flushBeforeNavigate after a failed save', () => {
+describe('flushBeforeNavigate holding a navigation', () => {
 	type Callback = (opts: unknown) => Promise<void>;
 	let retries: Callback[];
 	let forms: HTMLFormElement[];
@@ -107,7 +109,9 @@ describe('flushBeforeNavigate after a failed save', () => {
 		forms = [];
 		goto.mockClear();
 		vi.stubGlobal('document', { activeElement: null });
+		vi.stubGlobal('window', { location: { href: 'http://localhost/stories/s/settings' } });
 		vi.stubGlobal('HTMLInputElement', class {});
+		vi.stubGlobal('HTMLTextAreaElement', class {});
 	});
 	afterEach(() => {
 		env.browser = false;
@@ -180,5 +184,64 @@ describe('flushBeforeNavigate after a failed save', () => {
 		const nav = navigation('link');
 		flushBeforeNavigate(nav);
 		expect(nav.cancel).not.toHaveBeenCalled();
+	});
+
+	// A link clicked straight from an edited field: its blur starts the save on
+	// the way, and nothing has failed yet (#1697).
+	it('holds the navigation while a save is in flight, and goes on when it lands', async () => {
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = navigation('link');
+		flushBeforeNavigate(nav);
+		expect(nav.cancel).toHaveBeenCalled();
+		await settle();
+		expect(goto).not.toHaveBeenCalled();
+		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+		expect(goto).toHaveBeenCalledWith(nav.to!.url);
+	});
+
+	it('stays on the page when a save in flight fails', async () => {
+		const form = connectedForm();
+		form.requestSubmit();
+		flushBeforeNavigate(navigation('link'));
+		await settle();
+		await retries[0]({ result: { type: 'error' }, update: vi.fn() });
+		await settle();
+		expect(goto).not.toHaveBeenCalled();
+		expect(failedSaves.has(form)).toBe(true);
+	});
+
+	it('holds the navigation for the save the focused field starts as it is left', async () => {
+		const form = connectedForm();
+		const field = Object.assign(
+			new (globalThis.HTMLTextAreaElement as unknown as new () => object)(),
+			{
+				dataset: {}
+			}
+		);
+		vi.stubGlobal('document', {
+			activeElement: {
+				blur: () =>
+					autosubmitForm({ target: field, currentTarget: form } as unknown as Event & {
+						currentTarget: HTMLFormElement;
+					})
+			}
+		});
+		const nav = navigation('link');
+		flushBeforeNavigate(nav);
+		expect(nav.cancel).toHaveBeenCalled();
+		await settle();
+		expect(form.requestSubmit).toHaveBeenCalledTimes(1);
+		expect(goto).not.toHaveBeenCalled();
+		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+		expect(goto).toHaveBeenCalledWith(nav.to!.url);
+	});
+
+	it('asks before the tab is closed while a save is in flight', async () => {
+		connectedForm().requestSubmit();
+		const leave = navigation('leave');
+		flushBeforeNavigate(leave);
+		expect(leave.cancel).toHaveBeenCalled();
+		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
 	});
 });

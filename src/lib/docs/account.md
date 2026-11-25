@@ -7,7 +7,8 @@ Connected apps is missing when the person who runs your Codex has turned it off.
 a choice saves as soon as you make it, and a text field saves when you leave it.
 A "Saved." note confirms each save. If a save fails, for example because you lost your connection, a note says
 your change was not saved; what you typed stays in the field, and leaving a field again tries the save once more.
-Following a link while a save has failed tries it again first, and you stay on the page if it fails again.
+If you follow a link while a change is still saving, or has failed, the link waits for the save (trying it
+again if it failed) and you stay on the page with your text if it does not go through.
 If you close the tab or reload first, your browser asks you to confirm.
 
 On a large window, the sidebar lists the parts of Security and Assistant under
