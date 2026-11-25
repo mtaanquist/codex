@@ -110,3 +110,27 @@ test('renaming and then leaving by a sidebar link does not end on a missing page
 	await expect(page).toHaveURL(`/stories/moved-${stamp}/settings/editor`);
 	await expect(page.getByLabel('Editing mode')).toBeVisible();
 });
+
+// A Details save that lands after the writer has moved to Publish refreshes the
+// page data; a genre ticked meanwhile, not yet saved, must stay ticked (#1651).
+test('a genre ticked on Publish while a Details save lands stays ticked', async ({ page }) => {
+	await newStory(page);
+	await page.route(/\?\/update$/, async (route) => {
+		await new Promise((resolve) => setTimeout(resolve, 1500));
+		await route.continue();
+	});
+	await page.locator('#st-description').fill('A courier races the ash north.');
+	const saved = page.waitForResponse(/\?\/update$/);
+	// Leaving the field for Publish starts its save.
+	await page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Publish' })
+		.click();
+	await expect(page).toHaveURL(/\/settings\/publish$/);
+	const fantasy = page.getByRole('checkbox', { name: 'Fantasy' });
+	await fantasy.check();
+	const refreshed = page.waitForResponse(/__data\.json/);
+	await saved;
+	await refreshed;
+	await expect(fantasy).toBeChecked();
+});
