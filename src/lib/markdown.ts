@@ -78,6 +78,55 @@ export function renderMarkdown(markdown: string, options: { xhtml?: boolean } = 
 	return (options.xhtml ? xhtmlRenderer : renderer).render(markdown);
 }
 
+// Author markdown shown on a public page (the reading page, a profile bio)
+// can reach readers who never signed in, so it may only load images Codex
+// serves itself. Any other image becomes a plain link to it, labelled with its
+// alt text, so a listed author cannot learn who reads their page from an image
+// request. The writer's own views keep remote images (renderMarkdown).
+const OWN_ASSET = new RegExp(`^/assets/${UUID_BODY}$`);
+const publicRenderer = new MarkdownIt({ html: false, linkify: false, typographer: false })
+	.use(pageBreaks)
+	.use(alignments)
+	.use(indents);
+const defaultImage = publicRenderer.renderer.rules.image!;
+publicRenderer.renderer.rules.image = (tokens, index, options, env, self) => {
+	const token = tokens[index];
+	const src = String(token.attrGet('src') ?? '');
+	if (OWN_ASSET.test(src)) return defaultImage(tokens, index, options, env, self);
+	const escape = publicRenderer.utils.escapeHtml;
+	// renderInlineAsText returns raw token content, so it must be escaped here.
+	const label = self.renderInlineAsText(token.children ?? [], options, env) || src;
+	if (!src) return escape(label);
+	return `<a href="${escape(src)}" rel="noopener noreferrer nofollow">${escape(label)}</a>`;
+};
+
+export function renderPublicMarkdown(markdown: string): string {
+	return publicRenderer.render(markdown);
+}
+
+// The words of a markdown snippet with every bit of markup dropped, for a
+// place that shows a short text inside a link (a shelf card): link text stays,
+// images go, and each block ends on its own line.
+export function markdownToPlainText(markdown: string): string {
+	const lines: string[] = [];
+	for (const token of publicRenderer.parse(markdown, {})) {
+		if (token.type === 'inline') {
+			let line = '';
+			for (const child of token.children ?? []) {
+				if (child.type === 'text' || child.type === 'code_inline') line += child.content;
+				else if (child.type === 'softbreak' || child.type === 'hardbreak') line += ' ';
+			}
+			lines.push(line.replace(/\s+/g, ' '));
+		} else if (token.type === 'fence' || token.type === 'code_block') {
+			lines.push(token.content.replace(/\n$/, ''));
+		}
+	}
+	return lines
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.join('\n');
+}
+
 // Assistant replies are model output, so they get their own renderer: raw
 // HTML stays escaped, images render as their alt text (a remote image would
 // make the browser fetch a URL the model chose, which a prompt injection could
