@@ -35,6 +35,7 @@ import { BOOK_PATTERN_CAP, CHAPTER_PATTERN_CAP } from './prompts/review.ts';
 import { logEvent } from '../log.ts';
 import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatMessage } from './providers/types.ts';
+import type { ReviewSettings } from '../review-runs.ts';
 
 // The pattern pass of a chapter or whole-story review (#1136), and its
 // whole-book form (#1137). Each unit (a chapter, or the book) is surveyed for
@@ -158,9 +159,15 @@ export function patternSurveyTokens(
 export async function patternSurveySystem(
 	db: Database,
 	userId: string,
-	storyId: string
+	storyId: string,
+	styleNotes?: string | null
 ): Promise<ChatMessage | null> {
-	const frame = await assembleStoryFrame(db, { userId, storyId, includeTiers: ['frame'] });
+	const frame = await assembleStoryFrame(db, {
+		userId,
+		storyId,
+		includeTiers: ['frame'],
+		styleNotes
+	});
 	return frame ? buildSystemMessage(frame) : null;
 }
 
@@ -169,9 +176,10 @@ export async function patternSurveySystem(
 export async function patternSurveyOverhead(
 	db: Database,
 	userId: string,
-	storyId: string
+	storyId: string,
+	styleNotes?: string | null
 ): Promise<number> {
-	const system = await patternSurveySystem(db, userId, storyId);
+	const system = await patternSurveySystem(db, userId, storyId, styleNotes);
 	return (system ? estimateTokens(system.content) : 0) + PERSONA_TOKENS;
 }
 
@@ -202,12 +210,20 @@ export async function planBookPass(
 		contextWindow: number | undefined;
 		budgetTokens: number;
 		replyTokens: number;
+		// The run's settings, read once when it opened; read here when unset.
+		settings?: ReviewSettings;
 	}
 ): Promise<{ unit: PatternUnit; fit: WholeBookFit; tokens: number }> {
 	const titles = await chapterTitles(db, opts.storyId);
-	const overhead = await patternSurveyOverhead(db, opts.userId, opts.storyId);
-	const language = await storyLanguage(db, opts.storyId, opts.userId);
-	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
+	const overhead = await patternSurveyOverhead(
+		db,
+		opts.userId,
+		opts.storyId,
+		opts.settings?.styleNotes
+	);
+	const language = opts.settings?.language ?? (await storyLanguage(db, opts.storyId, opts.userId));
+	const preferences =
+		opts.settings?.preferences ?? (await storyAssistantPreferences(db, opts.storyId, opts.userId));
 	const whole = bookPatternUnit(opts.scenes, titles, true);
 	const wholeTokens = patternSurveyTokens(
 		[whole],
@@ -609,6 +625,8 @@ export async function runPatternPass(
 		save: (progress: { notes: number; failures: ReviewFailure[] }) => Promise<void>;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
+		// The run's settings, read once when it opened; read here when unset.
+		settings?: ReviewSettings;
 	},
 	deps: GatewayDeps = {}
 ): Promise<PatternPassResult> {
@@ -616,9 +634,15 @@ export async function runPatternPass(
 	let notes = 0;
 	let capped = false;
 	// The text itself rides in each message.
-	const system = await patternSurveySystem(db, opts.userId, opts.storyId);
-	const language = await storyLanguage(db, opts.storyId, opts.userId);
-	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
+	const system = await patternSurveySystem(
+		db,
+		opts.userId,
+		opts.storyId,
+		opts.settings?.styleNotes
+	);
+	const language = opts.settings?.language ?? (await storyLanguage(db, opts.storyId, opts.userId));
+	const preferences =
+		opts.settings?.preferences ?? (await storyAssistantPreferences(db, opts.storyId, opts.userId));
 	const req = { ...opts, system, language, preferences };
 	const save = () => opts.save({ notes, failures });
 	const bodyChars = opts.budgetTokens * 4;
