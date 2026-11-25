@@ -12,8 +12,8 @@ version, date, branch or PR where it had one.
 
 Settings text boxes render their stored text on the server (2026-11-25,
 #1683, `staging/bug-fixes-5`). Svelte renders `<textarea defaultValue>` empty
-on the server, so a Details or Assistant preferences save made before the page
-had loaded (Enter in Title) posted the text boxes empty and erased them. They
+on the server, so the boxes showed empty until the page loaded, and text typed
+into one in that window replaced the stored text on its next save. They
 now use `value` read once with `untrack`, keyed by the story or universe, so
 the text is in the server HTML and a refresh after a save still cannot write
 over newer typing. Inputs keep `defaultValue`, which Svelte does render.
