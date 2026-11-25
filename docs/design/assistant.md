@@ -1286,7 +1286,11 @@ hashes:
   out-of-date Assistant-written one out (`chapterSummaryToSend`, used by
   `storySkeleton` and `attachments.ts`), and the summaries pass rewrites
   exactly those. One the writer wrote (no `summary_generated_at`) is never
-  out of date.
+  out of date. An export marks an Assistant-written chapter summary with
+  `summary-by: assistant` in chapter.md, and an import stamps such a summary
+  with `summary_generated_at` and a null `summary_input`, so it reads as out
+  of date: it is left out of the context until a summaries pass rewrites it,
+  rather than being taken as the writer's own (#1655).
 - Enrich reads: the pass (`enrichUniverse`) builds every mentioned entity's
   request and sends only those whose hash differs from the stored one. The
   hash covers the entry's name and its passages, not what is recorded on it

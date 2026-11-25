@@ -419,6 +419,8 @@ export const chapters = pgTable(
 		// The fingerprint of the request the Assistant's summary was written from
 		// (see llm/chapter-summary-request.ts). The summary is out of date when
 		// the request that would be sent now has a different one, or none is stored.
+		// An import of a summary chapter.md marks "summary-by: assistant" stores
+		// none, so it stays out of the context until a summaries pass rewrites it.
 		summaryInput: text('summary_input'),
 		metadata: jsonb('metadata').notNull().default({}),
 		updatedAt: timestamp('updated_at', { withTimezone: true })
