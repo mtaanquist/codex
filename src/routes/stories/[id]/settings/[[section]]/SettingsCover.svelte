@@ -57,9 +57,9 @@
 		</div>
 		<div class="settings-actions">
 			{#if form?.action === 'cover' && form.saved}
-				<span class="field-hint" role="status" style="color:var(--status-final-ink);"
-					>Cover saved.</span
-				>
+				<span class="field-hint" role="status" style="color:var(--status-final-ink);">
+					Cover saved.
+				</span>
 			{/if}
 			<button class="btn btn-primary" type="submit" aria-disabled={shrinking} aria-busy={shrinking}>
 				{shrinking ? 'Uploading...' : 'Upload cover'}

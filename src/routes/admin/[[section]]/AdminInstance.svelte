@@ -80,8 +80,9 @@
 		<div>
 			<h2 class="admin-block-title">Browse</h2>
 			<p class="admin-block-sub">
-				A public page at {#if data.browse}<a href={resolve('/browse')}>/browse</a
-					>{:else}/browse{/if} where readers find stories from every author on this site. Authors choose
+				A public page at {#if data.browse}<a href={resolve('/browse')}>
+						/browse
+					</a>{:else}/browse{/if} where readers find stories from every author on this site. Authors choose
 				which public stories appear there. While it is off, the page does not exist and authors do not
 				see the option.
 			</p>
@@ -236,8 +237,9 @@
 			</div>
 
 			<div class="settings-actions">
-				<button type="submit" formaction="?/testEmail" class="btn btn-ghost">Send test email</button
-				>
+				<button type="submit" formaction="?/testEmail" class="btn btn-ghost">
+					Send test email
+				</button>
 				<button type="submit" class="btn btn-primary">Save</button>
 			</div>
 		</form>

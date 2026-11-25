@@ -1721,9 +1721,9 @@
 									onclick={() => void openChat(item.id)}
 								>
 									<span class="chat-row-title">{item.title || 'Untitled chat'}</span>
-									<span class="chat-row-time"
-										>{relativeShort(item.updatedAt, page.data.timeZone, now())}</span
-									>
+									<span class="chat-row-time">
+										{relativeShort(item.updatedAt, page.data.timeZone, now())}
+									</span>
 								</button>
 							{:else}
 								<p class="chat-empty">
@@ -2001,8 +2001,9 @@
 							}}
 						>
 							<span class="model-chip-name">{chipModel || 'Model'}</span>
-							{#if chipEffort}<span class="model-chip-effort">{EFFORT_LABELS[chipEffort]}</span
-								>{/if}
+							{#if chipEffort}<span class="model-chip-effort">
+									{EFFORT_LABELS[chipEffort]}
+								</span>{/if}
 						</button>
 						{#if reference}
 							<span class="chip context-chip" title={reference.text}>

@@ -89,9 +89,9 @@
 						<li>
 							{#if linkHref(link.url)}
 								<!-- An external author link, not an app route; resolve() does not apply. -->
-								<a href={linkHref(link.url)} rel="external nofollow noopener"
-									>{link.label || link.url}</a
-								>
+								<a href={linkHref(link.url)} rel="external nofollow noopener">
+									{link.label || link.url}
+								</a>
 							{:else}
 								{link.label ? `${link.label}: ${link.url}` : link.url}
 							{/if}

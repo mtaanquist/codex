@@ -89,8 +89,9 @@
 					href={withQuery(notesPath, { note: note.id })}
 				>
 					<Icon name="pin" size={12} />
-					<span class="note-name" class:untitled={!note.title}>{note.title || 'Untitled note'}</span
-					>
+					<span class="note-name" class:untitled={!note.title}>
+						{note.title || 'Untitled note'}
+					</span>
 				</a>
 			{/each}
 		{/if}
@@ -107,8 +108,9 @@
 					href={withQuery(notesPath, { note: note.id })}
 				>
 					<Icon name="note" size={12} />
-					<span class="note-name" class:untitled={!note.title}>{note.title || 'Untitled note'}</span
-					>
+					<span class="note-name" class:untitled={!note.title}>
+						{note.title || 'Untitled note'}
+					</span>
 				</a>
 			{/each}
 		{/if}
@@ -129,8 +131,9 @@
 			{#each shownUniverse as note (note.id)}
 				<a class="note-row" href={withQuery(universeNotesPath, { note: note.id })}>
 					<Icon name="universe" size={12} />
-					<span class="note-name" class:untitled={!note.title}>{note.title || 'Untitled note'}</span
-					>
+					<span class="note-name" class:untitled={!note.title}>
+						{note.title || 'Untitled note'}
+					</span>
 				</a>
 			{/each}
 		{/if}

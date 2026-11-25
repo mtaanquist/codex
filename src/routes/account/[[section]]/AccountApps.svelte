@@ -221,8 +221,10 @@
 							<button
 								type="submit"
 								class="btn btn-ghost btn-sm"
-								aria-label="Disconnect {clientDisplayName(app)}">Disconnect</button
+								aria-label="Disconnect {clientDisplayName(app)}"
 							>
+								Disconnect
+							</button>
 						</form>
 					</div>
 				{/each}
@@ -293,8 +295,10 @@
 							<button
 								type="submit"
 								class="btn btn-ghost btn-sm"
-								aria-label="Revoke the token {token.name}">Revoke</button
+								aria-label="Revoke the token {token.name}"
 							>
+								Revoke
+							</button>
 						</form>
 					</div>
 				{/each}

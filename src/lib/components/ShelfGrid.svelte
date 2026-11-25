@@ -71,14 +71,17 @@
 			</a>
 			{#if book.handle && book.byline}
 				<span class="shelf-item-by">
-					by <a href={resolve('/@[handle]', { handle: book.handle })}>{book.byline}</a
-					>{#if book.universe}, in
+					by <a href={resolve('/@[handle]', { handle: book.handle })}>
+						{book.byline}
+					</a>{#if book.universe}, in
 						<a
 							href={resolve('/@[handle]/universes/[universe=ref]', {
 								handle: book.handle,
 								universe: book.universe.slug
-							})}>{book.universe.name}</a
-						>{/if}
+							})}
+						>
+							{book.universe.name}
+						</a>{/if}
 				</span>
 			{/if}
 		</li>

@@ -280,9 +280,9 @@
 				<div class="modal-foot-note"></div>
 				{#if imported}
 					<button class="btn btn-sm btn-secondary" type="button" onclick={onClose}>Done</button>
-					<a class="btn btn-sm btn-primary" href={resolve('/stories/[id]', { id: imported.slug })}
-						>Open the story</a
-					>
+					<a class="btn btn-sm btn-primary" href={resolve('/stories/[id]', { id: imported.slug })}>
+						Open the story
+					</a>
 				{:else}
 					<button class="btn btn-sm btn-secondary" type="button" onclick={onClose}>Cancel</button>
 					<button

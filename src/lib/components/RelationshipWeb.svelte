@@ -135,10 +135,10 @@
 						<text class="web-name" x={node.x} y={node.y + nodeRadius(node.degree) + 13}>
 							{node.name}
 						</text>
-						<title
-							>{node.name}: {node.degree}
-							{node.degree === 1 ? 'relationship' : 'relationships'}</title
-						>
+						<title>
+							{node.name}: {node.degree}
+							{node.degree === 1 ? 'relationship' : 'relationships'}
+						</title>
 					</g>
 				</a>
 			{/each}

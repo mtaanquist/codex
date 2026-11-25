@@ -329,12 +329,12 @@
 								</button>
 							</div>
 						{/if}
-						<label class="choice"
-							><input type="checkbox" bind:checked={matchCase} /> Match case</label
-						>
-						<label class="choice"
-							><input type="checkbox" bind:checked={wholeWord} /> Whole words</label
-						>
+						<label class="choice">
+							<input type="checkbox" bind:checked={matchCase} /> Match case
+						</label>
+						<label class="choice">
+							<input type="checkbox" bind:checked={wholeWord} /> Whole words
+						</label>
 						<button
 							class="btn btn-sm btn-secondary fr-find"
 							type="submit"
@@ -395,12 +395,12 @@
 									listed; replace these, then search again for the rest.
 								{/if}
 							</p>
-							<button class="btn btn-sm btn-ghost" type="button" onclick={() => pickAll(true)}
-								>Select all</button
-							>
-							<button class="btn btn-sm btn-ghost" type="button" onclick={() => pickAll(false)}
-								>Select none</button
-							>
+							<button class="btn btn-sm btn-ghost" type="button" onclick={() => pickAll(true)}>
+								Select all
+							</button>
+							<button class="btn btn-sm btn-ghost" type="button" onclick={() => pickAll(false)}>
+								Select none
+							</button>
 						</div>
 						<div class="fr-results">
 							{#each results.scenes as scene (scene.sceneId)}
@@ -430,11 +430,11 @@
 														checked={picked.has(key(scene.sceneId, match.start))}
 														onchange={() => toggleMatch(scene.sceneId, match.start)}
 													/>
-													<span class="fr-snippet"
-														>{match.before}<del>{match.text}</del>{#if replace !== ''}<ins
-																>{replace}</ins
-															>{/if}{match.after}</span
-													>
+													<span class="fr-snippet">
+														{match.before}<del>{match.text}</del>{#if replace !== ''}<ins>
+																{replace}
+															</ins>{/if}{match.after}
+													</span>
 												</label>
 											</li>
 										{/each}
@@ -459,8 +459,10 @@
 						class="btn btn-sm btn-secondary"
 						type="button"
 						onclick={close}
-						disabled={busy !== null}>Cancel</button
+						disabled={busy !== null}
 					>
+						Cancel
+					</button>
 					<button
 						class="btn btn-sm btn-primary"
 						type="button"

@@ -43,12 +43,12 @@
 								@{edition.handle}/{edition.title}
 								<span class="pill">{edition.isCurrent ? 'current' : 'superseded'}</span>
 								{#if edition.isAdult}<span class="pill">adult</span>{/if}
-								{#if edition.isCurrent && edition.listedInBrowse}<span class="pill"
-										>listed in Browse</span
-									>{/if}
-								{#if edition.isCurrent && edition.browseBlockedAt}<span class="pill"
-										>removed from Browse</span
-									>{/if}
+								{#if edition.isCurrent && edition.listedInBrowse}<span class="pill">
+										listed in Browse
+									</span>{/if}
+								{#if edition.isCurrent && edition.browseBlockedAt}<span class="pill">
+										removed from Browse
+									</span>{/if}
 							</div>
 							<div class="list-sub">
 								published {formatDate(edition.publishedAt, page.data.timeZone)}
@@ -64,8 +64,10 @@
 									<button
 										type="submit"
 										class="btn btn-ghost btn-sm"
-										aria-label="Allow {edition.title} in Browse again">Allow in Browse again</button
+										aria-label="Allow {edition.title} in Browse again"
 									>
+										Allow in Browse again
+									</button>
 								</form>
 							{/if}
 						</div>
@@ -102,8 +104,10 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Restore {edition.title}">Restore</button
+									aria-label="Restore {edition.title}"
 								>
+									Restore
+								</button>
 							</form>
 						</div>
 					</div>
