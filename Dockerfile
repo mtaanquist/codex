@@ -27,7 +27,9 @@ COPY --from=build /app/server.js server.js
 COPY --from=build /app/drizzle drizzle
 COPY --from=build /app/scripts scripts
 # The worker runs from source under Node's native TypeScript support; it
-# imports from src/lib (schema, mention pipeline), so both come along.
+# imports from src/lib (schema, mention pipeline), so both come along. The app
+# also converts uploaded Word and EPUB files in a worker thread that runs
+# src/lib/server/import-document-worker.ts from source.
 COPY --from=build /app/src/worker src/worker
 COPY --from=build /app/src/lib src/lib
 # Stable launch commands, so a deployment's compose file can say `codex-app`

@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import TurndownService from 'turndown';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
-import { parseDocument, DocumentImportError, nestingDepth } from './import-document';
+import {
+	parseDocument,
+	parseDocumentInWorker,
+	DocumentImportError,
+	nestingDepth
+} from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
 // A real 1x1 PNG so the bytes survive the importer's magic-number sniff too.
@@ -293,6 +298,54 @@ describe('parseDocument (epub)', () => {
 		} finally {
 			spy.mockRestore();
 		}
+	});
+});
+
+describe('parseDocumentInWorker', () => {
+	it('imports a document in a worker thread', async () => {
+		const epub = buildEpub(
+			[
+				{ name: 'ch1.xhtml', xhtml: '<h1>One</h1><p>See <img src="images/pic.png" alt="x"/></p>' },
+				{ name: 'ch2.xhtml', xhtml: '<h1>Two</h1><p>Later.</p>' }
+			],
+			{ title: 'Threaded', withImage: true }
+		);
+		const plan = await parseDocumentInWorker(epub, 'book.epub');
+		expect(plan.story.title).toBe('Threaded');
+		expect(plan.chapters.map((c) => c.title)).toEqual(['One', 'Two']);
+		expect(plan.chapters[1].scenes[0].bodyMd).toBe('Later.');
+		expect(plan.assets).toHaveLength(1);
+		expect(Buffer.from(plan.assets[0].bytes).equals(PNG)).toBe(true);
+	});
+
+	it('passes a refusal back as a plain import error', async () => {
+		const outcome = parseDocumentInWorker(new Uint8Array([1, 2, 3]), 'notes.txt');
+		await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
+		await expect(outcome).rejects.toThrow(/can import Word/);
+	});
+
+	it('stops a slow conversion at the time limit without holding up the server', async () => {
+		// Tens of seconds of Turndown: its time grows with the square of the
+		// siblings under one element.
+		const flat = `<div>${'<span>word </span>'.repeat(200_000)}</div>`;
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: flat }]);
+		let longestGap = 0;
+		let last = performance.now();
+		const tick = setInterval(() => {
+			const now = performance.now();
+			longestGap = Math.max(longestGap, now - last);
+			last = now;
+		}, 10);
+		const started = performance.now();
+		try {
+			const outcome = parseDocumentInWorker(epub, 'flat.epub', 1000);
+			await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
+			await expect(outcome).rejects.toThrow(/took too long/);
+		} finally {
+			clearInterval(tick);
+		}
+		expect(performance.now() - started).toBeLessThan(5000);
+		expect(longestGap).toBeLessThan(500);
 	});
 });
 

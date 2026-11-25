@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { unzipSync, zipSync, strFromU8 } from 'fflate';
 import TurndownService from 'turndown';
 import mammoth from 'mammoth';
@@ -34,6 +36,51 @@ export async function parseDocument(bytes: Uint8Array, filename: string): Promis
 	if (extension === 'docx') return parseDocx(bytes, filename);
 	if (extension === 'epub') return parseEpub(bytes, filename);
 	throw new DocumentImportError('Codex can import Word (.docx) and EPUB (.epub) files.');
+}
+
+// Converting a document can take tens of seconds (Turndown slows with the
+// square of the siblings under one element), so the request path converts in a
+// worker thread, which keeps the server answering other requests and is
+// stopped after the time limit. The worker runs the TypeScript source, which
+// the production image ships for the background worker; the path is resolved
+// from the working directory because the bundled server code lives elsewhere.
+const WORKER_ENTRY = resolve('src/lib/server/import-document-worker.ts');
+const PARSE_TIME_LIMIT_MS = 30_000;
+const TOO_SLOW = 'This file took too long to read. Try splitting it into smaller files.';
+
+type WorkerReply = { plan: ImportPlan } | { importError: string };
+
+export function parseDocumentInWorker(
+	bytes: Uint8Array,
+	filename: string,
+	timeLimitMs = PARSE_TIME_LIMIT_MS
+): Promise<ImportPlan> {
+	return new Promise((resolvePlan, reject) => {
+		const worker = new Worker(WORKER_ENTRY, { workerData: { bytes, filename } });
+		const settle = (outcome: () => void) => {
+			clearTimeout(timer);
+			worker.removeAllListeners();
+			// Errors after this point have nowhere to go.
+			worker.on('error', () => {});
+			void worker.terminate();
+			outcome();
+		};
+		const timer = setTimeout(
+			() => settle(() => reject(new DocumentImportError(TOO_SLOW))),
+			timeLimitMs
+		);
+		worker.once('message', (reply: WorkerReply) =>
+			settle(() =>
+				'plan' in reply
+					? resolvePlan(reply.plan)
+					: reject(new DocumentImportError(reply.importError))
+			)
+		);
+		worker.once('error', (err) => settle(() => reject(err)));
+		worker.once('exit', (code) =>
+			settle(() => reject(new Error(`Document import worker exited with code ${code}`)))
+		);
+	});
 }
 
 // Turndown's time grows with the square of the nesting depth (a blockquote
