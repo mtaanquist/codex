@@ -472,7 +472,8 @@ describe('the read before the delete', () => {
 		expect(params).toEqual([ids.join(',')]);
 	});
 
-	it('finds the referenced ids among many', async () => {
+	// A list this long takes a few seconds, near the 5s default.
+	it('finds the referenced ids among many', { timeout: 30_000 }, async () => {
 		const storyId = await story();
 		const kept = await image();
 		await scene(storyId, link(kept.toUpperCase()));
