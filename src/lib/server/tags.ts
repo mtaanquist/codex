@@ -418,7 +418,14 @@ export async function mergeTag(
 			.where(and(eq(tags.kind, source.kind), eq(tags.slug, tagSlug(targetName))));
 		if (!named || named.removedAt) return { ok: false, message: notFound };
 		if (named.id === source.id) return { ok: false, message: 'Pick a different entry.' };
-		const survivorId = await survivorOf(tx, named.id);
+		const survivor = await survivorOf(tx, named.id);
+		if (!survivor.ended) {
+			return {
+				ok: false,
+				message: `"${named.name}" is merged in a loop or a chain too long to follow. Undo the merge on "${named.name}" first, then try again.`
+			};
+		}
+		const survivorId = survivor.id;
 		// Lock every row this changes, in id order, so two merges that touch the
 		// same entries wait for each other instead of deadlocking or each passing
 		// the checks below and pointing at one another.
@@ -446,7 +453,9 @@ export async function mergeTag(
 }
 
 // The entry a tag's merges end at (the tag itself when it is not merged).
-async function survivorOf(tx: Database, id: string): Promise<string> {
+// ended is false when the merges never end within MAX_MERGE_DEPTH (a loop or
+// a longer chain); migration 0125 repaired those, so it means broken data.
+async function survivorOf(tx: Database, id: string): Promise<{ id: string; ended: boolean }> {
 	const rows = await tx.execute(sql`
 		with recursive chain as (
 			select id, merged_into_id, 0 as depth from tags where id = ${id}
@@ -454,9 +463,10 @@ async function survivorOf(tx: Database, id: string): Promise<string> {
 			select t.id, t.merged_into_id, c.depth + 1 from chain c join tags t on t.id = c.merged_into_id
 			where c.depth < ${MAX_MERGE_DEPTH}
 		)
-		select id from chain order by depth desc limit 1
+		select id, merged_into_id is null as ended from chain order by depth desc limit 1
 	`);
-	return (rows.rows[0] as { id: string } | undefined)?.id ?? id;
+	const row = rows.rows[0] as { id: string; ended: boolean } | undefined;
+	return row ?? { id, ended: true };
 }
 
 export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
