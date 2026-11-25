@@ -151,11 +151,19 @@ function filterConditions(query: BrowseQuery, filters: BrowseFilters): SQL[] | n
 	if (filters.hide.length > 0) {
 		// Hidden if the story carries the warning now or its edition did at
 		// publish, so a reader is not shown a warning they asked to avoid. The
-		// edition froze names, so an entry since merged into the warning
-		// matches by its own name.
-		conditions.push(sql`not ${hasAny(filters.hide.flatMap((tag) => tag.ids))}`);
+		// edition froze the warnings' ids, which survive a rename and include
+		// entries since merged into the warning. Editions from before ids were
+		// frozen carry names alone and match by name.
+		const ids = filters.hide.flatMap((tag) => tag.ids);
+		conditions.push(sql`not ${hasAny(ids)}`);
 		conditions.push(
-			sql`not (p.content_warnings && array[${sql.join(
+			sql`not (p.content_warning_ids && array[${sql.join(
+				ids.map((id) => sql`${id}`),
+				sql`, `
+			)}]::uuid[])`
+		);
+		conditions.push(
+			sql`not (cardinality(p.content_warning_ids) = 0 and p.content_warnings && array[${sql.join(
 				filters.hide.flatMap((tag) => tag.names.map((name) => sql`${name}`)),
 				sql`, `
 			)}]::text[])`

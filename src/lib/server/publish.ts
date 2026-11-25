@@ -124,9 +124,7 @@ export async function publishStory(
 		])
 	];
 	const shownLabels = (await tagsForStories(db, [story.id])).get(story.id) ?? [];
-	const contentWarnings = shownLabels
-		.filter((tag) => tag.kind === 'warning')
-		.map((tag) => tag.name);
+	const warnings = shownLabels.filter((tag) => tag.kind === 'warning');
 	try {
 		const publicationId = await db.transaction(async (tx) => {
 			// Locked so a takedown running at the same moment waits for this
@@ -163,8 +161,9 @@ export async function publishStory(
 					handle: user.handle!,
 					...frontMatter,
 					isAdult: story.isAdult,
-					// Like the adult flag, the author's current choice, by name.
-					contentWarnings,
+					// Like the adult flag, the author's current choice.
+					contentWarnings: warnings.map((tag) => tag.name),
+					contentWarningIds: warnings.map((tag) => tag.id),
 					content,
 					versionLabel: versionLabel?.trim() || null,
 					sourceDraftId: draftId || null
