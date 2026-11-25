@@ -303,6 +303,10 @@ describe('moderation lists', () => {
 		expect((await listLiveEditions(db, { query: 'INKWRIGHT' })).total).toBe(
 			LIVE_EDITIONS_PAGE_SIZE + 2
 		);
+		// Rows show the handle with '@', so a search may carry one.
+		expect((await listLiveEditions(db, { query: '@inkwright' })).total).toBe(
+			LIVE_EDITIONS_PAGE_SIZE + 2
+		);
 		// LIKE wildcards in the search are taken literally.
 		expect((await listLiveEditions(db, { query: '%' })).total).toBe(0);
 	});
