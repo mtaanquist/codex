@@ -2,6 +2,7 @@ import type { SubmitFunction } from '$app/forms';
 import type { BeforeNavigate } from '$app/navigation';
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
+import { page } from '$app/state';
 import { tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { focusIsBeingRestored } from '#lib/enhance';
@@ -55,10 +56,14 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		if (lastSave.get(formElement) === save) unsaved.delete(formElement);
 		if (result.type === 'redirect') {
 			const leaving = leavingTo;
-			const target = leaving && retarget(leaving.url, result.location);
 			leavingTo = null;
 			redirecting += 1;
 			try {
+				// For a held Back or Forward press the browser is still on the entry it
+				// was going to until kit's undo lands; replacing before then would
+				// overwrite that entry instead of the old address.
+				if (leaving?.delta) await historyRestored;
+				const target = leaving && retarget(leaving.url, result.location);
 				await gotoOwn(result.location, { reset: false, replace: true, refreshAll: true });
 				// A Back or Forward press goes on through the history, unless the
 				// entry it was going to is under the old address too.
@@ -78,6 +83,15 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		else if (leavingTo && savesInFlight === 0 && unsavedForms().length === 0) continueLeaving();
 	};
 };
+
+// An autosaving form's action, on the page the form is on. A save that a Back
+// or Forward press starts runs after the browser has already moved to the
+// entry it was going to, so a relative `?/action` would post to that page,
+// which may be another story's settings with the same action. A form whose
+// page can be renamed posts to its id-based address instead.
+export function ownAction(name: string): string {
+	return `${page.url.pathname}?/${name}`;
+}
 
 // Forms whose last save errored; FormStatus shows the failure.
 export const failedSaves = new SvelteSet<HTMLFormElement>();
@@ -221,13 +235,20 @@ function holdLeaving(navigation: BeforeNavigate, url: URL) {
 }
 
 // The target with the page's old slug swapped for the new one: the first path
-// segment where the current address and the redirect differ.
+// segment where the current address and the redirect differ. Only a target
+// under the same path up to that segment is the same work: a story and a
+// universe can share a slug.
 function retarget(target: URL, location: string): URL {
 	const from = window.location.pathname.split('/');
 	const to = new URL(location, window.location.href).pathname.split('/');
 	const at = from.findIndex((segment, i) => segment !== to[i]);
 	const parts = target.pathname.split('/');
-	if (target.origin !== window.location.origin || at < 0 || parts[at] !== from[at]) return target;
+	if (
+		target.origin !== window.location.origin ||
+		at < 0 ||
+		from.slice(0, at + 1).some((segment, i) => parts[i] !== segment)
+	)
+		return target;
 	parts[at] = to[at];
 	const next = new URL(target);
 	next.pathname = parts.join('/');

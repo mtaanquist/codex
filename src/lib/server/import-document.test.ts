@@ -3,12 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import TurndownService from 'turndown';
 import mammoth from 'mammoth';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
-import {
-	parseDocument,
-	parseDocumentInWorker,
-	DocumentImportError,
-	nestingDepth
-} from './import-document';
+import { parseDocument, parseDocumentInWorker, DocumentImportError } from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
 // A real 1x1 PNG so the bytes survive the importer's magic-number sniff too.
@@ -528,71 +523,52 @@ describe('parseDocumentInWorker start failure', () => {
 	});
 });
 
-describe('nestingDepth', () => {
-	it('counts open elements', () => {
-		expect(nestingDepth('<div><blockquote><em>x</em></blockquote><div></div></div>')).toBe(3);
+describe('parseDocument nesting limit', () => {
+	const convert = (xhtml: string) =>
+		parseDocument(buildEpub([{ name: 'a.xhtml', xhtml }]), 'a.epub');
+
+	it('imports nesting up to the limit and refuses one level more', async () => {
+		const at = (depth: number) => '<div>'.repeat(depth - 1) + '<p>Deepest.</p>';
+		const plan = await convert(at(64));
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Deepest.');
+		await expect(convert(at(65))).rejects.toThrow(/nested too deeply/);
 	});
 
-	it('does not count elements that cannot hold others or close themselves', () => {
-		expect(nestingDepth('<p>a<p>b<br/><img src="x"><li>c<li>d<a id="1"/>e<a id="2"/>')).toBe(0);
+	it('does not count markup inside comments, scripts or styles', async () => {
+		const deep = '<div>'.repeat(200);
+		const plan = await convert(
+			`<!-- ${deep} --><script>"${deep}"</script><style>${deep}</style><p>Kept.</p>`
+		);
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Kept.');
 	});
 
-	it('counts a self-closed element as open, as an HTML parser does', () => {
-		expect(nestingDepth('<span/>a<span/>b<div/>c')).toBe(3);
-	});
-
-	it('skips comments and the text of scripts and styles', () => {
-		expect(
-			nestingDepth('<!-- <div><div> --><script>"<div><div>"</script><style>a<b{}</STYLE><em>x</em>')
-		).toBe(1);
-	});
-
-	it('does not let a stray end tag of another name close an element', () => {
-		expect(nestingDepth('<blockquote></i><p>a</p><p>b</p>'.repeat(1000))).toBe(1000);
-		expect(nestingDepth('<div><em></div></div><div></div>')).toBe(2);
-	});
-
-	it('closes the elements left open inside the one an end tag closes', () => {
-		expect(nestingDepth('<div><span><b>x</div><div>y</div>')).toBe(3);
-		expect(nestingDepth('<div><span><b>x</div></b></span><div><div>y</div></div>')).toBe(3);
-	});
-
-	it('ignores a stray closing tag and a lone angle bracket', () => {
-		expect(nestingDepth('</div></div>a < b<div><div></div></div>')).toBe(2);
-	});
-
-	it('ends comments where an HTML parser does', () => {
-		const nest = '<div><div><div>x</div></div></div>';
-		expect(nestingDepth(`<!-->${nest}<!-- -->`)).toBe(3);
-		expect(nestingDepth(`<!--->${nest}<!-- -->`)).toBe(3);
-		expect(nestingDepth(`<!-- a --!>${nest}<!-- -->`)).toBe(3);
-		expect(nestingDepth(`<!--!>${nest}-->`)).toBe(0);
-		expect(nestingDepth(`<!---->${nest}`)).toBe(3);
-	});
-
-	it('counts what SVG and MathML nest', () => {
-		// Inside SVG, style and title are ordinary elements and links and
-		// inputs nest; a self-closed element does close.
-		expect(nestingDepth('<svg><style><g><g><g>x</g></g></g></style></svg>')).toBe(5);
-		expect(nestingDepth('<svg><title><style><g><g></g></g></style></title></svg>')).toBe(2);
-		expect(nestingDepth('<svg><a><a><a><a>x</a></a></a></a></svg>')).toBe(5);
-		expect(nestingDepth('<svg><input><input><input>x</svg>')).toBe(4);
-		expect(nestingDepth('<svg><path/><path/><path/></svg>')).toBe(1);
-		expect(nestingDepth('<svg/><div>x</div>')).toBe(1);
-		// An HTML element such as a div holds HTML again.
-		expect(nestingDepth('<svg><a><div><a><a>x</a></a></div></a></svg>')).toBe(3);
-		expect(nestingDepth('<math><mi><style><div><div></style></mi></math>')).toBe(2);
-	});
-
-	it('refuses deep nesting hidden in comments or SVG when converting', async () => {
+	it('refuses deep nesting however the markup hides it', async () => {
 		const deep = '<blockquote>'.repeat(200) + 'x' + '</blockquote>'.repeat(200);
-		for (const xhtml of [
+		const vectors = [
 			`<!-->${deep}<!-- -->`,
-			`<svg><style>${deep.replaceAll('blockquote', 'g')}</style></svg>`
-		]) {
-			const epub = buildEpub([{ name: 'a.xhtml', xhtml }]);
-			await expect(parseDocument(epub, 'a.epub')).rejects.toThrow(/nested too deeply/);
+			`<svg><style>${deep.replaceAll('blockquote', 'g')}</style></svg>`,
+			'<math><annotation-xml encoding="text/html">' +
+				'<li/><section/>'.repeat(300) +
+				'<p>q</p>'.repeat(2000),
+			'<svg><br>' + '<section/>'.repeat(300),
+			'<math><p>' + '<section/>'.repeat(300),
+			'<svg><font color="red">' + '<section/>'.repeat(300),
+			'<section><!x </section>>'.repeat(300),
+			'<section><?x </section>>'.repeat(300),
+			'<section></1 </section>>'.repeat(300),
+			'<section><![CDATA[</section>>'.repeat(300)
+		];
+		for (const xhtml of vectors) {
+			const started = performance.now();
+			await expect(convert(xhtml)).rejects.toThrow(/nested too deeply/);
+			expect(performance.now() - started).toBeLessThan(2000);
 		}
+	});
+
+	it('stops reading markup thousands of levels deep early', async () => {
+		const started = performance.now();
+		await expect(convert('<div>'.repeat(200_000))).rejects.toThrow(/nested too deeply/);
+		expect(performance.now() - started).toBeLessThan(2000);
 	});
 });
 

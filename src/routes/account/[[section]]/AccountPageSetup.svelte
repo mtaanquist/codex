@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import {
 		FONT_SIZES,
 		GUTTERS,
@@ -38,7 +38,7 @@
 	<div class="settings-group">
 		<form
 			method="POST"
-			action="?/savePageSetup"
+			action={ownAction('savePageSetup')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>

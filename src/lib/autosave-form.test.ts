@@ -9,9 +9,11 @@ vi.mock('$app/env', () => ({
 	}
 }));
 vi.mock('$app/navigation', () => ({ goto }));
+const state = vi.hoisted(() => ({ page: { url: new URL('http://localhost/') } }));
+vi.mock('$app/state', () => state);
 vi.mock('#lib/enhance', () => ({ focusIsBeingRestored: () => false }));
 
-const { autosaveSubmit, autosubmitForm, failedSaves, flushBeforeNavigate } =
+const { autosaveSubmit, autosubmitForm, failedSaves, flushBeforeNavigate, ownAction } =
 	await import('./autosave-form');
 
 function fakeForm() {
@@ -31,6 +33,16 @@ async function save(formElement: HTMLFormElement, result: { type: string }) {
 	await (callback as (opts: unknown) => Promise<void>)({ result, update });
 	return update;
 }
+
+// The browser has already moved to a Back press's target when the press's
+// save posts, so the action names the form's own page, not the address bar's
+// (#1721).
+describe('ownAction', () => {
+	it('posts to the page the form is on, without its query', () => {
+		state.page.url = new URL('http://localhost/stories/a/settings/goals?x=1');
+		expect(ownAction('saveGoals')).toBe('/stories/a/settings/goals?/saveGoals');
+	});
+});
 
 describe('autosaveSubmit', () => {
 	it('keeps the page when a save errors, and marks the form unsaved', async () => {
@@ -369,14 +381,15 @@ describe('flushBeforeNavigate holding a navigation', () => {
 			update: vi.fn()
 		});
 		await settle();
+		// Not before kit's undo has put the old address back (#1723).
+		expect(goto).not.toHaveBeenCalled();
+		await historyRestored();
+		await landed;
 		expect(goto).toHaveBeenCalledTimes(1);
 		expect(goto).toHaveBeenCalledWith(
 			'/universes/new/categories',
 			expect.objectContaining({ replace: true })
 		);
-		expect(history.go).not.toHaveBeenCalled();
-		await historyRestored();
-		await landed;
 		expect(history.go).toHaveBeenCalledWith(-1);
 	});
 
@@ -396,11 +409,33 @@ describe('flushBeforeNavigate holding a navigation', () => {
 			cancel: vi.fn()
 		} as unknown as BeforeNavigate;
 		flushBeforeNavigate(nav);
-		await retries[0]({
+		const landed = retries[0]({
 			result: { type: 'redirect', location: '/universes/new/categories' },
 			update: vi.fn()
 		});
+		await historyRestored();
+		await landed;
 		expect(goto).toHaveBeenLastCalledWith(new URL('http://localhost/universes/new'));
 		expect(history.go).not.toHaveBeenCalled();
+	});
+
+	// Story and universe slugs are separate, so a universe that shares the
+	// renamed story's slug keeps its address (#1722).
+	it.each([
+		['/stories/dune/settings', '/stories/dune-messiah/settings', '/universes/dune'],
+		['/universes/dune', '/universes/dune-messiah', '/stories/dune/settings']
+	])('leaves a link to another work with the same slug alone (%s)', async (from, to, link) => {
+		stubWindow({ href: `http://localhost${from}`, pathname: from, origin: 'http://localhost' });
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = {
+			type: 'link',
+			from: { route: { id: 'a' } },
+			to: { url: new URL(`http://localhost${link}`), route: { id: 'b' } },
+			cancel: vi.fn()
+		} as unknown as BeforeNavigate;
+		flushBeforeNavigate(nav);
+		await retries[0]({ result: { type: 'redirect', location: to }, update: vi.fn() });
+		expect(goto).toHaveBeenLastCalledWith(new URL(`http://localhost${link}`));
 	});
 });
