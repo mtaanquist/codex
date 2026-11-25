@@ -85,6 +85,36 @@ test('a listed public story shows on Browse until it is made private', async ({
 	await anonymous.close();
 });
 
+test('Browse includes adult work on load once a reader searched with it', async ({ browser }) => {
+	await setBrowse(true);
+	const anonymous = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+	const reader = await anonymous.newPage();
+	const adultBox = reader.getByLabel('Include adult content');
+
+	await gotoReady(reader, '/browse');
+	await expect(adultBox).not.toBeChecked();
+	await adultBox.check();
+	await reader.getByRole('button', { name: 'Search' }).click();
+	await expect(reader).toHaveURL(/adult=show/);
+
+	// A full load and a link inside the app both bring the choice back.
+	await gotoReady(reader, '/browse?q=bell');
+	await expect(reader).toHaveURL('/browse?q=bell&adult=show');
+	await expect(adultBox).toBeChecked();
+	await gotoReady(reader, '/');
+	await reader.getByRole('banner').getByRole('link', { name: 'Browse' }).click();
+	await expect(reader).toHaveURL('/browse?adult=show');
+
+	// Unticking and searching leaves adult work out from then on.
+	await adultBox.uncheck();
+	await reader.getByRole('button', { name: 'Search' }).click();
+	await expect(reader).not.toHaveURL(/adult=/);
+	await gotoReady(reader, '/browse');
+	await expect(reader).toHaveURL('/browse');
+	await expect(adultBox).not.toBeChecked();
+	await anonymous.close();
+});
+
 test('Browse does not exist while it is off', async ({ page }) => {
 	await setBrowse(false);
 	const response = await gotoReady(page, '/browse');
