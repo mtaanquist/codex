@@ -71,7 +71,7 @@ afterAll(async () => {
 });
 
 async function tagStory(id: string, names: string[]) {
-	const checked = checkTagNames(names);
+	const checked = await checkTagNames(db, names);
 	if (!checked.ok) throw new Error(checked.message);
 	return await setStoryTags(db, id, checked.tags);
 }
@@ -139,9 +139,32 @@ describe('story tags', () => {
 		expect(view.fandoms.map((tag) => tag.name)).toEqual(['Middle-earth']);
 	});
 
-	it('refuses more than 20 tags and a tag with odd characters', () => {
-		expect(checkTagNames(Array.from({ length: 21 }, (_, i) => `t${i}`)).ok).toBe(false);
-		expect(checkTagNames(['fine', '<b>']).ok).toBe(false);
+	it('refuses more than 20 tags and a tag with odd characters', async () => {
+		expect(
+			(
+				await checkTagNames(
+					db,
+					Array.from({ length: 21 }, (_, i) => `t${i}`)
+				)
+			).ok
+		).toBe(false);
+		expect((await checkTagNames(db, ['fine', '<b>'])).ok).toBe(false);
+	});
+
+	it('counts a merged-away name and its survivor once toward the 20', async () => {
+		const twenty = Array.from({ length: 19 }, (_, i) => `t${i}`).concat('Target');
+		await tagStory(storyId, twenty);
+		await tagStory(otherStoryId, ['Gone']);
+		await db.insert(tags).values({ kind: 'tag', name: 'M', slug: 'm' });
+		expect(await mergeTag(db, 'tag', await tagId('m'), 'Target')).toEqual({ ok: true });
+		await setTagRemoved(db, 'tag', await tagId('gone'), true, ownerId);
+		// "M" shows as Target and the removed "Gone" does not show, so the story
+		// still shows 20.
+		const checked = await checkTagNames(db, [...twenty, 'M', 'Gone'], 20);
+		expect(checked.ok).toBe(true);
+		if (checked.ok) await setStoryTags(db, storyId, checked.tags);
+		expect(await names(storyId)).toHaveLength(20);
+		expect((await checkTagNames(db, [...twenty, 'M', 'New'], 20)).ok).toBe(false);
 	});
 
 	it('shows a merged tag as its target, and undoing the merge splits them again', async () => {
@@ -198,11 +221,11 @@ describe('story tags', () => {
 		expect((await storyTagView(db, storyId)).genres.map((tag) => tag.name)).toEqual(['Grimdark']);
 	});
 
-	it('lets a story over 20 tags after an unmerge keep them but not add more', () => {
+	it('lets a story over 20 tags after an unmerge keep them but not add more', async () => {
 		const names = Array.from({ length: 21 }, (_, i) => `t${i}`);
-		expect(checkTagNames(names).ok).toBe(false);
-		expect(checkTagNames(names, 21).ok).toBe(true);
-		expect(checkTagNames([...names, 'extra'], 21).ok).toBe(false);
+		expect((await checkTagNames(db, names)).ok).toBe(false);
+		expect((await checkTagNames(db, names, 21)).ok).toBe(true);
+		expect((await checkTagNames(db, [...names, 'extra'], 21)).ok).toBe(false);
 	});
 
 	it('merges into the survivor and keeps every chain one step deep', async () => {

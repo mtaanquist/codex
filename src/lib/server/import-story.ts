@@ -33,6 +33,7 @@ import {
 	listedByName,
 	setStoryList,
 	setStoryTags,
+	tagSurvivors,
 	universeFandom,
 	type ListKind
 } from './tags';
@@ -268,12 +269,26 @@ export async function runImport(
 			if (!cleaned.ok && !cleaned.empty) problems.push(`The tag was left off: ${cleaned.reason}`);
 			return cleaned.ok;
 		});
-		const tagSlugs = [...new Set(tagNames.map(tagSlug))];
-		const keptSlugs = new Set(tagSlugs.slice(0, MAX_TAGS));
-		const checkedTags = checkTagNames(tagNames.filter((name) => keptSlugs.has(tagSlug(name))));
-		if (tagSlugs.length > MAX_TAGS) {
-			problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
-		}
+		// The first tags in file order up to the limit, counting a merged-away
+		// name and its survivor once. A removed tag takes no slot; it is left off
+		// and reported when the tags are written.
+		const survivors = await tagSurvivors(db, [...new Set(tagNames.map(tagSlug))]);
+		const keptTags = new Set<string>();
+		let tagsDropped = false;
+		const checkedTags = await checkTagNames(
+			db,
+			tagNames.filter((name) => {
+				const shown = survivors.get(tagSlug(name));
+				if (!shown || keptTags.has(shown)) return true;
+				if (keptTags.size >= MAX_TAGS) {
+					tagsDropped = true;
+					return false;
+				}
+				keptTags.add(shown);
+				return true;
+			})
+		);
+		if (tagsDropped) problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
 		// The universe's own fandom counts toward the limit and is not stored on
 		// the story again.
 		const fromUniverse = await universeFandom(db, universe.id);
