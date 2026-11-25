@@ -99,7 +99,7 @@ describe('buildAccountExport', () => {
 			.returning();
 		const [chapter] = await db
 			.insert(chapters)
-			.values({ storyId: story.id, title: 'One', position: 1 })
+			.values({ storyId: story.id, title: 'One', position: 1, summaryMd: 'They set out.' })
 			.returning();
 		await db.insert(scenes).values({
 			storyId: story.id,
@@ -118,6 +118,9 @@ describe('buildAccountExport', () => {
 		expect(character).toContain('A smuggler.');
 		expect(character).toContain('Long history.');
 		expect(zip.names).toContain('universes/mythos/stories/halden/story.md');
+		expect(zip.text('universes/mythos/stories/halden/chapters/01-one/chapter.md')).toBe(
+			'---\ntitle: "One"\n---\nThey set out.'
+		);
 
 		const sceneFile = zip.names.find(
 			(n) => n.includes('/stories/halden/chapters/') && !n.endsWith('chapter.md')

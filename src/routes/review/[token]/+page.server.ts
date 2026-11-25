@@ -101,7 +101,8 @@ export const load: PageServerLoad = async ({ params, cookies, locals }) => {
 		storyTitle: resolved.storyTitle,
 		reviewerName: reviewer.displayName,
 		canSuggest: resolved.invitation.canSuggest,
-		chapters: content.chapters,
+		// Titles only: a chapter summary is the author's working material.
+		chapters: content.chapters.map(({ id, title }) => ({ id, title })),
 		scenes,
 		threads: await listThreads(db, storyId, anchors, { reviewerId: reviewer.id }),
 		suggestions: await listSuggestions(db, storyId, { reviewerId: reviewer.id }, anchors),
