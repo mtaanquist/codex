@@ -1,11 +1,13 @@
 <script lang="ts">
-	// The "Assistant preferences" group of a story's or a universe's Details:
-	// the house style, the habit checks, and the writer's own notes. On a
+	// The "Assistant preferences" section of a story's or a universe's
+	// settings: the house style, the habit checks, and the writer's own notes. On a
 	// story, a blank choice uses its universe's; on a universe, the Assistant's
 	// default (infer from the text, check everything). Standalone stories share
 	// a hidden universe, whose settings the writer sees as the defaults for all
 	// standalone stories, so standalone words it that way.
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { enhance } from '#lib/enhance';
+	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import {
 		HABIT_CHECKS,
 		HOUSE_STYLE,
@@ -75,7 +77,8 @@
 	{:else if inherited && standalone}
 		How the Assistant reviews and drafts this story. A setting on "{useInherited}" follows the
 		settings for all your standalone stories (in your library, open Settings under Standalone
-		stories); where those are not set either, the Assistant works it out from your prose.
+		stories, then Assistant preferences); where those are not set either, the Assistant works it out
+		from your prose.
 	{:else if inherited}
 		How the Assistant reviews and drafts this story. A setting on "{useInherited}" follows the
 		universe's settings; where the universe has not set it either, the Assistant works it out from
@@ -86,24 +89,24 @@
 	{/if}
 {/snippet}
 
+<div class="admin-block-head">
+	<h2 class="admin-block-title">Assistant preferences</h2>
+	<p class="admin-block-sub">{@render intro()}</p>
+</div>
+<!-- Each page's own form style: story sections sit in a card, universe ones do not. -->
 {#if level === 'universe'}
-	<div class="admin-block-head">
-		<h2 class="admin-block-title">Assistant preferences</h2>
-		<p class="admin-block-sub">{@render intro()}</p>
-	</div>
 	{@render body()}
 {:else}
-	<div class="settings-group">
-		<header class="settings-group-header">
-			<h3 class="settings-group-title">Assistant preferences</h3>
-			<p class="settings-group-subtitle">{@render intro()}</p>
-		</header>
-		{@render body()}
-	</div>
+	<div class="settings-group">{@render body()}</div>
 {/if}
 
 {#snippet body()}
-	<form method="POST" action="?/saveAssistantPreferences">
+	<form
+		method="POST"
+		action="?/saveAssistantPreferences"
+		use:enhance={autosaveSubmit}
+		onchange={autosubmitForm}
+	>
 		<fieldset class="prefs-set">
 			<legend>House style</legend>
 			<p class="field-hint prefs-lead">
@@ -151,8 +154,8 @@
 				class="input"
 				name="assistantNotes"
 				rows="3"
-				maxlength={MAX_ASSISTANT_NOTES}>{values.assistantNotes ?? ''}</textarea
-			>
+				maxlength={MAX_ASSISTANT_NOTES}
+				defaultValue={values.assistantNotes ?? ''}></textarea>
 			<p class="field-hint">
 				Habits only you know about, for example "I overuse the word 'just'" or "Sentence fragments
 				are on purpose, leave them". Reviews, including "Look for habits that repeat in the prose",
@@ -167,7 +170,6 @@
 		</div>
 		<div class="settings-actions">
 			<FormStatus {error} success={saved ? 'Saved.' : null} />
-			<button class="btn btn-primary" type="submit">Save preferences</button>
 		</div>
 	</form>
 {/snippet}

@@ -21,7 +21,7 @@ test('a model chosen for a universe is the default in its stories', async ({ pag
 
 	await page
 		.getByRole('navigation', { name: 'Universe settings' })
-		.getByRole('link', { name: 'Assistant' })
+		.getByRole('link', { name: 'Assistant', exact: true })
 		.click();
 	await expect(page.getByRole('heading', { name: 'Assistant models' })).toBeVisible();
 	const background = page.getByRole('combobox', { name: 'Background work' });

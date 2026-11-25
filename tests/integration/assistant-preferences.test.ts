@@ -285,7 +285,32 @@ describe('the assistant preferences', () => {
 			expect(data.assistantModels).toBeNull();
 			expect(data.assistantPreferencesShown).toBe(false);
 		}
+		// Hidden, the section's own page is not there either.
+		await expect(
+			storySettings.load({
+				params: { id: storyId, section: 'preferences' },
+				locals: { user, session: null }
+			} as never)
+		).rejects.toMatchObject({ status: 404 });
+		await expect(
+			universePage.load({
+				params: { id: universeId, section: 'preferences' },
+				locals: { user, session: null }
+			} as never)
+		).rejects.toMatchObject({ status: 404 });
 		await db.update(users).set({ mcpEnabled: true }).where(eq(users.id, user.id));
+		await expect(
+			storySettings.load({
+				params: { id: storyId, section: 'preferences' },
+				locals: { user, session: null }
+			} as never)
+		).resolves.toMatchObject({ assistantPreferencesShown: true });
+		await expect(
+			universePage.load({
+				params: { id: universeId, section: 'preferences' },
+				locals: { user, session: null }
+			} as never)
+		).resolves.toMatchObject({ assistantPreferencesShown: true });
 		for (const data of await loads()) {
 			// The Assistant section stays hidden; the preferences show.
 			expect(data.assistantModels).toBeNull();

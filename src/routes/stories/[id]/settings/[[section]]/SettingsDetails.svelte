@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
-	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
+	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { enhance } from '#lib/enhance';
+	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import { inheritedChoiceLabel } from '#lib/assistant-preferences';
 	import {
 		normaliseLanguage,
@@ -22,15 +24,11 @@
 <div class="admin-block-head">
 	<h2 class="admin-block-title">Details</h2>
 	<p class="admin-block-sub">
-		How the story is named and described, the language it is written in, and how the Assistant
-		reviews it.
+		How the story is named and described, the language it is written in, and its genre and style.
 	</p>
 </div>
 <div class="settings-group">
-	<form method="POST" action="?/update">
-		{#if form?.action === 'update' && form.message}
-			<p class="form-error" role="alert">{form.message}</p>
-		{/if}
+	<form method="POST" action="?/update" use:enhance={autosaveSubmit} onchange={autosubmitForm}>
 		<div class="field">
 			<label for="st-title">Title</label>
 			<input
@@ -38,8 +36,8 @@
 				class="input"
 				type="text"
 				name="title"
-				value={data.story.title}
-				required
+				defaultValue={data.story.title}
+				data-renames
 			/>
 			<span class="field-hint">
 				The web address follows the title: /stories/{data.story.slug}. Renaming moves the address;
@@ -53,18 +51,27 @@
 				class="input"
 				type="text"
 				name="author"
-				value={data.story.author ?? ''}
+				defaultValue={data.story.author ?? ''}
 			/>
 		</div>
 		<div class="field">
 			<label for="st-brief">Brief</label>
-			<input id="st-brief" class="input" type="text" name="brief" value={data.story.brief ?? ''} />
+			<input
+				id="st-brief"
+				class="input"
+				type="text"
+				name="brief"
+				defaultValue={data.story.brief ?? ''}
+			/>
 		</div>
 		<div class="field">
 			<label for="st-description">Description</label>
-			<textarea id="st-description" class="input" name="description" rows="4"
-				>{data.story.descriptionMd ?? ''}</textarea
-			>
+			<textarea
+				id="st-description"
+				class="input"
+				name="description"
+				rows="4"
+				defaultValue={data.story.descriptionMd ?? ''}></textarea>
 		</div>
 		{#if !data.story.coverAssetId}
 			<div class="field">
@@ -109,9 +116,12 @@
 		</div>
 		<div class="field">
 			<label for="st-style-notes">Genre and style</label>
-			<textarea id="st-style-notes" class="input" name="styleNotes" rows="2"
-				>{data.story.styleNotes ?? ''}</textarea
-			>
+			<textarea
+				id="st-style-notes"
+				class="input"
+				name="styleNotes"
+				rows="2"
+				defaultValue={data.story.styleNotes ?? ''}></textarea>
 			<p class="field-hint">
 				A sentence on the genre and the style you are writing in, for example "epic fantasy serial,
 				omniscient narrator, formal prose". The intended audience and a comparison title or two also
@@ -119,30 +129,13 @@
 			</p>
 		</div>
 		<div class="settings-actions">
-			{#if form?.action === 'update' && form.saved}
-				<span class="field-hint" role="status" style="color:var(--status-final-ink);">Saved.</span>
-			{/if}
-			<button class="btn btn-primary" type="submit">Save</button>
+			<FormStatus
+				error={form?.action === 'update' && form.message ? form.message : null}
+				success={form?.action === 'update' && form.saved ? 'Saved.' : null}
+			/>
 		</div>
 	</form>
 </div>
-{#if data.assistantPreferencesShown}
-	<AssistantPreferences
-		level="story"
-		stored={data.story.assistantPreferences}
-		notes={data.story.assistantNotes}
-		inherited={{
-			preferences: data.universe.assistantPreferences,
-			notes: data.universe.assistantNotes
-		}}
-		standalone={data.universe.standalone}
-		saved={form?.action === 'assistant-preferences' && form.saved === true}
-		error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
-		submitted={form?.action === 'assistant-preferences' && 'submitted' in form
-			? form.submitted
-			: null}
-	/>
-{/if}
 
 <style>
 	.cover-color-row {
