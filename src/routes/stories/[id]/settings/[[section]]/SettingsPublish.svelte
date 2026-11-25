@@ -4,6 +4,7 @@
 	import { formatDateTime } from '#lib/format';
 	import { tick } from 'svelte';
 	import { enhance } from '#lib/enhance';
+	import { browseHomeHref } from '#lib/browse-adult.svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
 	import PenNamePrompt from '#lib/components/PenNamePrompt.svelte';
 	import { reportReasonLabel } from '#lib/report-reasons';
@@ -113,7 +114,7 @@
 					</p>
 				{:else}
 					<p class="field-hint">
-						Lets readers find a public story on the site's <a href={resolve('/browse')}>Browse</a>
+						Lets readers find a public story on the site's <a href={browseHomeHref()}>Browse</a>
 						page.{#if data.archive?.hiddenFromBrowse}
 							Your account is set to stay off Browse, so it will not appear there until you change
 							that in your account settings.{/if}

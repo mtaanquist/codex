@@ -43,7 +43,6 @@ test('library: tinted covers, the cover colour, the Recent row, and the view set
 	const colour = page.getByLabel('Cover colour');
 	const next = (await colour.inputValue()) === 'var(--cat-teal)' ? 'Rose' : 'Teal';
 	await colour.selectOption({ label: next });
-	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(page.getByRole('status')).toHaveText('Saved.');
 	await page.reload();
 	await expect(page.getByLabel('Cover colour')).toHaveValue(`var(--cat-${next.toLowerCase()})`);

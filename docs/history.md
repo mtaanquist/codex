@@ -10,6 +10,38 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Assistant preferences gets its own settings item (2026-11-25, #1548,
+`feat/assistant-preferences-item`). Story and universe Details had grown to
+about 20 fields once the preferences form (#1344) joined them. A two-column
+layout was mocked first: in two columns the fields stack, the preferences
+column stays long, and the page got only about a quarter shorter, so Mads
+picked a separate sidebar item instead, per the design-system rule for
+independent groups. The item shows on the same condition the form did
+(the Assistant set up, or connected apps on) and its page 404s otherwise.
+Details now uses `FormStatus` for its save message on both pages, and the
+component renders one h2 heading at both levels. On Mads's ask the same PR
+moved Details (story and universe) and Assistant preferences to the autosave
+pattern the other settings pages use (#1573): a choice saves at once, a text
+field on blur, and a focused field is flushed before leaving the page. The
+universe's known-setting picker writes a hidden field from script, which
+fires no change event, so a pick or an unlink submits the form itself, and
+its search box is left out of the autosave. A review of that change found
+writer-trust gaps, now fixed with tests in `e2e/settings-autosave.spec.ts`:
+kit's focus reset after every successful save took focus from the text field
+the writer had moved on to (keepEditorFocus in `#lib/enhance` now hands it
+back to inputs, textareas and selects, not only editors), and the reset's
+blur fired a change that saved half a word (autosubmitForm now skips a text
+field whose focus is being restored and saves it on its next real blur).
+Text fields use `defaultValue`, so a refresh never writes over a field the
+writer has typed in again. A rename's redirect is followed with
+`goto(..., { reset: false, replace: true })`, so the next field keeps focus
+and saves to the new address, and leaving by a link with an unsaved rename
+saves the rename first and then goes on to the target at the new address
+(also while the rename is still saving, which is the usual case for a mouse
+click, since the link takes focus on mousedown). A field held back by a reset
+saves once on its next blur, not once per held change, and number and date
+fields are held back like text ones.
+
 Staging review of the language setting and Assistant preferences, round 8
 (2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's
 over-cap warning looked only at the largest scene, but every reviewer request
