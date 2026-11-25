@@ -75,7 +75,8 @@
 	{:else if inherited && standalone}
 		How the Assistant reviews and drafts this story. A setting on "{useInherited}" follows the
 		settings for all your standalone stories (in your library, open Settings under Standalone
-		stories); where those are not set either, the Assistant works it out from your prose.
+		stories, then Assistant preferences); where those are not set either, the Assistant works it out
+		from your prose.
 	{:else if inherited}
 		How the Assistant reviews and drafts this story. A setting on "{useInherited}" follows the
 		universe's settings; where the universe has not set it either, the Assistant works it out from

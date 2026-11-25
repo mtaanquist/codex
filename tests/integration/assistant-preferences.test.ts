@@ -305,6 +305,12 @@ describe('the assistant preferences', () => {
 				locals: { user, session: null }
 			} as never)
 		).resolves.toMatchObject({ assistantPreferencesShown: true });
+		await expect(
+			universePage.load({
+				params: { id: universeId, section: 'preferences' },
+				locals: { user, session: null }
+			} as never)
+		).resolves.toMatchObject({ assistantPreferencesShown: true });
 		for (const data of await loads()) {
 			// The Assistant section stays hidden; the preferences show.
 			expect(data.assistantModels).toBeNull();
