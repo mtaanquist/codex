@@ -308,6 +308,19 @@ describe('the queue', () => {
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: 'spam' });
 	});
 
+	it('says whether the deletion that hid a reported edition is still pending', async () => {
+		await createReport(db, publicationId, 'spam', '');
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		const [pending] = await listOpenReports(db);
+		expect(pending).toMatchObject({ editionRemovedReason: null, ownerDeletionPending: true });
+		expect(pending.editionRemovedAt).not.toBeNull();
+
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		const [cancelled] = await listOpenReports(db);
+		expect(cancelled).toMatchObject({ editionRemovedReason: null, ownerDeletionPending: false });
+		expect(cancelled.editionRemovedAt).not.toBeNull();
+	});
+
 	it('dismissing closes one report, once', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await createReport(db, publicationId, 'spam', '');

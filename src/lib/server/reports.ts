@@ -81,12 +81,16 @@ export async function listOpenReports(db: Database, limit = 100) {
 			editionRemovedAt: publications.removedAt,
 			// Set only by a moderator's takedown, not by account deletion.
 			editionRemovedReason: publications.removedReason,
+			// An edition down with no reason was hidden by the owner's account
+			// deletion; it stays down after they cancel it.
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
 			listedInBrowse: stories.listedInBrowse,
 			browseBlockedAt: stories.browseBlockedAt
 		})
 		.from(publicationReports)
 		.innerJoin(publications, eq(publications.id, publicationReports.publicationId))
 		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(isNull(publicationReports.resolvedAt))
 		.orderBy(publicationReports.createdAt)
 		.limit(limit);
