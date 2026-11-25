@@ -415,4 +415,24 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		expect(goto).toHaveBeenLastCalledWith(new URL('http://localhost/universes/new'));
 		expect(history.go).not.toHaveBeenCalled();
 	});
+
+	// Story and universe slugs are separate, so a universe that shares the
+	// renamed story's slug keeps its address (#1722).
+	it.each([
+		['/stories/dune/settings', '/stories/dune-messiah/settings', '/universes/dune'],
+		['/universes/dune', '/universes/dune-messiah', '/stories/dune/settings']
+	])('leaves a link to another work with the same slug alone (%s)', async (from, to, link) => {
+		stubWindow({ href: `http://localhost${from}`, pathname: from, origin: 'http://localhost' });
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = {
+			type: 'link',
+			from: { route: { id: 'a' } },
+			to: { url: new URL(`http://localhost${link}`), route: { id: 'b' } },
+			cancel: vi.fn()
+		} as unknown as BeforeNavigate;
+		flushBeforeNavigate(nav);
+		await retries[0]({ result: { type: 'redirect', location: to }, update: vi.fn() });
+		expect(goto).toHaveBeenLastCalledWith(new URL(`http://localhost${link}`));
+	});
 });
