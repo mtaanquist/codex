@@ -636,6 +636,32 @@ describe('runImport', () => {
 		expect(over.problems).toContain('Only the first 20 tags were kept.');
 	});
 
+	it('leaves off a removed tag and one merged into a removed tag, and says so', async () => {
+		const original = await seedStory();
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Gone', slug: 'gone', removedAt: new Date() },
+			{ kind: 'tag', name: 'Alias', slug: 'alias' }
+		]);
+		await pool.query(
+			`update tags set merged_into_id = (select id from tags where slug = 'gone') where slug = 'alias'`
+		);
+		const plan = await exportPlan(original);
+		plan.story.tags = ['Kept', 'Gone', 'Alias'];
+		const result = await runImport(db, universe, plan);
+		expect((await storyTagView(db, result.storyId)).tags.map((tag) => tag.name)).toEqual(['Kept']);
+		const stored = await pool.query(
+			`select t.slug from story_tags st join tags t on t.id = st.tag_id where st.story_id = $1`,
+			[result.storyId]
+		);
+		expect(stored.rows.map((row) => row.slug)).toEqual(['kept']);
+		expect(result.problems).toEqual(
+			expect.arrayContaining([
+				'The tag "Gone" was removed by this site\'s moderators, so it was left off.',
+				'The tag "Alias" was removed by this site\'s moderators, so it was left off.'
+			])
+		);
+	});
+
 	it('keeps the tags when a merge is undone while the import counts them', async () => {
 		const original = await seedStory();
 		await db.insert(tags).values([
