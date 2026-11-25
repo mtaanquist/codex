@@ -214,7 +214,8 @@ export type ExportFreeformNote = {
 	createdAt: Date;
 };
 export type StoryContent = {
-	chapters: { id: string; title: string | null }[];
+	// Summaries are absent for frozen editions, which keep none.
+	chapters: { id: string; title: string | null; summaryMd?: string | null }[];
 	scenes: ExportScene[];
 	// Both absent for frozen editions: notes are working material, not manuscript.
 	notes?: ExportNote[];
@@ -288,7 +289,7 @@ export async function gatherDrafts(db: Database, storyId: string): Promise<Expor
 
 export async function gatherStory(db: Database, story: ExportStory): Promise<StoryContent> {
 	const chapterList = await db
-		.select({ id: chapters.id, title: chapters.title })
+		.select({ id: chapters.id, title: chapters.title, summaryMd: chapters.summaryMd })
 		.from(chapters)
 		.where(eq(chapters.storyId, story.id))
 		.orderBy(asc(chapters.position));
@@ -399,6 +400,7 @@ export async function buildStoryZip(
 	const referenced = [
 		...new Set([
 			...sceneList.flatMap((scene) => findAssetReferences(scene.bodyMd)),
+			...chapterList.flatMap((chapter) => findAssetReferences(chapter.summaryMd ?? '')),
 			...noteList.flatMap((note) => findAssetReferences(note.notesMd)),
 			...freeformList.flatMap((note) => findAssetReferences(note.bodyMd)),
 			...docAssets(draftDocList)
@@ -439,8 +441,14 @@ export async function buildStoryZip(
 	chapterList.forEach((chapter, chapterIndex) => {
 		const dir = `chapters/${String(chapterIndex + 1).padStart(2, '0')}-${slugify(chapter.title, 'chapter')}`;
 		// Carries the chapter's exact title (the folder name is only a slug)
-		// and keeps empty chapters present in the archive.
-		entries.push(textEntry(`${root}/${dir}/chapter.md`, frontMatter({ title: chapter.title })));
+		// and summary, and keeps empty chapters present in the archive.
+		const up = '../'.repeat(dir.split('/').length);
+		const summary = rewriteAssetReferences(chapter.summaryMd ?? '', (id) =>
+			assetPath.has(id) ? `${up}${assetPath.get(id)}` : `/assets/${id}`
+		);
+		entries.push(
+			textEntry(`${root}/${dir}/chapter.md`, frontMatter({ title: chapter.title }) + summary)
+		);
 		sceneList
 			.filter((scene) => scene.chapterId === chapter.id)
 			.forEach((scene, sceneIndex) => sceneFile(scene, sceneIndex, dir));
@@ -711,7 +719,12 @@ async function gatherUniverseDocs(
 			};
 			chapterList.forEach((chapter, ci) => {
 				const dir = `${sDir}/chapters/${String(ci + 1).padStart(2, '0')}-${slugify(chapter.title, 'chapter')}`;
-				docs.push({ dir, name: 'chapter.md', front: { title: chapter.title }, body: '' });
+				docs.push({
+					dir,
+					name: 'chapter.md',
+					front: { title: chapter.title },
+					body: chapter.summaryMd ?? ''
+				});
 				sceneList
 					.filter((s) => s.chapterId === chapter.id)
 					.forEach((s, si) => addScene(s, si, dir));

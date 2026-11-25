@@ -18,7 +18,8 @@ import {
 export type ImportedScene = { title: string | null; status: SceneStatus | null; bodyMd: string };
 export type ImportedChapter = {
 	title: string | null;
-	// Only document imports that carry chapter summaries (AO3) set this.
+	// From chapter.md's body, or a document import that carries summaries
+	// (AO3); absent from document plans without them.
 	summaryMd?: string | null;
 	scenes: ImportedScene[];
 };
@@ -359,10 +360,10 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const chapters = [...chapterFiles.values()]
 		.sort((a, b) => orderOf(a.name) - orderOf(b.name) || a.name.localeCompare(b.name))
 		.map((group, chapterIndex) => {
-			const meta = group.files.find((f) => f.file === 'chapter.md');
-			const title = meta
-				? scalar(parseFrontMatter(read(meta.path)).fields, 'title')
-				: deslug(group.name);
+			const metaFile = group.files.find((f) => f.file === 'chapter.md');
+			const meta = metaFile ? parseFrontMatter(read(metaFile.path)) : null;
+			const title = meta ? scalar(meta.fields, 'title') : deslug(group.name);
+			const summaryMd = meta?.body.trim() || null;
 			const scenes = group.files
 				.filter((f) => f.file !== 'chapter.md')
 				.sort((a, b) => orderOf(a.file) - orderOf(b.file) || a.file.localeCompare(b.file))
@@ -371,7 +372,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					scenePositions.set(rel, { chapter: chapterIndex, index });
 					return parseScene(f.path, rel);
 				});
-			return { title, scenes };
+			return { title, summaryMd, scenes };
 		});
 
 	const unfiledScenes = unfiled

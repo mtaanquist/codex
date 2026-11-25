@@ -20,7 +20,7 @@ import {
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
-import { buildStoryZip, gatherStory } from '../../src/lib/server/export';
+import { buildStoryZip, gatherStory, inMemoryAsset } from '../../src/lib/server/export';
 import { parseStoryZip } from '../../src/lib/import-markdown';
 import { previewImport, runImport } from '../../src/lib/server/import-story';
 import { checkTagNames, setStoryList, setStoryTags, storyTagView } from '../../src/lib/server/tags';
@@ -268,6 +268,36 @@ describe('runImport', () => {
 			],
 			[null, 'An untitled idea.', false, null, '2026-01-02T10:00:00.000Z', universe.id, ownerId]
 		]);
+	});
+
+	it('round-trips chapter summaries', async () => {
+		const original = await seedStory();
+		await db
+			.update(chapters)
+			.set({
+				summaryMd: 'They leave at dawn.\n\n![map](/assets/11111111-1111-1111-1111-111111111111)'
+			})
+			.where(eq(chapters.title, 'The Caravan'));
+		const assetLoader = async (ids: string[]) =>
+			ids.map((id) => inMemoryAsset(id, 'image/png', new Uint8Array([1, 2, 3])));
+		const bytes = await zipBytes(
+			(await buildStoryZip(original, await gatherStory(db, original), assetLoader)).entries
+		);
+		const plan = parseStoryZip(bytes);
+		expect(plan.problems).toEqual([]);
+		expect(plan.chapters.map((chapter) => chapter.summaryMd)).toEqual([
+			'They leave at dawn.\n\n![map](../../assets/11111111-1111-1111-1111-111111111111.png)',
+			null
+		]);
+
+		const result = await runImport(db, universe, plan);
+		const chapterRows = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(chapterRows[0].summaryMd).toMatch(/^They leave at dawn\.\n\n!\[map\]/);
+		expect(chapterRows[1].summaryMd).toBeNull();
 	});
 
 	it('creates missing entities, skips ambiguous ones, and reports both', async () => {
