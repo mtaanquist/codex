@@ -159,6 +159,14 @@ describe('upgrading from the previous release', () => {
 		const adopted = await adopt(['prose', 'mechanics']);
 		expect(adopted?.completed).toEqual([QUAY, SALE]);
 		expect(adopted?.notes).toBe(4);
+		// The old row carries no settings key, so a run that has one still
+		// continues it.
+		const keyed = await adoptCappedRun(db, {
+			userId: USER,
+			scope: reviewScopeKey({ storyId: TIDE, categories: ['prose', 'mechanics'] }),
+			settings: 'a-settings-key'
+		});
+		expect(keyed?.completed).toEqual([QUAY, SALE]);
 	});
 
 	it('summarises only what has no summary or an out-of-date one, and keeps the writer summary', async () => {

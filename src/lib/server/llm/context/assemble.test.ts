@@ -198,11 +198,13 @@ describe('renderFrame', () => {
 			}
 		});
 		const style = text.indexOf('House style for this story:');
-		const leave = text.indexOf('Leave them alone');
+		const leave = text.indexOf('unless the writer asks about them');
 		const begin = text.indexOf(NOTES_BEGIN);
 		const note = text.indexOf('I like long sentences.');
 		const end = text.indexOf(NOTES_END);
 		expect(leave).toBeGreaterThan(style);
+		// The chat may still discuss them when the writer asks.
+		expect(text).not.toContain('Leave them alone');
 		expect(text).toContain('filter verbs');
 		expect(begin).toBeGreaterThan(leave);
 		expect(note).toBeGreaterThan(begin);
@@ -218,7 +220,7 @@ describe('renderFrame', () => {
 			}
 		});
 		expect(text).not.toContain('House style');
-		expect(text).toContain('Leave them alone');
+		expect(text).toContain('unless the writer asks about them');
 		expect(text).toContain('Keep it terse.');
 	});
 });

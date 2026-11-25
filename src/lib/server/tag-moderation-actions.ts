@@ -43,37 +43,43 @@ async function withId(
 	return { scope: 'tags', done: true };
 }
 
-export const tagActions = {
-	rename: (event: RequestEvent) =>
-		withId(event, async (id, data) => {
-			const result = await renameTag(db, id, formText(data, 'name'));
-			return result.ok ? null : result.message;
-		}),
-	merge: (event: RequestEvent) =>
-		withId(event, async (id, data) => {
-			const result = await mergeTag(db, id, formText(data, 'target'));
-			return result.ok ? null : result.message;
-		}),
-	unmerge: (event: RequestEvent) =>
-		withId(event, async (id) => ((await unmergeTag(db, id)) ? null : 'That entry is not merged.')),
-	remove: (event: RequestEvent) =>
-		withId(event, async (id) =>
-			(await setTagRemoved(db, id, true, event.locals.user!.id))
-				? null
-				: 'That entry does not exist.'
-		),
-	restore: (event: RequestEvent) =>
-		withId(event, async (id) =>
-			(await setTagRemoved(db, id, false, event.locals.user!.id))
-				? null
-				: 'That entry does not exist.'
-		)
-};
+// The actions of a moderation page for one kind of entry. An id of another
+// kind is treated as not found.
+export function tagActions(kind: TagKind) {
+	return {
+		rename: (event: RequestEvent) =>
+			withId(event, async (id, data) => {
+				const result = await renameTag(db, kind, id, formText(data, 'name'));
+				return result.ok ? null : result.message;
+			}),
+		merge: (event: RequestEvent) =>
+			withId(event, async (id, data) => {
+				const result = await mergeTag(db, kind, id, formText(data, 'target'));
+				return result.ok ? null : result.message;
+			}),
+		unmerge: (event: RequestEvent) =>
+			withId(event, async (id) =>
+				(await unmergeTag(db, kind, id)) ? null : 'That entry is not merged.'
+			),
+		remove: (event: RequestEvent) =>
+			withId(event, async (id) =>
+				(await setTagRemoved(db, kind, id, true, event.locals.user!.id))
+					? null
+					: 'That entry does not exist.'
+			),
+		restore: (event: RequestEvent) =>
+			withId(event, async (id) =>
+				(await setTagRemoved(db, kind, id, false, event.locals.user!.id))
+					? null
+					: 'That entry does not exist.'
+			)
+	};
+}
 
 // The actions of a curated list page: the shared ones plus adding entries.
 export function listActions(kind: ListKind) {
 	return {
-		...tagActions,
+		...tagActions(kind),
 		add: async ({ request, locals }: RequestEvent) => {
 			requireModerator(locals);
 			const result = await addListEntries(db, kind, formText(await request.formData(), 'names'));

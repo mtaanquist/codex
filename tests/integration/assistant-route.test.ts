@@ -760,7 +760,7 @@ describe('chats over the endpoints', () => {
 		const unset = systems.at(-1)!;
 		expect(unset).not.toContain('The story is written in');
 		expect(unset).not.toContain('House style for this story');
-		expect(unset).not.toContain('Leave them alone');
+		expect(unset).not.toContain('The writer uses these on purpose');
 		expect(unset).not.toContain("The writer's own notes");
 
 		await db.update(universes).set({ language: 'en-GB' }).where(eq(universes.id, universeId));
@@ -776,7 +776,7 @@ describe('chats over the endpoints', () => {
 		expect(systems.at(-1)).toContain('Answer the writer in the language they write to you in.');
 		expect(systems.at(-1)).toContain('House style for this story: single quotation marks');
 		expect(systems.at(-1)).toContain('Keep to it.');
-		expect(systems.at(-1)).toContain('Leave them alone');
+		expect(systems.at(-1)).toContain('unless the writer asks about them');
 		expect(systems.at(-1)).toContain('filter verbs');
 		expect(systems.at(-1)).toContain(
 			"--- the writer's notes ---\nLong sentences on purpose.\n--- end of the notes ---"

@@ -1072,6 +1072,10 @@ export const publications = pgTable(
 		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
 		// A key from REPORT_REASONS (#lib/report-reasons), shown to the author.
 		removedReason: text('removed_reason'),
+		// Set on every edition of an author who schedules account deletion, so a
+		// later restore of a takedown clears the reason but leaves the edition
+		// down, as cancelling the deletion leaves the others.
+		hiddenByAccountDeletion: boolean('hidden_by_account_deletion').notNull().default(false),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
@@ -1822,6 +1826,10 @@ export type ReviewRunState = {
 	// What the run was over (mode and target, see reviewScopeKey), so a later
 	// run over the same scope can carry on from a capped one.
 	scope?: string;
+	// A hash of the language and preferences the run read (see
+	// reviewSettingsKey); a capped run is only continued under the same ones.
+	// Absent on rows saved before it was recorded.
+	settings?: string;
 	total: number;
 	completed: string[];
 	currentSceneTitle?: string | null;

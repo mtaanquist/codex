@@ -6,19 +6,42 @@ import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/r
 
 // Readers report a published edition; admins and moderators work the queue.
 
+// Returns false when the edition is gone or already taken down, so nothing
+// was filed.
 export async function createReport(
 	db: Database,
 	publicationId: string,
 	reason: ReportReason,
 	comment: string
-): Promise<void> {
+): Promise<boolean> {
 	const trimmed = comment.replaceAll('\u0000', '').trim().slice(0, MAX_REPORT_COMMENT);
-	const [edition] = await db
-		.select({ handle: publications.handle, title: publications.title })
-		.from(publications)
-		.where(eq(publications.id, publicationId));
-	if (!edition) return;
-	await db.insert(publicationReports).values({ publicationId, reason, comment: trimmed || null });
+	const edition = await db.transaction(async (tx) => {
+		const [found] = await tx
+			.select({
+				storyId: publications.storyId,
+				handle: publications.handle,
+				title: publications.title
+			})
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		if (!found) return null;
+		// A takedown holds the story row for update until it has closed the
+		// story's reports, so a report filed meanwhile waits for it and then
+		// sees the edition is down.
+		await tx
+			.select({ id: stories.id })
+			.from(stories)
+			.where(eq(stories.id, found.storyId))
+			.for('share');
+		const [up] = await tx
+			.select({ id: publications.id })
+			.from(publications)
+			.where(and(eq(publications.id, publicationId), isNull(publications.removedAt)));
+		if (!up) return null;
+		await tx.insert(publicationReports).values({ publicationId, reason, comment: trimmed || null });
+		return found;
+	});
+	if (!edition) return false;
 	// The bell for every admin and moderator, email per their preference.
 	const moderators = await db
 		.select({ id: users.id })
@@ -40,6 +63,7 @@ export async function createReport(
 			href: '/admin/reports'
 		}
 	);
+	return true;
 }
 
 // The open reports, oldest first so nothing waits behind newer ones.

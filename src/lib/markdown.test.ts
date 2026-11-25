@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
 	findAssetReferences,
+	markdownToPlainText,
 	renderMarkdown,
+	renderPublicMarkdown,
 	renderReplyBlocks,
 	renderReplyMarkdown,
 	rewriteAssetReferences
@@ -37,6 +39,67 @@ describe('renderMarkdown', () => {
 		const html = renderMarkdown('The \\page marker mid-sentence.');
 		expect(html).not.toContain('page-break');
 		expect(html).toContain('\\page marker');
+	});
+});
+
+describe('renderPublicMarkdown', () => {
+	const asset = '/assets/0f8fad5b-d9cb-469f-a165-70867728950e';
+
+	it('keeps an image Codex serves', () => {
+		expect(renderPublicMarkdown(`![A map](${asset})`)).toContain(
+			`<img src="${asset}" alt="A map">`
+		);
+	});
+
+	it('turns a remote image into a link labelled with its alt text', () => {
+		const html = renderPublicMarkdown('![A "map"](https://tracker.example/p.gif)');
+		expect(html).not.toContain('<img');
+		expect(html).toContain(
+			'<a href="https://tracker.example/p.gif" rel="noopener noreferrer nofollow">A &quot;map&quot;</a>'
+		);
+	});
+
+	it('labels a remote image with no alt text by its address', () => {
+		const html = renderPublicMarkdown('![](https://tracker.example/p.gif)');
+		expect(html).not.toContain('<img');
+		expect(html).toContain('>https://tracker.example/p.gif</a>');
+	});
+
+	it('does not nest a link when a remote image sits inside one', () => {
+		const html = renderPublicMarkdown('[![Cover](https://x.example/c.png)](https://example.com)');
+		expect(html).toContain('<a href="https://example.com">Cover</a>');
+	});
+
+	it('does not load an asset path on another host or with extra segments', () => {
+		expect(renderPublicMarkdown(`![x](https://elsewhere.example${asset})`)).not.toContain('<img');
+		expect(renderPublicMarkdown(`![x](${asset}/../../p.gif)`)).not.toContain('<img');
+		expect(renderPublicMarkdown(`![x](/${asset})`)).not.toContain('<img');
+	});
+
+	it('still escapes raw HTML and refuses script links', () => {
+		const html = renderPublicMarkdown(
+			'<img src="https://x.example/a.gif"> [go](javascript:alert(1))'
+		);
+		expect(html).not.toContain('<img');
+		expect(html).not.toContain('href="javascript');
+	});
+
+	it('keeps the prose markers', () => {
+		expect(renderPublicMarkdown('\\center Middle')).toContain('class="align-center"');
+	});
+});
+
+describe('markdownToPlainText', () => {
+	it('drops markup, links and images, one block per line', () => {
+		expect(
+			markdownToPlainText(
+				'A *quiet* [tale](https://example.com) ![](https://tracker.example/p.gif)\nof `ships`.\n\n- one\n- two'
+			)
+		).toBe('A quiet tale of ships.\none\ntwo');
+	});
+
+	it('returns plain characters for Svelte to escape', () => {
+		expect(markdownToPlainText('Fish & <chips>')).toBe('Fish & <chips>');
 	});
 });
 

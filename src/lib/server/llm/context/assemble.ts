@@ -637,7 +637,7 @@ export function renderFrame(
 		if (rule) lines.push(rule);
 		const style = houseStyleLine(preferences, 'chat');
 		if (style) lines.push(style);
-		const leaveAlone = leaveAloneLine(preferences);
+		const leaveAlone = leaveAloneLine(preferences, 'chat');
 		if (leaveAlone) lines.push(leaveAlone);
 		const notes = habitNotesLine(preferences, 'chat');
 		if (notes) lines.push(notes);

@@ -628,23 +628,43 @@ export async function takedownPublication(
 	});
 }
 
-// Lifts a moderator's takedown, so the edition is public again and the author
-// can publish new editions. Never an edition account deletion took down, and
-// never while the author's account is waiting to be deleted.
+// Lifts a moderator's takedown, so the author can publish new editions and the
+// edition is public again, unless the author's account deletion also hid it:
+// then it stays down, as cancelling the deletion leaves the author's other
+// editions. Never while the author's account is waiting to be deleted.
 export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
-	const restored = await db
-		.update(publications)
-		.set({ removedAt: null, removedBy: null, removedReason: null })
-		.where(
-			and(
-				eq(publications.id, publicationId),
-				isNotNull(publications.removedAt),
-				isNotNull(publications.removedReason),
-				sql`not exists (select 1 from users du where du.id = ${publications.ownerId} and du.deletion_scheduled_at is not null)`
+	return await db.transaction(async (tx) => {
+		const [edition] = await tx
+			.select({ ownerId: publications.ownerId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		if (!edition) return false;
+		// scheduleAccountDeletion updates this row first, so a deletion
+		// scheduled at the same moment either commits before this read (and the
+		// restore is refused) or waits until the restore has committed.
+		const [owner] = await tx
+			.select({ deletionScheduledAt: users.deletionScheduledAt })
+			.from(users)
+			.where(eq(users.id, edition.ownerId))
+			.for('update');
+		if (!owner || owner.deletionScheduledAt) return false;
+		const restored = await tx
+			.update(publications)
+			.set({
+				removedAt: sql`case when ${publications.hiddenByAccountDeletion} then ${publications.removedAt} end`,
+				removedBy: null,
+				removedReason: null
+			})
+			.where(
+				and(
+					eq(publications.id, publicationId),
+					isNotNull(publications.removedAt),
+					isNotNull(publications.removedReason)
+				)
 			)
-		)
-		.returning({ id: publications.id });
-	return restored.length > 0;
+			.returning({ id: publications.id });
+		return restored.length > 0;
+	});
 }
 
 // The admin's view of everything published on this instance.
@@ -679,7 +699,8 @@ export async function listTakenDown(db: Database) {
 			handle: publications.handle,
 			title: publications.title,
 			removedAt: publications.removedAt,
-			removedReason: publications.removedReason
+			removedReason: publications.removedReason,
+			hiddenByAccountDeletion: publications.hiddenByAccountDeletion
 		})
 		.from(publications)
 		.where(
