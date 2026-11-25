@@ -446,6 +446,30 @@ describe('parseDocumentInWorker limits', () => {
 	});
 });
 
+describe('parseDocumentInWorker start failure', () => {
+	it('frees its place when the worker cannot start', async () => {
+		const failure = new Error('cannot start worker');
+		vi.resetModules();
+		vi.doMock('node:worker_threads', () => ({
+			Worker: class {
+				constructor() {
+					throw failure;
+				}
+			}
+		}));
+		try {
+			const fresh = await import('./import-document');
+			const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: '<p>Text.</p>' }]);
+			for (let attempt = 0; attempt < 3; attempt++) {
+				await expect(fresh.parseDocumentInWorker(epub, 'a.epub')).rejects.toBe(failure);
+			}
+		} finally {
+			vi.doUnmock('node:worker_threads');
+			vi.resetModules();
+		}
+	});
+});
+
 describe('nestingDepth', () => {
 	it('counts open elements', () => {
 		expect(nestingDepth('<div><blockquote><em>x</em></blockquote><div></div></div>')).toBe(3);
