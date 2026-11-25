@@ -366,6 +366,42 @@ describe('runImport', () => {
 		});
 	});
 
+	it('resolves merged label names and keeps the first ones in file order', async () => {
+		const original = await seedStory();
+		const listed = await db
+			.insert(tags)
+			.values(
+				['Fantasy', 'Horror', 'Romance', 'Mystery', 'Grimdark'].map((name) => ({
+					kind: 'genre' as const,
+					name,
+					slug: name.toLowerCase()
+				}))
+			)
+			.returning();
+		const id = (name: string) => listed.find((tag) => tag.name === name)!.id;
+		await db
+			.update(tags)
+			.set({ mergedIntoId: id('Fantasy') })
+			.where(eq(tags.id, id('Grimdark')));
+		const plan = await exportPlan(original);
+		// A merged alias and its survivor are one genre; an unknown name takes no slot.
+		plan.story.genres = ['Mystery', 'Grimdark', 'Nope', 'Fantasy', 'Romance'];
+		plan.story.tags = ['A', 'a', 'B'];
+		const result = await runImport(db, universe, plan);
+		const view = await storyTagView(db, result.storyId);
+		expect(view.genres.map((tag) => tag.name)).toEqual(['Fantasy', 'Mystery', 'Romance']);
+		expect(result.problems.some((problem) => problem.startsWith('Only the first'))).toBe(false);
+
+		plan.story.genres = ['Romance', 'Horror', 'Grimdark', 'Mystery'];
+		const over = await runImport(db, universe, plan);
+		expect((await storyTagView(db, over.storyId)).genres.map((tag) => tag.name)).toEqual([
+			'Fantasy',
+			'Horror',
+			'Romance'
+		]);
+		expect(over.problems).toContain('Only the first 3 genres were kept.');
+	});
+
 	it('keeps a fandom from the universe on export, and does not store it twice on import', async () => {
 		const original = await seedStory();
 		const [discworld] = await db

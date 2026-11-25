@@ -251,14 +251,15 @@ export async function runImport(
 		// Labels from a Codex export: genres, warnings and fandoms this site's
 		// lists do not have are left off and reported.
 		const listed = async (kind: ListKind, names: string[], noun: string) => {
-			const { ids, missing } = await listedByName(db, kind, names);
-			for (const name of missing) {
+			const found = await listedByName(db, kind, names);
+			for (const name of found.missing) {
 				problems.push(`The ${noun} "${name}" is not on this site's list, so it was left off.`);
 			}
-			return ids;
+			return found.ids;
 		};
-		const genreIds = (await listed('genre', plan.story.genres ?? [], 'genre')).slice(0, MAX_GENRES);
-		if ((plan.story.genres?.length ?? 0) > MAX_GENRES) {
+		const genres = await listed('genre', plan.story.genres ?? [], 'genre');
+		const genreIds = genres.slice(0, MAX_GENRES);
+		if (genres.length > MAX_GENRES) {
 			problems.push(`Only the first ${MAX_GENRES} genres were kept.`);
 		}
 		const warningIds = await listed('warning', plan.story.contentWarnings ?? [], 'content warning');
@@ -267,18 +268,20 @@ export async function runImport(
 			if (!cleaned.ok && !cleaned.empty) problems.push(`The tag was left off: ${cleaned.reason}`);
 			return cleaned.ok;
 		});
-		const checkedTags = checkTagNames(tagNames.slice(0, MAX_TAGS));
-		if ((plan.story.tags?.length ?? 0) > MAX_TAGS) {
+		const tagSlugs = [...new Set(tagNames.map(tagSlug))];
+		const keptSlugs = new Set(tagSlugs.slice(0, MAX_TAGS));
+		const checkedTags = checkTagNames(tagNames.filter((name) => keptSlugs.has(tagSlug(name))));
+		if (tagSlugs.length > MAX_TAGS) {
 			problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
 		}
 		// The universe's own fandom counts toward the limit and is not stored on
 		// the story again.
 		const fromUniverse = await universeFandom(db, universe.id);
-		const ownFandoms = (plan.story.fandoms ?? []).filter(
-			(name) => !fromUniverse || tagSlug(name) !== tagSlug(fromUniverse.name)
+		const ownFandoms = (await listed('fandom', plan.story.fandoms ?? [], 'fandom')).filter(
+			(id) => id !== fromUniverse?.id
 		);
 		const fandomRoom = MAX_FANDOMS - (fromUniverse ? 1 : 0);
-		const fandomIds = (await listed('fandom', ownFandoms, 'fandom')).slice(0, fandomRoom);
+		const fandomIds = ownFandoms.slice(0, fandomRoom);
 		if (ownFandoms.length > fandomRoom) {
 			problems.push(`A story can have up to ${MAX_FANDOMS} fandoms, so some were left off.`);
 		}
