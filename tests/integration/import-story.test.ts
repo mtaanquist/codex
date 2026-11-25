@@ -307,7 +307,7 @@ describe('runImport', () => {
 		for (const tag of listed) {
 			await setStoryList(db, original.id, tag.kind as 'fandom' | 'genre' | 'warning', [tag.id]);
 		}
-		const checked = checkTagNames(['Found Family']);
+		const checked = await checkTagNames(db, ['Found Family']);
 		if (!checked.ok) throw new Error(checked.message);
 		await setStoryTags(db, original.id, checked.tags);
 
@@ -400,6 +400,30 @@ describe('runImport', () => {
 			'Romance'
 		]);
 		expect(over.problems).toContain('Only the first 3 genres were kept.');
+	});
+
+	it('counts a merged tag name and its survivor once toward the 20 tags', async () => {
+		const original = await seedStory();
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Target', slug: 'target' },
+			{ kind: 'tag', name: 'M', slug: 'm' }
+		]);
+		await pool.query(
+			`update tags set merged_into_id = (select id from tags where slug = 'target') where slug = 'm'`
+		);
+		const plan = await exportPlan(original);
+		const nineteen = Array.from({ length: 19 }, (_, i) => `t${i}`);
+		plan.story.tags = ['Target', ...nineteen, 'M'];
+		const result = await runImport(db, universe, plan);
+		expect((await storyTagView(db, result.storyId)).tags).toHaveLength(20);
+		expect(result.problems.some((problem) => problem.startsWith('Only the first'))).toBe(false);
+
+		plan.story.tags = ['Target', ...nineteen, 'M', 'Extra'];
+		const over = await runImport(db, universe, plan);
+		const shown = (await storyTagView(db, over.storyId)).tags.map((tag) => tag.name);
+		expect(shown).toHaveLength(20);
+		expect(shown).not.toContain('Extra');
+		expect(over.problems).toContain('Only the first 20 tags were kept.');
 	});
 
 	it('keeps a fandom from the universe on export, and does not store it twice on import', async () => {

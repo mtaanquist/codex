@@ -96,13 +96,15 @@ export async function storyTagView(db: Database, storyId: string) {
 }
 
 // Cleans typed tag names, keyed by slug (the first spelling wins), or says
-// why one cannot be used. Nothing is written.
-export function checkTagNames(
+// why one cannot be used. The limit counts the tags the story would show, so
+// a merged-away name and its survivor count once. Nothing is written.
+export async function checkTagNames(
+	db: Database,
 	names: string[],
 	// How many the story shows now. A story already over the limit (after an
 	// unmerge or a restore) may keep them but not add more.
 	currentCount = 0
-): { ok: true; tags: Map<string, string> } | { ok: false; message: string } {
+): Promise<{ ok: true; tags: Map<string, string> } | { ok: false; message: string }> {
 	const cleaned = new Map<string, string>();
 	for (const raw of names) {
 		const result = cleanTagName(raw);
@@ -113,10 +115,48 @@ export function checkTagNames(
 		const slug = tagSlug(result.name);
 		if (!cleaned.has(slug)) cleaned.set(slug, result.name);
 	}
-	if (cleaned.size > Math.max(MAX_TAGS, currentCount)) {
-		return { ok: false, message: `A story can have up to ${MAX_TAGS} tags.` };
+	const limit = Math.max(MAX_TAGS, currentCount);
+	if (cleaned.size > limit) {
+		const shown = new Set((await tagSurvivors(db, [...cleaned.keys()])).values());
+		shown.delete(null);
+		if (shown.size > limit) {
+			return { ok: false, message: `A story can have up to ${MAX_TAGS} tags.` };
+		}
 	}
 	return { ok: true, tags: cleaned };
+}
+
+// What each free-form tag slug would show as on a story: the id of the
+// surviving tag, the slug itself for a tag that does not exist yet, or null
+// for one that would not show (removed, or merged into a removed tag).
+export async function tagSurvivors(
+	db: Database,
+	slugs: string[]
+): Promise<Map<string, string | null>> {
+	const result = new Map<string, string | null>(slugs.map((slug) => [slug, `new:${slug}`]));
+	if (slugs.length === 0) return result;
+	const rows = await db.execute(sql`
+		with recursive chain as (
+			select t.slug as start_slug, t.id, t.removed_at is not null as start_removed, 0 as depth
+			from tags t
+			where t.kind = 'tag' and t.slug in (${sql.join(
+				slugs.map((slug) => sql`${slug}`),
+				sql`, `
+			)})
+			union all
+			select c.start_slug, t.id, c.start_removed, c.depth + 1 from chain c
+			join tags m on m.id = c.id join tags t on t.id = m.merged_into_id
+			where c.depth < ${MAX_MERGE_DEPTH}
+		)
+		select distinct on (c.start_slug) c.start_slug, t.id,
+			c.start_removed or t.removed_at is not null as hidden
+		from chain c join tags t on t.id = c.id
+		order by c.start_slug, c.depth desc
+	`);
+	for (const row of rows.rows as { start_slug: string; id: string; hidden: boolean }[]) {
+		result.set(row.start_slug, row.hidden ? null : row.id);
+	}
+	return result;
 }
 
 // Replaces a story's free-form tags. A slug that matches an existing tag

@@ -411,7 +411,7 @@ describe('the page', () => {
 		await saveBrowseEnabled(db, true);
 		const hidden = await story('Draft', { listed: false });
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, hidden.id));
-		const checked = checkTagNames(['Project Nightjar']);
+		const checked = await checkTagNames(db, ['Project Nightjar']);
 		if (!checked.ok) throw new Error(checked.message);
 		await setStoryTags(db, hidden.id, checked.tags);
 		const result = (await load('?tag=project-nightjar')) as {

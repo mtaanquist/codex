@@ -412,7 +412,7 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const view = await storyTagView(db, story.id);
 		// Checked before anything is written, so a refused name saves nothing.
-		const checked = checkTagNames(chipValues(data, 'tags'), view.tags.length);
+		const checked = await checkTagNames(db, chipValues(data, 'tags'), view.tags.length);
 		const genres = await pickListed(db, 'genre', data.getAll('genres'));
 		// Like fandoms, a story already over the limit (after an unmerge) may
 		// keep what it has but not add more.
