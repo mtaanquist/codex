@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -552,6 +553,43 @@ describe('runImport', () => {
 		expect(shown).toHaveLength(20);
 		expect(shown).not.toContain('Extra');
 		expect(over.problems).toContain('Only the first 20 tags were kept.');
+	});
+
+	it('keeps the tags when a merge is undone while the import counts them', async () => {
+		const original = await seedStory();
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Target', slug: 'target' },
+			{ kind: 'tag', name: 'M', slug: 'm' }
+		]);
+		await pool.query(
+			`update tags set merged_into_id = (select id from tags where slug = 'target') where slug = 'm'`
+		);
+		const plan = await exportPlan(original);
+		const nineteen = Array.from({ length: 19 }, (_, i) => `t${i}`);
+		plan.story.tags = ['Target', ...nineteen, 'M'];
+		// A moderator undoes the merge after the import's first count of the
+		// tags, so a second count sees 21.
+		let counts = 0;
+		const racing = new Proxy(db, {
+			get(target, prop) {
+				const value = Reflect.get(target, prop, target);
+				if (typeof value !== 'function') return value;
+				if (prop !== 'execute') return value.bind(target);
+				return async (query: Parameters<Database['execute']>[0]) => {
+					const result = await value.call(target, query);
+					const text = new PgDialect().sqlToQuery(query as SQL).sql;
+					if (text.includes('with recursive chain') && ++counts === 1) {
+						await pool.query(`update tags set merged_into_id = null where slug = 'm'`);
+					}
+					return result;
+				};
+			}
+		});
+		const result = await runImport(racing, universe, plan);
+		expect(counts).toBeGreaterThan(0);
+		const shown = (await storyTagView(db, result.storyId)).tags.map((tag) => tag.name);
+		expect(shown).toContain('Target');
+		expect(shown).toContain('t0');
 	});
 
 	it('keeps a fandom from the universe on export, and does not store it twice on import', async () => {

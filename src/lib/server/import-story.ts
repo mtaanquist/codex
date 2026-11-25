@@ -299,20 +299,21 @@ export async function runImport(
 		const survivors = await tagSurvivors(db, [...new Set(tagNames.map(tagSlug))]);
 		const keptTags = new Set<string>();
 		let tagsDropped = false;
-		const checkedTags = await checkTagNames(
-			db,
-			tagNames.filter((name) => {
-				const shown = survivors.get(tagSlug(name));
-				if (!shown || keptTags.has(shown)) return true;
-				if (keptTags.size >= MAX_TAGS) {
-					tagsDropped = true;
-					return false;
-				}
-				keptTags.add(shown);
-				return true;
-			})
-		);
+		const tagsToKeep = tagNames.filter((name) => {
+			const shown = survivors.get(tagSlug(name));
+			if (!shown || keptTags.has(shown)) return true;
+			if (keptTags.size >= MAX_TAGS) {
+				tagsDropped = true;
+				return false;
+			}
+			keptTags.add(shown);
+			return true;
+		});
 		if (tagsDropped) problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
+		// Already cut to the limit above; a merge undone since then must not
+		// make the check refuse them all, so it allows as many as are kept.
+		const checkedTags = await checkTagNames(db, tagsToKeep, tagsToKeep.length);
+		if (!checkedTags.ok) problems.push(`The tags were left off: ${checkedTags.message}`);
 		// The universe's own fandom counts toward the limit and is not stored on
 		// the story again.
 		const fromUniverse = await universeFandom(db, universe.id);
