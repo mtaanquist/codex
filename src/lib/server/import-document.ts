@@ -272,6 +272,9 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 	// declares, so unpack with the size guards first (fflate never writes past
 	// the declared size) and hand mammoth an uncompressed copy of what survived.
 	const entries = jszipNames(unzipGuarded(bytes, 'Word document'));
+	// mammoth applies a style map stored in the file itself, which Codex never
+	// writes: a large one is slow to match against, and one can drop all text.
+	delete entries['mammoth/style-map'];
 	if (docxXmlBytes(entries) > MAX_DOCX_XML_BYTES) {
 		throw new DocumentImportError(
 			'This Word document is too large to import. Try splitting it into smaller files.'
