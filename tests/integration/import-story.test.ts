@@ -270,6 +270,26 @@ describe('runImport', () => {
 		]);
 	});
 
+	it('combines two notes that match the same entity instead of failing', async () => {
+		const plan = await exportPlan(await seedStory());
+		plan.notes.push({ kind: 'character', name: 'alice vane', notesMd: 'Hates the rain.' });
+
+		const preview = await previewImport(db, universe, plan);
+		expect(preview.notes).toEqual([{ kind: 'character', name: 'Alice Vane', outcome: 'match' }]);
+		expect(preview.problems).toEqual([
+			'The notes for "Alice Vane" and "alice vane" both belong to the character "Alice Vane", so they were combined into one note.'
+		]);
+
+		const result = await runImport(db, universe, plan);
+		expect(result.notesAttached).toBe(1);
+		expect(result.problems).toEqual(preview.problems);
+		const noteRows = await db
+			.select()
+			.from(characterStoryNotes)
+			.where(eq(characterStoryNotes.storyId, result.storyId));
+		expect(noteRows.map((row) => row.notesMd)).toEqual(['Limps in this book.\n\nHates the rain.']);
+	});
+
 	it('round-trips chapter summaries', async () => {
 		const original = await seedStory();
 		await db
@@ -565,7 +585,6 @@ describe('runImport', () => {
 
 	// Only the story slug index is a clash a fresh pick can fix.
 	it('does not try again after a clash other than the slug', async () => {
-		await db.insert(characters).values({ universeId: universe.id, ownerId, name: 'Alice' });
 		let writes = 0;
 		const counting = new Proxy(db, {
 			get(target, prop) {
@@ -578,17 +597,29 @@ describe('runImport', () => {
 				};
 			}
 		});
-		const note = { kind: 'character' as const, name: 'Alice', notesMd: 'Twice.' };
+		// A scene holds one waiting draft; the parser keeps the first, so only a
+		// hand-built plan carries two.
+		const draft = {
+			scene: { chapter: null, index: 0 },
+			brief: 'Go on.',
+			targetWords: null,
+			pov: null,
+			note: null,
+			chapterBrief: null,
+			source: 'assistant' as const,
+			textMd: 'More prose.'
+		};
 		await expect(
 			runImport(counting, universe, {
 				story: { title: 'Twice', author: null, brief: null, descriptionMd: '' },
 				chapters: [],
 				unfiled: [{ title: null, status: null, bodyMd: 'Prose.' }],
-				notes: [note, note],
+				notes: [],
+				waitingDrafts: [draft, draft],
 				assets: [],
 				problems: []
 			})
-		).rejects.toMatchObject({ cause: { constraint: 'character_story_notes_unique' } });
+		).rejects.toMatchObject({ cause: { constraint: 'assistant_drafts_open_scene_idx' } });
 		expect(writes).toBe(1);
 		expect(await db.select().from(stories).where(eq(stories.title, 'Twice'))).toEqual([]);
 	});
