@@ -22,7 +22,8 @@ import {
 import {
 	cancelLongReads,
 	CANCEL_ON_MIGRATE_APP_NAME,
-	holdOffLongReads
+	holdOffLongReads,
+	SWEEP_LOCK_SQL
 } from '../../src/lib/server/db/migrate';
 import { purgeStory } from '../../src/lib/server/story-delete';
 import { trashStory } from '../../src/lib/server/story-lifecycle';
@@ -705,6 +706,19 @@ describe('a migration starting during the full read', () => {
 		return rows[0].n as number;
 	}
 
+	// Polls until the backend has ended and its locks are gone.
+	async function waitForLockRelease(pid: number) {
+		for (let i = 0; i < 250; i++) {
+			const { rows } = await pool.query(
+				`select count(*)::int as n from pg_locks where pid = $1 and locktype = 'advisory'`,
+				[pid]
+			);
+			if (rows[0].n === 0) return;
+			await new Promise((resolve) => setTimeout(resolve, 20));
+		}
+		throw new Error('the advisory lock was never released');
+	}
+
 	it('cancels it, and the sweep fails without changing anything', async () => {
 		const orphan = await image();
 		const holder = await pool.connect();
@@ -762,6 +776,28 @@ describe('a migration starting during the full read', () => {
 		}
 	});
 
+	// A cancelled read keeps its name until its rollback reaches the server, so
+	// the second pass can find and cancel the same backend again.
+	it('counts a read it had to cancel more than once as one read', async () => {
+		const reader = await pool.connect();
+		const migrator = await pool.connect();
+		try {
+			// Named and holding the lock, but idle: a cancel finds nothing to stop,
+			// so every pass until the rollback below cancels it again.
+			await reader.query('begin');
+			await reader.query(`set local application_name = '${CANCEL_ON_MIGRATE_APP_NAME}'`);
+			await reader.query(`select pg_advisory_xact_lock_shared(${SWEEP_LOCK_SQL})`);
+			const holding = holdOffLongReads(migrator);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			await reader.query('rollback');
+			expect(await holding).toBe(1);
+		} finally {
+			reader.release();
+			await migrator.query('select pg_advisory_unlock_all()');
+			migrator.release();
+		}
+	});
+
 	it('keeps new reads from starting while the migrator holds them off', async () => {
 		const orphan = await image();
 		const holder = await pool.connect();
@@ -782,8 +818,12 @@ describe('a migration starting during the full read', () => {
 		} finally {
 			await holder.query('rollback');
 			holder.release();
-			// The migrator's session ends, and the lock with it.
+			// The migrator's session ends, and the lock with it. Closing the
+			// socket does not wait for the server to end the session, so wait
+			// until the lock is gone before the next sweep.
+			const migratorPid = (await migrator.query('select pg_backend_pid() as pid')).rows[0].pid;
 			migrator.release(true);
+			await waitForLockRelease(migratorPid);
 		}
 		expect((await marks([orphan])).get(orphan)).toBeNull();
 		await sweepUnusedAssets(db);

@@ -60,13 +60,19 @@ const LONG_READS = `from pg_stat_activity
 
 /** Cancels the long reads that would hold up a migration; returns how many. */
 export async function cancelLongReads(client: pg.ClientBase): Promise<number> {
-	const count = (rows: { cancelled: boolean }[]) => rows.filter((row) => row.cancelled).length;
+	return (await cancelReads(client)).length;
+}
+
+// The pids of the reads cancelled.
+async function cancelReads(client: pg.ClientBase): Promise<number[]> {
+	const cancelledPids = (rows: { pid: number; cancelled: boolean }[]) =>
+		rows.filter((row) => row.cancelled).map((row) => row.pid);
 	try {
-		const { rows } = await client.query<{ cancelled: boolean }>(
-			`select pg_cancel_backend(pid) as cancelled ${LONG_READS}`,
+		const { rows } = await client.query<{ pid: number; cancelled: boolean }>(
+			`select pid, pg_cancel_backend(pid) as cancelled ${LONG_READS}`,
 			[CANCEL_ON_MIGRATE_APP_NAME]
 		);
-		return count(rows);
+		return cancelledPids(rows);
 	} catch {
 		// pg_cancel_backend raises an error, rather than returning false, for a
 		// backend this role still may not signal (a superuser's), which fails the
@@ -77,14 +83,14 @@ export async function cancelLongReads(client: pg.ClientBase): Promise<number> {
 	const { rows } = await client.query<{ pid: number }>(`select pid ${LONG_READS}`, [
 		CANCEL_ON_MIGRATE_APP_NAME
 	]);
-	let cancelled = 0;
+	const cancelled: number[] = [];
 	for (const { pid } of rows) {
 		try {
-			const result = await client.query<{ cancelled: boolean }>(
-				`select pg_cancel_backend(pid) as cancelled ${LONG_READS} and pid = $2`,
+			const result = await client.query<{ pid: number; cancelled: boolean }>(
+				`select pid, pg_cancel_backend(pid) as cancelled ${LONG_READS} and pid = $2`,
 				[CANCEL_ON_MIGRATE_APP_NAME, pid]
 			);
-			cancelled += count(result.rows);
+			cancelled.push(...cancelledPids(result.rows));
 		} catch (error) {
 			console.warn(
 				`Could not cancel long-running read ${pid}: ${error instanceof Error ? error.message : String(error)}`
@@ -96,24 +102,26 @@ export async function cancelLongReads(client: pg.ClientBase): Promise<number> {
 
 /**
  * Cancels the long reads and takes the sweep lock for this session, so none
- * starts again until the session ends; returns how many were cancelled. A
- * cancel that lands between a read's statements is lost, and that read then
- * still holds the lock, so it cancels again until the lock comes free. After
- * about five seconds (a read this role may not cancel) it waits for the lock.
+ * starts again until the session ends; returns how many reads were cancelled.
+ * A cancel that lands between a read's statements is lost, and that read then
+ * still holds the lock, so it cancels again until the lock comes free. A read
+ * cancelled twice (its rollback had not reached the server yet) counts once.
+ * After about five seconds (a read this role may not cancel) it waits for the
+ * lock.
  */
 export async function holdOffLongReads(client: pg.ClientBase): Promise<number> {
 	// Once whatever the lock says, so a named read that holds no lock goes too.
-	let cancelled = await cancelLongReads(client);
+	const cancelled = new Set(await cancelReads(client));
 	for (let attempt = 0; attempt < 100; attempt++) {
 		const { rows } = await client.query<{ locked: boolean }>(
 			`select pg_try_advisory_lock(${SWEEP_LOCK_SQL}) as locked`
 		);
-		if (rows[0].locked) return cancelled;
-		cancelled += await cancelLongReads(client);
+		if (rows[0].locked) return cancelled.size;
+		for (const pid of await cancelReads(client)) cancelled.add(pid);
 		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 	await client.query(`select pg_advisory_lock(${SWEEP_LOCK_SQL})`);
-	return cancelled;
+	return cancelled.size;
 }
 
 // Applies pending migrations while holding a session advisory lock, so the app
