@@ -52,4 +52,13 @@ test.describe('signed in with a role', () => {
 		await expect(page).toHaveURL('/admin/warnings');
 		await expect(page.locator('.list-title', { hasText: 'Graphic violence' })).toBeVisible();
 	});
+
+	test('a tag list page past the end links back to the first page', async ({ page }) => {
+		await signIn(page, 'moderator-e2e@example.com');
+		await gotoReady(page, '/admin/genres?page=50');
+		await expect(page.getByText('No genres on this page.')).toBeVisible();
+		await page.getByRole('link', { name: 'Go to the first page' }).click();
+		await expect(page).toHaveURL('/admin/genres');
+		await expect(page.locator('.list-title', { hasText: 'Fantasy' })).toBeVisible();
+	});
 });
