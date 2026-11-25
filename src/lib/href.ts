@@ -31,3 +31,15 @@ export function withQuery(
 	const fragment = hash ?? (hashAt === -1 ? '' : path.slice(hashAt + 1));
 	return `${pathname}${search ? `?${search}` : ''}${fragment ? `#${fragment}` : ''}` as ResolvedPathname;
 }
+
+/**
+ * A form action (`?/name`) that keeps the page's own query parameters, so a
+ * plain POST renders the same search and page again. A previous action's
+ * `/name` key is dropped.
+ */
+export function actionKeepingQuery(action: string, search: Iterable<[string, string]>): string {
+	const params = new URLSearchParams();
+	for (const [key, value] of search) if (!key.startsWith('/')) params.append(key, value);
+	const rest = params.toString();
+	return `?/${action}${rest ? `&${rest}` : ''}`;
+}
