@@ -33,6 +33,7 @@ import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
 import { likePattern } from './sql-like.ts';
+import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
@@ -679,7 +680,7 @@ export async function listLiveEditions(
 	db: Database,
 	{ query = '', page = 0 }: { query?: string; page?: number } = {}
 ) {
-	const safePage = Math.max(0, Math.floor(Number.isFinite(page) ? page : 0));
+	const safePage = pageIndex(page);
 	const text = query.trim();
 	const pattern = likePattern(text);
 	const where = and(
