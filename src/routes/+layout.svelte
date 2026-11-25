@@ -28,7 +28,9 @@
 	import { applyAppearance } from '#lib/appearance-apply';
 	import { followSystemTheme } from '#lib/theme';
 	import { TIMEZONE_COOKIE, TIMEZONE_TRIED_KEY, browserTimeZone } from '#lib/timezone';
-	import { refreshAll } from '$app/navigation';
+	import { beforeNavigate, goto, refreshAll } from '$app/navigation';
+	import { withRememberedAdult } from '#lib/browse';
+	import { browseAdultRemembered, syncBrowseAdult } from '#lib/browse-adult.svelte';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ActivityCenter from '#lib/components/ActivityCenter.svelte';
@@ -86,6 +88,24 @@
 		const secure = location.protocol === 'https:' ? '; secure' : '';
 		document.cookie = `${TIMEZONE_COOKIE}=${encodeURIComponent(timeZone)}; path=/; max-age=31536000; samesite=lax${secure}`;
 		void refreshAll();
+	});
+
+	// Browse includes adult work when the reader chose that on this device.
+	// Links to it read the choice once mounted; any other navigation into
+	// Browse is sent to adult=show here, before its data loads, so the page
+	// is not fetched (and counted against its rate limit) twice.
+	$effect(() => syncBrowseAdult());
+	beforeNavigate((navigation) => {
+		const to = navigation.to;
+		// A full page load is left to the pre-paint script, and going back to an
+		// older entry to the universal load.
+		if (navigation.willUnload || navigation.type === 'popstate') return;
+		if (!to || to.route.id !== '/browse') return;
+		const target = withRememberedAdult(to.url, browseAdultRemembered());
+		if (!target) return;
+		navigation.cancel();
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the navigation's own address
+		void goto(target);
 	});
 
 	// With no theme choice stored on this device, the palette follows the system
