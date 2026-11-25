@@ -299,6 +299,19 @@ describe('search and filters', () => {
 		expect(await titles('hide=death')).toEqual([]);
 	});
 
+	it('hides an edition from before ids were frozen by the name of a warning since merged into the hidden one', async () => {
+		await addListEntries(db, 'warning', 'Death\nCharacter death');
+		const { rows } = await pool.query("select id from tags where slug = 'character-death'");
+		const s = await story('Older');
+		await pool.query(
+			`update publications set content_warnings = '{Character death}', content_warning_ids = '{}' where story_id = $1`,
+			[s.id]
+		);
+		await mergeTag(db, 'warning', rows[0].id, 'Death');
+		expect(await titles()).toEqual(['Older']);
+		expect(await titles('hide=death')).toEqual([]);
+	});
+
 	it('pages newest first with a keyset cursor', async () => {
 		for (let i = 0; i < BROWSE_PAGE_SIZE + 2; i++) await story(`S${i}`);
 		const first = parseBrowseQuery(new URLSearchParams(''));
