@@ -125,7 +125,8 @@ const NESTED_TOO_DEEPLY =
 
 // Elements that never hold others, those whose end tag HTML lets a writer
 // leave out (an unclosed <p> or <li> ends at the next one, it does not nest),
-// and links, which close the one before them.
+// and links, which close the one before them. Inside SVG or MathML these
+// rules do not apply: every element there nests unless self-closed.
 const NON_NESTING_TAGS = new Set(
 	(
 		'area base br col embed hr img input link meta param source track wbr a ' +
@@ -133,26 +134,78 @@ const NON_NESTING_TAGS = new Set(
 	).split(' ')
 );
 const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
+// HTML elements that end the SVG or MathML they appear in, as a parser reads
+// them, so they and their content are read as HTML.
+const FOREIGN_BREAKOUT_TAGS = new Set(
+	(
+		'b big blockquote body br center code dd div dl dt em embed h1 h2 h3 h4 h5 h6 head hr i ' +
+		'img li listing menu meta nobr ol p pre ruby s small span strong strike sub sup table tt u ul var'
+	).split(' ')
+);
+// Elements inside SVG or MathML whose content is read as HTML again.
+const HTML_INSIDE_FOREIGN = new Set([
+	'foreignobject',
+	'desc',
+	'title',
+	'mi',
+	'mo',
+	'mn',
+	'ms',
+	'mtext'
+]);
 const TAG_NAME = /<(\/?)([a-zA-Z][\w:-]*)/y;
 
+type Content = 'html' | 'foreign';
+
+// How the content of a newly opened element is read.
+function contentOf(name: string, parent: Content): Content {
+	if (parent === 'html') return name === 'svg' || name === 'math' ? 'foreign' : 'html';
+	return HTML_INSIDE_FOREIGN.has(name) ? 'html' : 'foreign';
+}
+
+// Where an HTML comment opened at i ends (just past it), or -1 when it never
+// does. As in an HTML parser, "<!-->" and "<!--->" end at once, and "--!>"
+// ends a comment as well as "-->".
+function commentEnd(html: string, i: number): number {
+	const dashes = html.indexOf('-->', i + 2);
+	const bang = html.indexOf('--!>', i + 4);
+	if (bang !== -1 && (dashes === -1 || bang < dashes)) return bang + 4;
+	return dashes === -1 ? -1 : dashes + 3;
+}
+
 // The deepest element nesting in an HTML fragment, in one pass. A stack of
-// open tags rather than a parse, so it can overstate sloppy markup a little.
-// As in an HTML parser, an end tag closes the nearest open element of its name
-// and any left open inside it, and an end tag with no open element of its name
-// is ignored. Turndown parses as HTML, where "<span/>" opens a span that stays
-// open, so a trailing slash does not close a tag here either.
+// open tags rather than a parse, so it can overstate sloppy markup a little,
+// but it must never understate what Turndown's HTML parser builds. As in an
+// HTML parser, an end tag closes the nearest open element of its name and any
+// left open inside it, and an end tag with no open element of its name is
+// ignored. Outside SVG and MathML, "<span/>" opens a span that stays open, so
+// a trailing slash does not close a tag there.
 export function nestingDepth(html: string): number {
 	const open: string[] = [];
+	// How the content of each open element is read, in step with open.
+	const contents: Content[] = [];
 	// How many of each name are on the stack, so a stray end tag is found
 	// without searching it.
 	const openCounts = new Map<string, number>();
+	const pop = () => {
+		const popped = open.pop()!;
+		contents.pop();
+		openCounts.set(popped, openCounts.get(popped)! - 1);
+		return popped;
+	};
 	let max = 0;
+	const push = (name: string, content: Content) => {
+		open.push(name);
+		contents.push(content);
+		openCounts.set(name, (openCounts.get(name) ?? 0) + 1);
+		if (open.length > max) max = open.length;
+	};
 	let i = html.indexOf('<');
 	while (i !== -1) {
 		if (html.startsWith('<!--', i)) {
-			const end = html.indexOf('-->', i + 4);
+			const end = commentEnd(html, i);
 			if (end === -1) break;
-			i = html.indexOf('<', end + 3);
+			i = html.indexOf('<', end);
 			continue;
 		}
 		TAG_NAME.lastIndex = i;
@@ -166,25 +219,23 @@ export function nestingDepth(html: string): number {
 		const closing = match[1] === '/';
 		const name = match[2].toLowerCase();
 		let next = end + 1;
-		if (!NON_NESTING_TAGS.has(name)) {
-			if (closing) {
-				if (openCounts.get(name)) {
-					let popped: string;
-					do {
-						popped = open.pop()!;
-						openCounts.set(popped, openCounts.get(popped)! - 1);
-					} while (popped !== name);
-				}
-			} else if (RAW_TEXT_TAGS.has(name)) {
-				const close = new RegExp(`</${name}`, 'gi');
-				close.lastIndex = next;
-				if (!close.exec(html)) break;
-				next = close.lastIndex - name.length - 2;
-			} else {
-				open.push(name);
-				openCounts.set(name, (openCounts.get(name) ?? 0) + 1);
-				if (open.length > max) max = open.length;
-			}
+		if (closing) {
+			if (openCounts.get(name)) while (pop() !== name);
+			i = html.indexOf('<', next);
+			continue;
+		}
+		let content: Content = contents.at(-1) ?? 'html';
+		// A parser closes the SVG first; staying inside it only overstates.
+		if (content === 'foreign' && FOREIGN_BREAKOUT_TAGS.has(name)) content = 'html';
+		if (content === 'foreign' || name === 'svg' || name === 'math') {
+			if (html[end - 1] !== '/') push(name, contentOf(name, content));
+		} else if (RAW_TEXT_TAGS.has(name)) {
+			const close = new RegExp(`</${name}`, 'gi');
+			close.lastIndex = next;
+			if (!close.exec(html)) break;
+			next = close.lastIndex - name.length - 2;
+		} else if (!NON_NESTING_TAGS.has(name)) {
+			push(name, 'html');
 		}
 		i = html.indexOf('<', next);
 	}

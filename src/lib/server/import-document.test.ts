@@ -459,6 +459,40 @@ describe('nestingDepth', () => {
 	it('ignores a stray closing tag and a lone angle bracket', () => {
 		expect(nestingDepth('</div></div>a < b<div><div></div></div>')).toBe(2);
 	});
+
+	it('ends comments where an HTML parser does', () => {
+		const nest = '<div><div><div>x</div></div></div>';
+		expect(nestingDepth(`<!-->${nest}<!-- -->`)).toBe(3);
+		expect(nestingDepth(`<!--->${nest}<!-- -->`)).toBe(3);
+		expect(nestingDepth(`<!-- a --!>${nest}<!-- -->`)).toBe(3);
+		expect(nestingDepth(`<!--!>${nest}-->`)).toBe(0);
+		expect(nestingDepth(`<!---->${nest}`)).toBe(3);
+	});
+
+	it('counts what SVG and MathML nest', () => {
+		// Inside SVG, style and title are ordinary elements and links and
+		// inputs nest; a self-closed element does close.
+		expect(nestingDepth('<svg><style><g><g><g>x</g></g></g></style></svg>')).toBe(5);
+		expect(nestingDepth('<svg><title><style><g><g></g></g></style></title></svg>')).toBe(2);
+		expect(nestingDepth('<svg><a><a><a><a>x</a></a></a></a></svg>')).toBe(5);
+		expect(nestingDepth('<svg><input><input><input>x</svg>')).toBe(4);
+		expect(nestingDepth('<svg><path/><path/><path/></svg>')).toBe(1);
+		expect(nestingDepth('<svg/><div>x</div>')).toBe(1);
+		// An HTML element such as a div holds HTML again.
+		expect(nestingDepth('<svg><a><div><a><a>x</a></a></div></a></svg>')).toBe(3);
+		expect(nestingDepth('<math><mi><style><div><div></style></mi></math>')).toBe(2);
+	});
+
+	it('refuses deep nesting hidden in comments or SVG when converting', async () => {
+		const deep = '<blockquote>'.repeat(200) + 'x' + '</blockquote>'.repeat(200);
+		for (const xhtml of [
+			`<!-->${deep}<!-- -->`,
+			`<svg><style>${deep.replaceAll('blockquote', 'g')}</style></svg>`
+		]) {
+			const epub = buildEpub([{ name: 'a.xhtml', xhtml }]);
+			await expect(parseDocument(epub, 'a.epub')).rejects.toThrow(/nested too deeply/);
+		}
+	});
 });
 
 // --- AO3 fixtures ---
