@@ -21,6 +21,7 @@
 	import SettingsHistory from './SettingsHistory.svelte';
 	import SettingsDanger from './SettingsDanger.svelte';
 	import ScopeModels from '#lib/components/ScopeModels.svelte';
+	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -36,6 +37,7 @@
 		cover: 'publishing',
 		pagesetup: 'publishing',
 		review: 'reviewing',
+		preferences: 'reviewing',
 		assistant: 'account',
 		editor: 'editor',
 		goals: 'planning',
@@ -62,6 +64,7 @@
 	const NAV = $derived(
 		[
 			{ id: 'details', label: 'Details' },
+			{ id: 'preferences', label: 'Assistant preferences' },
 			{ id: 'editor', label: 'Editor' },
 			{ id: 'pagesetup', label: 'Page setup' },
 			{ id: 'goals', label: 'Goals' },
@@ -77,6 +80,7 @@
 			.filter((item) => item.id !== 'cover' || data.assetsConfigured)
 			.filter((item) => item.id !== 'publish' || (data.archive?.enabled && data.archive?.handle))
 			.filter((item) => item.id !== 'assistant' || data.assistantModels)
+			.filter((item) => item.id !== 'preferences' || data.assistantPreferencesShown)
 	);
 </script>
 
@@ -132,6 +136,26 @@
 	<div class="admin-block" class:active={active === 'details'} id="details">
 		<SettingsDetails {data} {form} />
 	</div>
+
+	{#if data.assistantPreferencesShown}
+		<div class="admin-block" class:active={active === 'preferences'} id="preferences">
+			<AssistantPreferences
+				level="story"
+				stored={data.story.assistantPreferences}
+				notes={data.story.assistantNotes}
+				inherited={{
+					preferences: data.universe.assistantPreferences,
+					notes: data.universe.assistantNotes
+				}}
+				standalone={data.universe.standalone}
+				saved={form?.action === 'assistant-preferences' && form.saved === true}
+				error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+				submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+					? form.submitted
+					: null}
+			/>
+		</div>
+	{/if}
 
 	<div class="admin-block" class:active={active === 'editor'} id="editor">
 		<SettingsEditor {data} {form} />

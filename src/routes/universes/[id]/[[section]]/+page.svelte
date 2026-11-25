@@ -8,6 +8,7 @@
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
 	import { WRITING_LANGUAGES } from '#lib/writing-languages';
 	import AssistantPreferences from '#lib/components/AssistantPreferences.svelte';
+	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { letterFill } from '#lib/entity-badge';
 	import Icon from '#lib/components/Icon.svelte';
 	import FandomSuggest from '#lib/components/FandomSuggest.svelte';
@@ -32,7 +33,8 @@
 	// Each section is its own page (/universes/<slug>/categories, ...);
 	// a plain /universes/<slug> is the details. Forms post to the section
 	// they sit on, so a reload lands where the form lives.
-	type Section = 'details' | 'categories' | 'suggestions' | 'assistant' | 'history' | 'export';
+	type Section =
+		'details' | 'preferences' | 'categories' | 'suggestions' | 'assistant' | 'history' | 'export';
 	const waiting = $derived(
 		data.proposals.entities.length + data.proposals.splits.length + data.proposals.drafts.length
 	);
@@ -40,6 +42,7 @@
 	const NAV: { id: Section; label: string }[] = $derived(
 		[
 			{ id: 'details' as const, label: 'Details' },
+			{ id: 'preferences' as const, label: 'Assistant preferences' },
 			{ id: 'categories' as const, label: 'Entity categories' },
 			{
 				id: 'suggestions' as const,
@@ -48,7 +51,9 @@
 			{ id: 'assistant' as const, label: 'Assistant' },
 			{ id: 'history' as const, label: 'History' },
 			{ id: 'export' as const, label: 'Import and export' }
-		].filter((item) => item.id !== 'assistant' || data.assistantModels)
+		]
+			.filter((item) => item.id !== 'assistant' || data.assistantModels)
+			.filter((item) => item.id !== 'preferences' || data.assistantPreferencesShown)
 	);
 	let active: Section = $derived((page.params.section as Section) ?? 'details');
 
@@ -187,7 +192,11 @@
 			crumbs={universePath(data.universe, {
 				universeAt: active === 'export' ? 'export' : 'settings'
 			})}
-			helpTopic={active === 'export' ? 'getting-started' : 'planning'}
+			helpTopic={active === 'export'
+				? 'getting-started'
+				: active === 'preferences'
+					? 'reviewing'
+					: 'planning'}
 			helpLabel="universe settings"
 		/>
 	{/snippet}
@@ -235,12 +244,6 @@
 				</p>
 			</div>
 			<form method="POST" action="?/update">
-				{#if form?.action === 'update' && form.message}
-					<p class="form-error" role="alert">{form.message}</p>
-				{/if}
-				{#if form?.action === 'update' && form.saved}
-					<p class="form-saved" role="status">Saved.</p>
-				{/if}
 				<div class="field">
 					<label for="u-name">Name</label>
 					<input
@@ -330,26 +333,14 @@
 					</span>
 				</div>
 				<div class="settings-actions">
+					<FormStatus
+						error={form?.action === 'update' && form.message ? form.message : null}
+						success={form?.action === 'update' && form.saved ? 'Saved.' : null}
+					/>
 					<button class="btn btn-primary" type="submit">Save changes</button>
 				</div>
 			</form>
 		</div>
-
-		{#if data.assistantPreferencesShown}
-			<div class="admin-block" id="assistant-preferences">
-				<AssistantPreferences
-					level="universe"
-					standalone={data.universe.standalone}
-					stored={data.universe.assistantPreferences}
-					notes={data.universe.assistantNotes}
-					saved={form?.action === 'assistant-preferences' && form.saved === true}
-					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
-					submitted={form?.action === 'assistant-preferences' && 'submitted' in form
-						? form.submitted
-						: null}
-				/>
-			</div>
-		{/if}
 
 		<div class="admin-block">
 			<div class="admin-block-head">
@@ -380,6 +371,24 @@
 			</div>
 		</div>
 	</section>
+
+	{#if data.assistantPreferencesShown}
+		<section class="admin-section" class:active={active === 'preferences'}>
+			<div class="admin-block">
+				<AssistantPreferences
+					level="universe"
+					standalone={data.universe.standalone}
+					stored={data.universe.assistantPreferences}
+					notes={data.universe.assistantNotes}
+					saved={form?.action === 'assistant-preferences' && form.saved === true}
+					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+					submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+						? form.submitted
+						: null}
+				/>
+			</div>
+		</section>
+	{/if}
 
 	<section class="admin-section" class:active={active === 'categories'}>
 		<div class="admin-block">

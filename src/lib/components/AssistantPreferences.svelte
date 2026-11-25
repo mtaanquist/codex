@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The "Assistant preferences" group of a story's or a universe's Details:
-	// the house style, the habit checks, and the writer's own notes. On a
+	// The "Assistant preferences" section of a story's or a universe's
+	// settings: the house style, the habit checks, and the writer's own notes. On a
 	// story, a blank choice uses its universe's; on a universe, the Assistant's
 	// default (infer from the text, check everything). Standalone stories share
 	// a hidden universe, whose settings the writer sees as the defaults for all
@@ -86,20 +86,15 @@
 	{/if}
 {/snippet}
 
+<div class="admin-block-head">
+	<h2 class="admin-block-title">Assistant preferences</h2>
+	<p class="admin-block-sub">{@render intro()}</p>
+</div>
+<!-- Each page's own form style: story sections sit in a card, universe ones do not. -->
 {#if level === 'universe'}
-	<div class="admin-block-head">
-		<h2 class="admin-block-title">Assistant preferences</h2>
-		<p class="admin-block-sub">{@render intro()}</p>
-	</div>
 	{@render body()}
 {:else}
-	<div class="settings-group">
-		<header class="settings-group-header">
-			<h3 class="settings-group-title">Assistant preferences</h3>
-			<p class="settings-group-subtitle">{@render intro()}</p>
-		</header>
-		{@render body()}
-	</div>
+	<div class="settings-group">{@render body()}</div>
 {/if}
 
 {#snippet body()}

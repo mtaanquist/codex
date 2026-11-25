@@ -10,6 +10,18 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Assistant preferences gets its own settings item (2026-11-25, #1548,
+`feat/assistant-preferences-item`). Story and universe Details had grown to
+about 20 fields once the preferences form (#1344) joined them. A two-column
+layout was mocked first: in two columns the fields stack, the preferences
+column stays long, and the page got only about a quarter shorter, so Mads
+picked a separate sidebar item instead, per the design-system rule for
+independent groups. The item shows on the same condition the form did
+(the Assistant set up, or connected apps on) and its page 404s otherwise.
+Details now uses `FormStatus` for its save message on both pages, and the
+component renders one h2 heading at both levels. Saving one form no longer
+risks unsaved edits in the other on these pages; the general case is #1550.
+
 Staging review of the language setting and Assistant preferences, round 8
 (2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's
 over-cap warning looked only at the largest scene, but every reviewer request
