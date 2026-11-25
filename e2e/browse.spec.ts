@@ -122,6 +122,11 @@ test('Browse includes adult work on load once a reader searched with it', async 
 	await adultBox.check();
 	await reader.getByRole('button', { name: 'Search' }).click();
 	await expect(reader).toHaveURL(/adult=show/);
+	// Going back to the page from before the search shows adult work, and the
+	// address says so.
+	await reader.goBack();
+	await expect(adultBox).toBeChecked();
+	await expect(reader).toHaveURL('/browse?adult=show');
 
 	// A full load and a link inside the app both bring the choice back.
 	await gotoReady(reader, '/browse?q=bell');
