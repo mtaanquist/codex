@@ -376,8 +376,10 @@ describe('runImport', () => {
 		expect(imported).toMatchObject(settings);
 	});
 
-	it('round-trips text with line and paragraph separators, emoji, quotes and blank lines', async () => {
+	it('round-trips text with line and paragraph separators, emoji, quotes, indents and blank lines', async () => {
 		const original = await seedStory();
+		// Four leading spaces make a code block, so a first line keeps its indent.
+		const code = '    let toll = 3;';
 		// U+2028 and U+2029 come in with text pasted from Word or a PDF, and
 		// JSON.stringify leaves them raw in the front matter.
 		const odd = 'One\u2028two\u2029three "quoted" \'single\' \u{1F409}';
@@ -394,11 +396,11 @@ describe('runImport', () => {
 		await db.update(stories).set(fields).where(eq(stories.id, original.id));
 		await db
 			.update(chapters)
-			.set({ title: `The Caravan ${odd}` })
+			.set({ title: `The Caravan ${odd}`, summaryMd: `${code}\n\n${odd}` })
 			.where(eq(chapters.storyId, original.id));
 		await db
 			.update(scenes)
-			.set({ title: `Departure ${odd}`, bodyMd: `The gate opened.\n\n\n${odd}` })
+			.set({ title: `Departure ${odd}`, bodyMd: `${code}\n\nThe gate opened.\n\n\n${odd}` })
 			.where(eq(scenes.title, 'Departure'));
 		await db
 			.update(notes)
@@ -406,7 +408,7 @@ describe('runImport', () => {
 			.where(eq(notes.title, 'Threads'));
 		await db
 			.update(characterStoryNotes)
-			.set({ notesMd: `Limps.\n\n${odd}` })
+			.set({ notesMd: `${code}\nLimps.\n\n${odd}` })
 			.where(eq(characterStoryNotes.storyId, original.id));
 		await db
 			.update(characters)
@@ -426,7 +428,7 @@ describe('runImport', () => {
 			.from(chapters)
 			.where(eq(chapters.storyId, result.storyId))
 			.orderBy(asc(chapters.position));
-		expect(chapter.title).toBe(`The Caravan ${odd}`);
+		expect([chapter.title, chapter.summaryMd]).toEqual([`The Caravan ${odd}`, `${code}\n\n${odd}`]);
 		const [scene] = await db
 			.select()
 			.from(scenes)
@@ -434,7 +436,7 @@ describe('runImport', () => {
 			.orderBy(asc(scenes.globalPosition));
 		expect([scene.title, scene.bodyMd]).toEqual([
 			`Departure ${odd}`,
-			`The gate opened.\n\n\n${odd}`
+			`${code}\n\nThe gate opened.\n\n\n${odd}`
 		]);
 		const [note] = await db
 			.select()
@@ -446,7 +448,7 @@ describe('runImport', () => {
 			.select()
 			.from(characterStoryNotes)
 			.where(eq(characterStoryNotes.storyId, result.storyId));
-		expect(entityNote.notesMd).toBe(`Limps.\n\n${odd}`);
+		expect(entityNote.notesMd).toBe(`${code}\nLimps.\n\n${odd}`);
 		expect(result.notesAttached).toBe(1);
 		expect(result.entitiesCreated).toBe(0);
 	});
