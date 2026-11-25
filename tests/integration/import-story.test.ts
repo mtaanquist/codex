@@ -21,7 +21,7 @@ import {
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
-import { buildStoryZip, gatherStory } from '../../src/lib/server/export';
+import { buildStoryZip, gatherStory, inMemoryAsset } from '../../src/lib/server/export';
 import { parseStoryZip } from '../../src/lib/import-markdown';
 import { previewImport, runImport } from '../../src/lib/server/import-story';
 import { checkTagNames, setStoryList, setStoryTags, storyTagView } from '../../src/lib/server/tags';
@@ -271,6 +271,56 @@ describe('runImport', () => {
 		]);
 	});
 
+	it('combines two notes that match the same entity instead of failing', async () => {
+		const plan = await exportPlan(await seedStory());
+		plan.notes.push({ kind: 'character', name: 'alice vane', notesMd: 'Hates the rain.' });
+
+		const preview = await previewImport(db, universe, plan);
+		expect(preview.notes).toEqual([{ kind: 'character', name: 'Alice Vane', outcome: 'match' }]);
+		expect(preview.problems).toEqual([
+			'The notes for "Alice Vane" and "alice vane" both belong to the character "Alice Vane", so they were combined into one note.'
+		]);
+
+		const result = await runImport(db, universe, plan);
+		expect(result.notesAttached).toBe(1);
+		expect(result.problems).toEqual(preview.problems);
+		const noteRows = await db
+			.select()
+			.from(characterStoryNotes)
+			.where(eq(characterStoryNotes.storyId, result.storyId));
+		expect(noteRows.map((row) => row.notesMd)).toEqual(['Limps in this book.\n\nHates the rain.']);
+	});
+
+	it('round-trips chapter summaries', async () => {
+		const original = await seedStory();
+		await db
+			.update(chapters)
+			.set({
+				summaryMd: 'They leave at dawn.\n\n![map](/assets/11111111-1111-1111-1111-111111111111)'
+			})
+			.where(eq(chapters.title, 'The Caravan'));
+		const assetLoader = async (ids: string[]) =>
+			ids.map((id) => inMemoryAsset(id, 'image/png', new Uint8Array([1, 2, 3])));
+		const bytes = await zipBytes(
+			(await buildStoryZip(original, await gatherStory(db, original), assetLoader)).entries
+		);
+		const plan = parseStoryZip(bytes);
+		expect(plan.problems).toEqual([]);
+		expect(plan.chapters.map((chapter) => chapter.summaryMd)).toEqual([
+			'They leave at dawn.\n\n![map](../../assets/11111111-1111-1111-1111-111111111111.png)',
+			null
+		]);
+
+		const result = await runImport(db, universe, plan);
+		const chapterRows = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(chapterRows[0].summaryMd).toMatch(/^They leave at dawn\.\n\n!\[map\]/);
+		expect(chapterRows[1].summaryMd).toBeNull();
+	});
+
 	it('creates missing entities, skips ambiguous ones, and reports both', async () => {
 		const plan = await exportPlan(await seedStory());
 		await db.insert(places).values([
@@ -347,8 +397,10 @@ describe('runImport', () => {
 		expect(imported).toMatchObject(settings);
 	});
 
-	it('round-trips text with line and paragraph separators, emoji, quotes and blank lines', async () => {
+	it('round-trips text with line and paragraph separators, emoji, quotes, indents and blank lines', async () => {
 		const original = await seedStory();
+		// Four leading spaces make a code block, so a first line keeps its indent.
+		const code = '    let toll = 3;';
 		// U+2028 and U+2029 come in with text pasted from Word or a PDF, and
 		// JSON.stringify leaves them raw in the front matter.
 		const odd = 'One\u2028two\u2029three "quoted" \'single\' \u{1F409}';
@@ -365,11 +417,11 @@ describe('runImport', () => {
 		await db.update(stories).set(fields).where(eq(stories.id, original.id));
 		await db
 			.update(chapters)
-			.set({ title: `The Caravan ${odd}` })
+			.set({ title: `The Caravan ${odd}`, summaryMd: `${code}\n\n${odd}` })
 			.where(eq(chapters.storyId, original.id));
 		await db
 			.update(scenes)
-			.set({ title: `Departure ${odd}`, bodyMd: `The gate opened.\n\n\n${odd}` })
+			.set({ title: `Departure ${odd}`, bodyMd: `${code}\n\nThe gate opened.\n\n\n${odd}` })
 			.where(eq(scenes.title, 'Departure'));
 		await db
 			.update(notes)
@@ -377,7 +429,7 @@ describe('runImport', () => {
 			.where(eq(notes.title, 'Threads'));
 		await db
 			.update(characterStoryNotes)
-			.set({ notesMd: `Limps.\n\n${odd}` })
+			.set({ notesMd: `${code}\nLimps.\n\n${odd}` })
 			.where(eq(characterStoryNotes.storyId, original.id));
 		await db
 			.update(characters)
@@ -397,7 +449,7 @@ describe('runImport', () => {
 			.from(chapters)
 			.where(eq(chapters.storyId, result.storyId))
 			.orderBy(asc(chapters.position));
-		expect(chapter.title).toBe(`The Caravan ${odd}`);
+		expect([chapter.title, chapter.summaryMd]).toEqual([`The Caravan ${odd}`, `${code}\n\n${odd}`]);
 		const [scene] = await db
 			.select()
 			.from(scenes)
@@ -405,7 +457,7 @@ describe('runImport', () => {
 			.orderBy(asc(scenes.globalPosition));
 		expect([scene.title, scene.bodyMd]).toEqual([
 			`Departure ${odd}`,
-			`The gate opened.\n\n\n${odd}`
+			`${code}\n\nThe gate opened.\n\n\n${odd}`
 		]);
 		const [note] = await db
 			.select()
@@ -417,7 +469,7 @@ describe('runImport', () => {
 			.select()
 			.from(characterStoryNotes)
 			.where(eq(characterStoryNotes.storyId, result.storyId));
-		expect(entityNote.notesMd).toBe(`Limps.\n\n${odd}`);
+		expect(entityNote.notesMd).toBe(`${code}\nLimps.\n\n${odd}`);
 		expect(result.notesAttached).toBe(1);
 		expect(result.entitiesCreated).toBe(0);
 	});
@@ -571,7 +623,6 @@ describe('runImport', () => {
 
 	// Only the story slug index is a clash a fresh pick can fix.
 	it('does not try again after a clash other than the slug', async () => {
-		await db.insert(characters).values({ universeId: universe.id, ownerId, name: 'Alice' });
 		let writes = 0;
 		const counting = new Proxy(db, {
 			get(target, prop) {
@@ -584,17 +635,29 @@ describe('runImport', () => {
 				};
 			}
 		});
-		const note = { kind: 'character' as const, name: 'Alice', notesMd: 'Twice.' };
+		// A scene holds one waiting draft; the parser keeps the first, so only a
+		// hand-built plan carries two.
+		const draft = {
+			scene: { chapter: null, index: 0 },
+			brief: 'Go on.',
+			targetWords: null,
+			pov: null,
+			note: null,
+			chapterBrief: null,
+			source: 'assistant' as const,
+			textMd: 'More prose.'
+		};
 		await expect(
 			runImport(counting, universe, {
 				story: { title: 'Twice', author: null, brief: null, descriptionMd: '' },
 				chapters: [],
 				unfiled: [{ title: null, status: null, bodyMd: 'Prose.' }],
-				notes: [note, note],
+				notes: [],
+				waitingDrafts: [draft, draft],
 				assets: [],
 				problems: []
 			})
-		).rejects.toMatchObject({ cause: { constraint: 'character_story_notes_unique' } });
+		).rejects.toMatchObject({ cause: { constraint: 'assistant_drafts_open_scene_idx' } });
 		expect(writes).toBe(1);
 		expect(await db.select().from(stories).where(eq(stories.title, 'Twice'))).toEqual([]);
 	});

@@ -499,6 +499,10 @@ describe('recentAssistantUsage', () => {
 		// A page past the end is empty, and a negative page clamps to the first.
 		expect((await recentAssistantUsage(db, userId, 9)).recent).toHaveLength(0);
 		expect((await recentAssistantUsage(db, userId, -3)).page).toBe(0);
+		// A huge page number is an empty page, not an offset Postgres refuses.
+		const far = await recentAssistantUsage(db, userId, 1e20);
+		expect(far).toMatchObject({ recent: [], hasMore: false });
+		expect(far.totals.requests).toBe(55);
 	});
 
 	it('only counts the requesting user', async () => {

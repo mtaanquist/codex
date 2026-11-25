@@ -24,8 +24,9 @@ test('slugs: created things get readable addresses that follow renames', async (
 
 	// Renaming the story in settings moves the address with the title.
 	await gotoReady(page, `/stories/toll-road-${stamp}/settings`);
+	// Details saves when the field loses focus.
 	await page.locator('#st-title').fill(`Toll ${stamp}`);
-	await page.locator('#details').getByRole('button', { name: 'Save', exact: true }).click();
+	await page.locator('#st-title').press('Tab');
 	await expect(page).toHaveURL(`/stories/toll-${stamp}/settings`);
 
 	// The old slug is gone; the new one carries the story.
@@ -46,7 +47,7 @@ test('slugs: created things get readable addresses that follow renames', async (
 	// Renaming the universe moves its address too.
 	await gotoReady(page, `/universes/slugfall-${stamp}`);
 	await page.locator('#u-name').fill(`Slugged ${stamp}`);
-	await page.getByRole('button', { name: 'Save changes' }).click();
+	await page.locator('#u-name').press('Tab');
 	await expect(page).toHaveURL(`/universes/slugged-${stamp}`);
 	const staleUniverse = await gotoReady(page, `/universes/slugfall-${stamp}/plan`);
 	expect(staleUniverse!.status()).toBe(404);

@@ -131,6 +131,7 @@ const signedIn = () => [
 	['story workspace', storyPath],
 	['plan', `${storyPath}/plan`],
 	['review', `${storyPath}/review`],
+	['story settings', `${storyPath}/settings`],
 	['saved draft', draftPath],
 	['saved draft compare', `${draftPath}?tab=compare`],
 	['account', '/account'],

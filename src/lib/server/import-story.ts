@@ -67,13 +67,16 @@ export type ImportPreview = {
 
 // Each note finds its entity by trimmed, case-insensitive name within its
 // kind. One candidate attaches, none creates, two or more skips: picking one
-// silently would be the only wrong answer.
+// silently would be the only wrong answer. Entity names are not unique, so
+// two notes ("Ann" and "ann") can find the same entity, which holds one note
+// per story: the later one's text is appended to the first, and a problem
+// says so.
 async function resolveNotes(
 	db: Database,
 	universeId: string,
 	notes: ImportedNote[]
-): Promise<NoteResolution[]> {
-	if (notes.length === 0) return [];
+): Promise<{ resolutions: NoteResolution[]; problems: string[] }> {
+	if (notes.length === 0) return { resolutions: [], problems: [] };
 	const namesIn = (type: EntityType) => {
 		const table = entityTable(type);
 		return db
@@ -87,10 +90,10 @@ async function resolveNotes(
 		lore: await namesIn('lore_entry')
 	};
 	const byName = (rows: { id: string; name: string }[]) => {
-		const map = new Map<string, string[]>();
+		const map = new Map<string, { id: string; name: string }[]>();
 		for (const row of rows) {
 			const key = row.name.trim().toLowerCase();
-			map.set(key, [...(map.get(key) ?? []), row.id]);
+			map.set(key, [...(map.get(key) ?? []), row]);
 		}
 		return map;
 	};
@@ -99,12 +102,32 @@ async function resolveNotes(
 		place: byName(lists.place),
 		lore: byName(lists.lore)
 	};
-	return notes.map((note) => {
+	const resolutions: NoteResolution[] = [];
+	const problems: string[] = [];
+	const matched = new Map<string, NoteResolution>();
+	for (const note of notes) {
 		const candidates = maps[note.kind].get(note.name.trim().toLowerCase()) ?? [];
-		if (candidates.length === 1) return { ...note, outcome: 'match', entityId: candidates[0] };
-		if (candidates.length === 0) return { ...note, outcome: 'create', entityId: null };
-		return { ...note, outcome: 'ambiguous', entityId: null };
-	});
+		if (candidates.length === 0) {
+			resolutions.push({ ...note, outcome: 'create', entityId: null });
+		} else if (candidates.length > 1) {
+			resolutions.push({ ...note, outcome: 'ambiguous', entityId: null });
+		} else {
+			const entity = candidates[0];
+			const first = matched.get(entity.id);
+			if (!first) {
+				const resolution: NoteResolution = { ...note, outcome: 'match', entityId: entity.id };
+				matched.set(entity.id, resolution);
+				resolutions.push(resolution);
+				continue;
+			}
+			first.notesMd = [first.notesMd, note.notesMd].filter((text) => text !== '').join('\n\n');
+			const kind = note.kind === 'lore' ? 'lore entry' : note.kind;
+			problems.push(
+				`The notes for "${first.name}" and "${note.name}" both belong to the ${kind} "${entity.name}", so they were combined into one note.`
+			);
+		}
+	}
+	return { resolutions, problems };
 }
 
 export async function previewImport(
@@ -117,8 +140,8 @@ export async function previewImport(
 		.select({ title: stories.title })
 		.from(stories)
 		.where(eq(stories.universeId, universe.id));
-	const resolutions = await resolveNotes(db, universe.id, plan.notes);
-	const problems = [...plan.problems];
+	const { resolutions, problems: noteProblems } = await resolveNotes(db, universe.id, plan.notes);
+	const problems = [...plan.problems, ...noteProblems];
 	try {
 		await holdCountQuota(db, universe.ownerId, { stories: 1 });
 	} catch (err) {
@@ -235,7 +258,8 @@ export async function runImport(
 		const rewrite = (body: string) =>
 			rewriteBundledAssetLinks(body, (id) => assetLinks.get(id) ?? null);
 
-		const resolutions = await resolveNotes(db, universe.id, plan.notes);
+		const { resolutions, problems: noteProblems } = await resolveNotes(db, universe.id, plan.notes);
+		problems.push(...noteProblems);
 
 		// The slug is picked up front; the story row itself is inserted inside the
 		// transaction below, so a failure partway through the import rolls the empty

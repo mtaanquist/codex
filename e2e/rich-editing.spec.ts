@@ -72,7 +72,6 @@ test('rich editing: toolbar formats, marks hide by default, override shows them'
 	// A language set in the story's details wins over the editor preference.
 	await gotoReady(page, `/stories/${storyId}/settings`);
 	await page.getByLabel('Language', { exact: true }).selectOption('English (UK)');
-	await page.getByRole('button', { name: 'Save', exact: true }).click();
 	await expect(page.getByRole('status')).toHaveText('Saved.');
 	await gotoReady(page, editorUrl);
 	await expect(page.locator('.cm-content')).toHaveAttribute('lang', 'en-GB');

@@ -18,7 +18,8 @@ import {
 export type ImportedScene = { title: string | null; status: SceneStatus | null; bodyMd: string };
 export type ImportedChapter = {
 	title: string | null;
-	// Only document imports that carry chapter summaries (AO3) set this.
+	// From chapter.md's body, or a document import that carries summaries
+	// (AO3); absent from document plans without them.
 	summaryMd?: string | null;
 	scenes: ImportedScene[];
 };
@@ -137,6 +138,12 @@ function parseScalar(value: string): string {
 	} catch {
 		return value;
 	}
+}
+
+// A file's body without the blank lines around it. The first line keeps its
+// indent: four leading spaces make a code block.
+function bodyText(body: string): string {
+	return body.replace(/^(?:[ \t]*\n)+/, '').replace(/[ \t\n]+$/, '');
 }
 
 function scalar(fields: FrontMatter, key: string): string | null {
@@ -287,7 +294,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		title: scalar(storyDoc.fields, 'title') ?? deslug(root.replace(/\/$/, '')) ?? 'Imported story',
 		author: scalar(storyDoc.fields, 'author'),
 		brief: scalar(storyDoc.fields, 'brief'),
-		descriptionMd: storyDoc.body.trim(),
+		descriptionMd: bodyText(storyDoc.body),
 		...(scalar(storyDoc.fields, 'adult') === 'true' && { isAdult: true }),
 		...labelLists(storyDoc.fields),
 		...assistantSettings(storyDoc.fields, problems)
@@ -307,7 +314,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				problems.push(`${rel}: unknown status "${rawStatus}"; the scene starts as a draft.`);
 			}
 		}
-		return { title: scalar(doc.fields, 'title'), status, bodyMd: doc.body.trim() };
+		return { title: scalar(doc.fields, 'title'), status, bodyMd: bodyText(doc.body) };
 	};
 
 	// Group chapter files by folder, ordered by the NN- prefix.
@@ -342,7 +349,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				problems.push(`${rel}: the note names no entity and will be skipped.`);
 				continue;
 			}
-			notes.push({ kind, name, notesMd: doc.body.trim() });
+			notes.push({ kind, name, notesMd: bodyText(doc.body) });
 		} else if (parts[0] === 'notebook' && parts.length === 2 && parts[1].endsWith('.md')) {
 			notebook.push({ rel, doc: parseFrontMatter(read(path)) });
 		} else if (parts[0] === 'waiting-drafts' && parts.length === 2 && parts[1].endsWith('.md')) {
@@ -359,10 +366,10 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const chapters = [...chapterFiles.values()]
 		.sort((a, b) => orderOf(a.name) - orderOf(b.name) || a.name.localeCompare(b.name))
 		.map((group, chapterIndex) => {
-			const meta = group.files.find((f) => f.file === 'chapter.md');
-			const title = meta
-				? scalar(parseFrontMatter(read(meta.path)).fields, 'title')
-				: deslug(group.name);
+			const metaFile = group.files.find((f) => f.file === 'chapter.md');
+			const meta = metaFile ? parseFrontMatter(read(metaFile.path)) : null;
+			const title = meta ? scalar(meta.fields, 'title') : deslug(group.name);
+			const summaryMd = (meta && bodyText(meta.body)) || null;
 			const scenes = group.files
 				.filter((f) => f.file !== 'chapter.md')
 				.sort((a, b) => orderOf(a.file) - orderOf(b.file) || a.file.localeCompare(b.file))
@@ -371,7 +378,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					scenePositions.set(rel, { chapter: chapterIndex, index });
 					return parseScene(f.path, rel);
 				});
-			return { title, scenes };
+			return { title, summaryMd, scenes };
 		});
 
 	const unfiledScenes = unfiled
@@ -394,7 +401,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		const createdAt = created ? new Date(created) : null;
 		return {
 			title: scalar(doc.fields, 'title'),
-			bodyMd: doc.body.trim(),
+			bodyMd: bodyText(doc.body),
 			pinned: scalar(doc.fields, 'pinned') === 'true',
 			scene,
 			createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null
@@ -427,7 +434,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					note: scalar(doc.fields, 'note'),
 					chapterBrief: scalar(doc.fields, 'chapter-brief'),
 					source: scalar(doc.fields, 'source') === 'app' ? 'app' : 'assistant',
-					textMd: doc.body.trim()
+					textMd: bodyText(doc.body)
 				}
 			];
 		});
