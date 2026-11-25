@@ -25,7 +25,18 @@ pattern the other settings pages use (#1573): a choice saves at once, a text
 field on blur, and a focused field is flushed before leaving the page. The
 universe's known-setting picker writes a hidden field from script, which
 fires no change event, so a pick or an unlink submits the form itself, and
-its search box is left out of the autosave.
+its search box is left out of the autosave. A review of that change found
+writer-trust gaps, now fixed with tests in `e2e/settings-autosave.spec.ts`:
+kit's focus reset after every successful save took focus from the text field
+the writer had moved on to (keepEditorFocus in `#lib/enhance` now hands it
+back to inputs, textareas and selects, not only editors), and the reset's
+blur fired a change that saved half a word (autosubmitForm now skips a text
+field whose focus is being restored and saves it on its next real blur).
+Text fields use `defaultValue`, so a refresh never writes over a field the
+writer has typed in again. A rename's redirect is followed with
+`goto(..., { reset: false, replace: true })`, so the next field keeps focus
+and saves to the new address, and leaving by a link with an unsaved rename
+saves the rename first instead of loading the old address.
 
 Staging review of the language setting and Assistant preferences, round 8
 (2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's

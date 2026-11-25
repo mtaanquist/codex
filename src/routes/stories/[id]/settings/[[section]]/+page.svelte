@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { beforeNavigate } from '$app/navigation';
-	import { flushFocusedField } from '#lib/autosave-form';
+	import { flushBeforeNavigate, flushFocusedField } from '#lib/autosave-form';
 	import { storyCoverColor } from '#lib/entity-color';
 	import { letterFill } from '#lib/entity-badge';
 	import AppBar from '#lib/components/AppBar.svelte';
@@ -54,7 +54,7 @@
 
 	// The settings forms (Editor, Page setup, Goals) save on change instead of
 	// with a button; see #lib/autosave-form.
-	beforeNavigate(flushFocusedField);
+	beforeNavigate(flushBeforeNavigate);
 
 	const coverColor = $derived(storyCoverColor(data.story));
 

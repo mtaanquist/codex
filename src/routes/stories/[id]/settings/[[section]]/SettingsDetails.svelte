@@ -36,8 +36,8 @@
 				class="input"
 				type="text"
 				name="title"
-				value={data.story.title}
-				required
+				defaultValue={data.story.title}
+				data-renames
 			/>
 			<span class="field-hint">
 				The web address follows the title: /stories/{data.story.slug}. Renaming moves the address;
@@ -51,18 +51,27 @@
 				class="input"
 				type="text"
 				name="author"
-				value={data.story.author ?? ''}
+				defaultValue={data.story.author ?? ''}
 			/>
 		</div>
 		<div class="field">
 			<label for="st-brief">Brief</label>
-			<input id="st-brief" class="input" type="text" name="brief" value={data.story.brief ?? ''} />
+			<input
+				id="st-brief"
+				class="input"
+				type="text"
+				name="brief"
+				defaultValue={data.story.brief ?? ''}
+			/>
 		</div>
 		<div class="field">
 			<label for="st-description">Description</label>
-			<textarea id="st-description" class="input" name="description" rows="4"
-				>{data.story.descriptionMd ?? ''}</textarea
-			>
+			<textarea
+				id="st-description"
+				class="input"
+				name="description"
+				rows="4"
+				defaultValue={data.story.descriptionMd ?? ''}></textarea>
 		</div>
 		{#if !data.story.coverAssetId}
 			<div class="field">
@@ -107,9 +116,12 @@
 		</div>
 		<div class="field">
 			<label for="st-style-notes">Genre and style</label>
-			<textarea id="st-style-notes" class="input" name="styleNotes" rows="2"
-				>{data.story.styleNotes ?? ''}</textarea
-			>
+			<textarea
+				id="st-style-notes"
+				class="input"
+				name="styleNotes"
+				rows="2"
+				defaultValue={data.story.styleNotes ?? ''}></textarea>
 			<p class="field-hint">
 				A sentence on the genre and the style you are writing in, for example "epic fantasy serial,
 				omniscient narrator, formal prose". The intended audience and a comparison title or two also

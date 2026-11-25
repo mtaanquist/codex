@@ -5,7 +5,12 @@
 	import { beforeNavigate, refreshAll } from '$app/navigation';
 	import { tick } from 'svelte';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm, flushFocusedField } from '#lib/autosave-form';
+	import {
+		autosaveSubmit,
+		autosubmitForm,
+		flushBeforeNavigate,
+		flushFocusedField
+	} from '#lib/autosave-form';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
@@ -36,7 +41,7 @@
 
 	// The Details forms save on change instead of with a button; see
 	// #lib/autosave-form.
-	beforeNavigate(flushFocusedField);
+	beforeNavigate(flushBeforeNavigate);
 
 	// The setting picker fills a hidden field from script, which fires no
 	// change event, so a pick or an unlink saves the form itself. Typing in
@@ -279,8 +284,8 @@
 						class="input"
 						type="text"
 						name="name"
-						value={data.universe.name}
-						required
+						defaultValue={data.universe.name}
+						data-renames
 					/>
 					<span class="field-hint">
 						The web address follows the name: /universes/{data.universe.slug}. Renaming moves the
@@ -289,9 +294,12 @@
 				</div>
 				<div class="field">
 					<label for="u-description">Description</label>
-					<textarea id="u-description" class="input" name="description" rows="6"
-						>{data.universe.descriptionMd ?? ''}</textarea
-					>
+					<textarea
+						id="u-description"
+						class="input"
+						name="description"
+						rows="6"
+						defaultValue={data.universe.descriptionMd ?? ''}></textarea>
 					<span class="field-hint">Markdown is fine. Shown on the library card.</span>
 				</div>
 				<div class="field">

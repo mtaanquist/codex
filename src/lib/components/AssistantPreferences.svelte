@@ -154,8 +154,8 @@
 				class="input"
 				name="assistantNotes"
 				rows="3"
-				maxlength={MAX_ASSISTANT_NOTES}>{values.assistantNotes ?? ''}</textarea
-			>
+				maxlength={MAX_ASSISTANT_NOTES}
+				defaultValue={values.assistantNotes ?? ''}></textarea>
 			<p class="field-hint">
 				Habits only you know about, for example "I overuse the word 'just'" or "Sentence fragments
 				are on purpose, leave them". Reviews, including "Look for habits that repeat in the prose",
