@@ -294,6 +294,9 @@ describe('moderation lists', () => {
 		expect(second.hasMore).toBe(false);
 		const seen = new Set([...first.editions, ...second.editions].map((row) => row.id));
 		expect(seen.size).toBe(LIVE_EDITIONS_PAGE_SIZE + 2);
+		// A huge page number is an empty page, not an offset Postgres refuses.
+		const far = await listLiveEditions(db, { page: 1e20 });
+		expect(far).toMatchObject({ editions: [], total: LIVE_EDITIONS_PAGE_SIZE + 2, hasMore: false });
 
 		const found = await listLiveEditions(db, { query: 'story 7' });
 		expect(found.editions.map((row) => row.title)).toEqual(['Story 7']);

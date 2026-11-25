@@ -873,6 +873,9 @@ describe('account usage', () => {
 		const ids = new Set([...first.accounts, ...second.accounts].map((u) => u.id));
 		expect(ids.size).toBe(total);
 		expect((await listAccountUsage(db, { page: -4 })).page).toBe(0);
+		// A huge page number is an empty page, not an offset Postgres refuses.
+		const far = await listAccountUsage(db, { page: 1e20 });
+		expect(far).toMatchObject({ total, accounts: [], hasMore: false });
 	});
 
 	it('finds accounts by email or name, with LIKE wildcards taken as typed', async () => {
