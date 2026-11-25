@@ -28,6 +28,7 @@ import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 import { zipBytes } from '../../src/lib/server/zip-stream';
 import { isCoverColor } from '../../src/lib/entity-color';
+import { MAX_ASSISTANT_NOTES } from '../../src/lib/assistant-preferences';
 
 let pool: pg.Pool;
 let db: Database;
@@ -343,6 +344,81 @@ describe('runImport', () => {
 		const result = await runImport(db, universe, plan);
 		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
 		expect(imported).toMatchObject(settings);
+	});
+
+	it('round-trips text with line and paragraph separators, emoji, quotes and blank lines', async () => {
+		const original = await seedStory();
+		// U+2028 and U+2029 come in with text pasted from Word or a PDF, and
+		// JSON.stringify leaves them raw in the front matter.
+		const odd = 'One\u2028two\u2029three "quoted" \'single\' \u{1F409}';
+		const fields = {
+			title: `Halden ${odd}`,
+			author: `A. Vane ${odd}`,
+			brief: `A toll road.\u2028${odd}`,
+			descriptionMd: `The long road.\n\n\n${odd}`,
+			styleNotes: `Omniscient.\n\n${odd}\n\nNo slang.`,
+			// Notes up to the limit, emoji counting as two characters.
+			assistantNotes: `${odd}\n\n`.padEnd(MAX_ASSISTANT_NOTES - 2, 'x') + '\u{1F409}'
+		};
+		expect(fields.assistantNotes).toHaveLength(MAX_ASSISTANT_NOTES);
+		await db.update(stories).set(fields).where(eq(stories.id, original.id));
+		await db
+			.update(chapters)
+			.set({ title: `The Caravan ${odd}` })
+			.where(eq(chapters.storyId, original.id));
+		await db
+			.update(scenes)
+			.set({ title: `Departure ${odd}`, bodyMd: `The gate opened.\n\n\n${odd}` })
+			.where(eq(scenes.title, 'Departure'));
+		await db
+			.update(notes)
+			.set({ title: `Threads ${odd}`, bodyMd: `Who paid?\u2029${odd}` })
+			.where(eq(notes.title, 'Threads'));
+		await db
+			.update(characterStoryNotes)
+			.set({ notesMd: `Limps.\n\n${odd}` })
+			.where(eq(characterStoryNotes.storyId, original.id));
+		await db
+			.update(characters)
+			.set({ name: `Alice ${odd}` })
+			.where(eq(characters.name, 'Alice Vane'));
+
+		const [configured] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const plan = await exportPlan(configured);
+		expect(plan.problems).toEqual([]);
+		const result = await runImport(db, universe, plan);
+		expect(result.problems).toEqual([]);
+
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported).toMatchObject(fields);
+		const [chapter] = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(chapter.title).toBe(`The Caravan ${odd}`);
+		const [scene] = await db
+			.select()
+			.from(scenes)
+			.where(eq(scenes.storyId, result.storyId))
+			.orderBy(asc(scenes.globalPosition));
+		expect([scene.title, scene.bodyMd]).toEqual([
+			`Departure ${odd}`,
+			`The gate opened.\n\n\n${odd}`
+		]);
+		const [note] = await db
+			.select()
+			.from(notes)
+			.where(eq(notes.storyId, result.storyId))
+			.orderBy(asc(notes.createdAt));
+		expect([note.title, note.bodyMd]).toEqual([`Threads ${odd}`, `Who paid?\u2029${odd}`]);
+		const [entityNote] = await db
+			.select()
+			.from(characterStoryNotes)
+			.where(eq(characterStoryNotes.storyId, result.storyId));
+		expect(entityNote.notesMd).toBe(`Limps.\n\n${odd}`);
+		expect(result.notesAttached).toBe(1);
+		expect(result.entitiesCreated).toBe(0);
 	});
 
 	it('leaves unset settings out of story.md and imports them as unset', async () => {

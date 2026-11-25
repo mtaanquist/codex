@@ -33,6 +33,15 @@ describe('parseFrontMatter', () => {
 		expect(parseFrontMatter('---\nnever closed').body).toBe('---\nnever closed');
 	});
 
+	it('keeps values and list items that hold a line or paragraph separator', () => {
+		const value = 'One\u2028two\u2029three';
+		const { fields } = parseFrontMatter(
+			`---\nstyle-notes: ${JSON.stringify(value)}\naliases:\n  - ${JSON.stringify(value)}\n---\n`
+		);
+		expect(fields['style-notes']).toBe(value);
+		expect(fields.aliases).toEqual([value]);
+	});
+
 	it('falls back to the raw text for unquoted values', () => {
 		expect(parseFrontMatter('---\ntitle: Plain words\n---\n').fields.title).toBe('Plain words');
 	});
