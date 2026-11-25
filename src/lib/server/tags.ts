@@ -2,6 +2,7 @@ import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { storyTags, tags, universes } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
+import { pageIndex } from './paging.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
 import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
@@ -377,7 +378,7 @@ export async function listTagsForModeration(
 	kind: TagKind,
 	options: { query?: string; page?: number } = {}
 ) {
-	const page = Math.max(0, Math.floor(options.page ?? 0));
+	const page = pageIndex(options.page ?? 0);
 	const query = options.query?.trim() ?? '';
 	const target = sql`(select name from tags m where m.id = ${tags.mergedIntoId})`;
 	const rows = await db

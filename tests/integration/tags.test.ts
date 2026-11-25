@@ -13,6 +13,7 @@ import {
 	findFandoms,
 	listedByName,
 	listEntries,
+	listTagsForModeration,
 	mergeTag,
 	pickListed,
 	renameTag,
@@ -465,6 +466,19 @@ describe('moderation by kind', () => {
 		const [row] = await db.select().from(tags).where(eq(tags.id, fandom));
 		expect(row).toMatchObject({ name: 'Discworld', removedAt: null, mergedIntoId: null });
 		expect(await mergedInto('fantasy')).toBe(await tagId('horror'));
+	});
+
+	it('lists a huge page number as an empty page, and Infinity as the first', async () => {
+		await addListEntries(db, 'genre', 'Fantasy\nHorror');
+		expect((await listTagsForModeration(db, 'genre')).rows).toHaveLength(2);
+		expect(await listTagsForModeration(db, 'genre', { page: 1e20 })).toMatchObject({
+			rows: [],
+			more: false
+		});
+		// Not a number at all reads as the first page.
+		const odd = await listTagsForModeration(db, 'genre', { page: Infinity });
+		expect(odd.page).toBe(0);
+		expect(odd.rows).toHaveLength(2);
 	});
 });
 
