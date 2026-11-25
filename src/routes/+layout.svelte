@@ -97,7 +97,9 @@
 	$effect(() => syncBrowseAdult());
 	beforeNavigate((navigation) => {
 		const to = navigation.to;
-		if (navigation.type === 'leave' || navigation.type === 'popstate') return;
+		// A full page load is left to the pre-paint script, and going back to an
+		// older entry to the universal load.
+		if (navigation.willUnload || navigation.type === 'popstate') return;
 		if (!to || to.route.id !== '/browse') return;
 		const target = withRememberedAdult(to.url, browseAdultRemembered());
 		if (!target) return;
