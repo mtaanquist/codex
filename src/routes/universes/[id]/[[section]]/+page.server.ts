@@ -13,7 +13,7 @@ import { quotaFailure } from '#lib/server/quotas';
 import { effectiveAssetConfig } from '#lib/server/assets';
 import { listUserExports, markExportFailed, requestExport } from '#lib/server/user-exports';
 import { queueUserExport } from '#lib/server/jobs';
-import { exportLimit } from '#lib/server/rate-limit';
+import { exportLimit, importLimit } from '#lib/server/rate-limit';
 import { formText } from '#lib/server/validation';
 import { assistantLayout, saveUniverseModels } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
@@ -27,7 +27,15 @@ import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/t
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
-async function planFromUpload(data: FormData) {
+async function planFromUpload(userId: string, data: FormData) {
+	if (!importLimit(userId).allowed) {
+		return {
+			fail: fail(429, {
+				action: 'import' as const,
+				message: 'Too many imports just now. Try again shortly.'
+			})
+		};
+	}
 	const file = data.get('archive');
 	if (!(file instanceof File) || file.size === 0) {
 		return { fail: fail(400, { action: 'import' as const, message: 'Choose a file first.' }) };
@@ -276,7 +284,7 @@ export const actions: Actions = {
 	},
 	previewImport: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
-		const upload = await planFromUpload(await request.formData());
+		const upload = await planFromUpload(locals.user!.id, await request.formData());
 		if (upload.fail) return upload.fail;
 		return {
 			action: 'import' as const,
@@ -285,7 +293,7 @@ export const actions: Actions = {
 	},
 	runImport: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
-		const upload = await planFromUpload(await request.formData());
+		const upload = await planFromUpload(locals.user!.id, await request.formData());
 		if (upload.fail) return upload.fail;
 		try {
 			return {

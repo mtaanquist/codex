@@ -26,6 +26,10 @@ const MAX_INPUT_BYTES = 25 * 1024 * 1024;
 const MAX_ENTRIES = 5000;
 const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
+// One EPUB spine document, in bytes. Converting one takes roughly 40 to 60
+// times its size in memory, so this keeps a conversion well under a gigabyte.
+// A whole novel in a single file is a few megabytes.
+const MAX_SPINE_FILE_BYTES = 10 * 1024 * 1024;
 
 export async function parseDocument(bytes: Uint8Array, filename: string): Promise<ImportPlan> {
 	if (bytes.length === 0) throw new DocumentImportError('This file is empty.');
@@ -47,6 +51,13 @@ export async function parseDocument(bytes: Uint8Array, filename: string): Promis
 const WORKER_ENTRY = resolve('src/lib/server/import-document-worker.ts');
 const PARSE_TIME_LIMIT_MS = 30_000;
 const TOO_SLOW = 'This file took too long to read. Try splitting it into smaller files.';
+const TOO_LARGE = 'This file is too large to read. Try splitting it into smaller files.';
+const BUSY = 'Another file is being read. Try again in a minute.';
+// Each conversion can hold hundreds of megabytes and a core for the full time
+// limit, so only this many run at once across the whole server; more are
+// turned away rather than queued.
+const MAX_RUNNING_CONVERSIONS = 2;
+let runningConversions = 0;
 
 type WorkerReply = { plan: ImportPlan } | { importError: string };
 
@@ -55,15 +66,24 @@ export function parseDocumentInWorker(
 	filename: string,
 	timeLimitMs = PARSE_TIME_LIMIT_MS
 ): Promise<ImportPlan> {
+	if (runningConversions >= MAX_RUNNING_CONVERSIONS) {
+		return Promise.reject(new DocumentImportError(BUSY));
+	}
+	runningConversions++;
 	return new Promise((resolvePlan, reject) => {
 		const worker = new Worker(WORKER_ENTRY, { workerData: { bytes, filename } });
+		// The slot is freed once the worker has stopped, before the caller hears
+		// back, so a caller that settles can start another conversion at once.
 		const settle = (outcome: () => void) => {
 			clearTimeout(timer);
 			worker.removeAllListeners();
 			// Errors after this point have nowhere to go.
 			worker.on('error', () => {});
-			void worker.terminate();
-			outcome();
+			const release = () => {
+				runningConversions--;
+				outcome();
+			};
+			worker.terminate().then(release, release);
 		};
 		const timer = setTimeout(
 			() => settle(() => reject(new DocumentImportError(TOO_SLOW))),
@@ -76,7 +96,15 @@ export function parseDocumentInWorker(
 					: reject(new DocumentImportError(reply.importError))
 			)
 		);
-		worker.once('error', (err) => settle(() => reject(err)));
+		worker.once('error', (err) =>
+			settle(() =>
+				reject(
+					(err as NodeJS.ErrnoException).code === 'ERR_WORKER_OUT_OF_MEMORY'
+						? new DocumentImportError(TOO_LARGE)
+						: err
+				)
+			)
+		);
 		worker.once('exit', (code) =>
 			settle(() => reject(new Error(`Document import worker exited with code ${code}`)))
 		);
@@ -107,12 +135,17 @@ const NON_NESTING_TAGS = new Set(
 const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
 const TAG_NAME = /<(\/?)([a-zA-Z][\w:-]*)/y;
 
-// The deepest element nesting in an HTML fragment, in one pass. A count of
+// The deepest element nesting in an HTML fragment, in one pass. A stack of
 // open tags rather than a parse, so it can overstate sloppy markup a little.
-// Turndown parses as HTML, where "<span/>" opens a span that stays open, so a
-// trailing slash does not close a tag here either.
+// As in an HTML parser, an end tag closes the nearest open element of its name
+// and any left open inside it, and an end tag with no open element of its name
+// is ignored. Turndown parses as HTML, where "<span/>" opens a span that stays
+// open, so a trailing slash does not close a tag here either.
 export function nestingDepth(html: string): number {
-	let depth = 0;
+	const open: string[] = [];
+	// How many of each name are on the stack, so a stray end tag is found
+	// without searching it.
+	const openCounts = new Map<string, number>();
 	let max = 0;
 	let i = html.indexOf('<');
 	while (i !== -1) {
@@ -134,13 +167,24 @@ export function nestingDepth(html: string): number {
 		const name = match[2].toLowerCase();
 		let next = end + 1;
 		if (!NON_NESTING_TAGS.has(name)) {
-			if (closing) depth = Math.max(0, depth - 1);
-			else if (RAW_TEXT_TAGS.has(name)) {
+			if (closing) {
+				if (openCounts.get(name)) {
+					let popped: string;
+					do {
+						popped = open.pop()!;
+						openCounts.set(popped, openCounts.get(popped)! - 1);
+					} while (popped !== name);
+				}
+			} else if (RAW_TEXT_TAGS.has(name)) {
 				const close = new RegExp(`</${name}`, 'gi');
 				close.lastIndex = next;
 				if (!close.exec(html)) break;
 				next = close.lastIndex - name.length - 2;
-			} else if (++depth > max) max = depth;
+			} else {
+				open.push(name);
+				openCounts.set(name, (openCounts.get(name) ?? 0) + 1);
+				if (open.length > max) max = open.length;
+			}
 		}
 		i = html.indexOf('<', next);
 	}
@@ -298,6 +342,11 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 		const path = posixResolve(opfDir, decodePath(href));
 		const data = entries[path];
 		if (!data || !/\.x?html?$/i.test(path)) continue;
+		if (data.length > MAX_SPINE_FILE_BYTES) {
+			throw new DocumentImportError(
+				'This EPUB has a section too large to import. Try splitting it into smaller files.'
+			);
+		}
 		const rewritten = rewriteEpubImages(strFromU8(data), path, entries, assets, assetPaths);
 		const body = extractBody(rewritten);
 		bodies.push(body);
