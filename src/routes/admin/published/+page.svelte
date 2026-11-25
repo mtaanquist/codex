@@ -56,7 +56,11 @@
 	{#if data.live.editions.length === 0}
 		<div class="admin-card">
 			<p class="admin-block-sub" style="margin:0;">
-				{query ? 'No edition matches that search.' : 'Nothing is published right now.'}
+				{#if data.live.page > 0}
+					No editions on this page. <a href={livePageHref(0)}>Go to the first page</a>.
+				{:else}
+					{query ? 'No edition matches that search.' : 'Nothing is published right now.'}
+				{/if}
 			</p>
 		</div>
 	{:else}
@@ -156,9 +160,14 @@
 									edition.removedReason
 								)}
 							</div>
-							{#if edition.hiddenByAccountDeletion}
+							{#if edition.ownerDeletionPending}
 								<div class="list-sub">
-									The writer asked to delete their account. Restoring lets them publish again but
+									The writer asked to delete their account. You can restore this edition only if the
+									deletion is cancelled.
+								</div>
+							{:else if edition.hiddenByAccountDeletion}
+								<div class="list-sub">
+									The writer's account deletion was cancelled. Restoring lets them publish again but
 									keeps this edition hidden.
 								</div>
 							{/if}
