@@ -1,8 +1,11 @@
 import {
 	and,
+	asc,
+	count,
 	desc,
 	eq,
 	exists,
+	ilike,
 	inArray,
 	isNotNull,
 	isNull,
@@ -29,6 +32,7 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import { likePattern } from './sql-like.ts';
 import { tagsForStories } from './tags.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
@@ -667,31 +671,68 @@ export async function restorePublication(db: Database, publicationId: string): P
 	});
 }
 
-// The admin's view of everything published on this instance.
-export async function listPublications(db: Database, limit = 50) {
-	return await db
+export const LIVE_EDITIONS_PAGE_SIZE = 50;
+
+// The Published page: every story's current edition that is up, newest
+// first, one page at a time, optionally narrowed to a handle or title.
+export async function listLiveEditions(
+	db: Database,
+	{ query = '', page = 0 }: { query?: string; page?: number } = {}
+) {
+	const safePage = Math.max(0, Math.floor(Number.isFinite(page) ? page : 0));
+	const text = query.trim();
+	const pattern = likePattern(text);
+	const where = and(
+		eq(publications.isCurrent, true),
+		isNull(publications.removedAt),
+		text ? or(ilike(publications.handle, pattern), ilike(publications.title, pattern)) : undefined
+	);
+	const [{ total }] = await db.select({ total: count() }).from(publications).where(where);
+	// One row past the page says whether a next page exists.
+	const rows = await db
 		.select({
 			id: publications.id,
 			handle: publications.handle,
 			title: publications.title,
 			isAdult: publications.isAdult,
-			isCurrent: publications.isCurrent,
-			removedAt: publications.removedAt,
-			removedReason: publications.removedReason,
 			publishedAt: publications.publishedAt,
 			storyId: publications.storyId,
 			listedInBrowse: stories.listedInBrowse,
-			browseBlockedAt: stories.browseBlockedAt,
-			browseBlockedReason: stories.browseBlockedReason
+			browseBlockedAt: stories.browseBlockedAt
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
-		.orderBy(desc(publications.publishedAt))
-		.limit(limit);
+		.where(where)
+		.orderBy(desc(publications.publishedAt), asc(publications.id))
+		.limit(LIVE_EDITIONS_PAGE_SIZE + 1)
+		.offset(safePage * LIVE_EDITIONS_PAGE_SIZE);
+	return {
+		editions: rows.slice(0, LIVE_EDITIONS_PAGE_SIZE),
+		total,
+		page: safePage,
+		hasMore: rows.length > LIVE_EDITIONS_PAGE_SIZE
+	};
+}
+
+// Stories a moderator removed from Browse, oldest first, so "Allow in Browse
+// again" stays reachable however many editions are published after them.
+export async function listBrowseBlocked(db: Database) {
+	return await db
+		.select({
+			storyId: stories.id,
+			title: stories.title,
+			handle: users.handle,
+			browseBlockedAt: stories.browseBlockedAt,
+			browseBlockedReason: stories.browseBlockedReason
+		})
+		.from(stories)
+		.innerJoin(users, eq(users.id, stories.ownerId))
+		.where(isNotNull(stories.browseBlockedAt))
+		.orderBy(stories.browseBlockedAt);
 }
 
 // Current editions a moderator took down, oldest takedown first, for the
-// Restore list. Separate from listPublications so none drop out of view.
+// Restore list. Separate from listLiveEditions so none drop out of view.
 export async function listTakenDown(db: Database) {
 	return await db
 		.select({
