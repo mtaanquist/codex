@@ -485,7 +485,9 @@ primitive's own class too, but do not copy the pattern.
 - Inline result messages: the `FormStatus.svelte` component. Pass `live`
   where the message changes without a page load (an enhanced form whose row
   goes away): the status region then stays in the page, so each new message
-  is read out. The older
+  is read out. In an autosaving form (`#lib/autosave-form`) whose last save
+  errored, the form's first `FormStatus` shows the not-saved message in place
+  of its own, so every autosaving form needs one. The older
   `.form-error`/`.form-saved` classes remain in some routes; do not spread
   them further.
 - Do not hand-roll a text field. The codebase has 15+ one-off inputs that

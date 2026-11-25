@@ -1,11 +1,14 @@
 <script lang="ts">
+	import { failedSaves, NOT_SAVED } from '#lib/autosave-form';
+
 	// The inline save-feedback line that sits in a settings form's action row:
 	// an error in the danger colour, or a success note in the final-status
 	// colour. The caller passes the already-narrowed strings (which scope/action
-	// matched), so this stays a dumb presentational component.
+	// matched). In an autosaving form whose last save errored, the first
+	// FormStatus in the form says so in place of either.
 	let {
-		error = null,
-		success = null,
+		error: givenError = null,
+		success: givenSuccess = null,
 		block = false,
 		live = false
 	}: {
@@ -18,7 +21,17 @@
 		// is read out by screen readers. Implies block.
 		live?: boolean;
 	} = $props();
+
+	let marker = $state<HTMLElement>();
+	const form = $derived(marker?.closest('form'));
+	const failed = $derived(
+		!!form && failedSaves.has(form) && form.querySelector('[data-form-status]') === marker
+	);
+	const error = $derived(failed ? NOT_SAVED : givenError);
+	const success = $derived(failed ? null : givenSuccess);
 </script>
+
+<span hidden data-form-status bind:this={marker}></span>
 
 {#if live}
 	<div role="status">
