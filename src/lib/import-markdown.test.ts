@@ -220,6 +220,26 @@ describe('parseStoryZip', () => {
 		expect(plan.problems).toEqual([]);
 	});
 
+	it('keeps the indent of a first line and drops only blank lines around a body', () => {
+		const code = '    let x = 1;\n\nThen prose.';
+		const plan = parseStoryZip(
+			zip({
+				'h/story.md': `---\ntitle: "H"\n---\n${code}`,
+				'h/chapters/01-a/chapter.md': `---\ntitle: "A"\n---\n\n${code}\n\n`,
+				'h/chapters/01-a/01-s.md': `---\ntitle: "S"\n---\n${code}\n`,
+				'h/notes/characters/ann.md': `---\nname: "Ann"\n---\n${code}`,
+				'h/notebook/idea.md': `---\ntitle: "Idea"\n---\n${code}`,
+				'h/waiting-drafts/01.md': `---\nscene: "chapters/01-a/01-s.md"\n---\n${code}`
+			})
+		);
+		expect(plan.story.descriptionMd).toBe(code);
+		expect(plan.chapters[0].summaryMd).toBe(code);
+		expect(plan.chapters[0].scenes[0].bodyMd).toBe(code);
+		expect(plan.notes[0].notesMd).toBe(code);
+		expect(plan.freeformNotes![0].bodyMd).toBe(code);
+		expect(plan.waitingDrafts![0].textMd).toBe(code);
+	});
+
 	it('flags unknown statuses as problems and starts those scenes as drafts', () => {
 		const plan = parseStoryZip(full());
 		expect(plan.chapters[0].scenes[1].status).toBeNull();

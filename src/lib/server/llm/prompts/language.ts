@@ -51,6 +51,12 @@ function interferingNative(
 	return { native, language };
 }
 
+// The native language as far as a prompt that hints at it reads it: null
+// where no hint is given.
+export function hintedNative(setting: LanguageSetting): WritingLanguage | null {
+	return interferingNative(setting)?.native ?? null;
+}
+
 // For copyedit and prose review: slips carried over from the writer's native
 // language, as a place to look rather than a reason to flag every sentence.
 export function nativeInterferenceLine(setting: LanguageSetting): string {

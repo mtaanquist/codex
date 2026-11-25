@@ -775,6 +775,38 @@ describe('per-run spend cap (#549)', () => {
 		expect(second.seen).toHaveLength(1);
 	});
 
+	// #1625: only a pass whose prompts hint at the native language restarts on
+	// a change to it.
+	it('restarts on a native language change only when the review reads it', async () => {
+		for (const [categories, scenesSeen] of [
+			[['lore'], 1],
+			[['prose'], 3]
+		] as const) {
+			const storyId = await seedStory(3);
+			await db.update(stories).set({ language: 'en-GB' }).where(eq(stories.id, storyId));
+			await db.update(users).set({ nativeLanguage: 'da' }).where(eq(users.id, userId));
+			await priceModel();
+			await configure({ spendCapUsd: 1.5 });
+			const first = await reviewStoryScenes(
+				db,
+				{ userId, storyId, categories: [...categories], jobId: `native-${storyId}-1` },
+				{ provider: provider().provider }
+			);
+			expect(first.capped).toBe(true);
+
+			await db.update(users).set({ nativeLanguage: 'sv' }).where(eq(users.id, userId));
+			await configure({ spendCapUsd: 10 });
+			const second = provider();
+			await reviewStoryScenes(
+				db,
+				{ userId, storyId, categories: [...categories], jobId: `native-${storyId}-2` },
+				{ provider: second.provider }
+			);
+
+			expect(second.seen).toHaveLength(scenesSeen);
+		}
+	});
+
 	it('continues a capped run saved before the settings were recorded', async () => {
 		const storyId = await seedStory(3);
 		await priceModel();

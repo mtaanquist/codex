@@ -140,6 +140,12 @@ function parseScalar(value: string): string {
 	}
 }
 
+// A file's body without the blank lines around it. The first line keeps its
+// indent: four leading spaces make a code block.
+function bodyText(body: string): string {
+	return body.replace(/^(?:[ \t]*\n)+/, '').replace(/[ \t\n]+$/, '');
+}
+
 function scalar(fields: FrontMatter, key: string): string | null {
 	const value = fields[key];
 	return typeof value === 'string' && value !== '' ? value : null;
@@ -295,7 +301,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		title: scalar(storyDoc.fields, 'title') ?? deslug(root.replace(/\/$/, '')) ?? 'Imported story',
 		author: scalar(storyDoc.fields, 'author'),
 		brief: scalar(storyDoc.fields, 'brief'),
-		descriptionMd: storyDoc.body.trim(),
+		descriptionMd: bodyText(storyDoc.body),
 		...(scalar(storyDoc.fields, 'adult') === 'true' && { isAdult: true }),
 		...labelLists(storyDoc.fields),
 		...assistantSettings(storyDoc.fields, problems)
@@ -315,7 +321,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				problems.push(`${rel}: unknown status "${rawStatus}"; the scene starts as a draft.`);
 			}
 		}
-		return { title: scalar(doc.fields, 'title'), status, bodyMd: doc.body.trim() };
+		return { title: scalar(doc.fields, 'title'), status, bodyMd: bodyText(doc.body) };
 	};
 
 	// Group chapter files by folder, ordered by the NN- prefix.
@@ -350,7 +356,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				problems.push(`${rel}: the note names no entity and will be skipped.`);
 				continue;
 			}
-			notes.push({ kind, name, notesMd: doc.body.trim() });
+			notes.push({ kind, name, notesMd: bodyText(doc.body) });
 		} else if (parts[0] === 'notebook' && parts.length === 2 && parts[1].endsWith('.md')) {
 			notebook.push({ rel, doc: parseFrontMatter(read(path)) });
 		} else if (parts[0] === 'waiting-drafts' && parts.length === 2 && parts[1].endsWith('.md')) {
@@ -370,7 +376,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 			const metaFile = group.files.find((f) => f.file === 'chapter.md');
 			const meta = metaFile ? parseFrontMatter(read(metaFile.path)) : null;
 			const title = meta ? scalar(meta.fields, 'title') : deslug(group.name);
-			const summaryMd = meta?.body.trim() || null;
+			const summaryMd = (meta && bodyText(meta.body)) || null;
 			const scenes = group.files
 				.filter((f) => f.file !== 'chapter.md')
 				.sort((a, b) => orderOf(a.file) - orderOf(b.file) || a.file.localeCompare(b.file))
@@ -402,7 +408,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		const createdAt = created ? new Date(created) : null;
 		return {
 			title: scalar(doc.fields, 'title'),
-			bodyMd: doc.body.trim(),
+			bodyMd: bodyText(doc.body),
 			pinned: scalar(doc.fields, 'pinned') === 'true',
 			scene,
 			createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null
@@ -435,7 +441,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					note: scalar(doc.fields, 'note'),
 					chapterBrief: scalar(doc.fields, 'chapter-brief'),
 					source: scalar(doc.fields, 'source') === 'app' ? 'app' : 'assistant',
-					textMd: doc.body.trim()
+					textMd: bodyText(doc.body)
 				}
 			];
 		});

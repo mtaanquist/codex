@@ -8,6 +8,7 @@ import {
 	CATEGORY_LABELS,
 	isFullReview,
 	REVIEW_CATEGORIES,
+	type PatternScope,
 	type ReviewCategory
 } from '../../../review-shape.ts';
 import { bodyExcerpt, estimateTokens } from '../context/assemble.ts';
@@ -128,6 +129,16 @@ export function readsWording(categories: ReviewCategory[]): boolean {
 	return (
 		categories.length === 0 || categories.includes('mechanics') || categories.includes('prose')
 	);
+}
+
+// Whether a review's prompts hint at the writer's native language: an
+// exhaustive pass that reads the wording (see focusInstruction), or a run
+// with a pattern pass.
+export function readsNative(
+	categories: ReviewCategory[],
+	patterns: PatternScope | undefined
+): boolean {
+	return (categories.length > 0 && readsWording(categories)) || Boolean(patterns);
 }
 
 // The lines a scene's review task adds for the language, for the estimate:

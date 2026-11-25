@@ -33,4 +33,10 @@ test('a new universe can be set in a known setting from the list', async ({ page
 
 	await expect(page.locator('.fandom-linked')).toContainText(setting);
 	await expect(page.getByLabel('Established setting')).toBeChecked();
+
+	// Unlinking saves on its own, though the picker changes a hidden field.
+	await page.getByRole('button', { name: 'Unlink' }).click();
+	await expect(page.getByRole('status')).toHaveText('Saved.');
+	await page.reload();
+	await expect(page.locator('.fandom-linked')).toHaveCount(0);
 });
