@@ -114,6 +114,45 @@ describe('parseDocument (docx)', () => {
 		}
 	});
 
+	// mammoth's zip reader tidies entry names ("./a", "a//b", "x/../a" all read
+	// as "a"), so the size limit has to see the same names.
+	const untidyNames = ['./word/document.xml', 'word//document.xml', 'x/../word/document.xml'];
+
+	it.each(untidyNames)('refuses a document too large to convert stored as %s', async (name) => {
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const files = unzipSync(buildDocx(paragraph('word '.repeat(2_200_000))));
+			files[name] = files['word/document.xml'];
+			delete files['word/document.xml'];
+			await expect(parseDocument(zipSync(files), 'huge.docx')).rejects.toThrow(
+				/too large to import/
+			);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it.each(untidyNames)('imports a document stored as %s', async (name) => {
+		const files = unzipSync(buildDocx(paragraph('Untidy.') + imageParagraph(), { title: 'T' }));
+		files[name] = files['word/document.xml'];
+		delete files['word/document.xml'];
+		files['./docProps/core.xml'] = files['docProps/core.xml'];
+		delete files['docProps/core.xml'];
+		const plan = await parseDocument(zipSync(files), 'untidy.docx');
+		expect(plan.story.title).toBe('T');
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Untidy.');
+		expect(plan.assets).toHaveLength(1);
+	});
+
+	it('refuses a document with two files that read as the same name', async () => {
+		const files = unzipSync(buildDocx(paragraph('Small.')));
+		files['./word/document.xml'] = files['word/document.xml'];
+		await expect(parseDocument(zipSync(files), 'twice.docx')).rejects.toThrow(
+			/could not be read as a Word document/
+		);
+	});
+
 	it('imports a renamed main part and does not count images toward the size limit', async () => {
 		const files = unzipSync(
 			renamePart(

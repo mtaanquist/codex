@@ -271,7 +271,7 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 	// mammoth's zip reader inflates every entry in full whatever size it
 	// declares, so unpack with the size guards first (fflate never writes past
 	// the declared size) and hand mammoth an uncompressed copy of what survived.
-	const entries = unzipGuarded(bytes, 'Word document');
+	const entries = jszipNames(unzipGuarded(bytes, 'Word document'));
 	if (docxXmlBytes(entries) > MAX_DOCX_XML_BYTES) {
 		throw new DocumentImportError(
 			'This Word document is too large to import. Try splitting it into smaller files.'
@@ -302,6 +302,36 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 	const { chapters, problems } = detectStructure(htmlToBlocks(html, newBudget()));
 	const core = docxCoreProperties(entries['docProps/core.xml']);
 	return buildPlan(core.title ?? fileStem(filename), core.author, chapters, assets, problems);
+}
+
+// mammoth's zip reader (JSZip) tidies every entry name as it loads, so
+// "./word/document.xml", "word//document.xml" and "x/../word/document.xml" all
+// read as "word/document.xml". Renaming the entries the same way before
+// counting and rezipping means the size check and mammoth see the same files.
+// Two entries that tidy to one name are refused rather than letting one hide.
+function jszipNames(entries: Record<string, Uint8Array>): Record<string, Uint8Array> {
+	const tidied: Record<string, Uint8Array> = {};
+	for (const [name, data] of Object.entries(entries)) {
+		const tidy = jszipResolve(name);
+		if (Object.hasOwn(tidied, tidy)) {
+			throw new DocumentImportError('This file could not be read as a Word document.');
+		}
+		tidied[tidy] = data;
+	}
+	return tidied;
+}
+
+// JSZip's utils.resolve: drops "." and empty segments (but keeps a leading or
+// trailing slash) and lets ".." remove the segment before it.
+function jszipResolve(path: string): string {
+	const parts = path.split('/');
+	const result: string[] = [];
+	parts.forEach((part, index) => {
+		if (part === '.' || (part === '' && index !== 0 && index !== parts.length - 1)) return;
+		if (part === '..') result.pop();
+		else result.push(part);
+	});
+	return result.join('/');
 }
 
 // The parts mammoth reads as XML: the content types, every relationships
