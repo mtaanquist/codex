@@ -132,6 +132,16 @@ describe('reviewSettingsKey', () => {
 		).not.toBe(plain);
 	});
 
+	it('changes with the style notes, which the prose is judged against', () => {
+		const plain = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true);
+		const noir = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, 'Hardboiled noir.');
+		expect(noir).not.toBe(plain);
+		expect(reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, 'Cosy mystery.')).not.toBe(noir);
+		// No notes keys as it did before style notes were part of the key.
+		expect(reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, null)).toBe(plain);
+		expect(reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, '  ')).toBe(plain);
+	});
+
 	it('changes with the native language only where the prompts hint at it', () => {
 		const english = { language: 'en-GB', native: 'da' } as const;
 		const swedish = { language: 'en-GB', native: 'sv' } as const;

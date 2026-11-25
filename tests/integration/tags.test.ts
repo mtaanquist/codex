@@ -277,6 +277,21 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Kept', 'Spoilers']);
 	});
 
+	it('will not add a tag merged into a removed tag, and says so', async () => {
+		await tagStory(otherStoryId, ['Spoilers', 'Spoiler']);
+		expect(await mergeTag(db, 'tag', await tagId('spoiler'), 'Spoilers')).toEqual({ ok: true });
+		await setTagRemoved(db, 'tag', await tagId('spoilers'), true, ownerId);
+		expect(await tagStory(storyId, ['spoiler', 'Kept'])).toEqual({ skipped: ['Spoiler'] });
+		const [{ n }] = (
+			await pool.query(
+				'select count(*)::int as n from story_tags st join tags t on t.id = st.tag_id where st.story_id = $1 and t.slug = $2',
+				[storyId, 'spoiler']
+			)
+		).rows;
+		expect(n).toBe(0);
+		expect(await names(storyId)).toEqual(['Kept']);
+	});
+
 	it('renames, refusing a name another tag has', async () => {
 		await tagStory(storyId, ['Slowburn', 'Slow Burn']);
 		expect((await renameTag(db, 'tag', await tagId('slowburn'), 'slow burn')).ok).toBe(false);

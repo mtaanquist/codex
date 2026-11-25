@@ -47,16 +47,18 @@ export function reviewScopeKey(input: ScopeInput): string {
 }
 
 // A short hash of the settings a review's prompts read: the story language,
-// for a pass that reads the wording the Assistant preferences (null for one
-// that does not, so changing them does not restart a lore-only review), and
-// the native language only where the prompts hint at it (see readsNative). Kept
+// for a pass that reads the wording the Assistant preferences and the story's
+// style notes (null for one that does not, so changing them does not restart a
+// lore-only review), and the native language only where the prompts hint at it
+// (see readsNative). Kept
 // on the run state rather than in the scope key, so the queue still holds one
 // job per scope, and compared when a capped run is adopted: a changed setting
 // starts a fresh run instead of carrying the old notes forward as done.
 export function reviewSettingsKey(
 	language: LanguageSetting,
 	preferences: PreferenceSetting | null,
-	readsNative: boolean
+	readsNative: boolean,
+	styleNotes: string | null = null
 ): string {
 	const input = JSON.stringify({
 		language: language.language,
@@ -65,7 +67,10 @@ export function reviewSettingsKey(
 			houseStyle: Object.entries(preferences.houseStyle).sort(([a], [b]) => a.localeCompare(b)),
 			leaveAlone: [...preferences.leaveAlone].sort(),
 			notes: preferences.notes
-		}
+		},
+		// Only when set, so a run made before style notes were keyed, on a story
+		// without them, keeps its key.
+		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {})
 	});
 	return createHash('sha256').update(input).digest('hex').slice(0, 16);
 }

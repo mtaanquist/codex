@@ -1375,7 +1375,8 @@ attempt for pg-boss to retry rather than starting over. A copyedit capped
 under the key from before v3.21.3 (no categories in it) is not continued; it
 starts over. A whole-story or chapter review also records a short hash of the
 settings its prompts read (`reviewSettingsKey`: the story language, plus the
-Assistant preferences for a pass that reads the wording), kept beside the
+Assistant preferences and the story's style notes for a pass that reads the
+wording, and the native language where the prompts hint at it), kept beside the
 scope rather than in it so the queue key is unchanged; a capped run with a
 different hash is not continued, so a changed setting starts over instead of
 counting notes made under the old one as done. A row saved before the hash

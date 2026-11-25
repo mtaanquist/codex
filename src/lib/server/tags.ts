@@ -161,8 +161,8 @@ export async function tagSurvivors(
 }
 
 // Replaces a story's free-form tags. A slug that matches an existing tag
-// reuses it (a merged one keeps pointing at its survivor); a removed tag
-// cannot be added back and comes back in `skipped`.
+// reuses it (a merged one keeps pointing at its survivor); a removed tag, or
+// one merged into a removed tag, cannot be added and comes back in `skipped`.
 export async function setStoryTags(
 	db: Database,
 	storyId: string,
@@ -180,12 +180,14 @@ export async function setStoryTags(
 			cleaned.size === 0
 				? []
 				: await tx
-						.select({ id: tags.id, name: tags.name, removedAt: tags.removedAt })
+						.select({ id: tags.id, name: tags.name, slug: tags.slug })
 						.from(tags)
 						.where(and(eq(tags.kind, 'tag'), inArray(tags.slug, [...cleaned.keys()])));
+		const survivors = await tagSurvivors(tx, [...cleaned.keys()]);
 		const keep = found.filter((tag) => {
-			if (tag.removedAt) skipped.push(tag.name);
-			return !tag.removedAt;
+			const hidden = survivors.get(tag.slug) === null;
+			if (hidden) skipped.push(tag.name);
+			return !hidden;
 		});
 		await replaceStoryTags(
 			tx,

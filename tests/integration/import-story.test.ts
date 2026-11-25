@@ -367,6 +367,24 @@ describe('runImport', () => {
 		expect(writer.summaryGeneratedAt).toBeNull();
 	});
 
+	it('bundles images in the story description and links them for the import', async () => {
+		const original = await seedStory();
+		const imageId = '22222222-2222-2222-2222-222222222222';
+		await db
+			.update(stories)
+			.set({ descriptionMd: `The long road.\n\n![cover](/assets/${imageId})` })
+			.where(eq(stories.id, original.id));
+		const [story] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const assetLoader = async (ids: string[]) =>
+			ids.map((id) => inMemoryAsset(id, 'image/png', new Uint8Array([1, 2, 3])));
+		const bytes = await zipBytes(
+			(await buildStoryZip(story, await gatherStory(db, story), assetLoader)).entries
+		);
+		const plan = parseStoryZip(bytes);
+		expect(plan.story.descriptionMd).toBe(`The long road.\n\n![cover](assets/${imageId}.png)`);
+		expect(plan.assets.map((asset) => asset.id)).toEqual([imageId]);
+	});
+
 	it('creates missing entities, skips ambiguous ones, and reports both', async () => {
 		const plan = await exportPlan(await seedStory());
 		await db.insert(places).values([

@@ -745,6 +745,16 @@ export type ContinuityReviewResult = {
 	overCap?: boolean;
 };
 
+// The story's style notes, which the review frame asks the reviewer to judge
+// the prose against, so a wording pass keys its run on them.
+async function storyStyleNotes(db: Database, storyId: string): Promise<string | null> {
+	const [row] = await db
+		.select({ styleNotes: stories.styleNotes })
+		.from(stories)
+		.where(eq(stories.id, storyId));
+	return row?.styleNotes ?? null;
+}
+
 // The run state a review writes as it advances, when it was queued with a job
 // id. Saving progress is a convenience: a write that fails is logged and the
 // review carries on, and without a job id nothing is stored at all (the inline
@@ -1066,16 +1076,16 @@ export async function reviewStoryScenes(
 		categories: opts.categories,
 		patterns
 	};
+	const wording = readsWording(parseCategories(opts.categories));
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
 		scope: reviewScopeKey(scope),
 		settings: reviewSettingsKey(
 			await storyLanguage(db, opts.storyId, opts.userId),
-			readsWording(parseCategories(opts.categories))
-				? await storyAssistantPreferences(db, opts.storyId, opts.userId)
-				: null,
-			readsNative(parseCategories(opts.categories), patterns)
+			wording ? await storyAssistantPreferences(db, opts.storyId, opts.userId) : null,
+			readsNative(parseCategories(opts.categories), patterns),
+			wording ? await storyStyleNotes(db, opts.storyId) : null
 		)
 	});
 	const done = new Set(run.state.completed);
