@@ -1009,3 +1009,61 @@ describe('the whole-book pattern pass', () => {
 		expect(seen.some(isBookSurvey)).toBe(false);
 	});
 });
+
+// #1674: a run reads the language, the preferences and the style notes once when
+// it opens, so an edit made while it runs reaches neither the story frame nor
+// the pattern pass.
+describe('settings read when the run opens', () => {
+	it('keeps them for the frame and the pattern pass when they change mid-run', async () => {
+		await db
+			.update(stories)
+			.set({
+				language: 'en-GB',
+				styleNotes: 'Spare and terse.',
+				assistantNotes: 'Keep the serial commas.'
+			})
+			.where(eq(stories.id, storyId));
+		await db.update(users).set({ nativeLanguage: 'da' }).where(eq(users.id, userId));
+		// A stale summary, so the run asks for one before the frame and the pass.
+		await db.update(scenes).set({ summaryMd: null }).where(eq(scenes.id, sceneIds[2]));
+		const { provider, seen } = patternProvider(async (messages) => {
+			if (!asked(messages).includes('Summarise')) return;
+			await db
+				.update(stories)
+				.set({
+					language: 'da',
+					styleNotes: 'Lush and ornate.',
+					assistantNotes: 'Drop the serial commas.'
+				})
+				.where(eq(stories.id, storyId));
+		});
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, categories: ['prose'], patterns: 'chapter' },
+			{ provider }
+		);
+
+		const system = (messages: ChatMessage[]) =>
+			messages
+				.filter((m) => m.role === 'system')
+				.map((m) => m.content)
+				.join('\n');
+		const survey = seen.find(isSurvey);
+		const apply = seen.find(isApply);
+		const reviews = seen.filter(
+			(m) => !isSurvey(m) && !isApply(m) && !asked(m).includes('Summarise')
+		);
+		expect(survey && apply).toBeTruthy();
+		expect(reviews).toHaveLength(3);
+		for (const messages of [survey!, ...reviews]) {
+			expect(system(messages)).toContain('Spare and terse.');
+			expect(system(messages)).not.toContain('Lush and ornate.');
+		}
+		expect(asked(survey!)).toContain('Keep the serial commas.');
+		expect(asked(survey!)).not.toContain('Drop the serial commas.');
+		// The native-language hint holds only while the story is in another language.
+		expect(asked(survey!)).toContain("The writer's native language is Danish.");
+		expect(asked(apply!)).toContain('The story is written in British English.');
+		expect(asked(apply!)).not.toContain('The story is written in Danish.');
+	});
+});
