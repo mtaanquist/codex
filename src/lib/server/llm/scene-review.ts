@@ -43,6 +43,7 @@ import {
 	buildReviewMessage,
 	buildSurveyMessage,
 	parseCandidates,
+	readsNative,
 	readsWording,
 	splitSurveyChunks,
 	SURVEY_RETRY_MESSAGE,
@@ -1073,7 +1074,8 @@ export async function reviewStoryScenes(
 			await storyLanguage(db, opts.storyId, opts.userId),
 			readsWording(parseCategories(opts.categories))
 				? await storyAssistantPreferences(db, opts.storyId, opts.userId)
-				: null
+				: null,
+			readsNative(parseCategories(opts.categories), patterns)
 		)
 	});
 	const done = new Set(run.state.completed);
