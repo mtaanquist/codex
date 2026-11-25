@@ -303,7 +303,11 @@ export async function runImport(
 						author: plan.story.author,
 						brief: plan.story.brief,
 						descriptionMd: rewrite(plan.story.descriptionMd) || null,
-						isAdult: plan.story.isAdult ?? false
+						isAdult: plan.story.isAdult ?? false,
+						styleNotes: plan.story.styleNotes ?? null,
+						language: plan.story.language ?? null,
+						assistantPreferences: plan.story.assistantPreferences ?? {},
+						assistantNotes: plan.story.assistantNotes ?? null
 					})
 					.returning({ id: stories.id });
 				if (checkedTags.ok) {
