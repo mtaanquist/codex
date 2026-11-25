@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+	importLimit,
 	rateLimit,
 	refundSlidingRateLimit,
 	resetRateLimits,
@@ -134,5 +135,17 @@ describe('write and upload budgets', () => {
 		for (let i = 0; i < 200 && last.allowed; i++) last = uploadLimit('u1', 0);
 		expect(last.allowed).toBe(false);
 		expect(uploadLimit('u2', 0).allowed).toBe(true);
+	});
+});
+
+describe('import budget', () => {
+	it('refuses a user past the hourly import budget, and lets them in an hour later', () => {
+		let last = importLimit('u1', 0);
+		let allowed = 0;
+		for (let i = 0; i < 200 && last.allowed; i++, last = importLimit('u1', 0)) allowed++;
+		expect(allowed).toBe(60);
+		expect(last.retryAfterSeconds).toBe(3600);
+		expect(importLimit('u2', 0).allowed).toBe(true);
+		expect(importLimit('u1', 3600 * 1000).allowed).toBe(true);
 	});
 });

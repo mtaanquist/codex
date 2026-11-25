@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import TurndownService from 'turndown';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
@@ -253,6 +254,22 @@ describe('parseDocument (epub)', () => {
 		expect(performance.now() - started).toBeLessThan(2000);
 	});
 
+	it('refuses deeply nested quotes hidden behind stray end tags', async () => {
+		const nest = '<blockquote></i><p>a</p><p>b</p>'.repeat(1000);
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: nest.repeat(10) }]);
+		const started = performance.now();
+		await expect(parseDocument(epub, 'quotes.epub')).rejects.toThrow(/nested too deeply/);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it('refuses a section too large to convert before converting it', async () => {
+		const huge = `<p>${'word '.repeat(2_200_000)}</p>`;
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: huge }]);
+		const started = performance.now();
+		await expect(parseDocument(epub, 'huge.epub')).rejects.toThrow(/section too large/);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
 	it('imports nesting as deep as real books use', async () => {
 		const quotes = '<blockquote><p>Quoted.</p>'.repeat(12) + '</blockquote>'.repeat(12);
 		const list = '<ul><li>Item'.repeat(9) + '</li></ul>'.repeat(9);
@@ -349,6 +366,67 @@ describe('parseDocumentInWorker', () => {
 	});
 });
 
+describe('parseDocumentInWorker limits', () => {
+	const small = () => buildEpub([{ name: 'ch1.xhtml', xhtml: '<h1>One</h1><p>Text.</p>' }]);
+
+	it('turns a file away while two others are being read, and takes it once they finish', async () => {
+		const first = parseDocumentInWorker(small(), 'a.epub');
+		const second = parseDocumentInWorker(small(), 'b.epub');
+		const third = parseDocumentInWorker(small(), 'c.epub');
+		await expect(third).rejects.toBeInstanceOf(DocumentImportError);
+		await expect(third).rejects.toThrow(/Another file is being read/);
+		await expect(first).resolves.toBeDefined();
+		await expect(second).resolves.toBeDefined();
+		const plan = await parseDocumentInWorker(small(), 'd.epub');
+		expect(plan.chapters.flatMap((c) => c.scenes).map((s) => s.bodyMd)).toEqual(['Text.']);
+	});
+
+	it('frees its place when a reading fails or runs out of time', async () => {
+		const flat = `<div>${'<span>word </span>'.repeat(200_000)}</div>`;
+		const slow = buildEpub([{ name: 'ch1.xhtml', xhtml: flat }]);
+		await expect(parseDocumentInWorker(new Uint8Array([1]), 'x.txt')).rejects.toThrow();
+		await expect(parseDocumentInWorker(slow, 'slow.epub', 300)).rejects.toThrow(/took too long/);
+		await expect(parseDocumentInWorker(slow, 'slow.epub', 300)).rejects.toThrow(/took too long/);
+		await expect(parseDocumentInWorker(small(), 'a.epub')).resolves.toBeDefined();
+	});
+
+	it('reports a worker out of memory as a file too large, and other failures as they are', async () => {
+		// A fake worker that fails the way Node reports the heap limit.
+		const failWith = (error: Error) => {
+			class FailingWorker extends EventEmitter {
+				constructor() {
+					super();
+					setImmediate(() => this.emit('error', error));
+				}
+				terminate() {
+					return Promise.resolve(1);
+				}
+			}
+			return FailingWorker;
+		};
+		const oom = Object.assign(new Error('Worker terminated due to reaching memory limit'), {
+			code: 'ERR_WORKER_OUT_OF_MEMORY'
+		});
+		const other = new Error('worker crashed');
+		vi.resetModules();
+		vi.doMock('node:worker_threads', () => ({ Worker: failWith(oom) }));
+		try {
+			const fresh = await import('./import-document');
+			const outcome = fresh.parseDocumentInWorker(small(), 'big.epub');
+			await expect(outcome).rejects.toBeInstanceOf(fresh.DocumentImportError);
+			await expect(outcome).rejects.toThrow(/too large to read/);
+
+			vi.resetModules();
+			vi.doMock('node:worker_threads', () => ({ Worker: failWith(other) }));
+			const again = await import('./import-document');
+			await expect(again.parseDocumentInWorker(small(), 'a.epub')).rejects.toBe(other);
+		} finally {
+			vi.doUnmock('node:worker_threads');
+			vi.resetModules();
+		}
+	});
+});
+
 describe('nestingDepth', () => {
 	it('counts open elements', () => {
 		expect(nestingDepth('<div><blockquote><em>x</em></blockquote><div></div></div>')).toBe(3);
@@ -366,6 +444,16 @@ describe('nestingDepth', () => {
 		expect(
 			nestingDepth('<!-- <div><div> --><script>"<div><div>"</script><style>a<b{}</STYLE><em>x</em>')
 		).toBe(1);
+	});
+
+	it('does not let a stray end tag of another name close an element', () => {
+		expect(nestingDepth('<blockquote></i><p>a</p><p>b</p>'.repeat(1000))).toBe(1000);
+		expect(nestingDepth('<div><em></div></div><div></div>')).toBe(2);
+	});
+
+	it('closes the elements left open inside the one an end tag closes', () => {
+		expect(nestingDepth('<div><span><b>x</div><div>y</div>')).toBe(3);
+		expect(nestingDepth('<div><span><b>x</div></b></span><div><div>y</div></div>')).toBe(3);
 	});
 
 	it('ignores a stray closing tag and a lone angle bracket', () => {
