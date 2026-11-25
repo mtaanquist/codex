@@ -195,3 +195,25 @@ test('a universe field saved while a rename is still saving is kept', async ({ p
 	await gotoReady(page, `/universes/raced-world-${stamp}`);
 	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
 });
+
+// A save that fails (no connection, a server fault) keeps the page and the
+// typed text, says it was not saved, and the next blur saves it (#1681).
+test('a failed save keeps the page and the text, and the next blur retries', async ({ page }) => {
+	await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-description');
+	await field.fill('A courier races the ash north.');
+	await field.press('Tab');
+	await expect(page.getByRole('alert')).toHaveText(
+		'Your change was not saved. Check your connection and try again.'
+	);
+	await expect(page.locator('#st-title')).toBeVisible();
+	await expect(field).toHaveValue('A courier races the ash north.');
+	await page.unroute(/\?\/update$/);
+	const saved = page.waitForResponse(/\?\/update$/);
+	await page.keyboard.press('Tab');
+	await saved;
+	await expect(page.getByRole('status')).toHaveText('Saved.');
+	await page.reload();
+	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});

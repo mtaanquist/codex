@@ -2,6 +2,7 @@ import type { SubmitFunction } from '$app/forms';
 import type { BeforeNavigate } from '$app/navigation';
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
+import { SvelteSet } from 'svelte/reactivity';
 import { focusIsBeingRestored } from '#lib/enhance';
 
 // Helpers for settings forms that save on change instead of with a button. A
@@ -20,11 +21,28 @@ import { focusIsBeingRestored } from '#lib/enhance';
 // saved while a rename is still in flight does not post to the old slug. Its
 // result must not reload the page data at the old address either: that page
 // may already be gone, and the rename's redirect reloads the data anyway.
+//
+// A save that errors (a server fault, or no connection) leaves the page and
+// its fields alone: kit would replace the page with its error page, losing
+// what the writer typed. The form's FormStatus says it was not saved, and the
+// writer's next blur in the form tries again.
 export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
+	failedSaves.delete(formElement);
+	const save = (lastSave.get(formElement) ?? 0) + 1;
+	lastSave.set(formElement, save);
 	const renaming = hasUnsavedRename(formElement);
 	if (renaming) renamesInFlight += 1;
 	return async ({ result, update }) => {
 		if (renaming) renamesInFlight -= 1;
+		if (result.type === 'error') {
+			leavingTo = null;
+			// A later save posts every field again, so only the latest one counts.
+			if (lastSave.get(formElement) === save) {
+				failedSaves.add(formElement);
+				formElement.addEventListener('focusout', retryOnBlur, { once: true });
+			}
+			return;
+		}
 		if (result.type === 'redirect') {
 			const target = leavingTo && retarget(leavingTo, result.location);
 			leavingTo = null;
@@ -45,6 +63,18 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		else if (leavingTo && renamesInFlight === 0) continueLeaving();
 	};
 };
+
+// Forms whose last save errored; FormStatus shows the failure.
+export const failedSaves = new SvelteSet<HTMLFormElement>();
+const lastSave = new WeakMap<HTMLFormElement, number>();
+export const NOT_SAVED = 'Your change was not saved. Check your connection and try again.';
+
+function retryOnBlur(event: FocusEvent) {
+	const form = event.currentTarget as HTMLFormElement;
+	if (failedSaves.has(form) && event.target instanceof Element) {
+		saveUnlessRefocused(form, event.target);
+	}
+}
 
 // Use as a form's onchange handler: any control change submits the form. A
 // control marked data-no-autosave only changes the view (a filter box), so its
