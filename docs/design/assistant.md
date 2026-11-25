@@ -789,7 +789,9 @@ These cut across the surfaces and the architecture.
   review-thread reply that may revise its pending suggestion
   (`update_suggestion`), with the language line. The chat in a story gets
   what a connected app gets from `list_stories`: its story frame carries the
-  language, the house style, the habits to leave alone and the fenced notes.
+  language, the house style, the habits to leave alone (which the chat does
+  not flag or change unprompted, but discusses when the writer asks) and the
+  fenced notes.
   Not set, every prompt reads byte for byte as before. The continuation is
   left out on purpose (short follow-on text that copies the prose around
   it). There is no free-form
