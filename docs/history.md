@@ -10,6 +10,14 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Settings text boxes render their stored text on the server (2026-11-25,
+#1683, `staging/bug-fixes-5`). Svelte renders `<textarea defaultValue>` empty
+on the server, so a Details or Assistant preferences save made before the page
+had loaded (Enter in Title) posted the text boxes empty and erased them. They
+now use `value` read once with `untrack`, keyed by the story or universe, so
+the text is in the server HTML and a refresh after a save still cannot write
+over newer typing. Inputs keep `defaultValue`, which Svelte does render.
+
 Repairing the account-deletion flag on old editions (2026-11-25, #1630,
 #1642, `staging/bug-fixes-5`). Migration 0124 added
 `hidden_by_account_deletion` with no backfill, so 0127 sets it on the editions
