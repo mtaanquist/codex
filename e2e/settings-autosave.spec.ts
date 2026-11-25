@@ -266,3 +266,42 @@ test('a failed save keeps the page and the text, and the next blur retries', asy
 	await page.reload();
 	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
 });
+
+// Following a link while a save has failed tries the save again first, and
+// stays on the page if it fails again, so the change is not lost (#1692).
+test('leaving after a failed save waits for the save, and stays if it fails', async ({ page }) => {
+	const { slug } = await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-description');
+	await field.fill('A courier races the ash north.');
+	await field.press('Tab');
+	const alert = page.getByRole('alert');
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	const editorLink = page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' });
+	await editorLink.click();
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	await page.waitForTimeout(300);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await expect(field).toHaveValue('A courier races the ash north.');
+	// Once the connection is back, the same link saves and then goes on.
+	await page.unroute(/\?\/update$/);
+	await editorLink.click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});
+
+test('closing the tab after a failed save asks first', async ({ page }) => {
+	await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	await page.locator('#st-description').fill('A courier races the ash north.');
+	await page.locator('#st-description').press('Tab');
+	await expect(page.getByRole('alert')).toBeVisible();
+	const dialog = page.waitForEvent('dialog');
+	await page.close({ runBeforeUnload: true });
+	const asked = await dialog;
+	expect(asked.type()).toBe('beforeunload');
+	await asked.accept();
+});

@@ -25,24 +25,30 @@ import { focusIsBeingRestored } from '#lib/enhance';
 // A save that errors (a server fault, or no connection) leaves the page and
 // its fields alone: kit would replace the page with its error page, losing
 // what the writer typed. The form's FormStatus says it was not saved, and the
-// writer's next blur in the form tries again.
+// writer's next blur in the form tries again. Leaving the page tries again
+// too, and waits for it (see flushBeforeNavigate).
 export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 	failedSaves.delete(formElement);
+	formElement.removeEventListener('focusout', retryOnBlur);
 	const save = (lastSave.get(formElement) ?? 0) + 1;
 	lastSave.set(formElement, save);
 	const renaming = hasUnsavedRename(formElement);
 	if (renaming) renamesInFlight += 1;
+	savesInFlight += 1;
 	return async ({ result, update }) => {
 		if (renaming) renamesInFlight -= 1;
+		savesInFlight -= 1;
 		if (result.type === 'error') {
 			leavingTo = null;
 			// A later save posts every field again, so only the latest one counts.
 			if (lastSave.get(formElement) === save) {
 				failedSaves.add(formElement);
+				unsaved.add(formElement);
 				formElement.addEventListener('focusout', retryOnBlur, { once: true });
 			}
 			return;
 		}
+		if (lastSave.get(formElement) === save) unsaved.delete(formElement);
 		if (result.type === 'redirect') {
 			const target = leavingTo && retarget(leavingTo, result.location);
 			leavingTo = null;
@@ -60,13 +66,16 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		const moving = renamesInFlight > 0 || redirecting > 0;
 		await update({ reset: false, refreshAll: moving ? false : undefined });
 		if (result.type !== 'success') leavingTo = null;
-		else if (leavingTo && renamesInFlight === 0) continueLeaving();
+		else if (leavingTo && savesInFlight === 0 && unsavedForms().length === 0) continueLeaving();
 	};
 };
 
 // Forms whose last save errored; FormStatus shows the failure.
 export const failedSaves = new SvelteSet<HTMLFormElement>();
 const lastSave = new WeakMap<HTMLFormElement, number>();
+// Forms whose change has not landed since a save errored, including while it
+// is being tried again.
+const unsaved = new Set<HTMLFormElement>();
 export const NOT_SAVED = 'Your change was not saved. Check your connection and try again.';
 
 function retryOnBlur(event: FocusEvent) {
@@ -136,6 +145,7 @@ function hasUnsavedRename(form: HTMLFormElement): boolean {
 }
 
 let renamesInFlight = 0;
+let savesInFlight = 0;
 // Rename redirects still being followed.
 let redirecting = 0;
 // Where the writer was going when a rename was still saving.
@@ -169,18 +179,47 @@ export function flushFocusedField() {
 	if (browser) (document.activeElement as HTMLElement | null)?.blur?.();
 }
 
-// flushFocusedField for a settings page whose form can move the page's own
-// address (see hasUnsavedRename). Leaving while a rename is unsaved or still
-// saving would load the target at the old address, which the rename removes,
-// so the navigation waits for the save and then goes on to the target at the
-// new address.
+// A form that is gone can no longer be saved, so it does not hold the writer
+// on the page.
+function unsavedForms(): HTMLFormElement[] {
+	for (const form of unsaved) if (!form.isConnected) unsaved.delete(form);
+	return [...unsaved];
+}
+
+// flushFocusedField for an autosaving settings page, wired to `beforeNavigate`.
+//
+// Leaving while a save has failed would lose the change, so the navigation
+// waits while the save is tried again, and goes on only if it lands. If it
+// fails again the page stays with its message. Closing the tab or leaving the
+// app cannot wait, so the browser asks first.
+//
+// A form can also move the page's own address (see hasUnsavedRename). Leaving
+// while a rename is unsaved or still saving would load the target at the old
+// address, which the rename removes, so the navigation waits for the save and
+// then goes on to the target at the new address.
 export function flushBeforeNavigate(navigation: BeforeNavigate) {
-	// The rename's own redirect (see autosaveSubmit). A field the writer has
-	// moved on to keeps focus, and saves when they leave it, to the new
-	// address.
+	// The rename's own redirect, or going on after a held navigation (see
+	// autosaveSubmit). A field the writer has moved on to keeps focus, and
+	// saves when they leave it, to the new address.
 	if (navigation.type === 'goto' && navigation.from?.route.id === navigation.to?.route.id) return;
-	if (navigation.type === 'leave' || !navigation.to || !browser) {
+	if (!browser) return;
+	const failed = unsavedForms().length > 0;
+	if (navigation.type === 'leave' || !navigation.to) {
+		if (failed) navigation.cancel();
 		flushFocusedField();
+		return;
+	}
+	if (failed) {
+		navigation.cancel();
+		leavingTo = navigation.to.url;
+		flushFocusedField();
+		// A form whose retry is already saving (the blur that started this
+		// navigation retries its form) is waited for; the rest are sent again.
+		queueMicrotask(() =>
+			queueMicrotask(() => {
+				for (const form of unsavedForms()) if (failedSaves.has(form)) form.requestSubmit();
+			})
+		);
 		return;
 	}
 	const active = document.activeElement;
