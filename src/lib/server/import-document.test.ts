@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
 import TurndownService from 'turndown';
+import mammoth from 'mammoth';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
 import {
 	parseDocument,
@@ -124,6 +125,24 @@ describe('parseDocument (docx)', () => {
 			.map((s) => s.bodyMd)
 			.join('\n');
 		expect(body).toContain(`assets/${asset.id}.png`);
+	});
+
+	it('refuses a document too large to convert before converting it', async () => {
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const docx = buildDocx(paragraph('word '.repeat(2_200_000)));
+			await expect(parseDocument(docx, 'huge.docx')).rejects.toThrow(/too large to import/);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('imports a long novel', async () => {
+		// About 150,000 words in Word's usual run markup.
+		const para = paragraph('word '.repeat(100)).replace('<w:r>', '<w:r w:rsidR="00A1B2C3">');
+		const plan = await parseDocument(buildDocx(para.repeat(1500)), 'novel.docx');
+		expect(plan.chapters.flatMap((c) => c.scenes)).toHaveLength(1);
 	});
 });
 

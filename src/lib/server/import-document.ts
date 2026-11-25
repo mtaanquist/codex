@@ -30,6 +30,10 @@ const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 // times its size in memory, so this keeps a conversion well under a gigabyte.
 // A whole novel in a single file is a few megabytes.
 const MAX_SPINE_FILE_BYTES = 10 * 1024 * 1024;
+// The XML of a Word document, all parts together, in bytes. mammoth holds
+// about 100 times this in memory while reading it; a long novel's XML is a
+// few megabytes.
+const MAX_DOCX_XML_BYTES = 10 * 1024 * 1024;
 
 export async function parseDocument(bytes: Uint8Array, filename: string): Promise<ImportPlan> {
 	if (bytes.length === 0) throw new DocumentImportError('This file is empty.');
@@ -269,6 +273,15 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 	// declares, so unpack with the size guards first (fflate never writes past
 	// the declared size) and hand mammoth an uncompressed copy of what survived.
 	const entries = unzipGuarded(bytes, 'Word document');
+	let xmlBytes = 0;
+	for (const [name, data] of Object.entries(entries)) {
+		if (/\.(xml|rels)$/i.test(name)) xmlBytes += data.length;
+	}
+	if (xmlBytes > MAX_DOCX_XML_BYTES) {
+		throw new DocumentImportError(
+			'This Word document is too large to import. Try splitting it into smaller files.'
+		);
+	}
 	const bounded = zipSync(entries, { level: 0 });
 
 	const assets: ImportedAsset[] = [];
