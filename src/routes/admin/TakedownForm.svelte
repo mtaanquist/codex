@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { confirmSubmit } from '#lib/confirm.svelte';
+	import { actionKeepingQuery } from '#lib/href';
 	import { REPORT_REASONS, type ReportReason } from '#lib/report-reasons';
 
 	// Take an edition down, or take a story off Browse, with the reason the
@@ -28,7 +30,7 @@
 <form
 	class="takedown-form"
 	method="POST"
-	action={takedown ? '?/takedown' : '?/removeFromBrowse'}
+	action={actionKeepingQuery(takedown ? 'takedown' : 'removeFromBrowse', page.url.searchParams)}
 	onsubmit={confirmSubmit({
 		title: takedown ? `Take down "${title}"?` : `Remove "${title}" from Browse?`,
 		body: takedown
