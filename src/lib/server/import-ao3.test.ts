@@ -15,4 +15,19 @@ describe('parseAo3Bodies', () => {
 			expect(Date.now() - started).toBeLessThan(2000);
 		}
 	});
+
+	// Descending through wrapper divs used to rescan each div's inside once per
+	// level, which is quadratic in the nesting depth.
+	it('reads deeply nested wrapper divs in linear time', () => {
+		const nested =
+			'<div>'.repeat(1500) +
+			'<p>Summary</p><blockquote><p>Deep.</p></blockquote>' +
+			'</div>'.repeat(1500);
+		const preface = `<div id="preface">${nested.repeat(4)}</div>`;
+		const chapters = `<div id="chapters">${nested.repeat(4)}</div>`;
+		const started = Date.now();
+		const work = parseAo3Bodies([preface, chapters]);
+		expect(Date.now() - started).toBeLessThan(1000);
+		expect(work?.summaryHtml).toBe('<p>Deep.</p>');
+	});
 });
