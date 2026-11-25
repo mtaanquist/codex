@@ -53,6 +53,19 @@ domino's parse is quadratic in depth, so it stops once 131 elements are open. Se
 autosave now posts Details by id so a field saved during a rename lands
 (#1667), keeps the page on a failed save and holds navigation until a retry
 succeeds (#1681, #1692), and an id address redirects to the slug (#1691).
+That hold now covers a same-route `goto` such as the command palette (#1709)
+and a Back or Forward press, which is replayed with `history.go` (#1710).
+Autosave forms post to an absolute action built from kit's `page.url`
+(`ownAction`), because during a held Back press the address bar already shows
+the target and a relative `?/action` saved one story's settings into another
+(#1721, reproduced end to end). Import limits closed in rounds 8 to 12: a
+10 MB cap on the Word XML parts mammoth reads, found through relationships
+on names normalised the way JSZip does (#1712, #1725, #1733), the embedded
+style map dropped (#1736), AO3 detected before converting and capped per
+chapter (#1714), self-closed non-void tags in EPUB bodies closed before
+parsing so page-break markers no longer read as deep nesting (#1735), zip
+entries kept on a null-prototype map (#1741), and the worker capped at no
+more heap than Node's own default (#1742, #1743).
 Lessons: two
 review rounds found a server-blocking import (a backtracking trailing-space
 regex, #1641, then quadratic note combining, #1661, fixed with the AO3 wrapper walk), both introduced by
