@@ -19,8 +19,13 @@ picked a separate sidebar item instead, per the design-system rule for
 independent groups. The item shows on the same condition the form did
 (the Assistant set up, or connected apps on) and its page 404s otherwise.
 Details now uses `FormStatus` for its save message on both pages, and the
-component renders one h2 heading at both levels. Saving one form no longer
-risks unsaved edits in the other on these pages; the general case is #1550.
+component renders one h2 heading at both levels. On Mads's ask the same PR
+moved Details (story and universe) and Assistant preferences to the autosave
+pattern the other settings pages use (#1573): a choice saves at once, a text
+field on blur, and a focused field is flushed before leaving the page. The
+universe's known-setting picker writes a hidden field from script, which
+fires no change event, so a pick or an unlink submits the form itself, and
+its search box is left out of the autosave.
 
 Staging review of the language setting and Assistant preferences, round 8
 (2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's

@@ -67,7 +67,7 @@ Open the story's settings and select **Assistant preferences** in the list on th
 
 A review with only "Entities and lore" ticked checks facts, not wording, so it does not use the house style, the habits left alone, or your own habits.
 
-Select **Save preferences** to keep your changes. An AI app you connect to your account (see [Connected apps](/docs/connecting-apps)) is given the same preferences.
+Each change saves on its own: a choice as soon as you make it, and your notes when you leave the box. An AI app you connect to your account (see [Connected apps](/docs/connecting-apps)) is given the same preferences.
 
 ## Working through the feedback
 

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { enhance } from '#lib/enhance';
+	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import { inheritedChoiceLabel } from '#lib/assistant-preferences';
 	import {
 		normaliseLanguage,
@@ -26,7 +28,7 @@
 	</p>
 </div>
 <div class="settings-group">
-	<form method="POST" action="?/update">
+	<form method="POST" action="?/update" use:enhance={autosaveSubmit} onchange={autosubmitForm}>
 		<div class="field">
 			<label for="st-title">Title</label>
 			<input
@@ -119,7 +121,6 @@
 				error={form?.action === 'update' && form.message ? form.message : null}
 				success={form?.action === 'update' && form.saved ? 'Saved.' : null}
 			/>
-			<button class="btn btn-primary" type="submit">Save</button>
 		</div>
 	</form>
 </div>

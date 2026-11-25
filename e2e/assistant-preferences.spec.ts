@@ -31,11 +31,11 @@ test('Assistant preferences has its own settings page for a universe and a story
 		page.getByRole('heading', { name: 'Assistant preferences', level: 2 })
 	).toBeVisible();
 	await expect(page.locator('#u-name')).toBeHidden();
+	// A choice saves as soon as it is made, and the page stays put.
 	await page.getByRole('combobox', { name: 'Tense' }).selectOption('present');
-	await page.getByRole('button', { name: 'Save preferences' }).click();
-	// A plain form post stays on the section's page.
-	await expect(page).toHaveURL(new RegExp(`${universeUrl}/preferences\\?`));
 	await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+	await expect(page).toHaveURL(`${universeUrl}/preferences`);
+	await page.reload();
 	await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('present');
 	expect(await violations(page)).toEqual([]);
 
@@ -58,10 +58,22 @@ test('Assistant preferences has its own settings page for a universe and a story
 	const tense = page.getByRole('combobox', { name: 'Tense' });
 	await expect(tense.locator('option').first()).toHaveText(/: Present$/);
 	await tense.selectOption('past');
-	await page.getByRole('button', { name: 'Save preferences' }).click();
-	await expect(page).toHaveURL(new RegExp(`/stories/${slug}/settings/preferences\\?`));
 	await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
-	await page.reload();
+
+	// The notes save when the box loses focus; leaving the page from inside
+	// it saves them too.
+	// Typing in one field while another saves keeps what is typed.
+	await page.getByRole('combobox', { name: 'Comma splices' }).selectOption('leave');
+	await page.getByLabel('Your own habits').pressSequentially('Fragments are on purpose.');
+	await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+	await expect(page.getByLabel('Your own habits')).toHaveValue('Fragments are on purpose.');
+	await page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Details' })
+		.click();
+	await expect(page.locator('#st-title')).toBeVisible();
+	await gotoReady(page, `/stories/${slug}/settings/preferences`);
 	await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('past');
+	await expect(page.getByLabel('Your own habits')).toHaveValue('Fragments are on purpose.');
 	expect(await violations(page)).toEqual([]);
 });

@@ -6,6 +6,8 @@
 	// a hidden universe, whose settings the writer sees as the defaults for all
 	// standalone stories, so standalone words it that way.
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { enhance } from '#lib/enhance';
+	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import {
 		HABIT_CHECKS,
 		HOUSE_STYLE,
@@ -99,7 +101,12 @@
 {/if}
 
 {#snippet body()}
-	<form method="POST" action="?/saveAssistantPreferences">
+	<form
+		method="POST"
+		action="?/saveAssistantPreferences"
+		use:enhance={autosaveSubmit}
+		onchange={autosubmitForm}
+	>
 		<fieldset class="prefs-set">
 			<legend>House style</legend>
 			<p class="field-hint prefs-lead">
@@ -163,7 +170,6 @@
 		</div>
 		<div class="settings-actions">
 			<FormStatus {error} success={saved ? 'Saved.' : null} />
-			<button class="btn btn-primary" type="submit">Save preferences</button>
 		</div>
 	</form>
 {/snippet}

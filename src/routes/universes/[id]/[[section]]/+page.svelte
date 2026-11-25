@@ -2,7 +2,10 @@
 	import { withQuery } from '#lib/href';
 	import type { ResolvedPathname } from '$app/types';
 	import { confirmSubmit } from '#lib/confirm.svelte';
-	import { refreshAll } from '$app/navigation';
+	import { beforeNavigate, refreshAll } from '$app/navigation';
+	import { tick } from 'svelte';
+	import { enhance } from '#lib/enhance';
+	import { autosaveSubmit, autosubmitForm, flushFocusedField } from '#lib/autosave-form';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { CATEGORY_COLORS, entityColor } from '#lib/entity-color';
@@ -29,6 +32,23 @@
 	let fandomName = $derived<string | null>(data.fandom?.name ?? null);
 	let fandomQuery = $state('');
 	let established = $derived(data.universe.establishedSetting);
+	let detailsForm = $state<HTMLFormElement>();
+
+	// The Details forms save on change instead of with a button; see
+	// #lib/autosave-form.
+	beforeNavigate(flushFocusedField);
+
+	// The setting picker fills a hidden field from script, which fires no
+	// change event, so a pick or an unlink saves the form itself. Typing in
+	// its search box only searches.
+	async function saveDetails() {
+		await tick();
+		detailsForm?.requestSubmit();
+	}
+	function onDetailsChange(event: Event & { currentTarget: HTMLFormElement }) {
+		if ((event.target as HTMLElement | null)?.id === 'u-fandom') return;
+		autosubmitForm(event);
+	}
 
 	// Each section is its own page (/universes/<slug>/categories, ...);
 	// a plain /universes/<slug> is the details. Forms post to the section
@@ -182,6 +202,8 @@
 	}
 </script>
 
+<svelte:window onpagehide={flushFocusedField} />
+
 <svelte:head>
 	<title>{data.universe.name} - Codex</title>
 </svelte:head>
@@ -243,7 +265,13 @@
 					belongs to one.
 				</p>
 			</div>
-			<form method="POST" action="?/update">
+			<form
+				method="POST"
+				action="?/update"
+				bind:this={detailsForm}
+				use:enhance={autosaveSubmit}
+				onchange={onDetailsChange}
+			>
 				<div class="field">
 					<label for="u-name">Name</label>
 					<input
@@ -299,6 +327,7 @@
 								onclick={() => {
 									fandomId = null;
 									fandomName = null;
+									saveDetails();
 								}}>Unlink</button
 							>
 						</p>
@@ -312,6 +341,7 @@
 							fandomName = fandom.name;
 							fandomQuery = '';
 							established = true;
+							saveDetails();
 						}}
 					/>
 					<span class="field-hint">
@@ -337,7 +367,6 @@
 						error={form?.action === 'update' && form.message ? form.message : null}
 						success={form?.action === 'update' && form.saved ? 'Saved.' : null}
 					/>
-					<button class="btn btn-primary" type="submit">Save changes</button>
 				</div>
 			</form>
 		</div>
