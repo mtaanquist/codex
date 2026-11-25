@@ -5,6 +5,7 @@
 	// default (infer from the text, check everything). Standalone stories share
 	// a hidden universe, whose settings the writer sees as the defaults for all
 	// standalone stories, so standalone words it that way.
+	import { untrack } from 'svelte';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
@@ -43,6 +44,11 @@
 	const values: Record<string, string> = $derived(
 		submitted ?? { ...normalisePreferences(stored), assistantNotes: notes ?? '' }
 	);
+	// The notes box starts from the stored notes, read once (the page keys this
+	// component by story or universe): a value renders on the server, unlike
+	// defaultValue, and reading it once keeps a refresh from writing over newer
+	// typing.
+	const initialNotes = untrack(() => values.assistantNotes ?? '');
 	const fromUniverse = $derived(inherited ? normalisePreferences(inherited.preferences) : null);
 	const universeNotes = $derived(inherited ? normaliseNotes(inherited.notes) : null);
 	const id = (key: string) => `${level}-pref-${key}`;
@@ -156,7 +162,7 @@
 				name="assistantNotes"
 				rows="3"
 				maxlength={MAX_ASSISTANT_NOTES}
-				defaultValue={values.assistantNotes ?? ''}></textarea>
+				value={initialNotes}></textarea>
 			<p class="field-hint">
 				Habits only you know about, for example "I overuse the word 'just'" or "Sentence fragments
 				are on purpose, leave them". Reviews, including "Look for habits that repeat in the prose",

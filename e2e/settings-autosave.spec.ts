@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 
@@ -14,6 +14,16 @@ async function slowSaves(page: Page) {
 	});
 }
 
+// A page that has not run its script (a slow load, or a script that failed).
+async function withoutScript(browser: Browser, baseURL: string | undefined) {
+	const context = await browser.newContext({
+		baseURL,
+		javaScriptEnabled: false,
+		storageState: 'e2e/.auth/e2e.json'
+	});
+	return { context, page: await context.newPage() };
+}
+
 async function newStory(page: Page) {
 	const stamp = Date.now();
 	await gotoReady(page, '/');
@@ -21,6 +31,7 @@ async function newStory(page: Page) {
 	await page.getByLabel('New universe').fill(`Autosave world ${stamp}`);
 	await page.getByRole('button', { name: 'Create universe' }).click();
 	await expect(page).toHaveURL(/\/universes\//);
+	const universeUrl = new URL(page.url()).pathname;
 	await gotoReady(page, '/');
 	await startStoryInUniverse(page, `Autosave world ${stamp}`);
 	await page.getByLabel('New story').fill(`Autosave ${stamp}`);
@@ -28,7 +39,7 @@ async function newStory(page: Page) {
 	await expect(page.locator('.story-title')).toHaveText(`Autosave ${stamp}`);
 	const slug = new URL(page.url()).pathname.split('/')[2];
 	await gotoReady(page, `/stories/${slug}/settings`);
-	return { slug, stamp };
+	return { slug, stamp, universeUrl };
 }
 
 test('typing in the next field while a save lands keeps focus and text', async ({ page }) => {
@@ -194,6 +205,44 @@ test('a universe field saved while a rename is still saving is kept', async ({ p
 	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
 	await gotoReady(page, `/universes/raced-world-${stamp}`);
 	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
+});
+
+// The text boxes hold the stored text before the page's script runs, so they
+// never show empty and a save from that state does not post them empty (#1683).
+test('the Details text boxes hold the stored text before the script runs', async ({
+	page,
+	browser,
+	baseURL
+}) => {
+	const { slug, universeUrl } = await newStory(page);
+	const description = 'A courier races the ash north.';
+	const style = 'Epic fantasy serial, omniscient narrator.';
+	await page.locator('#st-description').fill(description);
+	await page.locator('#st-style-notes').fill(style);
+	const saved = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('styleNotes=Epic')
+	);
+	await page.locator('#st-style-notes').press('Tab');
+	expect((await saved).ok()).toBe(true);
+	await gotoReady(page, universeUrl);
+	await page.locator('#u-description').fill('Ash and bells.');
+	const universeSaved = page.waitForResponse(/\?\/update$/);
+	await page.locator('#u-description').press('Tab');
+	expect((await universeSaved).ok()).toBe(true);
+
+	const plain = await withoutScript(browser, baseURL);
+	try {
+		await plain.page.goto(`/stories/${slug}/settings`);
+		await expect(plain.page.locator('#st-description')).toHaveValue(description);
+		await expect(plain.page.locator('#st-style-notes')).toHaveValue(style);
+
+		await plain.page.goto(universeUrl);
+		await expect(plain.page.locator('#u-description')).toHaveValue('Ash and bells.');
+	} finally {
+		await plain.context.close();
+	}
 });
 
 // A save that fails (no connection, a server fault) keeps the page and the
