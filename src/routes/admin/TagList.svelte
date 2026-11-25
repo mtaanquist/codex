@@ -70,7 +70,11 @@
 <div class="admin-card tight">
 	{#if list.rows.length === 0}
 		<p class="admin-block-sub" style="margin:0;padding:var(--space-4) 0;">
-			{query ? `No ${noun}s match.` : `No ${noun}s yet.`}
+			{#if list.page > 0}
+				No {noun}s on this page. <a href={pageHref(0)}>Go to the first page</a>.
+			{:else}
+				{query ? `No ${noun}s match.` : `No ${noun}s yet.`}
+			{/if}
 		</p>
 	{:else}
 		<div class="attn-list">
