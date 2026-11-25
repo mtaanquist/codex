@@ -200,7 +200,7 @@ export function buildReviewMessage(
 		sparing
 			? `Be specific and sparing; a few high-value notes beat many shallow ones. Splitting your observations into one comment per theme does not count against being sparing. Check the scene against the established world and entity details ${source.where}. Do not rewrite the scene wholesale or change the meaning of the prose.`
 			: focusInstruction(categories, source, language, preferences),
-		wording ? leaveAloneLine(preferences) : '',
+		wording ? leaveAloneLine(preferences, 'check') : '',
 		wording ? habitNotesLine(preferences, 'review') : ''
 	].filter(Boolean);
 	if (prior.length === 0) {
@@ -627,7 +627,7 @@ const patternLooksFor = (preferences: PreferenceSetting) => {
 	);
 	return [
 		...(kinds.length ? kinds : [OTHER_HABITS]),
-		leaveAloneLine(preferences),
+		leaveAloneLine(preferences, 'check'),
 		habitNotesLine(preferences, 'pattern')
 	];
 };

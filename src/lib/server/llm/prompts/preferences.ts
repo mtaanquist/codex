@@ -95,13 +95,19 @@ const HABIT_PHRASES: Record<HabitCheck, string> = {
 	sentenceShapes: 'repeated sentence shapes, openings, and character gestures'
 };
 
-// The habits the writer uses on purpose. They are also dropped from the lists
-// of what to look for; saying so outright keeps a model from flagging them
-// out of its own habit.
-export function leaveAloneLine(setting: PreferenceSetting): string {
+// The habits the writer uses on purpose, for review and the pattern pass
+// ('check') or the chat's story frame ('chat'). They are also dropped from the
+// lists of what to look for; saying so outright keeps a model from flagging
+// them out of its own habit. The chat may still discuss them when the writer
+// asks, so it is not told to stay silent about them.
+export function leaveAloneLine(setting: PreferenceSetting, mode: 'check' | 'chat'): string {
 	if (setting.leaveAlone.length === 0) return '';
 	const list = setting.leaveAlone.map((habit) => HABIT_PHRASES[habit]).join('; ');
-	return `The writer uses these on purpose in this story. Leave them alone, and do not flag, comment on, or change them: ${list}.`;
+	return `The writer uses these on purpose in this story. ${
+		mode === 'chat'
+			? 'Do not flag or change them unless the writer asks about them'
+			: 'Leave them alone, and do not flag, comment on, or change them'
+	}: ${list}.`;
 }
 
 const NOTES_INTRO = {
@@ -137,7 +143,7 @@ export function habitNotesLine(
 export function reviewPreferenceText(setting: PreferenceSetting): string {
 	return [
 		houseStyleLine(setting, 'check'),
-		leaveAloneLine(setting),
+		leaveAloneLine(setting, 'check'),
 		habitNotesLine(setting, 'review')
 	]
 		.filter(Boolean)
