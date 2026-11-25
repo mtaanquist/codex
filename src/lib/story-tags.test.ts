@@ -23,4 +23,14 @@ describe('tags', () => {
 	it('splits on commas and new lines', () => {
 		expect(splitTags('a, b\nc,, ,d')).toEqual(['a', 'b', 'c', 'd']);
 	});
+
+	it('keeps an existing tag with a comma whole when picked from the suggestions', () => {
+		const suggestions = ['Smith, John', 'Found Family'];
+		expect(splitTags(' Smith, John ', suggestions)).toEqual(['Smith, John']);
+		expect(splitTags('Smith, John, Found Family', suggestions)).toEqual([
+			'Smith',
+			'John',
+			'Found Family'
+		]);
+	});
 });

@@ -39,7 +39,7 @@
 	}
 
 	function commit() {
-		const typed = splitOnComma ? splitTags(draft) : [draft.trim()];
+		const typed = splitOnComma ? splitTags(draft, suggestions) : [draft.trim()];
 		draft = '';
 		const added = [...new Set(typed)].filter((value) => value && !values.includes(value));
 		if (added.length > 0) onChange([...values, ...added]);

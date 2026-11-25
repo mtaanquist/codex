@@ -47,7 +47,10 @@ export function cleanTagName(
 }
 
 // Splits what was typed into the tag box: a comma or a new line ends a tag.
-export function splitTags(text: string): string[] {
+// Text that is exactly one of the suggestions stays whole, since older tags
+// can contain a comma.
+export function splitTags(text: string, suggestions: string[] = []): string[] {
+	if (suggestions.includes(text.trim())) return [text.trim()];
 	return text
 		.split(/[,\n]/)
 		.map((part) => part.trim())
