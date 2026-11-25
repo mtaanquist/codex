@@ -127,6 +127,17 @@ export async function publishStory(
 	const warnings = shownLabels.filter((tag) => tag.kind === 'warning');
 	try {
 		const publicationId = await db.transaction(async (tx) => {
+			// scheduleAccountDeletion updates this row first, so a deletion
+			// scheduled at the same moment either commits before this read (and
+			// the publish is refused) or waits and then takes the new edition
+			// down with the others. "No key update" still waits on that update but
+			// not on rows elsewhere that only reference this user.
+			const [owner] = await tx
+				.select({ deletionScheduledAt: users.deletionScheduledAt })
+				.from(users)
+				.where(eq(users.id, userId))
+				.for('no key update');
+			if (!owner || owner.deletionScheduledAt) return 'deleting' as const;
 			// Locked so a takedown running at the same moment waits for this
 			// publish (see takedownPublication).
 			await tx
@@ -148,7 +159,7 @@ export async function publishStory(
 						isNotNull(publications.removedAt)
 					)
 				);
-			if (current?.removedReason) return null;
+			if (current?.removedReason) return 'taken-down' as const;
 			await tx
 				.update(publications)
 				.set({ isCurrent: false })
@@ -188,7 +199,10 @@ export async function publishStory(
 			}
 			return edition.id;
 		});
-		if (publicationId === null) {
+		if (publicationId === 'deleting') {
+			return { ok: false, reason: 'Your account is waiting to be deleted, so it cannot publish.' };
+		}
+		if (publicationId === 'taken-down') {
 			return {
 				ok: false,
 				reason:

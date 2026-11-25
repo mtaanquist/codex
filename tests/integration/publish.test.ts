@@ -474,6 +474,41 @@ describe('concurrent publish', () => {
 	});
 });
 
+describe('publish while the account deletion is being scheduled', () => {
+	it('waits for the schedule, then refuses', async () => {
+		const client = await pool.connect();
+		try {
+			// A deletion being scheduled holds the account row, as scheduleAccountDeletion does.
+			await client.query('begin');
+			await client.query(
+				`update users set deletion_scheduled_at = now() + interval '7 days' where id = $1`,
+				[authorId]
+			);
+			let settled = false;
+			const publishing = publishStory(db, authorId, storyId).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await publishing).toMatchObject({ ok: false });
+		} finally {
+			client.release();
+		}
+		expect(await allEditions()).toEqual([]);
+	});
+
+	it('is refused once the deletion is scheduled', async () => {
+		await db
+			.update(users)
+			.set({ deletionScheduledAt: new Date(Date.now() + 86_400_000) })
+			.where(eq(users.id, authorId));
+		expect(await publishStory(db, authorId, storyId)).toMatchObject({ ok: false });
+		expect(await allEditions()).toEqual([]);
+	});
+});
+
 // The unused-image sweep deleting an image the moment a publish links it.
 // The trigger stands in for that delete landing between the publish's read
 // of the image and its link row.
