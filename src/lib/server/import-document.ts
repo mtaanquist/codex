@@ -30,6 +30,8 @@ const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
 // times its size in memory, so this keeps a conversion well under a gigabyte.
 // A whole novel in a single file is a few megabytes.
 const MAX_SPINE_FILE_BYTES = 10 * 1024 * 1024;
+const SECTION_TOO_LARGE =
+	'This EPUB has a section too large to import. Try splitting it into smaller files.';
 
 export async function parseDocument(bytes: Uint8Array, filename: string): Promise<ImportPlan> {
 	if (bytes.length === 0) throw new DocumentImportError('This file is empty.');
@@ -333,30 +335,16 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 
 	const assets: ImportedAsset[] = [];
 	const assetPaths = new Map<string, string>();
-	const files: { title: string | null; blocks: DocBlock[] }[] = [];
 	const bodies: string[] = [];
-	const budget = newBudget();
 	for (const idref of spine) {
 		const href = manifest.get(idref);
 		if (!href) continue;
 		const path = posixResolve(opfDir, decodePath(href));
 		const data = entries[path];
 		if (!data || !/\.x?html?$/i.test(path)) continue;
-		if (data.length > MAX_SPINE_FILE_BYTES) {
-			throw new DocumentImportError(
-				'This EPUB has a section too large to import. Try splitting it into smaller files.'
-			);
-		}
+		if (data.length > MAX_SPINE_FILE_BYTES) throw new DocumentImportError(SECTION_TOO_LARGE);
 		const rewritten = rewriteEpubImages(strFromU8(data), path, entries, assets, assetPaths);
-		const body = extractBody(rewritten);
-		bodies.push(body);
-		const blocks = htmlToBlocks(body, budget);
-		if (blocks.length === 0) continue;
-		const firstHeading = blocks.find((b) => b.kind === 'heading');
-		files.push({
-			title: firstHeading?.kind === 'heading' ? firstHeading.text.trim() || null : null,
-			blocks
-		});
+		bodies.push(extractBody(rewritten));
 	}
 
 	const title = tagText(opf, 'dc:title') ?? fileStem(filename);
@@ -365,6 +353,18 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 	if (tagText(opf, 'dc:publisher') === 'Archive of Our Own') {
 		const work = parseAo3Bodies(bodies);
 		if (work && work.chapters.length > 0) return buildAo3Plan(title, author, work, assets);
+	}
+
+	const files: { title: string | null; blocks: DocBlock[] }[] = [];
+	const budget = newBudget();
+	for (const body of bodies) {
+		const blocks = htmlToBlocks(body, budget);
+		if (blocks.length === 0) continue;
+		const firstHeading = blocks.find((b) => b.kind === 'heading');
+		files.push({
+			title: firstHeading?.kind === 'heading' ? firstHeading.text.trim() || null : null,
+			blocks
+		});
 	}
 
 	// Headings win when the book marks chapters with them. Otherwise fall back to
@@ -392,7 +392,12 @@ function buildAo3Plan(
 	work: Ao3Work,
 	assets: ImportedAsset[]
 ): ImportPlan {
-	// A fresh budget: this converts the same spine files a second time.
+	// A chapter's prose can join several spine files, so it gets their cap.
+	for (const chapter of work.chapters) {
+		if (Buffer.byteLength(chapter.proseHtml) > MAX_SPINE_FILE_BYTES) {
+			throw new DocumentImportError(SECTION_TOO_LARGE);
+		}
+	}
 	const budget = newBudget();
 	const md = (html: string | null) => (html ? htmlToMarkdown(html, budget).trim() : '');
 	const notes: ImportedFreeformNote[] = [];
