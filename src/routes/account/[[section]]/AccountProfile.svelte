@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { tick } from 'svelte';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { shrinkImagesOnSubmit } from '#lib/image-shrink';
 	import { formatBytes } from '#lib/format';
@@ -127,7 +127,7 @@
 
 		<form
 			method="POST"
-			action="?/updateName"
+			action={ownAction('updateName')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>
@@ -240,7 +240,7 @@
 		<div class="admin-card">
 			<form
 				method="POST"
-				action="?/saveProfile"
+				action={ownAction('saveProfile')}
 				bind:this={profileForm}
 				use:enhance={autosaveSubmit}
 				onchange={autosubmitForm}
@@ -382,7 +382,7 @@
 			<div class="admin-card" style="margin-top:var(--space-4);">
 				<form
 					method="POST"
-					action="?/saveBrowseOptOut"
+					action={ownAction('saveBrowseOptOut')}
 					use:enhance={autosaveSubmit}
 					onchange={autosubmitForm}
 				>

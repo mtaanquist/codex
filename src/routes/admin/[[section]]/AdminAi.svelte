@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import type { PageData, ActionData } from './$types';
 
@@ -86,7 +86,7 @@
 	<div class="admin-card">
 		<form
 			method="POST"
-			action="?/saveExternalAccess"
+			action={ownAction('saveExternalAccess')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>

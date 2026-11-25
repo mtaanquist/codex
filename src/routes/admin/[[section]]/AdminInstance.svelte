@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
 	import { browseHomeHref } from '#lib/browse-adult.svelte';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import type { PageData, ActionData } from './$types';
 
@@ -89,7 +89,7 @@
 	<div class="admin-card">
 		<form
 			method="POST"
-			action="?/saveBrowse"
+			action={ownAction('saveBrowse')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>

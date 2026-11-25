@@ -8,7 +8,7 @@
 	import { untrack } from 'svelte';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import {
 		HABIT_CHECKS,
 		HOUSE_STYLE,
@@ -109,7 +109,7 @@
 {#snippet body()}
 	<form
 		method="POST"
-		action="?/saveAssistantPreferences"
+		action={ownAction('saveAssistantPreferences')}
 		use:enhance={autosaveSubmit}
 		onchange={autosubmitForm}
 	>

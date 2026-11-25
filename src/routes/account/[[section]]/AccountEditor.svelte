@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import {
 		LINE_SPACING_CM_MAX,
 		LINE_SPACING_CM_MIN,
@@ -38,7 +38,7 @@
 	<div class="settings-group">
 		<form
 			method="POST"
-			action="?/saveEditorAppearance"
+			action={ownAction('saveEditorAppearance')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>
@@ -109,7 +109,7 @@
 	<div class="settings-group">
 		<form
 			method="POST"
-			action="?/savePreferences"
+			action={ownAction('savePreferences')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>
