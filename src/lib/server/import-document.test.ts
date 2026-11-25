@@ -158,6 +158,20 @@ describe('parseDocument (docx)', () => {
 		);
 	});
 
+	it('ignores a style map stored inside the document', async () => {
+		const files = unzipSync(buildDocx(paragraph('Kept.')));
+		files['mammoth/style-map'] = strToU8('p => !');
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const plan = await parseDocument(zipSync(files), 'mapped.docx');
+			expect(plan.chapters[0].scenes[0].bodyMd).toContain('Kept.');
+			const passed = unzipSync(new Uint8Array((spy.mock.calls[0][0] as { buffer: Buffer }).buffer));
+			expect(Object.keys(passed)).not.toContain('mammoth/style-map');
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
 	it('imports a renamed main part and does not count images toward the size limit', async () => {
 		const files = unzipSync(
 			renamePart(
