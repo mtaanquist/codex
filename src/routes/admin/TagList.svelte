@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { withQuery } from '#lib/href';
+	import { page } from '$app/state';
+	import { actionKeepingQuery, withQuery } from '#lib/href';
 	import { confirmSubmit } from '#lib/confirm.svelte';
 
 	// The list on the tag and list moderation pages: search, each entry
@@ -87,7 +88,7 @@
 						</div>
 						{#if editing === row.id}
 							<div class="tag-edit">
-								<form method="POST" action="?/rename">
+								<form method="POST" action={actionKeepingQuery('rename', page.url.searchParams)}>
 									<input type="hidden" name="id" value={row.id} />
 									<label class="visually-hidden" for="rename-{row.id}"
 										>New name for {row.name}</label
@@ -96,7 +97,7 @@
 									<button class="btn btn-secondary btn-sm" type="submit">Rename</button>
 								</form>
 								{#if !row.mergedIntoName}
-									<form method="POST" action="?/merge">
+									<form method="POST" action={actionKeepingQuery('merge', page.url.searchParams)}>
 										<input type="hidden" name="id" value={row.id} />
 										<label class="visually-hidden" for="merge-{row.id}">Merge {row.name} into</label
 										>
@@ -123,20 +124,20 @@
 							{editing === row.id ? 'Close' : 'Edit'}
 						</button>
 						{#if row.mergedIntoName}
-							<form method="POST" action="?/unmerge">
+							<form method="POST" action={actionKeepingQuery('unmerge', page.url.searchParams)}>
 								<input type="hidden" name="id" value={row.id} />
 								<button class="btn btn-ghost btn-sm" type="submit">Undo merge</button>
 							</form>
 						{/if}
 						{#if row.removedAt}
-							<form method="POST" action="?/restore">
+							<form method="POST" action={actionKeepingQuery('restore', page.url.searchParams)}>
 								<input type="hidden" name="id" value={row.id} />
 								<button class="btn btn-ghost btn-sm" type="submit">Restore</button>
 							</form>
 						{:else}
 							<form
 								method="POST"
-								action="?/remove"
+								action={actionKeepingQuery('remove', page.url.searchParams)}
 								onsubmit={confirmSubmit({
 									title: `Remove the ${noun} "${row.name}"?`,
 									body: `It disappears from every story that has it, and authors cannot add it again. You can restore it later.`,

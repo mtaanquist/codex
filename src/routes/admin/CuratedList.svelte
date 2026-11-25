@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { actionKeepingQuery } from '#lib/href';
 	import TagList from './TagList.svelte';
 
 	// A moderation page for one curated list (fandoms, genres, content
@@ -42,7 +44,7 @@
 		</div>
 	</div>
 	<div class="admin-card">
-		<form method="POST" action="?/add">
+		<form method="POST" action={actionKeepingQuery('add', page.url.searchParams)}>
 			{#if form?.scope === 'add' && form.message}
 				<p class="form-error" role="alert">{form.message}</p>
 			{:else if form?.scope === 'add' && form.added}
