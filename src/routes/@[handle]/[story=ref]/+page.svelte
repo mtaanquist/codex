@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { withQuery } from '#lib/href';
 	import { resolve } from '$app/paths';
-	import { renderMarkdown } from '#lib/markdown';
+	import { renderPublicMarkdown } from '#lib/markdown';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
 	import StoryLabels from '#lib/components/StoryLabels.svelte';
@@ -99,12 +99,12 @@
 					{formatLongDate(data.publishedAt, page.data.timeZone)}{#if data.versionLabel}
 						- {data.versionLabel}{/if}
 				</p>
-				<StoryLabels {...data.labels} />
+				<StoryLabels {...data.labels} adult={data.isAdult} />
 
 				{#if data.descriptionMd}
-					<!-- Author markdown; renderMarkdown escapes raw HTML. -->
+					<!-- Author markdown; renderPublicMarkdown escapes raw HTML and loads only Codex images. -->
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					<div class="reader-brief">{@html renderMarkdown(data.descriptionMd)}</div>
+					<div class="reader-brief">{@html renderPublicMarkdown(data.descriptionMd)}</div>
 				{/if}
 
 				{#if data.downloads.length > 0}
@@ -135,7 +135,7 @@
 							<!-- The shared renderer escapes raw HTML, so this is the
 							     author's words only. -->
 							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-							{@html renderMarkdown(scene.bodyMd)}
+							{@html renderPublicMarkdown(scene.bodyMd)}
 						{/each}
 					</div>
 				{/each}

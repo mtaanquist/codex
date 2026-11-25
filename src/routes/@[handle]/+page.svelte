@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { renderMarkdown } from '#lib/markdown';
+	import { renderPublicMarkdown } from '#lib/markdown';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
 	import ShelfGrid from '#lib/components/ShelfGrid.svelte';
@@ -70,9 +70,9 @@
 			</div>
 
 			{#if profile?.bioMd}
-				<!-- Author markdown; renderMarkdown escapes raw HTML. -->
+				<!-- Author markdown; renderPublicMarkdown escapes raw HTML and loads only Codex images. -->
 				<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-				<div class="shelf-bio">{@html renderMarkdown(profile.bioMd)}</div>
+				<div class="shelf-bio">{@html renderPublicMarkdown(profile.bioMd)}</div>
 			{/if}
 
 			{#if profile && (profile.links.length > 0 || profile.commissionsOpen)}

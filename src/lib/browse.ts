@@ -64,3 +64,19 @@ export function browseIndexable(query: BrowseQuery): boolean {
 		!query.q && filters <= 1 && query.hide.length === 0 && !query.adult && query.after === null
 	);
 }
+
+// A reader who includes adult work has that choice remembered on this device
+// (localStorage, which the server cannot read). Browse applies it on load: the
+// pre-paint script in app.html does it for a full page load, and the page's
+// universal load for a navigation inside the app. Both read this key.
+export const BROWSE_ADULT_KEY = 'codex:browse-adult';
+
+// Where a Browse address should go when the reader has the adult choice
+// remembered, or null when it already includes adult work or nothing is
+// remembered.
+export function withRememberedAdult(url: URL, remembered: boolean): string | null {
+	if (!remembered || url.searchParams.get('adult') === 'show') return null;
+	const target = new URL(url);
+	target.searchParams.set('adult', 'show');
+	return target.pathname + target.search;
+}

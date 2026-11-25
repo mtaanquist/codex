@@ -3,6 +3,7 @@ import { asc, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
+import { strFromU8, unzipSync, zipSync } from 'fflate';
 import * as schema from '../../src/lib/server/db/schema';
 import {
 	chapters,
@@ -324,6 +325,45 @@ describe('runImport', () => {
 		expect(view.tags.map((tag) => tag.name)).toEqual(['Found Family']);
 		expect(view.fandoms.map((tag) => tag.name)).toEqual(['Forgotten Realms']);
 		expect(result.problems.some((problem) => problem.includes('Elsewhere'))).toBe(true);
+	});
+
+	it('round-trips the style notes, language and Assistant preferences', async () => {
+		const original = await seedStory();
+		const settings = {
+			styleNotes: 'Epic fantasy serial,\nomniscient narrator.',
+			language: 'en-GB',
+			assistantPreferences: { quoteMarks: 'single', tense: 'past', epithets: 'leave' },
+			assistantNotes: 'Keep "ye" and "thee".\n\nLeave the dialect alone.'
+		};
+		await db.update(stories).set(settings).where(eq(stories.id, original.id));
+		const [configured] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const plan = await exportPlan(configured);
+		expect(plan.problems).toEqual([]);
+
+		const result = await runImport(db, universe, plan);
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported).toMatchObject(settings);
+	});
+
+	it('leaves unset settings out of story.md and imports them as unset', async () => {
+		const original = await seedStory();
+		const files = unzipSync(
+			await zipBytes(
+				(await buildStoryZip(original, await gatherStory(db, original), noAssets)).entries
+			)
+		);
+		const front = strFromU8(files['halden/story.md']);
+		for (const key of ['style-notes', 'language', 'assistant-preferences', 'assistant-notes']) {
+			expect(front).not.toContain(`${key}:`);
+		}
+		const result = await runImport(db, universe, parseStoryZip(zipSync(files)));
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported).toMatchObject({
+			styleNotes: null,
+			language: null,
+			assistantPreferences: {},
+			assistantNotes: null
+		});
 	});
 
 	it('keeps a fandom from the universe on export, and does not store it twice on import', async () => {
