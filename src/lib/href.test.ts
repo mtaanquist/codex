@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { ResolvedPathname } from '$app/types';
-import { withQuery } from './href';
+import { actionKeepingQuery, withQuery } from './href';
 
 const path = (p: string) => p as ResolvedPathname;
 
@@ -39,5 +39,23 @@ describe('withQuery', () => {
 
 	it('sets a hash', () => {
 		expect(withQuery(path('/docs/plan'), {}, 'categories')).toBe('/docs/plan#categories');
+	});
+});
+
+describe('actionKeepingQuery', () => {
+	it('names the action and keeps the query', () => {
+		expect(actionKeepingQuery('restore', new URLSearchParams('q=%40spam+mer&page=2'))).toBe(
+			'?/restore&q=%40spam+mer&page=2'
+		);
+	});
+
+	it('drops the action of the previous submit', () => {
+		expect(actionKeepingQuery('takedown', new URLSearchParams('/restore=&q=x'))).toBe(
+			'?/takedown&q=x'
+		);
+	});
+
+	it('is the bare action without a query', () => {
+		expect(actionKeepingQuery('takedown', new URLSearchParams())).toBe('?/takedown');
 	});
 });

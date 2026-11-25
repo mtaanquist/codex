@@ -2,7 +2,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { PageData, ActionData } from './$types';
-	import { withQuery } from '#lib/href';
+	import { actionKeepingQuery, withQuery } from '#lib/href';
 	import { formatDate, formatNumber } from '#lib/format';
 	import TakedownForm from '../TakedownForm.svelte';
 	import { reportReasonLabel } from '#lib/report-reasons';
@@ -125,7 +125,10 @@
 							</div>
 						</div>
 						<div class="list-actions">
-							<form method="POST" action="?/allowInBrowse">
+							<form
+								method="POST"
+								action={actionKeepingQuery('allowInBrowse', page.url.searchParams)}
+							>
 								<input type="hidden" name="storyId" value={story.storyId} />
 								<button
 									type="submit"
@@ -173,7 +176,7 @@
 							{/if}
 						</div>
 						<div class="list-actions">
-							<form method="POST" action="?/restore">
+							<form method="POST" action={actionKeepingQuery('restore', page.url.searchParams)}>
 								<input type="hidden" name="publicationId" value={edition.id} />
 								<button
 									type="submit"

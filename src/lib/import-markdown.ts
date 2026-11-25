@@ -143,9 +143,14 @@ function parseScalar(value: string): string {
 }
 
 // A file's body without the blank lines around it. The first line keeps its
-// indent: four leading spaces make a code block.
+// indent: four leading spaces make a code block. The end is trimmed with a
+// loop, since an unanchored-start regex like /[ \t\n]+$/ is quadratic on a
+// long whitespace run inside the body.
 function bodyText(body: string): string {
-	return body.replace(/^(?:[ \t]*\n)+/, '').replace(/[ \t\n]+$/, '');
+	const text = body.replace(/^(?:[ \t]*\n)+/, '');
+	let end = text.length;
+	while (end > 0 && ' \t\n'.includes(text[end - 1])) end--;
+	return text.slice(0, end);
 }
 
 function scalar(fields: FrontMatter, key: string): string | null {

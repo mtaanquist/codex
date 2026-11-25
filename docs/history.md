@@ -10,6 +10,16 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Repairing the account-deletion flag on old editions (2026-11-25, #1630,
+#1642, `staging/bug-fixes-5`). Migration 0124 added
+`hidden_by_account_deletion` with no backfill, so 0127 sets it on the editions
+an older deletion hid: every edition down without a takedown reason, and every
+edition of an owner whose deletion is still pending (one taken down while or
+before the deletion was pending carries a reason, so the first rule misses it).
+A deletion cancelled before the upgrade left nothing behind to tell its
+editions from ones a moderator took down, so a later restore of such an
+edition puts it back up.
+
 Assistant preferences gets its own settings item (2026-11-25, #1548,
 `feat/assistant-preferences-item`). Story and universe Details had grown to
 about 20 fields once the preferences form (#1344) joined them. A two-column

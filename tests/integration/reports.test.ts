@@ -333,6 +333,28 @@ describe('the queue', () => {
 		expect(up).toMatchObject({ removedAt: null, hiddenByAccountDeletion: false });
 	});
 
+	it('migration 0127 marks every edition of an owner whose deletion is pending', async () => {
+		const repairSql = readFileSync('drizzle/0127_mark-legacy-deletion-hides.sql', 'utf8');
+		const mod = await user('mod@example.com', 'moderator');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		// A deletion pending at upgrade time, with the edition taken down while
+		// it was pending (before the upgrade, that left the flag false).
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		await takedownPublication(db, publicationId, mod.id, 'copyright');
+		await db
+			.update(publications)
+			.set({ hiddenByAccountDeletion: false })
+			.where(eq(publications.storyId, storyId));
+
+		await pool.query(repairSql);
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+	});
+
 	it('says whether the deletion of a taken-down edition is still pending', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
