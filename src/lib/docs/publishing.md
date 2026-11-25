@@ -42,8 +42,8 @@ In the Publish section of a story's settings, under "Save tags", you can describ
 
 - **Genres.** Pick up to three from the site's list.
 - **Content warnings.** Tick everything on the site's list that a reader should know about before they start, such as graphic violence or death. If you tick none, the reading page says you added none; it does not call the story safe.
-- **Fandoms.** If the story is set in an existing world, such as a game setting or a series, pick it from the site's list. You can pick up to five. If the world you want is missing, use a tag instead, or ask the people who run the site to add it.
-- **Tags.** Anything else that helps a reader find the story, such as "found family" or "slow burn". Type a tag and press Enter or type a comma. When the site has a Browse page, the box suggests tags already used on stories listed there. You can add up to 20, each up to 50 characters. Tags that differ only in capitals, spaces, hyphens or underscores count as the same tag.
+- **Fandoms.** If the story is set in an existing world, such as a game setting or a series, pick it from the site's list. Type a name and press Enter. You can pick up to five. If the world you want is missing, use a tag instead, or ask the people who run the site to add it.
+- **Tags.** Anything else that helps a reader find the story, such as "found family" or "slow burn". Type a tag and press Enter or type a comma. To add several at once, paste them separated by commas, such as "found family, slow burn". When the site has a Browse page, the box suggests tags already used on stories listed there. You can add up to 20, each up to 50 characters. Tags that differ only in capitals, spaces, hyphens or underscores count as the same tag.
 
 Genres, fandoms and tags show on the reading page as soon as you save. Content warnings belong to the edition, like the adult flag, so readers see a change after you publish again. The moderators can merge tags that mean the same thing, or remove a tag; a removed tag disappears from your story and cannot be added again.
 

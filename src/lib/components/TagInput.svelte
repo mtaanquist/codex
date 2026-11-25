@@ -1,14 +1,18 @@
 <script lang="ts">
 	// A small list of short text tags shown as chips. Adding is hidden behind a
 	// dashed chip so the row stays compact until you reach for it. Used for
-	// character aliases and lore keywords, which feed mention detection.
+	// character aliases and lore keywords, which feed mention detection, and
+	// for a story's fandoms and tags.
+	import { splitTags } from '#lib/story-tags';
+
 	let {
 		values,
 		onChange,
 		addLabel = 'Add',
 		ariaLabel,
 		suggestions = [],
-		inputId
+		inputId,
+		splitOnComma = false
 	}: {
 		values: string[];
 		onChange: (values: string[]) => void;
@@ -19,6 +23,9 @@
 		// For a <label for> outside; the add button carries it until the
 		// input opens.
 		inputId?: string;
+		// A comma ends a value, typed or pasted, so "a, b" adds two. Off, a
+		// comma is part of the value (an alias such as "Smith, John").
+		splitOnComma?: boolean;
 	} = $props();
 	const listId = $props.id();
 
@@ -32,15 +39,14 @@
 	}
 
 	function commit() {
-		const value = draft.trim();
+		const typed = splitOnComma ? splitTags(draft) : [draft.trim()];
 		draft = '';
-		if (value && !values.includes(value)) {
-			onChange([...values, value]);
-		}
+		const added = [...new Set(typed)].filter((value) => value && !values.includes(value));
+		if (added.length > 0) onChange([...values, ...added]);
 	}
 
 	function onKeydown(event: KeyboardEvent) {
-		if (event.key === 'Enter' || event.key === ',') {
+		if (event.key === 'Enter' || (splitOnComma && event.key === ',')) {
 			event.preventDefault();
 			commit();
 		} else if (event.key === 'Escape') {

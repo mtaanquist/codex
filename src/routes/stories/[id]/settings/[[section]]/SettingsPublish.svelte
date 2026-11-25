@@ -222,10 +222,12 @@
 				addLabel="Add tag"
 				suggestions={data.lists.tags}
 				inputId="st-tags"
+				splitOnComma
 			/>
 			<p class="field-hint">
 				Anything else that helps a reader find the story, such as "found family". Up to {MAX_TAGS},
-				each up to {MAX_TAG_LENGTH} characters. Press Enter or type a comma after each one.
+				each up to {MAX_TAG_LENGTH} characters. Press Enter or type a comma after each one, or paste several
+				separated by commas.
 			</p>
 		</div>
 		<div class="settings-actions">
