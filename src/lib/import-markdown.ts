@@ -109,12 +109,14 @@ export function parseFrontMatter(text: string): { fields: FrontMatter; body: str
 	const fields: FrontMatter = {};
 	let listKey: string | null = null;
 	for (const line of lines.slice(1, close)) {
-		const item = line.match(/^ {2}- (.*)$/);
+		// The s flag lets . match U+2028 and U+2029, which JSON.stringify
+		// leaves raw inside a quoted value.
+		const item = line.match(/^ {2}- (.*)$/s);
 		if (item && listKey) {
 			(fields[listKey] as string[]).push(parseScalar(item[1]));
 			continue;
 		}
-		const pair = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/);
+		const pair = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/s);
 		if (!pair) continue;
 		const value = pair[2].trim();
 		if (value === '') {
