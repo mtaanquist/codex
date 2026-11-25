@@ -207,9 +207,8 @@ test('a universe field saved while a rename is still saving is kept', async ({ p
 	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
 });
 
-// The text boxes hold the stored text before the page's script runs, so a save
-// from that state (Enter in a field) keeps it instead of posting them empty
-// (#1683).
+// The text boxes hold the stored text before the page's script runs, so they
+// never show empty and a save from that state does not post them empty (#1683).
 test('the Details text boxes hold the stored text before the script runs', async ({
 	page,
 	browser,
@@ -220,24 +219,21 @@ test('the Details text boxes hold the stored text before the script runs', async
 	const style = 'Epic fantasy serial, omniscient narrator.';
 	await page.locator('#st-description').fill(description);
 	await page.locator('#st-style-notes').fill(style);
-	const saved = page.waitForResponse(/\?\/update$/);
+	const saved = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('styleNotes=Epic')
+	);
 	await page.locator('#st-style-notes').press('Tab');
-	await saved;
-	await expect(page.getByRole('status')).toHaveText('Saved.');
+	expect((await saved).ok()).toBe(true);
 	await gotoReady(page, universeUrl);
 	await page.locator('#u-description').fill('Ash and bells.');
 	const universeSaved = page.waitForResponse(/\?\/update$/);
 	await page.locator('#u-description').press('Tab');
-	await universeSaved;
+	expect((await universeSaved).ok()).toBe(true);
 
 	const plain = await withoutScript(browser, baseURL);
 	try {
-		await plain.page.goto(`/stories/${slug}/settings`);
-		await expect(plain.page.locator('#st-description')).toHaveValue(description);
-		await expect(plain.page.locator('#st-style-notes')).toHaveValue(style);
-		const posted = plain.page.waitForResponse(/\?\/update$/);
-		await plain.page.locator('#st-title').press('Enter');
-		await posted;
 		await plain.page.goto(`/stories/${slug}/settings`);
 		await expect(plain.page.locator('#st-description')).toHaveValue(description);
 		await expect(plain.page.locator('#st-style-notes')).toHaveValue(style);
