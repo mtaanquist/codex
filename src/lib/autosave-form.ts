@@ -55,10 +55,14 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		if (lastSave.get(formElement) === save) unsaved.delete(formElement);
 		if (result.type === 'redirect') {
 			const leaving = leavingTo;
-			const target = leaving && retarget(leaving.url, result.location);
 			leavingTo = null;
 			redirecting += 1;
 			try {
+				// For a held Back or Forward press the browser is still on the entry it
+				// was going to until kit's undo lands; replacing before then would
+				// overwrite that entry instead of the old address.
+				if (leaving?.delta) await historyRestored;
+				const target = leaving && retarget(leaving.url, result.location);
 				await gotoOwn(result.location, { reset: false, replace: true, refreshAll: true });
 				// A Back or Forward press goes on through the history, unless the
 				// entry it was going to is under the old address too.

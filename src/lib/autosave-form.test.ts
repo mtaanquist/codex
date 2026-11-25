@@ -369,14 +369,15 @@ describe('flushBeforeNavigate holding a navigation', () => {
 			update: vi.fn()
 		});
 		await settle();
+		// Not before kit's undo has put the old address back (#1723).
+		expect(goto).not.toHaveBeenCalled();
+		await historyRestored();
+		await landed;
 		expect(goto).toHaveBeenCalledTimes(1);
 		expect(goto).toHaveBeenCalledWith(
 			'/universes/new/categories',
 			expect.objectContaining({ replace: true })
 		);
-		expect(history.go).not.toHaveBeenCalled();
-		await historyRestored();
-		await landed;
 		expect(history.go).toHaveBeenCalledWith(-1);
 	});
 
@@ -396,10 +397,12 @@ describe('flushBeforeNavigate holding a navigation', () => {
 			cancel: vi.fn()
 		} as unknown as BeforeNavigate;
 		flushBeforeNavigate(nav);
-		await retries[0]({
+		const landed = retries[0]({
 			result: { type: 'redirect', location: '/universes/new/categories' },
 			update: vi.fn()
 		});
+		await historyRestored();
+		await landed;
 		expect(goto).toHaveBeenLastCalledWith(new URL('http://localhost/universes/new'));
 		expect(history.go).not.toHaveBeenCalled();
 	});

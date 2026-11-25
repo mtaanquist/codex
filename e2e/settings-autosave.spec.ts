@@ -122,6 +122,31 @@ test('renaming and then leaving by a sidebar link does not end on a missing page
 	await expect(page.getByLabel('Editing mode')).toBeVisible();
 });
 
+// Back pressed from a renamed title saves it, replaces the old settings
+// address, and goes on to the story at its new address (#1723).
+test('renaming and then pressing Back lands on the renamed story', async ({ page }) => {
+	const { slug, stamp } = await newStory(page);
+	await gotoReady(page, `/stories/${slug}`);
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'to-settings';
+		link.textContent = 'Settings';
+		document.body.append(link);
+	}, `/stories/${slug}/settings`);
+	await page.locator('#to-settings').click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await slowSaves(page);
+	await page.locator('#st-title').fill(`Backed ${stamp}`);
+	await page.evaluate(() => history.back());
+	await expect(page).toHaveURL(`/stories/backed-${stamp}`);
+	await expect(page.locator('.story-title')).toHaveText(`Backed ${stamp}`);
+	// The old settings address was replaced in the history by the new one.
+	await page.evaluate(() => history.back());
+	await expect(page).toHaveURL(`/stories/backed-${stamp}/settings`);
+	await expect(page.locator('#st-title')).toHaveValue(`Backed ${stamp}`);
+});
+
 // A settings page reached by id (as the Assistant links a universe's
 // suggestions) moves to its slug address, so a rename followed by a sidebar
 // link still lands on the renamed page (#1691).
