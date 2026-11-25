@@ -240,6 +240,20 @@ describe('parseStoryZip', () => {
 		expect(plan.waitingDrafts![0].textMd).toBe(code);
 	});
 
+	it('trims a body with a long whitespace run inside it in linear time', () => {
+		const run = ' \t\n'.repeat(30_000);
+		const body = `a${run}x${run}`;
+		const started = performance.now();
+		const plan = parseStoryZip(
+			zip({
+				'h/story.md': '---\ntitle: "H"\n---\n',
+				'h/chapters/01-a/01-s.md': `---\ntitle: "S"\n---\n${body}`
+			})
+		);
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(plan.chapters[0].scenes[0].bodyMd).toBe(`a${run}x`);
+	});
+
 	it('flags unknown statuses as problems and starts those scenes as drafts', () => {
 		const plan = parseStoryZip(full());
 		expect(plan.chapters[0].scenes[1].status).toBeNull();
