@@ -7,7 +7,7 @@ import { universeTimeline, universeRevisionCount } from '#lib/server/revisions';
 import { listCategories, saveCategories, universeContents } from '#lib/server/categories';
 import { trashUniverse, UNIVERSE_TRASH_DAYS } from '#lib/server/universe-lifecycle';
 import { parseStoryZip, StoryZipError, type ImportPlan } from '#lib/import-markdown';
-import { parseDocument, DocumentImportError } from '#lib/server/import-document';
+import { parseDocumentInWorker, DocumentImportError } from '#lib/server/import-document';
 import { previewImport, runImport } from '#lib/server/import-story';
 import { quotaFailure } from '#lib/server/quotas';
 import { effectiveAssetConfig } from '#lib/server/assets';
@@ -35,7 +35,9 @@ async function planFromUpload(data: FormData) {
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	const isManuscript = /\.(docx|epub)$/i.test(file.name);
 	try {
-		const plan = isManuscript ? await parseDocument(bytes, file.name) : parseStoryZip(bytes);
+		const plan = isManuscript
+			? await parseDocumentInWorker(bytes, file.name)
+			: parseStoryZip(bytes);
 		return { plan };
 	} catch (err) {
 		if (err instanceof StoryZipError || err instanceof DocumentImportError) {
