@@ -138,10 +138,19 @@ function attrOf(el: El, name: string): string | null {
 	return match ? (match[1] ?? match[2]) : null;
 }
 
+// A reference to a code point that cannot be stored (NUL, a surrogate, or past
+// U+10FFFF) reads as U+FFFD, as an HTML parser does.
+export function decodeCharRefs(text: string): string {
+	return text.replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (_, hex, dec) => {
+		const code = hex ? parseInt(hex, 16) : parseInt(dec, 10);
+		return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
+			? '\ufffd'
+			: String.fromCodePoint(code);
+	});
+}
+
 function decode(text: string): string {
-	return text
-		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-		.replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+	return decodeCharRefs(text)
 		.replace(/&nbsp;/g, ' ')
 		.replace(/&lt;/g, '<')
 		.replace(/&gt;/g, '>')
