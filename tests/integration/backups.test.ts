@@ -232,6 +232,10 @@ describe('pg_dump round trip', () => {
 			await admin.query(`create database "${restoreName}"`);
 			await restoreDumpFile(restoreUrl.toString(), dumpFile);
 			const restoredPool = new pg.Pool({ connectionString: restoreUrl.toString() });
+			// end() resolves before its clients finish closing, and the forced drop
+			// below terminates them (57P01); without a listener the pool rethrows
+			// that as an uncaught error and fails the run.
+			restoredPool.on('error', () => {});
 			try {
 				const restored = drizzle(restoredPool, { schema });
 				const runs = await listRecentBackupRuns(restored, 5);
