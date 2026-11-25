@@ -1,6 +1,14 @@
 import { and, count, desc, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { Database } from './auth';
-import { authTokens, sessions, stories, universes, users, userTotp } from './db/schema.ts';
+import {
+	authTokens,
+	publications,
+	sessions,
+	stories,
+	universes,
+	users,
+	userTotp
+} from './db/schema.ts';
 import { hashPassword } from './password.ts';
 import { isUniqueViolation } from './db-errors.ts';
 import { revokeTokens } from './tokens.ts';
@@ -161,11 +169,13 @@ export type InstanceStats = {
 	pending: number;
 	universes: number;
 	stories: number;
+	publishedEditions: number;
 };
 
 // Headline counts for the admin overview. Active writers are approved and not
 // suspended; pending are non-admin accounts still awaiting approval. Universe
-// and story counts are instance-wide.
+// and story counts are instance-wide. Published editions are current ones
+// that are up.
 export async function instanceStats(db: Database): Promise<InstanceStats> {
 	const [writers] = await db
 		.select({ n: count() })
@@ -179,11 +189,16 @@ export async function instanceStats(db: Database): Promise<InstanceStats> {
 		.where(and(isNull(users.approvedAt), ne(users.role, 'admin')));
 	const [universeCount] = await db.select({ n: count() }).from(universes);
 	const [storyCount] = await db.select({ n: count() }).from(stories);
+	const [editionCount] = await db
+		.select({ n: count() })
+		.from(publications)
+		.where(and(eq(publications.isCurrent, true), isNull(publications.removedAt)));
 	return {
 		writers: writers.n,
 		pending: pending.n,
 		universes: universeCount.n,
-		stories: storyCount.n
+		stories: storyCount.n,
+		publishedEditions: editionCount.n
 	};
 }
 

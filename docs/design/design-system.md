@@ -616,6 +616,10 @@ The remaining scoped spellings (`.role-tag`, `.nav-badge`, `.tfa-badge`,
   of buttons. A table too wide for a narrow card stacks per row with a
   container query and `data-label` cells (the admin accounts table) rather
   than scrolling, since a scroll wrapper clips the row menus.
+- A paged admin list (the accounts table, Published) takes a GET
+  `.admin-search` form above it (field, Find, Show all) and Previous/Next
+  links in a `.settings-actions` row under it, carrying `?q=` and a
+  zero-based `?page=`.
 - Icon-led row lists: `.list-row` with `.list-ic`, `.list-main`,
   `.list-title`, `.list-sub`, `.list-actions`. A long title (a web address,
   say) wraps anywhere, so its end is always shown.

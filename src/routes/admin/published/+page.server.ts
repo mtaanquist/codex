@@ -4,7 +4,8 @@ import { db } from '#lib/server/db';
 import { isUuid } from '#lib/slug';
 import { requireModerator } from '#lib/server/roles';
 import {
-	listPublications,
+	listBrowseBlocked,
+	listLiveEditions,
 	listTakenDown,
 	restorePublication,
 	takedownPublication
@@ -13,9 +14,17 @@ import { formText } from '#lib/server/validation';
 import { isReportReason } from '#lib/report-reasons';
 import { browseModerationActions } from '#lib/server/browse-moderation-actions';
 
-export const load: PageServerLoad = async ({ locals }) => {
+// The live list pages through ?page=N (zero-based) and searches ?q=.
+export const load: PageServerLoad = async ({ locals, url }) => {
 	requireModerator(locals);
-	return { published: await listPublications(db, 50), takenDown: await listTakenDown(db) };
+	return {
+		live: await listLiveEditions(db, {
+			query: url.searchParams.get('q') ?? '',
+			page: Number(url.searchParams.get('page')) || 0
+		}),
+		browseBlocked: await listBrowseBlocked(db),
+		takenDown: await listTakenDown(db)
+	};
 };
 
 export const actions: Actions = {
