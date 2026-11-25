@@ -30,7 +30,7 @@ A moderator can remove a story from Browse. When they do, the Publish section of
 
 ## Finding stories on Browse
 
-On the Browse page, search by title, writer, description or world, or pick a genre or fandom. Under "Hide stories with", tick any content warning you want to avoid. Adult stories are left out unless you tick "Include adult content"; your choice is remembered on this device. On a story's reading page, a genre, fandom or tag links to Browse with that filter.
+On the Browse page, search by title, writer, description or world, or pick a genre or fandom. Under "Hide stories with", tick any content warning you want to avoid. Adult stories are left out unless you tick "Include adult content" and search. Your choice is remembered on this device, so the next time you open Browse it includes adult stories straight away. Untick the box and search again to leave them out. On a story's reading page, a genre, fandom or tag links to Browse with that filter.
 
 ## Adult content
 

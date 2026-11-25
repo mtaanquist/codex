@@ -60,6 +60,24 @@
 				} catch (e) {
 					/* default widths stand */
 				}
+				// Browse includes adult work as soon as it opens when the reader
+				// chose that on this device (BROWSE_ADULT_KEY in src/lib/browse.ts).
+				// Going there before first paint keeps the list without it from
+				// showing for a moment.
+				try {
+					if (
+						location.pathname === '/browse' &&
+						localStorage.getItem('codex:browse-adult') === 'show'
+					) {
+						var browseUrl = new URL(location.href);
+						if (browseUrl.searchParams.get('adult') !== 'show') {
+							browseUrl.searchParams.set('adult', 'show');
+							location.replace(browseUrl.href);
+						}
+					}
+				} catch (e) {
+					/* the page itself applies it after loading */
+				}
 			})();
 		</script>
 		%sveltekit.head%
