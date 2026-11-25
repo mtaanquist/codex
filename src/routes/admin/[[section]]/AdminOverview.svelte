@@ -90,8 +90,10 @@
 			<div class="admin-stat-n">{data.stats.writers}</div>
 			<div class="admin-stat-foot">
 				{#if data.stats.pending > 0}<span class="delta up">+{data.stats.pending}</span> awaiting approval{:else}<span
-						class="delta flat">none</span
-					> awaiting approval{/if}
+						class="delta flat"
+					>
+						none
+					</span> awaiting approval{/if}
 			</div>
 		</div>
 		<div class="admin-stat">
@@ -132,10 +134,11 @@
 								stroke-width="1.8"
 								stroke-linecap="round"
 								stroke-linejoin="round"
-								><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline
-									points="22 4 12 14.01 9 11.01"
-								/></svg
 							>
+								<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline
+									points="22 4 12 14.01 9 11.01"
+								/>
+							</svg>
 						{:else if item.tone === 'warn'}
 							<svg
 								viewBox="0 0 24 24"
@@ -144,15 +147,11 @@
 								stroke-width="1.8"
 								stroke-linecap="round"
 								stroke-linejoin="round"
-								><path
-									d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
-								/><line x1="12" y1="9" x2="12" y2="13" /><line
-									x1="12"
-									y1="17"
-									x2="12"
-									y2="17"
-								/></svg
 							>
+								<path
+									d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
+								/><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" />
+							</svg>
 						{:else}
 							<svg
 								viewBox="0 0 24 24"
@@ -161,17 +160,13 @@
 								stroke-width="1.8"
 								stroke-linecap="round"
 								stroke-linejoin="round"
-								><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
+							>
+								<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
 									cx="9"
 									cy="7"
 									r="4"
-								/><line x1="19" y1="8" x2="19" y2="14" /><line
-									x1="22"
-									y1="11"
-									x2="16"
-									y2="11"
-								/></svg
-							>
+								/><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" />
+							</svg>
 						{/if}
 					</span>
 					<div class="attn-body">

@@ -137,9 +137,14 @@
 {:else if savedHref}
 	<div class="quick-note qn-saved" role="status">
 		Saved. <a href={savedHref}>Open the note</a>
-		<button class="qn-dismiss" type="button" aria-label="Dismiss" onclick={() => (savedHref = null)}
-			>&times;</button
+		<button
+			class="qn-dismiss"
+			type="button"
+			aria-label="Dismiss"
+			onclick={() => (savedHref = null)}
 		>
+			&times;
+		</button>
 	</div>
 {/if}
 

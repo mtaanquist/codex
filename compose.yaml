@@ -138,7 +138,7 @@ services:
   # at an external bucket (S3, B2, R2) instead.
   rustfs:
     logging: *logging
-    image: rustfs/rustfs:1.0.3
+    image: rustfs/rustfs:1.0.6
     profiles:
       - rustfs
     restart: unless-stopped
@@ -157,7 +157,7 @@ services:
   # with the image's own curl; 409 means the bucket already exists.
   rustfs-init:
     logging: *logging
-    image: rustfs/rustfs:1.0.3
+    image: rustfs/rustfs:1.0.6
     profiles:
       - rustfs
     depends_on:
@@ -180,7 +180,7 @@ services:
 
   caddy:
     logging: *logging
-    image: caddy:2.11.7-alpine
+    image: caddy:2.11.9-alpine
     profiles:
       - caddy
     restart: unless-stopped

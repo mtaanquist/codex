@@ -113,8 +113,9 @@
 			<span
 				class="ic"
 				style="background:linear-gradient(140deg,var(--accent-fill),color-mix(in oklab,var(--accent) 55%,#000));color:var(--accent-contrast);font-weight:700;font-size:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,.2);"
-				>{initials(data.displayName)}</span
 			>
+				{initials(data.displayName)}
+			</span>
 			<div>
 				<div class="tt">{data.displayName}</div>
 				<div class="st">{data.email}</div>
@@ -131,8 +132,9 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><path d="M20 21a8 8 0 0 0-16 0" /><circle cx="12" cy="7" r="4" /></svg
 				>
+					<path d="M20 21a8 8 0 0 0-16 0" /><circle cx="12" cy="7" r="4" />
+				</svg>
 				<span class="lbl">Profile</span>
 			</a>
 			<a class="nav-item" class:active={active === 'security'} href={sectionHref('security')}>
@@ -143,10 +145,9 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><rect x="3" y="11" width="18" height="11" rx="2" /><path
-						d="M7 11V7a5 5 0 0 1 10 0v4"
-					/></svg
 				>
+					<rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+				</svg>
 				<span class="lbl">Security</span>
 			</a>
 			{#if hasInvites}
@@ -158,12 +159,13 @@
 						stroke-width="1.7"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
+					>
+						<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
 							cx="9"
 							cy="7"
 							r="4"
-						/><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" /></svg
-					>
+						/><line x1="19" y1="8" x2="19" y2="14" /><line x1="22" y1="11" x2="16" y2="11" />
+					</svg>
 					<span class="lbl">Invites</span>
 				</a>
 			{/if}
@@ -177,10 +179,11 @@
 						stroke-width="1.7"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path
-							d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"
-						/></svg
 					>
+						<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path
+							d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"
+						/>
+					</svg>
 					<span class="lbl">Connected apps</span>
 				</a>
 			{/if}
@@ -193,10 +196,11 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><path
-						d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"
-					/><circle cx="12" cy="12" r="4" /></svg
 				>
+					<path
+						d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3 4.9 4.9M19.1 19.1l-1.4-1.4M17.7 6.3l1.4-1.4M4.9 19.1l1.4-1.4"
+					/><circle cx="12" cy="12" r="4" />
+				</svg>
 				<span class="lbl">Assistant</span>
 			</a>
 			<a class="nav-item" class:active={active === 'display'} href={sectionHref('display')}>
@@ -207,13 +211,14 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><rect x="2" y="3" width="20" height="14" rx="2" /><line
+				>
+					<rect x="2" y="3" width="20" height="14" rx="2" /><line
 						x1="8"
 						y1="21"
 						x2="16"
 						y2="21"
-					/><line x1="12" y1="17" x2="12" y2="21" /></svg
-				>
+					/><line x1="12" y1="17" x2="12" y2="21" />
+				</svg>
 				<span class="lbl">Display</span>
 			</a>
 			<a class="nav-item" class:active={active === 'editor'} href={sectionHref('editor')}>
@@ -224,8 +229,9 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg
 				>
+					<path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+				</svg>
 				<span class="lbl">Editor</span>
 			</a>
 			<a
@@ -240,10 +246,11 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path
-						d="M13.7 21a2 2 0 0 1-3.4 0"
-					/></svg
 				>
+					<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path
+						d="M13.7 21a2 2 0 0 1-3.4 0"
+					/>
+				</svg>
 				<span class="lbl">Notifications</span>
 			</a>
 			<a class="nav-item" class:active={active === 'pagesetup'} href={sectionHref('pagesetup')}>
@@ -254,10 +261,11 @@
 					stroke-width="1.7"
 					stroke-linecap="round"
 					stroke-linejoin="round"
-					><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path
-						d="M14 2v6h6"
-					/><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="16" y2="17" /></svg
 				>
+					<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path
+						d="M14 2v6h6"
+					/><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="16" y2="17" />
+				</svg>
 				<span class="lbl">Page setup</span>
 			</a>
 
@@ -270,8 +278,10 @@
 						stroke="currentColor"
 						stroke-width="1.7"
 						stroke-linecap="round"
-						stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V5z" /></svg
+						stroke-linejoin="round"
 					>
+						<path d="M12 2 4 5v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V5z" />
+					</svg>
 					<span class="lbl">Admin panel</span>
 					<svg
 						class="nav-out-arrow"
@@ -281,10 +291,11 @@
 						stroke-width="1.9"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path
-							d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"
-						/></svg
 					>
+						<path d="M15 3h6v6" /><path d="M10 14 21 3" /><path
+							d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"
+						/>
+					</svg>
 				</a>
 			{/if}
 		</nav>
@@ -293,9 +304,9 @@
 			<div class="admin-nav-label" id="account-contents-label">On this page</div>
 			<nav class="contents-nav" aria-labelledby="account-contents-label">
 				{#each contents as item (item.id)}
-					<a href="#{item.id}" aria-current={inView.id === item.id ? 'true' : undefined}
-						>{item.label}</a
-					>
+					<a href="#{item.id}" aria-current={inView.id === item.id ? 'true' : undefined}>
+						{item.label}
+					</a>
 				{/each}
 			</nav>
 		{/if}
@@ -305,9 +316,9 @@
 			style="background:transparent;box-shadow:none;border:0;padding:12px 4px 2px;"
 		>
 			<form method="POST" action={resolve('/logout')} onsubmit={dropAllDraftForms}>
-				<button class="btn btn-secondary" type="submit" style="width:100%;justify-content:center;"
-					>Sign out</button
-				>
+				<button class="btn btn-secondary" type="submit" style="width:100%;justify-content:center;">
+					Sign out
+				</button>
 			</form>
 		</div>
 	{/snippet}

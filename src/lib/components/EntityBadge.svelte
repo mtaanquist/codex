@@ -32,7 +32,7 @@
 {#if image}
 	<span class="badge {size} badge-img"><img src={image} alt="" /></span>
 {:else}
-	<span class="badge {size}" style="background: {background}"
-		>{letter ? entityLetter(name) : ''}</span
-	>
+	<span class="badge {size}" style="background: {background}">
+		{letter ? entityLetter(name) : ''}
+	</span>
 {/if}

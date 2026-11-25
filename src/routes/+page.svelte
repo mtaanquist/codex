@@ -176,8 +176,10 @@
 							<a
 								class="library-table-title"
 								class:story-card-empty={story.words === 0}
-								href={resolve('/stories/[id]', { id: story.slug })}>{story.title}</a
+								href={resolve('/stories/[id]', { id: story.slug })}
 							>
+								{story.title}
+							</a>
 							<!-- A link, not the cover menu: the table scrolls sideways, which
 							     would clip a menu. -->
 							{#if story.drafts.length > 0}
@@ -186,8 +188,10 @@
 									href={resolve('/stories/[id]/settings/[[section]]', {
 										id: story.slug,
 										section: 'drafts'
-									})}>{count(story.drafts.length, 'saved draft')}</a
+									})}
 								>
+									{count(story.drafts.length, 'saved draft')}
+								</a>
 							{/if}
 						</td>
 						<td>
@@ -289,8 +293,10 @@
 										<button
 											class="btn btn-ghost btn-sm"
 											type="button"
-											onclick={() => (newUniverseFandom = null)}>Not that one</button
+											onclick={() => (newUniverseFandom = null)}
 										>
+											Not that one
+										</button>
 									</p>
 								{/if}
 							</form>
@@ -345,9 +351,9 @@
 				{#each orderedUniverses as universe (universe.id)}
 					<section class="universe-section">
 						<header class="universe-header">
-							<span class="universe-mark universe-mark-icon" title="Universe"
-								><Icon name="universe" size={18} /></span
-							>
+							<span class="universe-mark universe-mark-icon" title="Universe">
+								<Icon name="universe" size={18} />
+							</span>
 							<div class="universe-identity">
 								<div class="universe-name-row">
 									<a
@@ -366,8 +372,10 @@
 											aria-label="{count(
 												universe.waiting,
 												'suggestion'
-											)} waiting in {universe.name}">{count(universe.waiting, 'suggestion')}</a
+											)} waiting in {universe.name}"
 										>
+											{count(universe.waiting, 'suggestion')}
+										</a>
 									{/if}
 								</div>
 								{#if universe.descriptionMd}
@@ -494,9 +502,9 @@
 					     start. Creating one makes the universe on first use. -->
 					<section class="universe-section">
 						<header class="universe-header">
-							<span class="universe-mark universe-mark-icon" title="Universe"
-								><Icon name="universe" size={18} /></span
-							>
+							<span class="universe-mark universe-mark-icon" title="Universe">
+								<Icon name="universe" size={18} />
+							</span>
 							<div class="universe-identity">
 								<h2 class="universe-name">Standalone stories</h2>
 								<p class="universe-description">

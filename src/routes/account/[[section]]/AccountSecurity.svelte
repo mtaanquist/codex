@@ -138,13 +138,13 @@
 			</div>
 			<div class="settings-actions">
 				{#if form?.scope === 'email' && form.message}
-					<span class="field-hint" role="alert" style="color:var(--danger-ink);"
-						>{form.message}</span
-					>
+					<span class="field-hint" role="alert" style="color:var(--danger-ink);">
+						{form.message}
+					</span>
 				{:else if form?.scope === 'email' && form.sent}
-					<span class="field-hint" role="status" style="color:var(--status-final-ink);"
-						>Check your new inbox for a confirmation link.</span
-					>
+					<span class="field-hint" role="status" style="color:var(--status-final-ink);">
+						Check your new inbox for a confirmation link.
+					</span>
 				{/if}
 				<button type="submit" class="btn btn-primary">Change email</button>
 			</div>
@@ -188,13 +188,13 @@
 			</div>
 			<div class="settings-actions">
 				{#if form?.scope === 'password' && form.message}
-					<span class="field-hint" role="alert" style="color:var(--danger-ink);"
-						>{form.message}</span
-					>
+					<span class="field-hint" role="alert" style="color:var(--danger-ink);">
+						{form.message}
+					</span>
 				{:else if form?.scope === 'password' && form.saved}
-					<span class="field-hint" role="status" style="color:var(--status-final-ink);"
-						>Password changed. Other devices were signed out.</span
-					>
+					<span class="field-hint" role="status" style="color:var(--status-final-ink);">
+						Password changed. Other devices were signed out.
+					</span>
 				{/if}
 				<button type="submit" class="btn btn-primary">Update password</button>
 			</div>
@@ -222,8 +222,9 @@
 						stroke-width="1.7"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path d="M12 2 4 5v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V5z" /><path d="m9 12 2 2 4-4" /></svg
 					>
+						<path d="M12 2 4 5v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V5z" /><path d="m9 12 2 2 4-4" />
+					</svg>
 				{:else}
 					<svg
 						viewBox="0 0 24 24"
@@ -232,10 +233,9 @@
 						stroke-width="1.7"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><rect x="5" y="11" width="14" height="10" rx="2" /><path
-							d="M8 11V7a4 4 0 0 1 8 0v4"
-						/></svg
 					>
+						<rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" />
+					</svg>
 				{/if}
 			</span>
 			<div class="tfa-body">
@@ -289,9 +289,9 @@
 								aria-label="Current password"
 								required
 							/>
-							<button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger-ink);"
-								>Turn off</button
-							>
+							<button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger-ink);">
+								Turn off
+							</button>
 						</form>
 					</div>
 				{:else if data.twoFactor.status === 'pending'}
@@ -338,9 +338,9 @@
 								</p>
 								<div class="copy-field">
 									<input id="totp-secret" type="text" value={data.totpSetup.secret} readonly />
-									<button type="button" onclick={() => copyText(data.totpSetup?.secret ?? '')}
-										>Copy</button
-									>
+									<button type="button" onclick={() => copyText(data.totpSetup?.secret ?? '')}>
+										Copy
+									</button>
 								</div>
 								<p class="hint" style="margin-top:9px;">
 									Time-based, 6 digits, refreshes every 30s.
@@ -390,9 +390,9 @@
 					<form method="POST" action="?/cancelTotp">
 						<button type="submit" class="btn btn-ghost">Cancel</button>
 					</form>
-					<button type="submit" form="totp-confirm" class="btn btn-primary"
-						>Verify and turn on</button
-					>
+					<button type="submit" form="totp-confirm" class="btn btn-primary">
+						Verify and turn on
+					</button>
 				</div>
 			</div>
 		{/if}
@@ -413,10 +413,11 @@
 						stroke-width="1.8"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path
-							d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
-						/><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" /></svg
 					>
+						<path
+							d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
+						/><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12" y2="17" />
+					</svg>
 					<span>Treat these like passwords. Anyone with one can get into your account.</span>
 				</div>
 				<div class="recovery-grid">
@@ -426,11 +427,13 @@
 					<button
 						type="button"
 						class="btn btn-secondary btn-sm"
-						onclick={() => copyText(codes.join('\n'))}>Copy all</button
+						onclick={() => copyText(codes.join('\n'))}
 					>
-					<button type="button" class="btn btn-ghost btn-sm" onclick={() => downloadCodes(codes)}
-						>Download .txt</button
-					>
+						Copy all
+					</button>
+					<button type="button" class="btn btn-ghost btn-sm" onclick={() => downloadCodes(codes)}>
+						Download .txt
+					</button>
 					<form
 						method="POST"
 						action="?/regenerateRecovery"
@@ -561,13 +564,14 @@
 							stroke-width="1.5"
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							><rect x="3" y="4" width="14" height="10" rx="1" /><line
+						>
+							<rect x="3" y="4" width="14" height="10" rx="1" /><line
 								x1="6"
 								y1="17"
 								x2="14"
 								y2="17"
-							/><line x1="10" y1="14" x2="10" y2="17" /></svg
-						>
+							/><line x1="10" y1="14" x2="10" y2="17" />
+						</svg>
 					</div>
 					<div class="user-row-identity">
 						<p class="user-row-name">{session.userAgent ?? 'Unknown device'}</p>
@@ -654,9 +658,9 @@
 			</div>
 			<div class="settings-actions">
 				{#if form?.scope === 'delete' && form.message}
-					<span class="field-hint" role="alert" style="color:var(--danger-ink);"
-						>{form.message}</span
-					>
+					<span class="field-hint" role="alert" style="color:var(--danger-ink);">
+						{form.message}
+					</span>
 				{/if}
 				<button type="submit" class="btn btn-danger">Delete my account</button>
 			</div>

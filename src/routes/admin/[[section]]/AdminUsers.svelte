@@ -203,9 +203,9 @@
 									<div class="cell-name">
 										{account.displayName}
 										{#if account.role === 'admin'}<span class="role-tag admin">Admin</span>
-										{:else if account.role === 'moderator'}<span class="role-tag moderator"
-												>Moderator</span
-											>{/if}
+										{:else if account.role === 'moderator'}<span class="role-tag moderator">
+												Moderator
+											</span>{/if}
 										{#if account.id === data.meId}<span class="pill">You</span>{/if}
 									</div>
 									<div class="cell-mail">{account.email}</div>
@@ -215,16 +215,17 @@
 						<td class="cell-muted" data-label="Status">
 							{userStatus(account)}{account.publicArchiveEnabled ? ', can publish' : ''}
 						</td>
-						<td class="cell-muted cell-nowrap" data-label="Joined"
-							>{formatDate(account.createdAt, page.data.timeZone)}</td
-						>
+						<td class="cell-muted cell-nowrap" data-label="Joined">
+							{formatDate(account.createdAt, page.data.timeZone)}
+						</td>
 						<td class="cell-muted cell-nowrap" data-label="Last active">
 							{#if account.lastActiveAt}
 								<time
 									datetime={new Date(account.lastActiveAt).toISOString()}
 									title={formatDateTime(account.lastActiveAt, page.data.timeZone)}
-									>{relativeShort(account.lastActiveAt, page.data.timeZone, now())}</time
 								>
+									{relativeShort(account.lastActiveAt, page.data.timeZone, now())}
+								</time>
 							{:else}
 								Never
 							{/if}
@@ -349,8 +350,10 @@
 										<button
 											type="submit"
 											class="btn btn-ghost btn-sm"
-											style="color:var(--danger-ink);">Delete</button
+											style="color:var(--danger-ink);"
 										>
+											Delete
+										</button>
 									</form>
 								</div>
 							</td>

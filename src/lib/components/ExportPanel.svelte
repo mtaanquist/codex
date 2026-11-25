@@ -56,8 +56,10 @@
 						<a
 							class="btn btn-ghost btn-sm"
 							href={resolve('/exports/[id=uuid]', { id: item.id })}
-							download>Download</a
+							download
 						>
+							Download
+						</a>
 					{:else if item.status === 'pending'}
 						<span class="export-status">Preparing...</span>
 					{:else}

@@ -71,9 +71,9 @@
 	</div>
 {:else if form?.scope === 'storage' && form.migrating}
 	<div class="status-banner ok">
-		<span class="dot"></span><span class="v"
-			>Copy started. The worker copies every stored file; check back here for the result.</span
-		>
+		<span class="dot"></span><span class="v">
+			Copy started. The worker copies every stored file; check back here for the result.
+		</span>
 	</div>
 {/if}
 
@@ -167,10 +167,10 @@
 		</div>
 	{:else if !recounting && recountResult && recountResult.next === null}
 		<div class="status-banner ok">
-			<span class="dot"></span><span class="v"
-				>Image storage recounted from the stored files for {formatNumber(recountResult.done)}
-				account{recountResult.done === 1 ? '' : 's'}.</span
-			>
+			<span class="dot"></span><span class="v">
+				Image storage recounted from the stored files for {formatNumber(recountResult.done)}
+				account{recountResult.done === 1 ? '' : 's'}.
+			</span>
 		</div>
 	{/if}
 
