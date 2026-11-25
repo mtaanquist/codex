@@ -78,3 +78,13 @@ export function readingAddress(story: {
 }): string {
 	return story.visibility === 'public' ? slugAddress(story) : story.id;
 }
+
+/**
+ * The same /stories/<ref>/... or /universes/<ref>/... address at another ref,
+ * keeping the rest of the path and the query.
+ */
+export function withRef(url: URL, ref: string): string {
+	const parts = url.pathname.split('/');
+	parts[2] = ref;
+	return parts.join('/') + url.search;
+}

@@ -19,7 +19,7 @@ import { assistantLayout, saveUniverseModels } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/server/proposals';
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
-import { isUuid } from '#lib/slug';
+import { isUuid, slugAddress, withRef } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
 import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
@@ -45,7 +45,7 @@ async function planFromUpload(data: FormData) {
 	}
 }
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// Details rests on /universes/<slug> itself; the other sections have
 	// their own page.
 	if (
@@ -56,6 +56,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	)
 		error(404, 'Not found');
 	const universe = await ownedUniverse(params.id, locals.user!.id);
+	// A page reached by id moves to its slug address, where its links and a
+	// rename's redirect expect it to be (#1691).
+	if (params.id !== slugAddress(universe)) redirect(303, withRef(url, slugAddress(universe)));
 	const [contents, categories, timeline, revisionCount, assistant] = await Promise.all([
 		universeContents(db, universe.id),
 		listCategories(db, universe.id),

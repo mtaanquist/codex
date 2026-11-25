@@ -6,6 +6,7 @@ import {
 	isValidSlug,
 	slugAddress,
 	slugify,
+	withRef,
 	SLUG_MAX
 } from './slug';
 
@@ -94,5 +95,15 @@ describe('readingAddress', () => {
 		expect(readingAddress({ ...story, slug, visibility: 'public' })).toBe(story.id);
 		expect(slugAddress({ id: story.id, slug: slug.toUpperCase() })).toBe(story.id);
 		expect(slugAddress(story)).toBe('book-of-ash');
+	});
+});
+
+describe('withRef', () => {
+	it('swaps the ref and keeps the section and query', () => {
+		const id = '0b7f8a52-5d3e-4c1a-9f0e-2a6c1d9b8e47';
+		expect(withRef(new URL(`http://x/stories/${id}/settings/editor?tab=1`), 'the-toll')).toBe(
+			'/stories/the-toll/settings/editor?tab=1'
+		);
+		expect(withRef(new URL(`http://x/universes/${id}`), 'ardenfall')).toBe('/universes/ardenfall');
 	});
 });

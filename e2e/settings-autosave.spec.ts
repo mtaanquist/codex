@@ -217,3 +217,24 @@ test('a failed save keeps the page and the text, and the next blur retries', asy
 	await page.reload();
 	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
 });
+
+// A settings page reached by id (as the Assistant links a universe's
+// suggestions) moves to its slug address, so a rename followed by a sidebar
+// link still lands on the renamed page (#1691).
+test('a settings page reached by id moves to its slug address', async ({ page }) => {
+	const { slug, stamp } = await newStory(page);
+	// The Details form posts by id.
+	const action = await page.locator('form:has(#st-title)').getAttribute('action');
+	const id = action!.split('/')[2];
+	expect(id).not.toBe(slug);
+	await gotoReady(page, `/stories/${id}/settings`);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await slowSaves(page);
+	await page.locator('#st-title').fill(`Moved ${stamp}`);
+	await page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' })
+		.click();
+	await expect(page).toHaveURL(`/stories/moved-${stamp}/settings/editor`);
+	await expect(page.getByLabel('Editing mode')).toBeVisible();
+});
