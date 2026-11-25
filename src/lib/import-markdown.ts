@@ -282,8 +282,15 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const inRoot = (path: string) => (path.startsWith(root) ? path.slice(root.length) : null);
 
 	const problems: string[] = [];
-	if (skippedDrafts) {
+	// A story folder re-zipped without its wrapping folder has drafts/ at the
+	// top, which the filter above cannot tell from a story named "drafts".
+	const rootDrafts = Object.keys(entries).some((path) => inRoot(path)?.startsWith('drafts/'));
+	if (skippedDrafts || rootDrafts) {
 		problems.push('The saved drafts in this archive were not imported, only the working draft.');
+	}
+	// The account export's review threads anchor to text; they are not recreated.
+	if (`${root}reviews.md` in entries) {
+		problems.push('The review comments in this archive were not imported.');
 	}
 	// An archive edited on Windows may carry \r\n line breaks; the editor and
 	// the front matter parser count a line break as one \n.
