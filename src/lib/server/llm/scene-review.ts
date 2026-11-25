@@ -20,6 +20,7 @@ import {
 	loadReviewRun,
 	ReviewRunLoadError,
 	reviewScopeKey,
+	reviewSettingsKey,
 	saveReviewRun
 } from '../review-runs.ts';
 import { needsSummary, summariseStory } from './summaries.ts';
@@ -42,6 +43,7 @@ import {
 	buildReviewMessage,
 	buildSurveyMessage,
 	parseCandidates,
+	readsWording,
 	splitSurveyChunks,
 	SURVEY_RETRY_MESSAGE,
 	type ContinuityCandidate,
@@ -51,6 +53,7 @@ import {
 import {
 	runPatternScope,
 	isFullReview,
+	parseCategories,
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
@@ -755,6 +758,9 @@ async function openRun(
 		jobId?: string;
 		userId: string;
 		scope: string;
+		// The run's settings key (see reviewSettingsKey); left out where the run
+		// carries nothing forward that the settings shape.
+		settings?: string;
 	}
 ): Promise<RunWriter> {
 	let state: ReviewRunState | null = null;
@@ -765,7 +771,11 @@ async function openRun(
 			// to continue" arrives as a new job with no row of its own. The capped
 			// run over the same scope is adopted under the new id, so the scenes it
 			// already reviewed are not reviewed (and billed) a second time.
-			state ??= await adoptCappedRun(db, { userId: opts.userId, scope: opts.scope });
+			state ??= await adoptCappedRun(db, {
+				userId: opts.userId,
+				scope: opts.scope,
+				settings: opts.settings
+			});
 		} catch (err) {
 			logEvent('error', 'review_run.load_failed', { jobId: opts.jobId, ...errorFields(err) });
 			throw new ReviewRunLoadError(err);
@@ -773,6 +783,7 @@ async function openRun(
 	}
 	const current = state ?? emptyReviewRun();
 	current.scope = opts.scope;
+	if (opts.settings) current.settings = opts.settings;
 	// The earlier attempt's stop flags and reported spend described that attempt,
 	// so they are cleared. The cap is the meter's (jobSpendMeter): a retry of the
 	// same job carries on from what its earlier attempts spent, and only a new
@@ -1057,7 +1068,13 @@ export async function reviewStoryScenes(
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
-		scope: reviewScopeKey(scope)
+		scope: reviewScopeKey(scope),
+		settings: reviewSettingsKey(
+			await storyLanguage(db, opts.storyId, opts.userId),
+			readsWording(parseCategories(opts.categories))
+				? await storyAssistantPreferences(db, opts.storyId, opts.userId)
+				: null
+		)
 	});
 	const done = new Set(run.state.completed);
 	// Only the scene failures carry over from an earlier attempt, alongside the

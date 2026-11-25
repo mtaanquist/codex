@@ -1364,7 +1364,13 @@ scenes whose pass failed and those edited since their pass read them, which
 are reviewed again. A failure to read or adopt the earlier run fails the
 attempt for pg-boss to retry rather than starting over. A copyedit capped
 under the key from before v3.21.3 (no categories in it) is not continued; it
-starts over. The rows are
+starts over. A whole-story or chapter review also records a short hash of the
+settings its prompts read (`reviewSettingsKey`: the story language, plus the
+Assistant preferences for a pass that reads the wording), kept beside the
+scope rather than in it so the queue key is unchanged; a capped run with a
+different hash is not continued, so a changed setting starts over instead of
+counting notes made under the old one as done. A row saved before the hash
+was recorded has none and is continued as before. The rows are
 disposable, and a daily worker sweep drops those older than 30 days. The
 review enqueue holds one unfinished job per scope (and the summaries enqueue one
 per story), so a duplicate request cannot start a second pass over the same
