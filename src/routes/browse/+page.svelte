@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { withQuery } from '#lib/href';
-	import { browseHeading } from '#lib/browse';
+	import { BROWSE_ADULT_KEY, browseHeading } from '#lib/browse';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
 	import ShelfGrid from '#lib/components/ShelfGrid.svelte';
@@ -11,23 +10,16 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const ADULT_KEY = 'codex:browse-adult';
 	const browse = resolve('/browse');
 
-	// The reader's choice to include adult work is remembered on this device
-	// only, and only ticks the box: it never changes results by itself.
+	// The choice to include adult work is remembered on this device when the
+	// reader searches with it, and applied whenever Browse opens (+page.ts and
+	// the pre-paint script in app.html).
 	let adult = $derived(data.query.adult);
-	onMount(() => {
-		try {
-			if (!data.query.adult && localStorage.getItem(ADULT_KEY) === 'show') adult = true;
-		} catch {
-			// Storage can be blocked; the box just starts unticked.
-		}
-	});
 	function rememberAdult() {
 		try {
-			if (adult) localStorage.setItem(ADULT_KEY, 'show');
-			else localStorage.removeItem(ADULT_KEY);
+			if (adult) localStorage.setItem(BROWSE_ADULT_KEY, 'show');
+			else localStorage.removeItem(BROWSE_ADULT_KEY);
 		} catch {
 			// Nothing to remember it in.
 		}

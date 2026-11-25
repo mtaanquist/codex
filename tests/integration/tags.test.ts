@@ -87,6 +87,37 @@ async function tagId(slug: string) {
 
 const addFandoms = (text: string) => addListEntries(db, 'fandom', text);
 
+// Runs `run` while another connection holds an open transaction from `hold`,
+// and finishes that transaction once `run` is stuck waiting on a lock.
+async function whileHeld<T>(
+	hold: (client: pg.PoolClient) => Promise<unknown>,
+	run: () => Promise<T>
+): Promise<T> {
+	const holder = await pool.connect();
+	try {
+		await holder.query('begin');
+		await hold(holder);
+		const pending = run();
+		for (let i = 0; i < 200; i++) {
+			const { rows } = await pool.query(
+				`select count(*)::int as n from pg_stat_activity
+				 where datname = current_database() and wait_event_type = 'Lock'`
+			);
+			if (rows[0].n > 0) break;
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		await holder.query('commit');
+		return await pending;
+	} finally {
+		holder.release();
+	}
+}
+
+async function mergedInto(slug: string) {
+	const [row] = await db.select().from(tags).where(eq(tags.slug, slug));
+	return row.mergedIntoId;
+}
+
 describe('story tags', () => {
 	it('reuses a tag by slug and keeps the first spelling', async () => {
 		await tagStory(storyId, ['Found Family', 'found-family', 'Slow Burn']);
@@ -172,17 +203,40 @@ describe('story tags', () => {
 		expect(checkTagNames([...names, 'extra'], 21).ok).toBe(false);
 	});
 
-	it('follows a chain of merges and refuses one that would loop', async () => {
+	it('merges into the survivor and keeps every chain one step deep', async () => {
 		await tagStory(storyId, ['A']);
 		await db.insert(tags).values([
 			{ kind: 'tag', name: 'B', slug: 'b' },
-			{ kind: 'tag', name: 'C', slug: 'c' }
+			{ kind: 'tag', name: 'C', slug: 'c' },
+			{ kind: 'tag', name: 'D', slug: 'd' }
 		]);
 		await mergeTag(db, await tagId('a'), 'B');
-		await mergeTag(db, await tagId('b'), 'C');
+		// B's merged entries move with it.
+		expect(await mergeTag(db, await tagId('b'), 'C')).toEqual({ ok: true });
+		expect(await mergedInto('a')).toBe(await tagId('c'));
 		expect(await names(storyId)).toEqual(['C']);
+		// Naming a merged entry lands on its survivor.
+		expect(await mergeTag(db, await tagId('d'), 'A')).toEqual({ ok: true });
+		expect(await mergedInto('d')).toBe(await tagId('c'));
 		expect((await mergeTag(db, await tagId('c'), 'A')).ok).toBe(false);
 		expect((await mergeTag(db, await tagId('a'), 'A')).ok).toBe(false);
+	});
+
+	it('refuses a merge whose target was merged into the source meanwhile', async () => {
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'A', slug: 'a' },
+			{ kind: 'tag', name: 'B', slug: 'b' }
+		]);
+		const a = await tagId('a');
+		const b = await tagId('b');
+		// Another moderator is merging B into A when this merge of A into B starts.
+		const result = await whileHeld(
+			(client) => client.query('update tags set merged_into_id = $1 where id = $2', [a, b]),
+			() => mergeTag(db, a, 'B')
+		);
+		expect(result.ok).toBe(false);
+		expect(await mergedInto('a')).toBeNull();
+		expect(await mergedInto('b')).toBe(a);
 	});
 
 	it('hides a removed tag everywhere and will not let authors add it back', async () => {
@@ -201,6 +255,22 @@ describe('story tags', () => {
 		expect((await renameTag(db, await tagId('slowburn'), 'slow burn')).ok).toBe(false);
 		expect(await renameTag(db, await tagId('slowburn'), 'Slow-Burning')).toEqual({ ok: true });
 		expect(await names(storyId)).toEqual(['Slow Burn', 'Slow-Burning']);
+	});
+
+	it('refuses a rename to a name a writer added since the check', async () => {
+		await tagStory(storyId, ['Slowburn']);
+		const id = await tagId('slowburn');
+		const result = await whileHeld(
+			(client) =>
+				client.query(
+					`insert into tags (kind, name, slug) values ('tag', 'Slow Burn', 'slow-burn')`
+				),
+			() => renameTag(db, id, 'Slow Burn')
+		);
+		expect(result).toEqual({
+			ok: false,
+			message: 'Another entry already has that name. Merge them instead.'
+		});
 	});
 });
 

@@ -1,10 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+	BROWSE_ADULT_KEY,
 	browseHeading,
 	browseIndexable,
 	decodeCursor,
 	encodeCursor,
-	parseBrowseQuery
+	parseBrowseQuery,
+	withRememberedAdult
 } from './browse';
 
 const id = '0b7c2f8e-3d1a-4c5b-9e6f-7a8b9c0d1e2f';
@@ -68,5 +71,27 @@ describe('browse heading', () => {
 		expect(browseHeading({ genre: 'Fantasy', fandom: 'Discworld', tag: 'dragons' })).toBe(
 			'Fantasy, Discworld stories tagged dragons'
 		);
+	});
+});
+
+describe('remembered adult choice', () => {
+	it('adds the adult choice to a Browse address, keeping the other filters', () => {
+		expect(
+			withRememberedAdult(new URL('https://codex.test/browse?tag=dragons&hide=death'), true)
+		).toBe('/browse?tag=dragons&hide=death&adult=show');
+		expect(withRememberedAdult(new URL('https://codex.test/browse'), true)).toBe(
+			'/browse?adult=show'
+		);
+	});
+
+	it('leaves the address alone when nothing is remembered or adult work is already in', () => {
+		expect(withRememberedAdult(new URL('https://codex.test/browse?q=sea'), false)).toBeNull();
+		expect(withRememberedAdult(new URL('https://codex.test/browse?adult=show'), true)).toBeNull();
+	});
+
+	it('is applied before first paint from the same storage key', () => {
+		const html = readFileSync('src/app.html', 'utf8');
+		expect(html).toContain(`localStorage.getItem('${BROWSE_ADULT_KEY}') === 'show'`);
+		expect(html).toContain("location.pathname === '/browse'");
 	});
 });

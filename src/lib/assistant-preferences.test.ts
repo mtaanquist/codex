@@ -9,6 +9,8 @@ import {
 	NOTES_BEGIN,
 	NOTES_END,
 	normalisePreferences,
+	preferenceLines,
+	preferencesFromLines,
 	readPreferencesForm
 } from './assistant-preferences.ts';
 
@@ -131,6 +133,30 @@ describe('assistant preferences', () => {
 		expect(read).toMatchObject({
 			ok: false,
 			submitted: { tense: 'past', narration: 'second', assistantNotes: 'Keep me.', quoteMarks: '' }
+		});
+	});
+});
+
+describe('preference lines', () => {
+	it('writes the set keys as lines and reads them back', () => {
+		const stored = { quoteMarks: 'single', filterVerbs: 'leave', narration: 'third-limited' };
+		const lines = preferenceLines(stored);
+		expect(lines).toEqual(['quoteMarks: single', 'narration: third-limited', 'filterVerbs: leave']);
+		expect(preferencesFromLines(lines)).toEqual({ preferences: stored, unread: 0 });
+	});
+
+	it('writes nothing for no preferences and counts lines it cannot use', () => {
+		expect(preferenceLines({})).toEqual([]);
+		expect(preferenceLines(null)).toEqual([]);
+		expect(
+			preferencesFromLines(['tense: present', 'tense: future', 'colour: red', 'junk'])
+		).toEqual({
+			preferences: {},
+			unread: 4
+		});
+		expect(preferencesFromLines(['tense: past', 'colour: red'])).toEqual({
+			preferences: { tense: 'past' },
+			unread: 1
 		});
 	});
 });

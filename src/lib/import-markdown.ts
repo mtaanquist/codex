@@ -2,6 +2,13 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { isSceneStatus, type SceneStatus } from './scene-status';
 import { UUID_BODY } from './slug';
 import { toLf } from './line-endings';
+import { normaliseLanguage, type WritingLanguage } from './writing-languages';
+import {
+	MAX_ASSISTANT_NOTES,
+	normaliseNotes,
+	preferencesFromLines,
+	type StoredPreferences
+} from './assistant-preferences';
 
 // Parses our own story export zip back into a plan the importer can write:
 // story metadata, chapters and scenes in NN- prefix order, story notes, and
@@ -59,6 +66,12 @@ export type ImportPlan = {
 		contentWarnings?: string[];
 		tags?: string[];
 		fandoms?: string[];
+		// The writer's settings from a Codex export's story.md, each absent
+		// when the file does not set it.
+		styleNotes?: string;
+		language?: WritingLanguage;
+		assistantPreferences?: StoredPreferences;
+		assistantNotes?: string;
 	};
 	chapters: ImportedChapter[];
 	unfiled: ImportedScene[];
@@ -145,6 +158,46 @@ function labelLists(fields: FrontMatter) {
 	return Object.fromEntries(Object.entries(lists).filter(([, value]) => value.length > 0));
 }
 
+// The language and Assistant settings story.md carries. A value this site
+// cannot use is left off and reported, so the preview names it before the
+// story is created.
+function assistantSettings(fields: FrontMatter, problems: string[]) {
+	const out: {
+		styleNotes?: string;
+		language?: WritingLanguage;
+		assistantPreferences?: StoredPreferences;
+		assistantNotes?: string;
+	} = {};
+	const styleNotes = scalar(fields, 'style-notes');
+	if (styleNotes) out.styleNotes = styleNotes;
+	const rawLanguage = scalar(fields, 'language');
+	if (rawLanguage) {
+		const language = normaliseLanguage(rawLanguage);
+		if (language) out.language = language;
+		else
+			problems.push(
+				`story.md: the language "${rawLanguage}" is not one this site knows, so the story uses its universe's.`
+			);
+	}
+	const lines = list(fields, 'assistant-preferences');
+	if (lines.length > 0) {
+		const { preferences, unread } = preferencesFromLines(lines);
+		if (Object.keys(preferences).length > 0) out.assistantPreferences = preferences;
+		if (unread > 0) {
+			problems.push('story.md: some Assistant preferences were not recognised and were left off.');
+		}
+	}
+	const notes = normaliseNotes(scalar(fields, 'assistant-notes'));
+	if (notes && notes.length > MAX_ASSISTANT_NOTES) {
+		problems.push(
+			`story.md: the Assistant notes are longer than ${MAX_ASSISTANT_NOTES} characters, so they were left off.`
+		);
+	} else if (notes) {
+		out.assistantNotes = notes;
+	}
+	return out;
+}
+
 // "01-the-toll-road" -> "The toll road"; the readable fallback when a title
 // only survives as a slug (chapter folders from zips older than chapter.md).
 function deslug(name: string): string | null {
@@ -228,13 +281,14 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const read = (path: string) => toLf(strFromU8(entries[path]));
 
 	const storyDoc = parseFrontMatter(read(storyPath));
-	const story = {
+	const story: ImportPlan['story'] = {
 		title: scalar(storyDoc.fields, 'title') ?? deslug(root.replace(/\/$/, '')) ?? 'Imported story',
 		author: scalar(storyDoc.fields, 'author'),
 		brief: scalar(storyDoc.fields, 'brief'),
 		descriptionMd: storyDoc.body.trim(),
 		...(scalar(storyDoc.fields, 'adult') === 'true' && { isAdult: true }),
-		...labelLists(storyDoc.fields)
+		...labelLists(storyDoc.fields),
+		...assistantSettings(storyDoc.fields, problems)
 	};
 	if (!scalar(storyDoc.fields, 'title')) {
 		problems.push(`story.md has no title; the story will be named "${story.title}".`);

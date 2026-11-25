@@ -1,6 +1,7 @@
-import { and, asc, eq, ilike, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { storyTags, tags, universes } from './db/schema.ts';
+import { isUniqueViolation } from './db-errors.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
 import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
@@ -21,8 +22,9 @@ export type ShownTag = {
 	inherited?: true;
 };
 
-// Follows merged_into_id from each start id to the surviving tag. The depth
-// cap only guards against a cycle that a merge check missed.
+// Follows merged_into_id from each start id to the surviving tag. A merge
+// keeps every chain one step deep; the cap guards reads against a cycle or a
+// longer chain left by older data.
 const MAX_MERGE_DEPTH = 8;
 
 // The visible labels on each story, by story id, including the fandom its
@@ -340,51 +342,80 @@ export async function renameTag(db: Database, id: string, rawName: string): Prom
 	const slug = tagSlug(cleaned.name);
 	const [tag] = await db.select().from(tags).where(eq(tags.id, id));
 	if (!tag) return { ok: false, message: 'That entry does not exist.' };
+	const clashMessage = 'Another entry already has that name. Merge them instead.';
 	const [clash] = await db
 		.select({ id: tags.id })
 		.from(tags)
 		.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
-	if (clash && clash.id !== id) {
-		return { ok: false, message: 'Another entry already has that name. Merge them instead.' };
+	if (clash && clash.id !== id) return { ok: false, message: clashMessage };
+	try {
+		await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
+	} catch (err) {
+		// Another rename, or a writer adding that tag, took the slug since the check.
+		if (isUniqueViolation(err)) return { ok: false, message: clashMessage };
+		throw err;
 	}
-	await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
 	return { ok: true };
 }
 
 // Points a tag at another of the same kind. Reads follow it, so every story
-// with the source shows the target; undoing only clears the pointer.
+// with the source shows the target; undoing only clears the pointer. A merge
+// always lands on a surviving entry and takes the source's own merged entries
+// with it, so no chain is ever more than one step.
 export async function mergeTag(
 	db: Database,
 	sourceId: string,
 	targetName: string
 ): Promise<ModResult> {
 	return await db.transaction(async (tx) => {
-		const [source] = await tx.select().from(tags).where(eq(tags.id, sourceId)).for('update');
+		const [source] = await tx.select().from(tags).where(eq(tags.id, sourceId));
 		if (!source) return { ok: false, message: 'That entry does not exist.' };
-		const [target] = await tx
+		const notFound = `There is no ${source.kind} called "${targetName.trim()}".`;
+		const [named] = await tx
 			.select()
 			.from(tags)
 			.where(and(eq(tags.kind, source.kind), eq(tags.slug, tagSlug(targetName))));
-		if (!target || target.removedAt) {
-			return { ok: false, message: `There is no ${source.kind} called "${targetName.trim()}".` };
+		if (!named || named.removedAt) return { ok: false, message: notFound };
+		if (named.id === source.id) return { ok: false, message: 'Pick a different entry.' };
+		const survivorId = await survivorOf(tx, named.id);
+		// Lock every row this changes, in id order, so two merges that touch the
+		// same entries wait for each other instead of deadlocking or each passing
+		// the checks below and pointing at one another.
+		const locked = await tx
+			.select()
+			.from(tags)
+			.where(or(inArray(tags.id, [source.id, survivorId]), eq(tags.mergedIntoId, source.id)))
+			.orderBy(asc(tags.id))
+			.for('update');
+		if (survivorId === source.id) {
+			return { ok: false, message: `"${named.name}" is already merged into "${source.name}".` };
 		}
-		if (target.id === source.id) return { ok: false, message: 'Pick a different entry.' };
-		// Refuse a merge that would loop back to the source.
-		const loop = await tx.execute(sql`
-			with recursive chain as (
-				select id, merged_into_id, 0 as depth from tags where id = ${target.id}
-				union all
-				select t.id, t.merged_into_id, c.depth + 1 from chain c join tags t on t.id = c.merged_into_id
-				where c.depth < ${MAX_MERGE_DEPTH}
-			)
-			select 1 from chain where id = ${source.id}
-		`);
-		if (loop.rows.length > 0) {
-			return { ok: false, message: `"${target.name}" is already merged into "${source.name}".` };
+		// A merge that committed while this one waited can have moved the target.
+		const target = locked.find((row) => row.id === survivorId);
+		if (!target || target.mergedIntoId) {
+			return { ok: false, message: 'That entry changed while you were working. Try again.' };
 		}
-		await tx.update(tags).set({ mergedIntoId: target.id }).where(eq(tags.id, source.id));
+		if (target.removedAt) return { ok: false, message: notFound };
+		await tx
+			.update(tags)
+			.set({ mergedIntoId: target.id })
+			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
 		return { ok: true };
 	});
+}
+
+// The entry a tag's merges end at (the tag itself when it is not merged).
+async function survivorOf(tx: Database, id: string): Promise<string> {
+	const rows = await tx.execute(sql`
+		with recursive chain as (
+			select id, merged_into_id, 0 as depth from tags where id = ${id}
+			union all
+			select t.id, t.merged_into_id, c.depth + 1 from chain c join tags t on t.id = c.merged_into_id
+			where c.depth < ${MAX_MERGE_DEPTH}
+		)
+		select id from chain order by depth desc limit 1
+	`);
+	return (rows.rows[0] as { id: string } | undefined)?.id ?? id;
 }
 
 export async function unmergeTag(db: Database, id: string): Promise<boolean> {

@@ -60,6 +60,61 @@ describe('parseStoryZip', () => {
 			[`halden/assets/${ASSET_ID}.png`]: new Uint8Array([1, 2, 3])
 		});
 
+	it('reads the language and Assistant settings from story.md', () => {
+		const plan = parseStoryZip(
+			zip({
+				'halden/story.md': [
+					'---',
+					'title: "Halden"',
+					'style-notes: "Epic fantasy,\\nformal prose."',
+					'language: "en-GB"',
+					'assistant-preferences:',
+					'  - "quoteMarks: single"',
+					'  - "filterVerbs: leave"',
+					'assistant-notes: "Keep \\"ye\\".\\nNo modern slang."',
+					'---',
+					''
+				].join('\n')
+			})
+		);
+		expect(plan.story).toMatchObject({
+			styleNotes: 'Epic fantasy,\nformal prose.',
+			language: 'en-GB',
+			assistantPreferences: { quoteMarks: 'single', filterVerbs: 'leave' },
+			assistantNotes: 'Keep "ye".\nNo modern slang.'
+		});
+		expect(plan.problems).toEqual([]);
+	});
+
+	it('leaves the settings out when story.md has none', () => {
+		const plan = parseStoryZip(zip({ 'halden/story.md': '---\ntitle: "Halden"\n---\n' }));
+		for (const key of ['styleNotes', 'language', 'assistantPreferences', 'assistantNotes']) {
+			expect(plan.story).not.toHaveProperty(key);
+		}
+	});
+
+	it('reports settings it cannot use instead of storing them', () => {
+		const plan = parseStoryZip(
+			zip({
+				'halden/story.md': [
+					'---',
+					'title: "Halden"',
+					'language: "Klingon"',
+					'assistant-preferences:',
+					'  - "tense: future"',
+					`assistant-notes: "${'x'.repeat(1001)}"`,
+					'---',
+					''
+				].join('\n')
+			})
+		);
+		for (const key of ['language', 'assistantPreferences', 'assistantNotes']) {
+			expect(plan.story).not.toHaveProperty(key);
+		}
+		expect(plan.problems).toHaveLength(3);
+		expect(plan.problems[0]).toContain('Klingon');
+	});
+
 	it('skips saved drafts without counting them against the file limit', () => {
 		const files: Record<string, string> = {
 			'halden/story.md': '---\ntitle: "Halden"\n---\n',
