@@ -189,12 +189,9 @@ describe('buildStoryZip', () => {
 
 describe('buildEpub', () => {
 	it('produces a structurally sound EPUB with rendered chapters', async () => {
-		const { filename, entries: archived } = await buildEpub(
-			story,
-			await gatherStory(db, story),
-			loader,
-			null
-		);
+		const content = await gatherStory(db, story);
+		content.scenes[0].bodyMd += '\n\n![tracker](https://tracker.example/p.gif)';
+		const { filename, entries: archived } = await buildEpub(story, content, loader, null);
 		const bytes = await zipBytes(archived);
 		expect(filename).toContain('.epub');
 		const entries = unzipSync(bytes);
@@ -218,6 +215,9 @@ describe('buildEpub', () => {
 		expect(chapter).toContain('<em>opened</em>');
 		expect(chapter).toContain(`src="images/${ASSET_ID}.png"`);
 		expect(entries[`OEBPS/images/${ASSET_ID}.png`]).toBeDefined();
+		// A remote image would let its host see who opens the book.
+		expect(chapter).not.toContain('<img src="https://tracker.example');
+		expect(chapter).toContain('<a href="https://tracker.example/p.gif"');
 
 		const nav = strFromU8(entries['OEBPS/nav.xhtml']);
 		expect(nav).toContain('<a href="ch1.xhtml">The Caravan</a>');
