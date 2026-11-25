@@ -134,3 +134,64 @@ test('a genre ticked on Publish while a Details save lands stays ticked', async 
 	await refreshed;
 	await expect(fantasy).toBeChecked();
 });
+
+// The rename commits at once but its answer arrives late, so the next field's
+// save is posted, and answered, while the page still has its old address. That
+// save must land and the page must stay (#1667).
+async function slowRenameAnswer(page: Page) {
+	let first = true;
+	await page.route(/\?\/update$/, async (route) => {
+		if (!first) return route.continue();
+		first = false;
+		const response = await route.fetch();
+		await new Promise((resolve) => setTimeout(resolve, 1500));
+		await route.fulfill({ response });
+	});
+}
+
+test('a story field saved while a rename is still saving is kept', async ({ page }) => {
+	const { stamp } = await newStory(page);
+	await slowRenameAnswer(page);
+	await page.locator('#st-title').fill(`Raced ${stamp}`);
+	await page.locator('#st-title').press('Tab');
+	await expect(page.locator('#st-author')).toBeFocused();
+	await page.keyboard.type('A. Writer');
+	const second = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('author=A.+Writer')
+	);
+	await page.keyboard.press('Tab');
+	expect((await second).ok()).toBe(true);
+	await expect(page).toHaveURL(`/stories/raced-${stamp}/settings`);
+	await expect(page.locator('#st-author')).toHaveValue('A. Writer');
+	await gotoReady(page, `/stories/raced-${stamp}/settings`);
+	await expect(page.locator('#st-title')).toHaveValue(`Raced ${stamp}`);
+	await expect(page.locator('#st-author')).toHaveValue('A. Writer');
+});
+
+test('a universe field saved while a rename is still saving is kept', async ({ page }) => {
+	const stamp = Date.now();
+	await gotoReady(page, '/');
+	await pickFromLibraryMenu(page, 'New universe');
+	await page.getByLabel('New universe').fill(`Race world ${stamp}`);
+	await page.getByRole('button', { name: 'Create universe' }).click();
+	await expect(page).toHaveURL(/\/universes\//);
+	await gotoReady(page, new URL(page.url()).pathname);
+	await slowRenameAnswer(page);
+	await page.locator('#u-name').fill(`Raced world ${stamp}`);
+	await page.locator('#u-name').press('Tab');
+	await expect(page.locator('#u-description')).toBeFocused();
+	await page.keyboard.type('Ash and bells.');
+	const second = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('description=Ash+and+bells.')
+	);
+	await page.keyboard.press('Tab');
+	expect((await second).ok()).toBe(true);
+	await expect(page).toHaveURL(`/universes/raced-world-${stamp}`);
+	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
+	await gotoReady(page, `/universes/raced-world-${stamp}`);
+	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
+});

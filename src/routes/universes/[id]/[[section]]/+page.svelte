@@ -270,9 +270,10 @@
 					belongs to one.
 				</p>
 			</div>
+			<!-- Posted by id: a save made while a rename is in flight must not use the old slug. -->
 			<form
 				method="POST"
-				action="?/update"
+				action="{resolve('/universes/[id]/[[section]]', { id: data.universe.id })}?/update"
 				bind:this={detailsForm}
 				use:enhance={autosaveSubmit}
 				onchange={onDetailsChange}

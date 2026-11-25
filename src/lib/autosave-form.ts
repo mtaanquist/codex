@@ -15,6 +15,11 @@ import { focusIsBeingRestored } from '#lib/enhance';
 // following it without a reset leaves the writer in the field they moved on to,
 // where kit's own redirect would take focus away mid-word. The old address no
 // longer exists, so it is replaced in the history.
+//
+// A form with a rename field posts to the page's id-based address, so a field
+// saved while a rename is still in flight does not post to the old slug. Its
+// result must not reload the page data at the old address either: that page
+// may already be gone, and the rename's redirect reloads the data anyway.
 export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 	const renaming = hasUnsavedRename(formElement);
 	if (renaming) renamesInFlight += 1;
@@ -23,13 +28,19 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		if (result.type === 'redirect') {
 			const target = leavingTo && retarget(leavingTo, result.location);
 			leavingTo = null;
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect, or where the writer was going with its slug swapped
-			if (target) await goto(target);
-			// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect
-			else await goto(result.location, { reset: false, replace: true, refreshAll: true });
+			redirecting += 1;
+			try {
+				// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect, or where the writer was going with its slug swapped
+				if (target) await goto(target);
+				// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect
+				else await goto(result.location, { reset: false, replace: true, refreshAll: true });
+			} finally {
+				redirecting -= 1;
+			}
 			return;
 		}
-		await update({ reset: false });
+		const moving = renamesInFlight > 0 || redirecting > 0;
+		await update({ reset: false, refreshAll: moving ? false : undefined });
 		if (result.type !== 'success') leavingTo = null;
 		else if (leavingTo && renamesInFlight === 0) continueLeaving();
 	};
@@ -95,6 +106,8 @@ function hasUnsavedRename(form: HTMLFormElement): boolean {
 }
 
 let renamesInFlight = 0;
+// Rename redirects still being followed.
+let redirecting = 0;
 // Where the writer was going when a rename was still saving.
 let leavingTo: URL | null = null;
 
