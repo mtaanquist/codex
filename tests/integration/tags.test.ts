@@ -147,41 +147,41 @@ describe('story tags', () => {
 	it('shows a merged tag as its target, and undoing the merge splits them again', async () => {
 		await tagStory(storyId, ['Fam']);
 		await tagStory(otherStoryId, ['Found Family']);
-		expect(await mergeTag(db, await tagId('fam'), 'found family')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'tag', await tagId('fam'), 'found family')).toEqual({ ok: true });
 		expect(await names(storyId)).toEqual(['Found Family']);
 		// Typing the old name later lands on the same entry, which still points on.
 		await tagStory(otherStoryId, ['fam', 'Found Family']);
 		expect(await names(otherStoryId)).toEqual(['Found Family']);
 
-		expect(await unmergeTag(db, await tagId('fam'))).toBe(true);
+		expect(await unmergeTag(db, 'tag', await tagId('fam'))).toBe(true);
 		expect(await names(storyId)).toEqual(['Fam']);
 	});
 
 	it('a save while merged or removed keeps the old entry, so undoing gives it back', async () => {
 		await tagStory(storyId, ['Fam', 'Spoilers', 'Kept']);
 		await tagStory(otherStoryId, ['Found Family']);
-		expect(await mergeTag(db, await tagId('fam'), 'Found Family')).toEqual({ ok: true });
-		await setTagRemoved(db, await tagId('spoilers'), true, ownerId);
+		expect(await mergeTag(db, 'tag', await tagId('fam'), 'Found Family')).toEqual({ ok: true });
+		await setTagRemoved(db, 'tag', await tagId('spoilers'), true, ownerId);
 		// The form shows "Found Family" and "Kept" and sends them back as they are.
 		await tagStory(storyId, ['Found Family', 'Kept']);
 		expect(await names(storyId)).toEqual(['Found Family', 'Kept']);
 
-		await unmergeTag(db, await tagId('fam'));
-		await setTagRemoved(db, await tagId('spoilers'), false, ownerId);
+		await unmergeTag(db, 'tag', await tagId('fam'));
+		await setTagRemoved(db, 'tag', await tagId('spoilers'), false, ownerId);
 		expect(await names(storyId)).toEqual(['Fam', 'Kept', 'Spoilers']);
 
 		// Dropping the survivor drops the merged entry with it.
-		await mergeTag(db, await tagId('fam'), 'Found Family');
+		await mergeTag(db, 'tag', await tagId('fam'), 'Found Family');
 		await tagStory(storyId, ['Kept', 'Spoilers']);
-		await unmergeTag(db, await tagId('fam'));
+		await unmergeTag(db, 'tag', await tagId('fam'));
 		expect(await names(storyId)).toEqual(['Kept', 'Spoilers']);
 	});
 
 	it('a merged entry whose own row is removed goes when the writer drops its survivor', async () => {
 		await tagStory(storyId, ['Fam']);
 		await tagStory(otherStoryId, ['Found Family']);
-		await mergeTag(db, await tagId('fam'), 'Found Family');
-		await setTagRemoved(db, await tagId('fam'), true, ownerId);
+		await mergeTag(db, 'tag', await tagId('fam'), 'Found Family');
+		await setTagRemoved(db, 'tag', await tagId('fam'), true, ownerId);
 		expect(await names(storyId)).toEqual(['Found Family']);
 		await tagStory(storyId, []);
 		expect(await names(storyId)).toEqual([]);
@@ -190,9 +190,11 @@ describe('story tags', () => {
 	it('keeps a merged curated entry on a save too', async () => {
 		await addListEntries(db, 'genre', 'Grimdark\nDark fantasy');
 		await setStoryList(db, storyId, 'genre', [await tagId('grimdark')]);
-		expect(await mergeTag(db, await tagId('grimdark'), 'Dark fantasy')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'genre', await tagId('grimdark'), 'Dark fantasy')).toEqual({
+			ok: true
+		});
 		await setStoryList(db, storyId, 'genre', [await tagId('dark-fantasy')]);
-		await unmergeTag(db, await tagId('grimdark'));
+		await unmergeTag(db, 'genre', await tagId('grimdark'));
 		expect((await storyTagView(db, storyId)).genres.map((tag) => tag.name)).toEqual(['Grimdark']);
 	});
 
@@ -210,16 +212,16 @@ describe('story tags', () => {
 			{ kind: 'tag', name: 'C', slug: 'c' },
 			{ kind: 'tag', name: 'D', slug: 'd' }
 		]);
-		await mergeTag(db, await tagId('a'), 'B');
+		await mergeTag(db, 'tag', await tagId('a'), 'B');
 		// B's merged entries move with it.
-		expect(await mergeTag(db, await tagId('b'), 'C')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'tag', await tagId('b'), 'C')).toEqual({ ok: true });
 		expect(await mergedInto('a')).toBe(await tagId('c'));
 		expect(await names(storyId)).toEqual(['C']);
 		// Naming a merged entry lands on its survivor.
-		expect(await mergeTag(db, await tagId('d'), 'A')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'tag', await tagId('d'), 'A')).toEqual({ ok: true });
 		expect(await mergedInto('d')).toBe(await tagId('c'));
-		expect((await mergeTag(db, await tagId('c'), 'A')).ok).toBe(false);
-		expect((await mergeTag(db, await tagId('a'), 'A')).ok).toBe(false);
+		expect((await mergeTag(db, 'tag', await tagId('c'), 'A')).ok).toBe(false);
+		expect((await mergeTag(db, 'tag', await tagId('a'), 'A')).ok).toBe(false);
 	});
 
 	it('refuses a merge whose target was merged into the source meanwhile', async () => {
@@ -232,7 +234,7 @@ describe('story tags', () => {
 		// Another moderator is merging B into A when this merge of A into B starts.
 		const result = await whileHeld(
 			(client) => client.query('update tags set merged_into_id = $1 where id = $2', [a, b]),
-			() => mergeTag(db, a, 'B')
+			() => mergeTag(db, 'tag', a, 'B')
 		);
 		expect(result.ok).toBe(false);
 		expect(await mergedInto('a')).toBeNull();
@@ -241,19 +243,21 @@ describe('story tags', () => {
 
 	it('hides a removed tag everywhere and will not let authors add it back', async () => {
 		await tagStory(storyId, ['Spoilers', 'Kept']);
-		await setTagRemoved(db, await tagId('spoilers'), true, ownerId);
+		await setTagRemoved(db, 'tag', await tagId('spoilers'), true, ownerId);
 		expect(await names(storyId)).toEqual(['Kept']);
 		expect(await tagStory(otherStoryId, ['spoilers'])).toEqual({ skipped: ['Spoilers'] });
 		expect(await names(otherStoryId)).toEqual([]);
 
-		await setTagRemoved(db, await tagId('spoilers'), false, ownerId);
+		await setTagRemoved(db, 'tag', await tagId('spoilers'), false, ownerId);
 		expect(await names(storyId)).toEqual(['Kept', 'Spoilers']);
 	});
 
 	it('renames, refusing a name another tag has', async () => {
 		await tagStory(storyId, ['Slowburn', 'Slow Burn']);
-		expect((await renameTag(db, await tagId('slowburn'), 'slow burn')).ok).toBe(false);
-		expect(await renameTag(db, await tagId('slowburn'), 'Slow-Burning')).toEqual({ ok: true });
+		expect((await renameTag(db, 'tag', await tagId('slowburn'), 'slow burn')).ok).toBe(false);
+		expect(await renameTag(db, 'tag', await tagId('slowburn'), 'Slow-Burning')).toEqual({
+			ok: true
+		});
 		expect(await names(storyId)).toEqual(['Slow Burn', 'Slow-Burning']);
 	});
 
@@ -265,7 +269,7 @@ describe('story tags', () => {
 				client.query(
 					`insert into tags (kind, name, slug) values ('tag', 'Slow Burn', 'slow-burn')`
 				),
-			() => renameTag(db, id, 'Slow Burn')
+			() => renameTag(db, 'tag', id, 'Slow Burn')
 		);
 		expect(result).toEqual({
 			ok: false,
@@ -316,9 +320,9 @@ describe('genres and content warnings', () => {
 		const fantasy = await tagId('fantasy');
 		const old = await tagId('old');
 		const death = await tagId('death');
-		await mergeTag(db, old, 'Horror');
+		await mergeTag(db, 'genre', old, 'Horror');
 		const removedId = await tagId('gone');
-		await setTagRemoved(db, removedId, true, ownerId);
+		await setTagRemoved(db, 'genre', removedId, true, ownerId);
 		expect(await pickListed(db, 'genre', [fantasy, old, death, removedId, 'nope', 3])).toEqual([
 			fantasy
 		]);
@@ -338,6 +342,23 @@ describe('genres and content warnings', () => {
 	});
 });
 
+describe('moderation by kind', () => {
+	it('does not find an entry of another kind than the page manages', async () => {
+		await addListEntries(db, 'genre', 'Fantasy\nHorror');
+		await addFandoms('Discworld');
+		const fandom = await tagId('discworld');
+		const fantasy = await tagId('fantasy');
+		await mergeTag(db, 'genre', fantasy, 'Horror');
+		expect((await renameTag(db, 'genre', fandom, 'Other')).ok).toBe(false);
+		expect((await mergeTag(db, 'genre', fandom, 'Horror')).ok).toBe(false);
+		expect(await unmergeTag(db, 'fandom', fantasy)).toBe(false);
+		expect(await setTagRemoved(db, 'genre', fandom, true, ownerId)).toBe(false);
+		const [row] = await db.select().from(tags).where(eq(tags.id, fandom));
+		expect(row).toMatchObject({ name: 'Discworld', removedAt: null, mergedIntoId: null });
+		expect(await mergedInto('fantasy')).toBe(await tagId('horror'));
+	});
+});
+
 describe('content warnings on editions', () => {
 	it('freezes the warning names at publish; a later change or rename waits for the next one', async () => {
 		await addListEntries(db, 'warning', 'Death\nAbuse');
@@ -350,7 +371,7 @@ describe('content warnings on editions', () => {
 		const published = await publishStory(db, ownerId, storyId);
 		if (!published.ok) throw new Error(published.reason);
 		await setStoryList(db, storyId, 'warning', [await tagId('abuse')]);
-		await renameTag(db, await tagId('death'), 'Character death');
+		await renameTag(db, 'warning', await tagId('death'), 'Character death');
 		const [edition] = await db
 			.select()
 			.from(publications)
@@ -385,12 +406,12 @@ describe('a universe linked to a fandom', () => {
 	it('follows a merge, hides a removed fandom, and refuses an entry not on the list', async () => {
 		const universeId = await linked();
 		await setUniverseFandom(db, universeId, await tagId('realms-of-old'));
-		await mergeTag(db, await tagId('realms-of-old'), 'Forgotten Realms');
+		await mergeTag(db, 'fandom', await tagId('realms-of-old'), 'Forgotten Realms');
 		expect(await universeFandom(db, universeId)).toMatchObject({ name: 'Forgotten Realms' });
 		expect((await storyTagView(db, storyId)).fandoms.map((tag) => tag.name)).toEqual([
 			'Forgotten Realms'
 		]);
-		await setTagRemoved(db, await tagId('forgotten-realms'), true, ownerId);
+		await setTagRemoved(db, 'fandom', await tagId('forgotten-realms'), true, ownerId);
 		expect(await universeFandom(db, universeId)).toBeNull();
 		expect((await storyTagView(db, storyId)).fandoms).toEqual([]);
 		expect(await setUniverseFandom(db, universeId, await tagId('forgotten-realms'))).toBe(false);

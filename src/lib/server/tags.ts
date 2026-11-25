@@ -334,13 +334,24 @@ export async function listTagsForModeration(
 
 type ModResult = { ok: true } | { ok: false; message: string };
 
+// The moderation functions below take the kind the page manages, so an id
+// of another kind is not found.
+
 // Renames a tag or fandom. Its slug follows the new name, so a name that
 // another entry of the same kind already has is refused: merge them instead.
-export async function renameTag(db: Database, id: string, rawName: string): Promise<ModResult> {
+export async function renameTag(
+	db: Database,
+	kind: TagKind,
+	id: string,
+	rawName: string
+): Promise<ModResult> {
 	const cleaned = cleanTagName(rawName);
 	if (!cleaned.ok) return { ok: false, message: cleaned.reason };
 	const slug = tagSlug(cleaned.name);
-	const [tag] = await db.select().from(tags).where(eq(tags.id, id));
+	const [tag] = await db
+		.select()
+		.from(tags)
+		.where(and(eq(tags.id, id), eq(tags.kind, kind)));
 	if (!tag) return { ok: false, message: 'That entry does not exist.' };
 	const clashMessage = 'Another entry already has that name. Merge them instead.';
 	const [clash] = await db
@@ -364,11 +375,15 @@ export async function renameTag(db: Database, id: string, rawName: string): Prom
 // with it, so no chain is ever more than one step.
 export async function mergeTag(
 	db: Database,
+	kind: TagKind,
 	sourceId: string,
 	targetName: string
 ): Promise<ModResult> {
 	return await db.transaction(async (tx) => {
-		const [source] = await tx.select().from(tags).where(eq(tags.id, sourceId));
+		const [source] = await tx
+			.select()
+			.from(tags)
+			.where(and(eq(tags.id, sourceId), eq(tags.kind, kind)));
 		if (!source) return { ok: false, message: 'That entry does not exist.' };
 		const notFound = `There is no ${source.kind} called "${targetName.trim()}".`;
 		const [named] = await tx
@@ -418,17 +433,18 @@ async function survivorOf(tx: Database, id: string): Promise<string> {
 	return (rows.rows[0] as { id: string } | undefined)?.id ?? id;
 }
 
-export async function unmergeTag(db: Database, id: string): Promise<boolean> {
+export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
 	const updated = await db
 		.update(tags)
 		.set({ mergedIntoId: null })
-		.where(and(eq(tags.id, id), sql`${tags.mergedIntoId} is not null`))
+		.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`))
 		.returning({ id: tags.id });
 	return updated.length > 0;
 }
 
 export async function setTagRemoved(
 	db: Database,
+	kind: TagKind,
 	id: string,
 	removed: boolean,
 	by: string
@@ -436,7 +452,7 @@ export async function setTagRemoved(
 	const updated = await db
 		.update(tags)
 		.set(removed ? { removedAt: sql`now()`, removedBy: by } : { removedAt: null, removedBy: null })
-		.where(eq(tags.id, id))
+		.where(and(eq(tags.id, id), eq(tags.kind, kind)))
 		.returning({ id: tags.id });
 	return updated.length > 0;
 }
