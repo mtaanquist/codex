@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type pg from 'pg';
 import {
+	chapters,
 	reviewers,
 	reviewSuggestions,
 	scenes,
@@ -95,6 +96,33 @@ function suggestForm() {
 	form.set('replacement', 'slow');
 	return form;
 }
+
+describe('load', () => {
+	it('gives a guest chapter titles but not the chapter summaries', async () => {
+		const [chapter] = await db
+			.insert(chapters)
+			.values({ storyId, title: 'One', position: 1, summaryMd: 'The secret ending.' })
+			.returning({ id: chapters.id });
+		await pool.query('update scenes set chapter_id = $1, position_in_chapter = 1 where id = $2', [
+			chapter.id,
+			sceneId
+		]);
+		const invitation = await createReviewInvitation(db, {
+			storyId,
+			createdBy: authorId,
+			canSuggest: false
+		});
+		const reviewer = await ensureReviewer(db, invitation.id, { displayName: 'Robin' });
+		const cookie = issueReviewerToken(reviewer!.id);
+		const data = (await page.load({
+			params: { token: invitation.token },
+			locals: { user: null, session: null },
+			cookies: { get: vi.fn(() => cookie), set: vi.fn() }
+		} as unknown as Parameters<typeof page.load>[0])) as { chapters?: unknown[] };
+		expect(data.chapters).toEqual([{ id: chapter.id, title: 'One' }]);
+		expect(JSON.stringify(data)).not.toContain('The secret ending.');
+	});
+});
 
 describe('suggest action', () => {
 	it('follows the link in the URL, not the invitation the cookie was issued under', async () => {

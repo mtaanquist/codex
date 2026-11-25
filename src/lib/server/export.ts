@@ -399,6 +399,7 @@ export async function buildStoryZip(
 	const draftDocList = draftFolders(draftList, `${root}/drafts`);
 	const referenced = [
 		...new Set([
+			...findAssetReferences(story.descriptionMd ?? ''),
 			...sceneList.flatMap((scene) => findAssetReferences(scene.bodyMd)),
 			...chapterList.flatMap((chapter) => findAssetReferences(chapter.summaryMd ?? '')),
 			...noteList.flatMap((note) => findAssetReferences(note.notesMd)),
@@ -415,7 +416,10 @@ export async function buildStoryZip(
 	entries.push(
 		textEntry(
 			`${root}/story.md`,
-			frontMatter(storyFront(story, content.labels)) + (story.descriptionMd ?? '')
+			frontMatter(storyFront(story, content.labels)) +
+				rewriteAssetReferences(story.descriptionMd ?? '', (id) =>
+					assetPath.has(id) ? assetPath.get(id)! : `/assets/${id}`
+				)
 		)
 	);
 
