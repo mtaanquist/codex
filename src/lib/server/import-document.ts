@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { totalmem } from 'node:os';
 import { resolve } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { unzipSync, zipSync, strFromU8 } from 'fflate';
@@ -65,12 +66,21 @@ const SECTION_TOO_LARGE =
 // turned away rather than queued.
 const MAX_RUNNING_CONVERSIONS = 2;
 let runningConversions = 0;
-// Each worker's heap is capped so one hostile file cannot take the whole
-// machine's memory; Node then stops it with ERR_WORKER_OUT_OF_MEMORY. A Word
-// document at the 10 MB XML limit made of short formatted runs needed about
-// 850 MB of heap (about 1.1 GB of process memory), so the cap leaves more than
-// twice that for real files.
-const WORKER_HEAP_LIMIT_MB = 2048;
+// A worker that passes its heap limit is stopped by Node with
+// ERR_WORKER_OUT_OF_MEMORY. Node's own default for a worker is about half the
+// available memory, up to 2048 MB, and the cap must never be above that: on a
+// small server a higher cap lets two conversions push the machine into the
+// kernel's out-of-memory killer instead. A Word document at the 10 MB XML limit
+// made of short formatted runs needed about 850 MB of heap, so 2048 MB leaves
+// room for real files on hosts with 4 GB or more.
+export function workerHeapLimitMb(availableBytes: number): number {
+	return Math.max(1, Math.min(2048, Math.floor(availableBytes / 2 / 2 ** 20)));
+}
+// constrainedMemory() is the cgroup limit, 0 when unknown, and can exceed the
+// physical memory when there is no limit.
+const WORKER_HEAP_LIMIT_MB = workerHeapLimitMb(
+	Math.min(process.constrainedMemory() || totalmem(), totalmem())
+);
 
 type WorkerReply = { plan: ImportPlan } | { importError: string };
 
