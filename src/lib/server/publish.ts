@@ -130,12 +130,13 @@ export async function publishStory(
 			// scheduleAccountDeletion updates this row first, so a deletion
 			// scheduled at the same moment either commits before this read (and
 			// the publish is refused) or waits and then takes the new edition
-			// down with the others.
+			// down with the others. "No key update" still waits on that update but
+			// not on rows elsewhere that only reference this user.
 			const [owner] = await tx
 				.select({ deletionScheduledAt: users.deletionScheduledAt })
 				.from(users)
 				.where(eq(users.id, userId))
-				.for('update');
+				.for('no key update');
 			if (!owner || owner.deletionScheduledAt) return 'deleting' as const;
 			// Locked so a takedown running at the same moment waits for this
 			// publish (see takedownPublication).
