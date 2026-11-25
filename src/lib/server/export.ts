@@ -24,6 +24,7 @@ import {
 } from './db/schema.ts';
 import { draftOutline, type DraftContent, type DraftEntityType } from '../drafts.ts';
 import { findAssetReferences, rewriteAssetReferences } from '../markdown.ts';
+import { preferenceLines } from '../assistant-preferences.ts';
 import { effectiveAssetConfig, s3AssetStore, type AssetObjectStore } from './assets.ts';
 import { extensionFor } from './media-types.ts';
 import { assetEntry, textEntry, type ZipArchive, type ZipEntry } from './zip-stream.ts';
@@ -176,6 +177,12 @@ export type ExportStory = {
 	descriptionMd: string | null;
 	// Present for a live story; a frozen edition's export leaves it out.
 	isAdult?: boolean;
+	// The writer's settings for the Assistant, for a live story only: an
+	// edition is for readers and never carries them.
+	styleNotes?: string | null;
+	language?: string | null;
+	assistantPreferences?: unknown;
+	assistantNotes?: string | null;
 };
 
 // The content the builders consume: a live story gathered from the database,
@@ -233,7 +240,25 @@ function storyFront(story: ExportStory, labels: { kind: string; name: string }[]
 		genres: names('genre'),
 		'content-warnings': names('warning'),
 		fandoms: names('fandom'),
-		tags: names('tag')
+		tags: names('tag'),
+		...assistantFront(story)
+	};
+}
+
+// The language and Assistant settings a story or universe.md carries, each
+// left out when not set. Notes stay one JSON-quoted line however many lines
+// they hold; the importer reads them back as typed.
+function assistantFront(owner: {
+	styleNotes?: string | null;
+	language?: string | null;
+	assistantPreferences?: unknown;
+	assistantNotes?: string | null;
+}) {
+	return {
+		'style-notes': owner.styleNotes,
+		language: owner.language,
+		'assistant-preferences': preferenceLines(owner.assistantPreferences),
+		'assistant-notes': owner.assistantNotes
 	};
 }
 
@@ -588,7 +613,11 @@ async function gatherUniverseDocs(
 		docs.push({
 			dir: uDir,
 			name: 'universe.md',
-			front: { name: universe.name, fandom: (await universeFandom(db, universe.id))?.name ?? null },
+			front: {
+				name: universe.name,
+				fandom: (await universeFandom(db, universe.id))?.name ?? null,
+				...assistantFront(universe)
+			},
 			body: universe.descriptionMd ?? ''
 		});
 

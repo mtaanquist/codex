@@ -130,6 +130,55 @@ describe('buildAccountExport', () => {
 		);
 	});
 
+	it('carries the universe and story settings in their front matter', async () => {
+		const [universe] = await db
+			.insert(universes)
+			.values({
+				ownerId,
+				name: 'Mythos',
+				language: 'da',
+				assistantPreferences: { serialComma: 'no', repetition: 'leave' },
+				assistantNotes: 'Danish names keep their letters.'
+			})
+			.returning();
+		await db.insert(stories).values({
+			universeId: universe.id,
+			ownerId,
+			title: 'Halden',
+			styleNotes: 'Formal prose.',
+			language: 'en-US',
+			assistantPreferences: { thoughts: 'italics' },
+			assistantNotes: 'Line one.\nLine two.'
+		});
+		await db.insert(stories).values({ universeId: universe.id, ownerId, title: 'Plain' });
+
+		const zip = entries(
+			await zipBytes((await buildAccountExport(db, ownerId, stubLoader)).entries)
+		);
+		expect(zip.text('universes/mythos/universe.md')).toContain(
+			[
+				'language: "da"',
+				'assistant-preferences:',
+				'  - "serialComma: no"',
+				'  - "repetition: leave"',
+				'assistant-notes: "Danish names keep their letters."'
+			].join('\n')
+		);
+		const story = zip.text('universes/mythos/stories/halden/story.md');
+		expect(story).toContain(
+			[
+				'style-notes: "Formal prose."',
+				'language: "en-US"',
+				'assistant-preferences:',
+				'  - "thoughts: italics"',
+				'assistant-notes: "Line one.\\nLine two."'
+			].join('\n')
+		);
+		// A story with nothing set writes none of the keys.
+		const plain = zip.text('universes/mythos/stories/plain/story.md');
+		expect(plain).not.toMatch(/style-notes|language|assistant-/);
+	});
+
 	it('produces a readable archive for an empty account', async () => {
 		const bytes = await zipBytes((await buildAccountExport(db, ownerId, stubLoader)).entries);
 		expect(entries(bytes).names).toEqual(['README.md']);
