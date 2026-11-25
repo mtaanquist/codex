@@ -1076,7 +1076,8 @@ export type StoryReviewResult = {
 // aborted, rather than counting the scenes never reached as failures.
 //
 // With a jobId the run records its progress as it goes, so the status endpoint
-// can show it and a retry of the same job skips the scenes already handled.
+// can show it and a retry of the same job skips the scenes already handled,
+// unless its settings key changed, which starts the run over.
 export async function reviewStoryScenes(
 	db: Database,
 	opts: {
