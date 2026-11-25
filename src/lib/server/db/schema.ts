@@ -1826,6 +1826,10 @@ export type ReviewRunState = {
 	// What the run was over (mode and target, see reviewScopeKey), so a later
 	// run over the same scope can carry on from a capped one.
 	scope?: string;
+	// A hash of the language and preferences the run read (see
+	// reviewSettingsKey); a capped run is only continued under the same ones.
+	// Absent on rows saved before it was recorded.
+	settings?: string;
 	total: number;
 	completed: string[];
 	currentSceneTitle?: string | null;
