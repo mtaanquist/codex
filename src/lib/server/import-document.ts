@@ -36,11 +36,82 @@ export async function parseDocument(bytes: Uint8Array, filename: string): Promis
 	throw new DocumentImportError('Codex can import Word (.docx) and EPUB (.epub) files.');
 }
 
+// Turndown's time grows with the square of the nesting depth (a blockquote
+// prefixes every line inside it once per level), so markup deeper than real
+// books go is refused before conversion. Word lists stop at nine levels, and
+// AO3 and Calibre output nests a handful of elements deep.
+const MAX_NESTING_DEPTH = 64;
+// Markdown one document may produce, in characters: as much as the largest
+// file Codex accepts, far beyond any real manuscript.
+const MAX_MARKDOWN_CHARS = MAX_INPUT_BYTES;
+
+const NESTED_TOO_DEEPLY =
+	'This file has formatting nested too deeply to import. Try saving it again from another program.';
+
+// Elements that never hold others, those whose end tag HTML lets a writer
+// leave out (an unclosed <p> or <li> ends at the next one, it does not nest),
+// and links, which close the one before them.
+const NON_NESTING_TAGS = new Set(
+	(
+		'area base br col embed hr img input link meta param source track wbr a ' +
+		'p li dt dd option optgroup tr td th thead tbody tfoot colgroup caption rt rp html head body'
+	).split(' ')
+);
+const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
+const TAG_NAME = /<(\/?)([a-zA-Z][\w:-]*)/y;
+
+// The deepest element nesting in an HTML fragment, in one pass. A count of
+// open tags rather than a parse, so it can overstate sloppy markup a little.
+// Turndown parses as HTML, where "<span/>" opens a span that stays open, so a
+// trailing slash does not close a tag here either.
+export function nestingDepth(html: string): number {
+	let depth = 0;
+	let max = 0;
+	let i = html.indexOf('<');
+	while (i !== -1) {
+		if (html.startsWith('<!--', i)) {
+			const end = html.indexOf('-->', i + 4);
+			if (end === -1) break;
+			i = html.indexOf('<', end + 3);
+			continue;
+		}
+		TAG_NAME.lastIndex = i;
+		const match = TAG_NAME.exec(html);
+		if (!match) {
+			i = html.indexOf('<', i + 1);
+			continue;
+		}
+		const end = html.indexOf('>', TAG_NAME.lastIndex);
+		if (end === -1) break;
+		const closing = match[1] === '/';
+		const name = match[2].toLowerCase();
+		let next = end + 1;
+		if (!NON_NESTING_TAGS.has(name)) {
+			if (closing) depth = Math.max(0, depth - 1);
+			else if (RAW_TEXT_TAGS.has(name)) {
+				const close = new RegExp(`</${name}`, 'gi');
+				close.lastIndex = next;
+				if (!close.exec(html)) break;
+				next = close.lastIndex - name.length - 2;
+			} else if (++depth > max) max = depth;
+		}
+		i = html.indexOf('<', next);
+	}
+	return max;
+}
+
+type MarkdownBudget = { chars: number };
+
+function newBudget(): MarkdownBudget {
+	return { chars: MAX_MARKDOWN_CHARS };
+}
+
 // Turndown escapes literal markdown characters in text, which would turn a
 // scene break typed as "***" into "\*\*\*" and hide it from the detector.
 // Manuscripts rarely contain deliberate markdown syntax, so leaving text
 // verbatim is both safer for break detection and more faithful to the source.
-function htmlToMarkdown(html: string): string {
+function htmlToMarkdown(html: string, budget: MarkdownBudget): string {
+	if (nestingDepth(html) > MAX_NESTING_DEPTH) throw new DocumentImportError(NESTED_TOO_DEEPLY);
 	const service = new TurndownService({
 		headingStyle: 'atx',
 		bulletListMarker: '-',
@@ -50,19 +121,24 @@ function htmlToMarkdown(html: string): string {
 	});
 	service.escape = (text) => text;
 	service.remove(['script', 'style', 'title']);
-	// Turndown recurses once per nesting level and overflows the stack on
-	// markup nested a couple of thousand elements deep.
+	let markdown: string;
 	try {
-		return service.turndown(html);
-	} catch {
-		throw new DocumentImportError(
-			'This file has formatting nested too deeply to import. Try saving it again from another program.'
-		);
+		markdown = service.turndown(html);
+	} catch (err) {
+		// Turndown recurses once per nesting level, so a stack overflow means
+		// markup nested deeper than the scan above could tell.
+		if (err instanceof RangeError) throw new DocumentImportError(NESTED_TOO_DEEPLY);
+		throw err;
 	}
+	budget.chars -= markdown.length;
+	if (budget.chars < 0) {
+		throw new DocumentImportError('This file has too much text to import as one story.');
+	}
+	return markdown;
 }
 
-function htmlToBlocks(html: string): DocBlock[] {
-	return markdownToBlocks(htmlToMarkdown(html));
+function htmlToBlocks(html: string, budget: MarkdownBudget): DocBlock[] {
+	return markdownToBlocks(htmlToMarkdown(html, budget));
 }
 
 function fileStem(filename: string): string {
@@ -124,7 +200,7 @@ async function parseDocx(bytes: Uint8Array, filename: string): Promise<ImportPla
 		throw new DocumentImportError('This file could not be read as a Word document.');
 	}
 
-	const { chapters, problems } = detectStructure(htmlToBlocks(html));
+	const { chapters, problems } = detectStructure(htmlToBlocks(html, newBudget()));
 	const core = docxCoreProperties(entries['docProps/core.xml']);
 	return buildPlan(core.title ?? fileStem(filename), core.author, chapters, assets, problems);
 }
@@ -168,6 +244,7 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 	const assetPaths = new Map<string, string>();
 	const files: { title: string | null; blocks: DocBlock[] }[] = [];
 	const bodies: string[] = [];
+	const budget = newBudget();
 	for (const idref of spine) {
 		const href = manifest.get(idref);
 		if (!href) continue;
@@ -177,7 +254,7 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 		const rewritten = rewriteEpubImages(strFromU8(data), path, entries, assets, assetPaths);
 		const body = extractBody(rewritten);
 		bodies.push(body);
-		const blocks = htmlToBlocks(body);
+		const blocks = htmlToBlocks(body, budget);
 		if (blocks.length === 0) continue;
 		const firstHeading = blocks.find((b) => b.kind === 'heading');
 		files.push({
@@ -219,7 +296,9 @@ function buildAo3Plan(
 	work: Ao3Work,
 	assets: ImportedAsset[]
 ): ImportPlan {
-	const md = (html: string | null) => (html ? htmlToMarkdown(html).trim() : '');
+	// A fresh budget: this converts the same spine files a second time.
+	const budget = newBudget();
+	const md = (html: string | null) => (html ? htmlToMarkdown(html, budget).trim() : '');
 	const notes: ImportedFreeformNote[] = [];
 	const addNote = (
 		noteTitle: string,
@@ -238,7 +317,7 @@ function buildAo3Plan(
 	addNote('Notes', md(work.notesHtml));
 
 	const chapters = work.chapters.map((chapter, index) => {
-		const scenes = splitScenes(htmlToBlocks(chapter.proseHtml));
+		const scenes = splitScenes(htmlToBlocks(chapter.proseHtml, budget));
 		const name = chapter.title ? `Chapter ${index + 1}: ${chapter.title}` : `Chapter ${index + 1}`;
 		addNote(`${name} notes`, md(chapter.notesHtml), { chapter: index, index: 0 });
 		addNote(`${name} end notes`, md(chapter.endNotesHtml), {

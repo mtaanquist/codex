@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import TurndownService from 'turndown';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
-import { parseDocument, DocumentImportError } from './import-document';
+import { parseDocument, DocumentImportError, nestingDepth } from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
 // A real 1x1 PNG so the bytes survive the importer's magic-number sniff too.
@@ -64,6 +65,14 @@ function imageParagraph(): string {
 }
 
 describe('parseDocument (docx)', () => {
+	it('refuses tables nested too deeply to convert', async () => {
+		const depth = 80;
+		const open = '<w:tbl><w:tr><w:tc>'.repeat(depth);
+		const close = '</w:tc></w:tr></w:tbl>'.repeat(depth);
+		const docx = buildDocx(open + paragraph('Deep.') + close);
+		await expect(parseDocument(docx, 'deep.docx')).rejects.toThrow(/nested too deeply/);
+	});
+
 	it('reads the title and author and splits chapters and scenes', async () => {
 		const docx = buildDocx(
 			[
@@ -228,6 +237,86 @@ describe('parseDocument (epub)', () => {
 		const outcome = parseDocument(epub, 'deep.epub');
 		await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
 		await expect(outcome).rejects.toThrow(/nested too deeply/);
+	});
+
+	it('refuses deeply nested quotes quickly instead of converting them', async () => {
+		// Converting these took over 20 seconds and 20 million characters.
+		const nest = '<blockquote><p>q</p>'.repeat(1000) + '</blockquote>'.repeat(1000);
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: nest.repeat(10) }]);
+		const started = performance.now();
+		await expect(parseDocument(epub, 'quotes.epub')).rejects.toThrow(/nested too deeply/);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it('imports nesting as deep as real books use', async () => {
+		const quotes = '<blockquote><p>Quoted.</p>'.repeat(12) + '</blockquote>'.repeat(12);
+		const list = '<ul><li>Item'.repeat(9) + '</li></ul>'.repeat(9);
+		const unclosed = '<p>An unclosed paragraph.'.repeat(300);
+		const plan = await parseDocument(
+			buildEpub([
+				{ name: 'ch1.xhtml', xhtml: `<div><div>${quotes}${list}${unclosed}</div></div>` }
+			]),
+			'nested.epub'
+		);
+		const body = plan.chapters[0].scenes[0].bodyMd;
+		expect(body).toContain('> > > > > > > > > > > > Quoted.');
+		expect(body).toContain('Item');
+		expect(body.match(/An unclosed paragraph\./g)).toHaveLength(300);
+	});
+
+	it('refuses a book that would produce too much text', async () => {
+		const chapter = `<p>${'a'.repeat(1_000_000)}</p>`;
+		const docs = Array.from({ length: 27 }, (_, i) => ({ name: `ch${i}.xhtml`, xhtml: chapter }));
+		await expect(parseDocument(buildEpub(docs), 'long.epub')).rejects.toThrow(/too much text/);
+	});
+
+	it('reports a stack overflow while converting as nesting', async () => {
+		const spy = vi.spyOn(TurndownService.prototype, 'turndown').mockImplementation(() => {
+			throw new RangeError('Maximum call stack size exceeded');
+		});
+		try {
+			const outcome = parseDocument(buildEpub([{ name: 'a.xhtml', xhtml: '<p>A.</p>' }]), 'a.epub');
+			await expect(outcome).rejects.toThrow(/nested too deeply/);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('lets any other conversion failure through unchanged', async () => {
+		const failure = new TypeError('converter bug');
+		const spy = vi.spyOn(TurndownService.prototype, 'turndown').mockImplementation(() => {
+			throw failure;
+		});
+		try {
+			const outcome = parseDocument(buildEpub([{ name: 'a.xhtml', xhtml: '<p>A.</p>' }]), 'a.epub');
+			await expect(outcome).rejects.toBe(failure);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});
+
+describe('nestingDepth', () => {
+	it('counts open elements', () => {
+		expect(nestingDepth('<div><blockquote><em>x</em></blockquote><div></div></div>')).toBe(3);
+	});
+
+	it('does not count elements that cannot hold others or close themselves', () => {
+		expect(nestingDepth('<p>a<p>b<br/><img src="x"><li>c<li>d<a id="1"/>e<a id="2"/>')).toBe(0);
+	});
+
+	it('counts a self-closed element as open, as an HTML parser does', () => {
+		expect(nestingDepth('<span/>a<span/>b<div/>c')).toBe(3);
+	});
+
+	it('skips comments and the text of scripts and styles', () => {
+		expect(
+			nestingDepth('<!-- <div><div> --><script>"<div><div>"</script><style>a<b{}</STYLE><em>x</em>')
+		).toBe(1);
+	});
+
+	it('ignores a stray closing tag and a lone angle bracket', () => {
+		expect(nestingDepth('</div></div>a < b<div><div></div></div>')).toBe(2);
 	});
 });
 
