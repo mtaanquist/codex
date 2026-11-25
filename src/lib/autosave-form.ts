@@ -221,13 +221,20 @@ function holdLeaving(navigation: BeforeNavigate, url: URL) {
 }
 
 // The target with the page's old slug swapped for the new one: the first path
-// segment where the current address and the redirect differ.
+// segment where the current address and the redirect differ. Only a target
+// under the same path up to that segment is the same work: a story and a
+// universe can share a slug.
 function retarget(target: URL, location: string): URL {
 	const from = window.location.pathname.split('/');
 	const to = new URL(location, window.location.href).pathname.split('/');
 	const at = from.findIndex((segment, i) => segment !== to[i]);
 	const parts = target.pathname.split('/');
-	if (target.origin !== window.location.origin || at < 0 || parts[at] !== from[at]) return target;
+	if (
+		target.origin !== window.location.origin ||
+		at < 0 ||
+		from.slice(0, at + 1).some((segment, i) => parts[i] !== segment)
+	)
+		return target;
 	parts[at] = to[at];
 	const next = new URL(target);
 	next.pathname = parts.join('/');
