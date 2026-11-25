@@ -50,12 +50,15 @@
 									href={resolve('/@[handle]/[story=ref]', {
 										handle: report.handle,
 										story: report.storyId
-									})}>@{report.handle}/{report.title}</a
+									})}
 								>
-								{#if report.editionRemovedReason}<span class="pill">taken down</span
-									>{:else if report.editionRemovedAt}<span class="pill"
-										>hidden: account deletion pending</span
-									>{/if}
+									@{report.handle}/{report.title}
+								</a>
+								{#if report.editionRemovedReason}<span class="pill">
+										taken down
+									</span>{:else if report.editionRemovedAt}<span class="pill">
+										hidden: account deletion pending
+									</span>{/if}
 							</div>
 							<div class="list-sub">
 								{reportReasonLabel(report.reason)} - reported {formatDate(
@@ -89,8 +92,10 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Dismiss report about {report.title}">Dismiss</button
+									aria-label="Dismiss report about {report.title}"
 								>
+									Dismiss
+								</button>
 							</form>
 						</div>
 					</div>

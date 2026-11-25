@@ -288,9 +288,9 @@
 				type="button"
 				onclick={() => (showUniverseCharacters = !showUniverseCharacters)}
 			>
-				<span class="tw" class:open={q !== '' || showUniverseCharacters}
-					><Icon name="chevron" size={11} /></span
-				>
+				<span class="tw" class:open={q !== '' || showUniverseCharacters}>
+					<Icon name="chevron" size={11} />
+				</span>
 				In the universe
 				<span class="count">{visibleAvailableCharacters.length}</span>
 			</button>
@@ -344,9 +344,9 @@
 				type="button"
 				onclick={() => (showUniversePlaces = !showUniversePlaces)}
 			>
-				<span class="tw" class:open={q !== '' || showUniversePlaces}
-					><Icon name="chevron" size={11} /></span
-				>
+				<span class="tw" class:open={q !== '' || showUniversePlaces}>
+					<Icon name="chevron" size={11} />
+				</span>
 				In the universe
 				<span class="count">{visibleAvailablePlaces.length}</span>
 			</button>

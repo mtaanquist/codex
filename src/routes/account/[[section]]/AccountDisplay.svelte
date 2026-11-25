@@ -118,8 +118,10 @@
 								stroke="currentColor"
 								stroke-width="2.4"
 								stroke-linecap="round"
-								stroke-linejoin="round"><path d="M3.5 8.5 6.5 11.5 12.5 4.5" /></svg
+								stroke-linejoin="round"
 							>
+								<path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
+							</svg>
 						</button>
 					{/each}
 					<span class="swatch-sep"></span>
@@ -131,10 +133,11 @@
 							stroke-width="2.2"
 							stroke-linecap="round"
 							stroke-linejoin="round"
-							><path d="M19 3a2.83 2.83 0 0 0-4 0l-2.5 2.5" /><path d="m11 7 6 6" /><path
-								d="M16 12 6.5 21.5a2.12 2.12 0 0 1-3-3L13 9"
-							/></svg
 						>
+							<path d="M19 3a2.83 2.83 0 0 0-4 0l-2.5 2.5" /><path d="m11 7 6 6" /><path
+								d="M16 12 6.5 21.5a2.12 2.12 0 0 1-3-3L13 9"
+							/>
+						</svg>
 						<input type="color" bind:value={accent} aria-label="Custom accent colour" />
 					</label>
 				</div>

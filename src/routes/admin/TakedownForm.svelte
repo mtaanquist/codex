@@ -54,8 +54,10 @@
 		type="submit"
 		class="btn btn-ghost btn-sm"
 		style="color:var(--danger-ink);"
-		aria-label="{label} {title}">{label}</button
+		aria-label="{label} {title}"
 	>
+		{label}
+	</button>
 </form>
 
 <style>

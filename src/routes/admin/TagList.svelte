@@ -89,17 +89,18 @@
 							<div class="tag-edit">
 								<form method="POST" action="?/rename">
 									<input type="hidden" name="id" value={row.id} />
-									<label class="visually-hidden" for="rename-{row.id}"
-										>New name for {row.name}</label
-									>
+									<label class="visually-hidden" for="rename-{row.id}">
+										New name for {row.name}
+									</label>
 									<input id="rename-{row.id}" class="input" name="name" value={row.name} required />
 									<button class="btn btn-secondary btn-sm" type="submit">Rename</button>
 								</form>
 								{#if !row.mergedIntoName}
 									<form method="POST" action="?/merge">
 										<input type="hidden" name="id" value={row.id} />
-										<label class="visually-hidden" for="merge-{row.id}">Merge {row.name} into</label
-										>
+										<label class="visually-hidden" for="merge-{row.id}">
+											Merge {row.name} into
+										</label>
 										<input
 											id="merge-{row.id}"
 											class="input"
@@ -145,9 +146,9 @@
 								})}
 							>
 								<input type="hidden" name="id" value={row.id} />
-								<button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger-ink);"
-									>Remove</button
-								>
+								<button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger-ink);">
+									Remove
+								</button>
 							</form>
 						{/if}
 					</div>
@@ -159,8 +160,9 @@
 
 {#if list.page > 0 || list.more}
 	<div class="settings-actions">
-		{#if list.page > 0}<a class="btn btn-ghost btn-sm" href={pageHref(list.page - 1)}>Previous</a
-			>{/if}
+		{#if list.page > 0}<a class="btn btn-ghost btn-sm" href={pageHref(list.page - 1)}>
+				Previous
+			</a>{/if}
 		{#if list.more}<a class="btn btn-ghost btn-sm" href={pageHref(list.page + 1)}>Next</a>{/if}
 	</div>
 {/if}

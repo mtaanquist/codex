@@ -348,9 +348,9 @@
 									if (e.key === 'Escape') renamingChapterId = null;
 								}}
 							/>
-							<button class="btn btn-sm btn-secondary" type="submit" title="Save chapter name"
-								>Save</button
-							>
+							<button class="btn btn-sm btn-secondary" type="submit" title="Save chapter name">
+								Save
+							</button>
 						</form>
 					{:else}
 						<button

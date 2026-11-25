@@ -192,10 +192,10 @@
 			<span class="rv-back-ic"><Icon name="chevron" size={14} /></span> Stop
 		</button>
 		<span class="inspector-kind pp-title">{name}</span>
-		<span class="pp-count" aria-live="polite"
-			>{#if step}{position} of {total}{#if earlier > 0}<span class="visually-hidden">,</span>
-					<span class="pp-earlier">{earlier} done earlier</span>{/if}{/if}</span
-		>
+		<span class="pp-count" aria-live="polite">
+			{#if step}{position} of {total}{#if earlier > 0}<span class="visually-hidden">,</span>
+					<span class="pp-earlier">{earlier} done earlier</span>{/if}{/if}
+		</span>
 	</div>
 	<div class="rv-panel-scroll" bind:this={scroller}>
 		{#snippet followUpPill(edit: ReviewSuggestion)}
@@ -230,10 +230,11 @@
 
 					{#if context}
 						<div class="rv-diff pp-para">
-							{context.before}{#if step.original}<span class="rv-diff-del">{step.original}</span
-								>{/if}{#if !editing && step.replacement}<span class="rv-diff-ins"
-									>{step.replacement}</span
-								>{/if}{context.after}
+							{context.before}{#if step.original}<span class="rv-diff-del">
+									{step.original}
+								</span>{/if}{#if !editing && step.replacement}<span class="rv-diff-ins">
+									{step.replacement}
+								</span>{/if}{context.after}
 						</div>
 					{:else}
 						<div class="rv-anchor-lost">
@@ -302,8 +303,9 @@
 						{#if revisedUnder}
 							<span class="rv-draft-k">The suggestion now reads</span>
 							<div class="rv-diff pp-revised">
-								{#if step.replacement}<span class="rv-diff-ins">{step.replacement}</span
-									>{:else}Remove these words.{/if}
+								{#if step.replacement}<span class="rv-diff-ins">
+										{step.replacement}
+									</span>{:else}Remove these words.{/if}
 							</div>
 						{/if}
 						{#if editing}

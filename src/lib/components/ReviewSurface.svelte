@@ -291,8 +291,10 @@
 							role="button"
 							tabindex="0"
 							onclick={(e) => openCardAtPointer(run.entityId, e)}
-							onkeydown={(e) => openCardFromKey(run.entityId, e)}>{run.text}</span
-						>{:else if run.kind === 'comment'}<span
+							onkeydown={(e) => openCardFromKey(run.entityId, e)}
+						>
+							{run.text}
+						</span>{:else if run.kind === 'comment'}<span
 							class="rv-mark rv-comment"
 							class:is-focused={focusedId === run.id}
 							style="--auth: {run.color};"
@@ -304,8 +306,10 @@
 								e.stopPropagation();
 								setFocused(run.id);
 							}}
-							onkeydown={() => {}}>{run.text}</span
-						>{:else if run.kind === 'del'}<span
+							onkeydown={() => {}}
+						>
+							{run.text}
+						</span>{:else if run.kind === 'del'}<span
 							class="rv-mark rv-del"
 							class:is-focused={focusedId === run.id}
 							style="--auth: {run.color};"
@@ -317,8 +321,10 @@
 								e.stopPropagation();
 								setFocused(run.id);
 							}}
-							onkeydown={() => {}}><del class="rv-del-t">{run.text}</del></span
-						>{:else if run.kind === 'ins'}<span
+							onkeydown={() => {}}
+						>
+							<del class="rv-del-t">{run.text}</del>
+						</span>{:else if run.kind === 'ins'}<span
 							class="rv-mark rv-ins"
 							class:is-focused={focusedId === run.id}
 							style="--auth: {run.color};"
@@ -330,8 +336,10 @@
 								e.stopPropagation();
 								setFocused(run.id);
 							}}
-							onkeydown={() => {}}><ins class="rv-ins-t" data-rv-virtual>{run.text}</ins></span
-						>{:else}<span
+							onkeydown={() => {}}
+						>
+							<ins class="rv-ins-t" data-rv-virtual>{run.text}</ins>
+						</span>{:else}<span
 							class="rv-mark rv-replace"
 							class:is-focused={focusedId === run.id}
 							style="--auth: {run.color};"
@@ -344,10 +352,11 @@
 								setFocused(run.id);
 							}}
 							onkeydown={() => {}}
-							><del class="rv-del-t">{run.before}</del><ins class="rv-ins-t" data-rv-virtual
-								>{run.after}</ins
-							></span
-						>{/if}{/each}
+						>
+							<del class="rv-del-t">{run.before}</del><ins class="rv-ins-t" data-rv-virtual>
+								{run.after}
+							</ins>
+						</span>{/if}{/each}
 			</div>
 		{/if}
 
