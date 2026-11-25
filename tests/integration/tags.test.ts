@@ -304,6 +304,29 @@ describe('fandoms', () => {
 		expect((await findFandoms(db, ['a', 'B'])).ok).toBe(true);
 	});
 
+	it('counts a merged-away fandom and its survivor once, in the order typed', async () => {
+		await addFandoms('Discworld\nPratchett\nDune\nA\nB\nC\nD');
+		await mergeTag(db, 'fandom', await tagId('pratchett'), 'Discworld');
+		expect(await listedByName(db, 'fandom', ['dune', 'Pratchett', 'nope', 'discworld'])).toEqual({
+			ids: [await tagId('dune'), await tagId('discworld')],
+			slugs: ['dune', 'discworld'],
+			missing: ['nope']
+		});
+		const found = await findFandoms(db, ['Pratchett', 'Discworld', 'Dune', 'A', 'B']);
+		expect(found).toEqual({
+			ok: true,
+			ids: [await tagId('discworld'), await tagId('dune'), await tagId('a'), await tagId('b')]
+		});
+		// Old code counted Pratchett and Discworld as two of the five.
+		expect((await findFandoms(db, ['Pratchett', 'Discworld', 'Dune', 'A', 'B', 'C'])).ok).toBe(
+			true
+		);
+		expect((await findFandoms(db, ['Pratchett', 'Dune', 'A', 'B', 'C'], ['discworld'])).ok).toBe(
+			true
+		);
+		expect((await findFandoms(db, ['Dune', 'A', 'B', 'C', 'D'], ['discworld'])).ok).toBe(false);
+	});
+
 	it('keeps a fandom and a tag with the same slug apart', async () => {
 		await addFandoms('Discworld');
 		await tagStory(storyId, ['Discworld']);
@@ -337,6 +360,7 @@ describe('genres and content warnings', () => {
 		]);
 		expect(await listedByName(db, 'warning', ['death', 'Fantasy'])).toEqual({
 			ids: [death],
+			slugs: ['death'],
 			missing: ['Fantasy']
 		});
 	});

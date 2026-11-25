@@ -156,25 +156,52 @@ export async function setStoryTags(
 	return { skipped };
 }
 
-// Matches names against a curated list by slug. Removed entries do not
-// match. Nothing is written.
+// Matches names against a curated list by slug, following merges to the
+// surviving entry. ids are the survivors in the order the names came, without
+// repeats, so a merged-away name and its survivor count once. Removed entries
+// (or a name whose survivor is removed) do not match. Nothing is written.
 export async function listedByName(
 	db: Database,
 	kind: ListKind,
 	names: string[]
-): Promise<{ ids: string[]; missing: string[] }> {
+): Promise<{ ids: string[]; slugs: string[]; missing: string[] }> {
 	const slugs = [...new Set(names.map(tagSlug).filter(Boolean))];
-	const found =
-		slugs.length === 0
-			? []
-			: await db
-					.select({ id: tags.id, slug: tags.slug })
-					.from(tags)
-					.where(and(eq(tags.kind, kind), inArray(tags.slug, slugs), isNull(tags.removedAt)));
-	return {
-		ids: found.map((tag) => tag.id),
-		missing: names.filter((name) => !found.some((tag) => tag.slug === tagSlug(name)))
-	};
+	const survivors = new Map<string, { id: string; slug: string }>();
+	if (slugs.length > 0) {
+		const rows = await db.execute(sql`
+			with recursive chain as (
+				select t.slug as start_slug, t.id, 0 as depth from tags t
+				where t.kind = ${kind} and t.removed_at is null and t.slug in (${sql.join(
+					slugs.map((slug) => sql`${slug}`),
+					sql`, `
+				)})
+				union all
+				select c.start_slug, t.id, c.depth + 1 from chain c
+				join tags m on m.id = c.id join tags t on t.id = m.merged_into_id
+				where c.depth < ${MAX_MERGE_DEPTH}
+			)
+			select distinct on (c.start_slug) c.start_slug, t.id, t.slug,
+				t.removed_at is null and t.merged_into_id is null as current
+			from chain c join tags t on t.id = c.id
+			order by c.start_slug, c.depth desc
+		`);
+		for (const row of rows.rows as {
+			start_slug: string;
+			id: string;
+			slug: string;
+			current: boolean;
+		}[]) {
+			if (row.current) survivors.set(row.start_slug, { id: row.id, slug: row.slug });
+		}
+	}
+	const found = new Map<string, string>();
+	const missing: string[] = [];
+	for (const name of names) {
+		const survivor = survivors.get(tagSlug(name));
+		if (!survivor) missing.push(name);
+		else found.set(survivor.id, survivor.slug);
+	}
+	return { ids: [...found.keys()], slugs: [...found.values()], missing };
 }
 
 // Finds fandoms on the curated list by name. A name not on it is refused;
@@ -189,22 +216,21 @@ export async function findFandoms(
 	// limit (its universe was linked later) may keep them but not add more.
 	currentCount = 0
 ): Promise<{ ok: true; ids: string[] } | { ok: false; message: string }> {
-	const names = typed.filter((name) => !inheritedSlugs.includes(tagSlug(name)));
-	const count = new Set(names.map(tagSlug).filter(Boolean)).size + inheritedSlugs.length;
-	if (count > Math.max(MAX_FANDOMS, currentCount)) {
+	const found = await listedByName(db, 'fandom', typed);
+	if (found.missing.length > 0) {
+		return {
+			ok: false,
+			message: `Not on the fandom list: ${found.missing.join(', ')}. Use a tag instead, or ask the people who run this site to add it.`
+		};
+	}
+	const ids = found.ids.filter((_, i) => !inheritedSlugs.includes(found.slugs[i]));
+	if (ids.length + inheritedSlugs.length > Math.max(MAX_FANDOMS, currentCount)) {
 		return {
 			ok: false,
 			message:
 				inheritedSlugs.length > 0
 					? `A story can have up to ${MAX_FANDOMS} fandoms, including the one its universe is set in.`
 					: `A story can have up to ${MAX_FANDOMS} fandoms.`
-		};
-	}
-	const { ids, missing } = await listedByName(db, 'fandom', names);
-	if (missing.length > 0) {
-		return {
-			ok: false,
-			message: `Not on the fandom list: ${missing.join(', ')}. Use a tag instead, or ask the people who run this site to add it.`
 		};
 	}
 	return { ok: true, ids };

@@ -127,7 +127,13 @@ describe('instanceStats', () => {
 
 	it('reports zeroes on an empty instance', async () => {
 		const stats = await instanceStats(db);
-		expect(stats).toEqual({ writers: 0, pending: 0, universes: 0, stories: 0 });
+		expect(stats).toEqual({
+			writers: 0,
+			pending: 0,
+			universes: 0,
+			stories: 0,
+			publishedEditions: 0
+		});
 	});
 });
 

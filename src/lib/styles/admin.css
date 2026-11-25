@@ -348,6 +348,13 @@ a.nav-item {
 	margin: 5px 0 0;
 	max-width: 60ch;
 }
+/* A GET search above a paged admin list: the field, Find, and Show all. */
+.admin-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-bottom: 10px;
+}
 /* A link in a section's description: underlined in the body colour, as
    prose links are everywhere. */
 .admin-block-sub a,
