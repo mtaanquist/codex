@@ -36,7 +36,11 @@ Text fields use `defaultValue`, so a refresh never writes over a field the
 writer has typed in again. A rename's redirect is followed with
 `goto(..., { reset: false, replace: true })`, so the next field keeps focus
 and saves to the new address, and leaving by a link with an unsaved rename
-saves the rename first instead of loading the old address.
+saves the rename first and then goes on to the target at the new address
+(also while the rename is still saving, which is the usual case for a mouse
+click, since the link takes focus on mousedown). A field held back by a reset
+saves once on its next blur, not once per held change, and number and date
+fields are held back like text ones.
 
 Staging review of the language setting and Assistant preferences, round 8
 (2026-11-24, `fix/llm-staging-review-8`, into `staging/llm-issues`). Round 7's

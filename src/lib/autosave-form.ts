@@ -15,40 +15,54 @@ import { focusIsBeingRestored } from '#lib/enhance';
 // following it without a reset leaves the writer in the field they moved on to,
 // where kit's own redirect would take focus away mid-word. The old address no
 // longer exists, so it is replaced in the history.
-export const autosaveSubmit: SubmitFunction =
-	() =>
-	async ({ result, update }) => {
+export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
+	const renaming = hasUnsavedRename(formElement);
+	if (renaming) renamesInFlight += 1;
+	return async ({ result, update }) => {
+		if (renaming) renamesInFlight -= 1;
 		if (result.type === 'redirect') {
+			const target = leavingTo && retarget(leavingTo, result.location);
+			leavingTo = null;
+			// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect, or where the writer was going with its slug swapped
+			if (target) await goto(target);
 			// eslint-disable-next-line svelte/no-navigation-without-resolve -- the action's own redirect
-			await goto(result.location, { reset: false, replace: true, refreshAll: true });
+			else await goto(result.location, { reset: false, replace: true, refreshAll: true });
 			return;
 		}
 		await update({ reset: false });
+		if (result.type !== 'success') leavingTo = null;
+		else if (leavingTo && renamesInFlight === 0) continueLeaving();
 	};
+};
 
 // Use as a form's onchange handler: any control change submits the form. A
 // control marked data-no-autosave only changes the view (a filter box), so its
 // changes do not save.
 //
-// A text field's change event also fires when another field's save lands and
+// A typed field's change event also fires when another field's save lands and
 // kit's focus reset blurs it for a moment (keepEditorFocus puts it back). That
 // is not the writer leaving the field, so it does not save half a word; the
-// field saves on its next real blur instead.
+// field is marked and saves on its next real blur instead.
 export function autosubmitForm(event: Event & { currentTarget: HTMLFormElement }) {
 	const control = event.target as HTMLElement | null;
 	if (control?.dataset && 'noAutosave' in control.dataset) return;
 	const form = event.currentTarget;
-	if (!isTextField(control)) {
+	if (!isTypedField(control)) {
 		form.requestSubmit();
 		return;
 	}
+	// A real change event covers a save the field was holding.
+	held.delete(control);
 	saveUnlessRefocused(form, control);
 }
 
-function isTextField(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement {
+// Fields whose save waits for their next real blur.
+const held = new WeakSet<Element>();
+
+const NOT_TYPED = new Set(['checkbox', 'radio', 'file', 'range', 'color', 'hidden']);
+function isTypedField(el: Element | null): el is HTMLInputElement | HTMLTextAreaElement {
 	return (
-		el instanceof HTMLTextAreaElement ||
-		(el instanceof HTMLInputElement && el.selectionStart !== null)
+		el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && !NOT_TYPED.has(el.type))
 	);
 }
 
@@ -60,8 +74,49 @@ function saveUnlessRefocused(form: HTMLFormElement, field: Element) {
 			form.requestSubmit();
 			return;
 		}
-		field.addEventListener('blur', () => saveUnlessRefocused(form, field), { once: true });
+		if (held.has(field)) return;
+		held.add(field);
+		const onBlur = () => {
+			// A change event on this blur saves it already.
+			if (!held.has(field)) return;
+			held.delete(field);
+			saveUnlessRefocused(form, field);
+		};
+		// After the change event, which fires before blur.
+		field.addEventListener('blur', onBlur, { once: true });
 	});
+}
+
+// A title or name field marked data-renames sets the page's own slug.
+function hasUnsavedRename(form: HTMLFormElement): boolean {
+	return [...form.querySelectorAll<HTMLInputElement>('input[data-renames]')].some(
+		(input) => input.value.trim() !== '' && input.value.trim() !== input.defaultValue.trim()
+	);
+}
+
+let renamesInFlight = 0;
+// Where the writer was going when a rename was still saving.
+let leavingTo: URL | null = null;
+
+function continueLeaving() {
+	const target = leavingTo;
+	leavingTo = null;
+	// eslint-disable-next-line svelte/no-navigation-without-resolve -- where the writer was going
+	if (target) void goto(target);
+}
+
+// The target with the page's old slug swapped for the new one: the first path
+// segment where the current address and the redirect differ.
+function retarget(target: URL, location: string): URL {
+	const from = window.location.pathname.split('/');
+	const to = new URL(location, window.location.href).pathname.split('/');
+	const at = from.findIndex((segment, i) => segment !== to[i]);
+	const parts = target.pathname.split('/');
+	if (target.origin !== window.location.origin || at < 0 || parts[at] !== from[at]) return target;
+	parts[at] = to[at];
+	const next = new URL(target);
+	next.pathname = parts.join('/');
+	return next;
 }
 
 // Save a still-focused field before navigating away or closing the page, so
@@ -72,25 +127,35 @@ export function flushFocusedField() {
 }
 
 // flushFocusedField for a settings page whose form can move the page's own
-// address: a title or name field marked data-renames sets the slug, and its
-// save redirects to the new address.
+// address (see hasUnsavedRename). Leaving while a rename is unsaved or still
+// saving would load the target at the old address, which the rename removes,
+// so the navigation waits for the save and then goes on to the target at the
+// new address.
 export function flushBeforeNavigate(navigation: BeforeNavigate) {
 	// The rename's own redirect (see autosaveSubmit). A field the writer has
 	// moved on to keeps focus, and saves when they leave it, to the new
 	// address.
 	if (navigation.type === 'goto' && navigation.from?.route.id === navigation.to?.route.id) return;
-	const active = browser ? document.activeElement : null;
-	if (
-		navigation.type !== 'leave' &&
-		active instanceof HTMLInputElement &&
-		'renames' in active.dataset &&
-		active.value !== active.defaultValue
-	) {
-		// Leaving now would load the target at the old address while the rename
-		// lands. Save the rename instead; it brings the writer back to the
-		// settings at the new address.
+	if (navigation.type === 'leave' || !navigation.to || !browser) {
+		flushFocusedField();
+		return;
+	}
+	const active = document.activeElement;
+	const renameField =
+		active instanceof HTMLInputElement && 'renames' in active.dataset && active.form
+			? active.form
+			: null;
+	if (renamesInFlight > 0 || (renameField && hasUnsavedRename(renameField))) {
 		navigation.cancel();
-		active.blur();
+		leavingTo = navigation.to.url;
+		flushFocusedField();
+		// The blur's save starts in a microtask (autosubmitForm). If none
+		// started (nothing changed since the last save), go on now.
+		queueMicrotask(() =>
+			queueMicrotask(() => {
+				if (renamesInFlight === 0) continueLeaving();
+			})
+		);
 		return;
 	}
 	flushFocusedField();

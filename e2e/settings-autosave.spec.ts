@@ -42,10 +42,16 @@ test('typing in the next field while a save lands keeps focus and text', async (
 	await saved;
 	await expect(page.locator('#st-style-notes')).toHaveValue(text);
 	await expect(page.locator('#st-style-notes')).toBeFocused();
-	// Leaving the field saves it.
+	// Leaving the field saves it, once.
+	let posts = 0;
+	page.on('request', (request) => {
+		if (request.method() === 'POST' && request.url().endsWith('?/update')) posts += 1;
+	});
 	const final = page.waitForResponse(/\?\/update$/);
 	await page.locator('#st-style-notes').press('Tab');
 	await final;
+	await page.waitForTimeout(200);
+	expect(posts).toBe(1);
 	await expect(page.getByRole('status')).toHaveText('Saved.');
 	await page.reload();
 	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
@@ -75,10 +81,13 @@ test('going back into a field before its save lands keeps the newer text', async
 
 test('renaming and typing in the next field keeps both', async ({ page }) => {
 	const { stamp } = await newStory(page);
+	await slowSaves(page);
 	await page.locator('#st-title').fill(`Renamed ${stamp}`);
 	await page.locator('#st-title').press('Tab');
 	await expect(page.locator('#st-author')).toBeFocused();
-	await page.keyboard.type('A. Writer', { delay: 25 });
+	const renamed = page.waitForResponse(/\?\/update$/);
+	await page.keyboard.type('A. Writer', { delay: 50 });
+	await renamed;
 	await expect(page).toHaveURL(`/stories/renamed-${stamp}/settings`);
 	await expect(page.locator('#st-author')).toHaveValue('A. Writer');
 	await page.locator('#st-author').press('Tab');
@@ -91,11 +100,13 @@ test('renaming and then leaving by a sidebar link does not end on a missing page
 	page
 }) => {
 	const { stamp } = await newStory(page);
+	await slowSaves(page);
 	await page.locator('#st-title').fill(`Moved ${stamp}`);
 	await page
 		.getByRole('navigation', { name: 'Story settings' })
 		.getByRole('link', { name: 'Editor' })
 		.click();
-	await expect(page).toHaveURL(new RegExp(`/stories/moved-${stamp}/settings`));
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Story settings');
+	// The rename saves first, then the link goes on to the new address.
+	await expect(page).toHaveURL(`/stories/moved-${stamp}/settings/editor`);
+	await expect(page.getByLabel('Editing mode')).toBeVisible();
 });
