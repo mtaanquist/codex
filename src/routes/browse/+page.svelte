@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { withQuery } from '#lib/href';
+	import { browseHeading } from '#lib/browse';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
 	import ShelfGrid from '#lib/components/ShelfGrid.svelte';
@@ -46,15 +47,7 @@
 		data.next ? withQuery(browse, { ...searchParams, after: data.next }) : null
 	);
 
-	const heading = $derived(
-		data.filters.tag
-			? `Stories tagged ${data.filters.tag.name}`
-			: data.filters.fandom && !data.filters.genre
-				? data.filters.fandom
-				: data.filters.genre && !data.filters.fandom
-					? data.filters.genre
-					: 'Browse'
-	);
+	const heading = $derived(browseHeading({ ...data.filters, tag: data.filters.tag?.name ?? null }));
 </script>
 
 <svelte:head>
