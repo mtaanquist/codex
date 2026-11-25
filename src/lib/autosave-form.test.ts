@@ -91,8 +91,11 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		return form;
 	}
 
-	function navigation(type: string) {
-		const to = { url: new URL('http://localhost/stories/s/settings/editor'), route: { id: 'b' } };
+	function navigation(type: string, toRoute = 'b') {
+		const to = {
+			url: new URL('http://localhost/stories/s/settings/editor'),
+			route: { id: toRoute }
+		};
 		return {
 			type,
 			from: { route: { id: 'a' } },
@@ -107,7 +110,8 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		env.browser = true;
 		retries = [];
 		forms = [];
-		goto.mockClear();
+		goto.mockReset();
+		goto.mockImplementation(async () => {});
 		vi.stubGlobal('document', { activeElement: null });
 		vi.stubGlobal('window', { location: { href: 'http://localhost/stories/s/settings' } });
 		vi.stubGlobal('HTMLInputElement', class {});
@@ -243,5 +247,59 @@ describe('flushBeforeNavigate holding a navigation', () => {
 		flushBeforeNavigate(leave);
 		expect(leave.cancel).toHaveBeenCalled();
 		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+	});
+
+	// The command palette navigates with goto, and a universe's main page and
+	// its settings share one route (#1709).
+	it('holds a goto to another page on the same route while a save is in flight', async () => {
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = navigation('goto', 'a');
+		flushBeforeNavigate(nav);
+		expect(nav.cancel).toHaveBeenCalled();
+		await retries[0]({ result: { type: 'error' }, update: vi.fn() });
+		await settle();
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('holds a goto to another page on the same route after a save failed', async () => {
+		await failedForm();
+		const nav = navigation('goto', 'a');
+		flushBeforeNavigate(nav);
+		expect(nav.cancel).toHaveBeenCalled();
+		await settle();
+		await retries[0]({ result: { type: 'error' }, update: vi.fn() });
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('lets the held goto go on once the save lands', async () => {
+		const form = connectedForm();
+		form.requestSubmit();
+		const nav = navigation('goto', 'a');
+		flushBeforeNavigate(nav);
+		const again = navigation('goto', 'a');
+		goto.mockImplementationOnce(async () => flushBeforeNavigate(again));
+		await retries[0]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
+		expect(goto).toHaveBeenCalledWith(nav.to!.url);
+		expect(again.cancel).not.toHaveBeenCalled();
+	});
+
+	it('does not hold the rename redirect while another save is in flight', async () => {
+		const renamed = connectedForm();
+		const other = connectedForm();
+		renamed.requestSubmit();
+		other.requestSubmit();
+		const redirect = navigation('goto', 'a');
+		goto.mockImplementationOnce(async () => flushBeforeNavigate(redirect));
+		await retries[0]({
+			result: { type: 'redirect', location: '/universes/new-name' },
+			update: vi.fn()
+		});
+		expect(goto).toHaveBeenCalledWith(
+			'/universes/new-name',
+			expect.objectContaining({ replace: true })
+		);
+		expect(redirect.cancel).not.toHaveBeenCalled();
+		await retries[1]({ result: { type: 'success' }, update: vi.fn(async () => {}) });
 	});
 });
