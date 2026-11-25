@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { page } from '$app/state';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit } from '#lib/autosave-form';
+	import { autosaveSubmit, ownAction } from '#lib/autosave-form';
 	import { askConfirm } from '#lib/confirm.svelte';
 	import { formatDate, formatDateTime } from '#lib/format';
 	import { clientDisplayName, PERMISSION_TEXT } from '#lib/mcp-access';
@@ -135,7 +135,7 @@
 		{:else}
 			<form
 				method="POST"
-				action="?/setExternalAccess"
+				action={ownAction('setExternalAccess')}
 				use:enhance={autosaveSubmit}
 				onchange={onToggle}
 			>

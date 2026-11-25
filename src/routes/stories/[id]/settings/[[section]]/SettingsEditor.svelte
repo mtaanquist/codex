@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { WRITING_LANGUAGES, writingLanguageLabel } from '#lib/writing-languages';
 	import type { ActionData, PageData } from './$types';
@@ -33,7 +33,7 @@
 <div class="settings-group">
 	<form
 		method="POST"
-		action="?/savePreferences"
+		action={ownAction('savePreferences')}
 		use:enhance={autosaveSubmit}
 		onchange={autosubmitForm}
 	>

@@ -9,9 +9,11 @@ vi.mock('$app/env', () => ({
 	}
 }));
 vi.mock('$app/navigation', () => ({ goto }));
+const state = vi.hoisted(() => ({ page: { url: new URL('http://localhost/') } }));
+vi.mock('$app/state', () => state);
 vi.mock('#lib/enhance', () => ({ focusIsBeingRestored: () => false }));
 
-const { autosaveSubmit, autosubmitForm, failedSaves, flushBeforeNavigate } =
+const { autosaveSubmit, autosubmitForm, failedSaves, flushBeforeNavigate, ownAction } =
 	await import('./autosave-form');
 
 function fakeForm() {
@@ -31,6 +33,16 @@ async function save(formElement: HTMLFormElement, result: { type: string }) {
 	await (callback as (opts: unknown) => Promise<void>)({ result, update });
 	return update;
 }
+
+// The browser has already moved to a Back press's target when the press's
+// save posts, so the action names the form's own page, not the address bar's
+// (#1721).
+describe('ownAction', () => {
+	it('posts to the page the form is on, without its query', () => {
+		state.page.url = new URL('http://localhost/stories/a/settings/goals?x=1');
+		expect(ownAction('saveGoals')).toBe('/stories/a/settings/goals?/saveGoals');
+	});
+});
 
 describe('autosaveSubmit', () => {
 	it('keeps the page when a save errors, and marks the form unsaved', async () => {

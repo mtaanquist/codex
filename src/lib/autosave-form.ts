@@ -2,6 +2,7 @@ import type { SubmitFunction } from '$app/forms';
 import type { BeforeNavigate } from '$app/navigation';
 import { browser } from '$app/env';
 import { goto } from '$app/navigation';
+import { page } from '$app/state';
 import { tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { focusIsBeingRestored } from '#lib/enhance';
@@ -78,6 +79,15 @@ export const autosaveSubmit: SubmitFunction = ({ formElement }) => {
 		else if (leavingTo && savesInFlight === 0 && unsavedForms().length === 0) continueLeaving();
 	};
 };
+
+// An autosaving form's action, on the page the form is on. A save that a Back
+// or Forward press starts runs after the browser has already moved to the
+// entry it was going to, so a relative `?/action` would post to that page,
+// which may be another story's settings with the same action. A form whose
+// page can be renamed posts to its id-based address instead.
+export function ownAction(name: string): string {
+	return `${page.url.pathname}?/${name}`;
+}
 
 // Forms whose last save errored; FormStatus shows the failure.
 export const failedSaves = new SvelteSet<HTMLFormElement>();

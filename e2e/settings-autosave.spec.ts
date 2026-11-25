@@ -417,3 +417,36 @@ test('closing the tab after a failed save asks first', async ({ page }) => {
 	expect(asked.type()).toBe('beforeunload');
 	await asked.accept();
 });
+
+// Back pressed from a field on one story's settings saves that field to that
+// story, not to the story the Back press was going to (#1721).
+test('a field saved by a Back press goes to its own story, not the one Back goes to', async ({
+	page
+}) => {
+	const first = await newStory(page);
+	const second = await newStory(page);
+	await gotoReady(page, `/stories/${first.slug}/settings/goals`);
+	const target = page.getByLabel('Target words (optional)');
+	await expect(target).toHaveValue('');
+	// Move to the second story's Goals in the app, as the command palette does.
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'to-other-story';
+		link.textContent = 'Other';
+		document.body.append(link);
+	}, `/stories/${second.slug}/settings/goals`);
+	await page.locator('#to-other-story').click();
+	await expect(page).toHaveURL(`/stories/${second.slug}/settings/goals`);
+	await target.fill('42000');
+	const saved = page.waitForRequest(
+		(request) => request.method() === 'POST' && request.url().includes('?/saveGoals')
+	);
+	await page.evaluate(() => history.back());
+	expect(new URL((await saved).url()).pathname).toBe(`/stories/${second.slug}/settings/goals`);
+	await expect(page).toHaveURL(`/stories/${first.slug}/settings/goals`);
+	await gotoReady(page, `/stories/${second.slug}/settings/goals`);
+	await expect(target).toHaveValue('42000');
+	await gotoReady(page, `/stories/${first.slug}/settings/goals`);
+	await expect(target).toHaveValue('');
+});
