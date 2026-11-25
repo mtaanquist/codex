@@ -7,6 +7,7 @@ import {
 	closeSelfClosedTags,
 	parseDocument,
 	parseDocumentInWorker,
+	workerHeapLimitMb,
 	DocumentImportError
 } from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
@@ -566,6 +567,14 @@ describe('parseDocumentInWorker limits', () => {
 		await expect(parseDocumentInWorker(slow, 'slow.epub', 300)).rejects.toThrow(/took too long/);
 		await expect(parseDocumentInWorker(slow, 'slow.epub', 300)).rejects.toThrow(/took too long/);
 		await expect(parseDocumentInWorker(small(), 'a.epub')).resolves.toBeDefined();
+	});
+
+	it('caps the worker heap at half the available memory, never above 2048 MB', () => {
+		const gb = 2 ** 30;
+		expect(workerHeapLimitMb(2 * gb)).toBe(1024);
+		expect(workerHeapLimitMb(3 * gb)).toBe(1536);
+		expect(workerHeapLimitMb(4 * gb)).toBe(2048);
+		expect(workerHeapLimitMb(64 * gb)).toBe(2048);
 	});
 
 	it('reports a worker out of memory as a file too large, and other failures as they are', async () => {
