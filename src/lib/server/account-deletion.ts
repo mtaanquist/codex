@@ -50,10 +50,15 @@ export async function scheduleAccountDeletion(db: Database, userId: string): Pro
 		await revokeTokens(tx, userId, 'sign_in');
 		// Public editions come down immediately - the public-facing erasure must
 		// be prompt even though the rows are purged after the grace window.
+		// Every edition is marked, those already taken down too, so restoring a
+		// takedown later never puts one back up (see restorePublication).
 		await tx
 			.update(publications)
-			.set({ removedAt: sql`now()` })
-			.where(and(eq(publications.ownerId, userId), isNull(publications.removedAt)));
+			.set({
+				removedAt: sql`coalesce(${publications.removedAt}, now())`,
+				hiddenByAccountDeletion: true
+			})
+			.where(eq(publications.ownerId, userId));
 	});
 	return reserveToken(db, userId, 'deletion_cancel', GRACE_DAYS * 24 * 60);
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "publications" ADD COLUMN "hidden_by_account_deletion" boolean DEFAULT false NOT NULL;
