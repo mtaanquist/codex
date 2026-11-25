@@ -719,10 +719,12 @@ describe('per-run spend cap (#549)', () => {
 	});
 
 	// #1552: the notes already left followed the old settings, so a changed
-	// language or preference starts the review over rather than counting them done.
-	it('does not adopt a capped run made under other preferences or another language', async () => {
+	// language, preference or style notes (#1648) starts the review over rather
+	// than counting them done.
+	it('does not adopt a capped run made under other preferences, style notes or another language', async () => {
 		for (const change of [
 			{ assistantNotes: 'Comma splices are on purpose.' },
+			{ styleNotes: 'Hardboiled noir, short sentences.' },
 			{ language: 'da' }
 		]) {
 			const storyId = await seedStory(3);
