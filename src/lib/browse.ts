@@ -56,6 +56,20 @@ export function parseBrowseQuery(params: URLSearchParams): BrowseQuery {
 	};
 }
 
+// The page heading names every filter set: the genre and fandom, and the
+// tag. "Browse" when none is.
+export function browseHeading(filters: {
+	genre: string | null;
+	fandom: string | null;
+	tag: string | null;
+}): string {
+	const named = [filters.genre, filters.fandom].filter((name): name is string => Boolean(name));
+	if (!filters.tag) return named.length > 0 ? named.join(', ') : 'Browse';
+	return named.length > 0
+		? `${named.join(', ')} stories tagged ${filters.tag}`
+		: `Stories tagged ${filters.tag}`;
+}
+
 // Search engines may index the plain page and a page for one genre, fandom or
 // tag. A search, a combination of filters, adult work or a later page is not.
 export function browseIndexable(query: BrowseQuery): boolean {

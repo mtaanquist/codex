@@ -95,6 +95,11 @@ async function titles(search = '') {
 	return result.books.map((book) => book.title);
 }
 
+async function writers(search: string) {
+	const query = parseBrowseQuery(new URLSearchParams(search));
+	return browseAuthors(db, query, await resolveFilters(db, query));
+}
+
 beforeAll(async () => {
 	await ensureTestDatabase();
 	await migrate(db, { migrationsFolder: 'drizzle' });
@@ -172,17 +177,15 @@ describe('search and filters', () => {
 		// A standalone story's hidden universe is not searched.
 		expect(await titles('q=ardenfall')).toEqual(['The Bell']);
 		expect(await titles('q=100%25')).toEqual([]);
-		expect(await browseAuthors(db, 'bea')).toEqual([{ handle: 'bea', name: 'Bea', stories: 1 }]);
+		expect(await writers('q=bea')).toEqual([{ handle: 'bea', name: 'Bea', stories: 1 }]);
 	});
 
 	it('does not match the account name of an author who uses a pen name', async () => {
 		await story('The Bell');
 		// The author's display name is "author"; readers only see "Ada Teller".
 		expect(await titles('q=author')).toEqual([]);
-		expect(await browseAuthors(db, 'author')).toEqual([]);
-		expect(await browseAuthors(db, 'ada')).toEqual([
-			{ handle: 'teller', name: 'Ada Teller', stories: 1 }
-		]);
+		expect(await writers('q=author')).toEqual([]);
+		expect(await writers('q=ada')).toEqual([{ handle: 'teller', name: 'Ada Teller', stories: 1 }]);
 	});
 
 	it('leaves authors with only adult stories out of Writers unless adult work is shown', async () => {
@@ -191,8 +194,29 @@ describe('search and filters', () => {
 			.update(publications)
 			.set({ isAdult: true })
 			.where(eq(publications.id, grown.publicationId));
-		expect(await browseAuthors(db, 'ada')).toEqual([]);
-		expect(await browseAuthors(db, 'ada', true)).toHaveLength(1);
+		expect(await writers('q=ada')).toEqual([]);
+		expect(await writers('q=ada&adult=show')).toHaveLength(1);
+	});
+
+	it('counts only the stories the other filters let through in Writers', async () => {
+		await addListEntries(db, 'genre', 'Fantasy');
+		await addListEntries(db, 'warning', 'Death');
+		const { rows } = await pool.query('select id, kind from tags');
+		const id = (kind: string) => rows.find((row) => row.kind === kind).id as string;
+		const a = await story('A');
+		const b = await story('B');
+		await story('C');
+		await setStoryList(db, a.id, 'genre', [id('genre')]);
+		await setStoryList(db, b.id, 'genre', [id('genre')]);
+		await setStoryList(db, b.id, 'warning', [id('warning')]);
+		expect(await writers('q=ada')).toEqual([{ handle: 'teller', name: 'Ada Teller', stories: 3 }]);
+		expect(await writers('q=ada&genre=fantasy')).toEqual([
+			{ handle: 'teller', name: 'Ada Teller', stories: 2 }
+		]);
+		expect(await writers('q=ada&genre=fantasy&hide=death')).toEqual([
+			{ handle: 'teller', name: 'Ada Teller', stories: 1 }
+		]);
+		expect(await writers('q=ada&genre=nothing')).toEqual([]);
 	});
 
 	it('filters by genre, following merges, and hides chosen warnings', async () => {

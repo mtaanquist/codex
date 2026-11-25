@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
 	BROWSE_ADULT_KEY,
+	browseHeading,
 	browseIndexable,
 	decodeCursor,
 	encodeCursor,
@@ -54,6 +55,22 @@ describe('browse query', () => {
 		expect(parse('hide=death')).toBe(false);
 		expect(parse('adult=show')).toBe(false);
 		expect(parse(`after=${encodeCursor('1795507967123456', id)}`)).toBe(false);
+	});
+});
+
+describe('browse heading', () => {
+	it('names every filter that is set', () => {
+		const none = { genre: null, fandom: null, tag: null };
+		expect(browseHeading(none)).toBe('Browse');
+		expect(browseHeading({ ...none, genre: 'Fantasy' })).toBe('Fantasy');
+		expect(browseHeading({ ...none, fandom: 'Discworld' })).toBe('Discworld');
+		expect(browseHeading({ ...none, genre: 'Fantasy', fandom: 'Discworld' })).toBe(
+			'Fantasy, Discworld'
+		);
+		expect(browseHeading({ ...none, tag: 'dragons' })).toBe('Stories tagged dragons');
+		expect(browseHeading({ genre: 'Fantasy', fandom: 'Discworld', tag: 'dragons' })).toBe(
+			'Fantasy, Discworld stories tagged dragons'
+		);
 	});
 });
 
