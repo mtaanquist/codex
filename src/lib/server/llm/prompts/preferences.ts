@@ -65,9 +65,12 @@ export function houseStyleLine(
 	}`;
 	// Dialogue and quoted thoughts keep their own tense and person, so a check
 	// would otherwise flag every "I am" a character says in a past-tense,
-	// third-person story.
+	// third-person story, and a rewrite would put it into the narration's tense.
 	const { tense, narration } = style;
-	if (mode !== 'write' && (tense || narration)) {
+	if (mode === 'write' && (tense || narration)) {
+		return `${line} Dialogue and a character's quoted thoughts keep their own tense and person.`;
+	}
+	if (tense || narration) {
 		return `${line} The ${
 			tense && narration
 				? 'tense and point of view apply'
