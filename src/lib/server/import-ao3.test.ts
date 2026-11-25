@@ -42,6 +42,20 @@ describe('parseAo3Bodies', () => {
 		}
 	});
 
+	// A comment closed one way used to search to the end for the other ending
+	// every time, which is quadratic in the number of comments.
+	it('reads a run of closed comments in linear time', () => {
+		for (const comment of ['<!---->', '<!----!>']) {
+			const junk = comment.repeat(500_000 / comment.length);
+			const started = Date.now();
+			const work = parseAo3Bodies([
+				`<div id="chapters"><div class="userstuff2"><p>${junk}Prose.</p></div></div>`
+			]);
+			expect(Date.now() - started).toBeLessThan(2000);
+			expect(work?.chapters[0].proseHtml).toContain('Prose.');
+		}
+	});
+
 	it('reads past an unclosed comment and ends comments as an HTML parser does', () => {
 		const chapter = (comment: string) =>
 			`<div id="chapters">${comment}<div class="userstuff2"><p>Prose.</p></div><!-- end --></div>`;
