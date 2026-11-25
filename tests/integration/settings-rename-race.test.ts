@@ -129,3 +129,43 @@ describe('a universe Details save racing a rename', () => {
 		expect(row).toMatchObject({ slug: 'emberfall', descriptionMd: 'Ash and bells.' });
 	});
 });
+
+// A settings page reached by id moves to its slug address, so a rename's
+// redirect and the sidebar links, which use the slug, still match it (#1691).
+function load(
+	page: typeof storySettings | typeof universeSettings,
+	path: string,
+	section?: string
+) {
+	const url = new URL(path, 'http://localhost');
+	const id = url.pathname.split('/')[2];
+	return run(() =>
+		page.load({ params: { id, section }, url, locals: { user, session: null } } as never)
+	);
+}
+
+describe('a settings page at its id address', () => {
+	it('redirects a story to its slug address, keeping the section and query', async () => {
+		const byId = await load(storySettings, `/stories/${storyId}/settings/editor?x=1`, 'editor');
+		expect(byId.thrown).toMatchObject({
+			status: 303,
+			location: '/stories/the-toll/settings/editor?x=1'
+		});
+		const bySlug = await load(storySettings, '/stories/the-toll/settings');
+		expect(bySlug.thrown).toBeUndefined();
+	});
+
+	it('redirects a universe to its slug address', async () => {
+		const byId = await load(
+			universeSettings,
+			`/universes/${universeId}/suggestions`,
+			'suggestions'
+		);
+		expect(byId.thrown).toMatchObject({
+			status: 303,
+			location: '/universes/ardenfall/suggestions'
+		});
+		const bySlug = await load(universeSettings, '/universes/ardenfall');
+		expect(bySlug.thrown).toBeUndefined();
+	});
+});

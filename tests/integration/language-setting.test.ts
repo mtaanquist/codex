@@ -161,7 +161,7 @@ describe('the language settings', () => {
 		);
 		expect((await storyLanguage(db, loose.id)).language).toBe('en-US');
 		const data = (await storySettings.load({
-			params: { id: loose.id },
+			params: { id: loose.slug },
 			locals: { user, session: null }
 		} as never)) as { universe: { language: string | null } };
 		expect(data.universe.language).toBe('en-US');
