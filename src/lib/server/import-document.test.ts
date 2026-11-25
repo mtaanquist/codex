@@ -3,7 +3,12 @@ import { describe, it, expect, vi } from 'vitest';
 import TurndownService from 'turndown';
 import mammoth from 'mammoth';
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
-import { parseDocument, parseDocumentInWorker, DocumentImportError } from './import-document';
+import {
+	closeSelfClosedTags,
+	parseDocument,
+	parseDocumentInWorker,
+	DocumentImportError
+} from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
 // A real 1x1 PNG so the bytes survive the importer's magic-number sniff too.
@@ -523,6 +528,52 @@ describe('parseDocumentInWorker start failure', () => {
 	});
 });
 
+describe('closeSelfClosedTags', () => {
+	it('opens and closes self-closed elements that are not void', () => {
+		expect(closeSelfClosedTags('<span id="p1"/><div class="x" /><a b/><svg:g/>')).toBe(
+			'<span id="p1"></span><div class="x" ></div><a b></a><svg:g></svg:g>'
+		);
+	});
+
+	it('leaves ordinary markup exactly as it is', () => {
+		const ordinary = [
+			'<p>Text <em>one</em>.</p><br/><hr /><img src="a.png" alt="x"/><BR/>',
+			'<a href=x/>link</a>',
+			'<p title="a/">t</p><p>1 < 2 and 3 > 2 / 4</p>',
+			'<!-- <span/> --><!--> <span/><!---> <span/><!-- x --!><p/>',
+			'<script>var a = "<span/>";</script><style>p{} /* <div/> */</style>',
+			'<title>A <span/> title</title><textarea><b/></textarea>',
+			'<!DOCTYPE html><?xml version="1.0"?></p ><![CDATA[x]]>',
+			'<span/'
+		];
+		expect(ordinary.map(closeSelfClosedTags)).toEqual([
+			ordinary[0],
+			ordinary[1],
+			ordinary[2],
+			'<!-- <span/> --><!--> <span></span><!---> <span></span><!-- x --!><p></p>',
+			ordinary[4],
+			ordinary[5],
+			ordinary[6],
+			ordinary[7]
+		]);
+	});
+
+	it('leaves everything after an unclosed comment or script alone', () => {
+		const unclosed = ['<!-- <span/>', '<script><span/>', '<style x="1"><span/>', '<plaintext><b/>'];
+		for (const html of unclosed) {
+			expect(closeSelfClosedTags(html)).toBe(html);
+		}
+	});
+
+	it('reads junk markup in linear time', () => {
+		for (const junk of ['<a'.repeat(200_000), '<a "'.repeat(100_000), '<a=b/'.repeat(80_000)]) {
+			const started = performance.now();
+			closeSelfClosedTags(junk);
+			expect(performance.now() - started).toBeLessThan(1000);
+		}
+	});
+});
+
 describe('parseDocument nesting limit', () => {
 	const convert = (xhtml: string) =>
 		parseDocument(buildEpub([{ name: 'a.xhtml', xhtml }]), 'a.epub');
@@ -548,11 +599,11 @@ describe('parseDocument nesting limit', () => {
 			`<!-->${deep}<!-- -->`,
 			`<svg><style>${deep.replaceAll('blockquote', 'g')}</style></svg>`,
 			'<math><annotation-xml encoding="text/html">' +
-				'<li/><section/>'.repeat(300) +
+				'<li><section>'.repeat(300) +
 				'<p>q</p>'.repeat(2000),
-			'<svg><br>' + '<section/>'.repeat(300),
-			'<math><p>' + '<section/>'.repeat(300),
-			'<svg><font color="red">' + '<section/>'.repeat(300),
+			'<svg><br>' + '<section>'.repeat(300),
+			'<math><p>' + '<section>'.repeat(300),
+			'<svg><font color="red">' + '<section>'.repeat(300),
 			'<section><!x </section>>'.repeat(300),
 			'<section><?x </section>>'.repeat(300),
 			'<section></1 </section>>'.repeat(300),
@@ -563,6 +614,32 @@ describe('parseDocument nesting limit', () => {
 			await expect(convert(xhtml)).rejects.toThrow(/nested too deeply/);
 			expect(performance.now() - started).toBeLessThan(2000);
 		}
+	});
+
+	// XHTML page-break markers are often written self-closed, which an HTML
+	// parser reads as an element left open around the rest of the chapter.
+	it('imports many self-closed page-break markers between paragraphs', async () => {
+		const pages = (marker: (n: number) => string) =>
+			Array.from({ length: 200 }, (_, n) => `${marker(n)}<p>Page ${n}.</p>`).join('');
+		const markers = [
+			(n: number) => `<span epub:type="pagebreak" id="page${n}" title="${n}"/>`,
+			() => `<div class="pagebreak" />`,
+			(n: number) => `<SPAN id="p${n}"/>`
+		];
+		for (const marker of markers) {
+			for (const xhtml of [pages(marker), `<section>${pages(marker)}</section>`]) {
+				const body = (await convert(xhtml)).chapters[0].scenes[0].bodyMd;
+				expect(body).toContain('Page 0.');
+				expect(body).toContain('Page 199.');
+				expect(body).not.toMatch(/^ {4}/m);
+			}
+		}
+	});
+
+	it('keeps the text of self-closed tags that would otherwise swallow the rest', async () => {
+		const body = (await convert('<p>One.</p><title/><textarea/><p>Two.</p>')).chapters[0].scenes[0]
+			.bodyMd;
+		expect(body).toContain('Two.');
 	});
 
 	it('stops reading markup thousands of levels deep early', async () => {
