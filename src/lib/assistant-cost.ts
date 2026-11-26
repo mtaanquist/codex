@@ -4,8 +4,19 @@
 
 // cacheRead is what a token read from the prompt cache costs, where the
 // endpoint reports it per model (OpenRouter's discovery does); without it the
-// provider's rate below applies.
-export type TokenPrice = { prompt: number; completion: number; cacheRead?: number };
+// provider's rate below applies. webSearch is the fee for one server-side web
+// search, kept on a usage row's stored price; without it WEB_SEARCH_FEE_USD
+// applies.
+export type TokenPrice = {
+	prompt: number;
+	completion: number;
+	cacheRead?: number;
+	webSearch?: number;
+};
+
+// What Anthropic bills per web search ($10 per 1,000), on top of the tokens.
+// Only the Claude adapter offers search, so this is the only fee there is.
+export const WEB_SEARCH_FEE_USD = 0.01;
 
 // The counts a cost is built from. The cache counts are subsets of
 // promptTokens: cacheWrite1hTokens of cacheWriteTokens, and cacheWriteTokens
@@ -16,6 +27,7 @@ export type CostedUsage = {
 	cachedPromptTokens?: number | null;
 	cacheWriteTokens?: number | null;
 	cacheWrite1hTokens?: number | null;
+	webSearchRequests?: number | null;
 };
 
 // Cache reads bill at a fraction of fresh prompt tokens, as a multiple of the
@@ -70,30 +82,39 @@ export function usageCostUsd(price: TokenPrice, usage: CostedUsage, provider?: s
 	const promptUnits =
 		fresh + (written - writtenHour) * CACHE_WRITE_RATE + writtenHour * CACHE_WRITE_1H_RATE;
 	const cachedUsd = cached * (price.cacheRead ?? price.prompt * cacheReadRate(provider));
-	return promptUnits * price.prompt + cachedUsd + usage.completionTokens * price.completion;
+	const searchUsd =
+		Math.max(usage.webSearchRequests ?? 0, 0) * (price.webSearch ?? WEB_SEARCH_FEE_USD);
+	return (
+		promptUnits * price.prompt + cachedUsd + usage.completionTokens * price.completion + searchUsd
+	);
 }
 
-// A usage log row, or a sum of rows for one model and provider, as the account
-// page lists it. The counts are null where the endpoint reported none.
+// A usage log row, or a sum of rows for one model, provider and price, as the
+// account page lists it. The counts are null where the endpoint reported none.
+// price is the one in force when the request was sent; null on a row from
+// before it was stored, or for a model that had no price then.
 export type UsageCostRow = {
 	model: string;
 	provider: string | null;
+	price: TokenPrice | null;
 	promptTokens: number | null;
 	completionTokens: number | null;
 	cachedPromptTokens: number | null;
 	cacheWriteTokens: number | null;
 	cacheWrite1hTokens: number | null;
+	webSearchRequests: number | null;
 };
 
-// What a usage row cost, priced at the rates of the provider it went to. A row
-// from before the provider was recorded falls back to currentProvider. Null
-// when the model has no price or the row has no counts.
+// What a usage row cost, at the price stored on it and the rates of the
+// provider it went to. A row from before the price was stored is priced from
+// the current list, and one from before the provider was recorded falls back
+// to currentProvider. Null when there is no price or the row has no counts.
 export function usageRowCostUsd(
 	pricing: Record<string, TokenPrice>,
 	row: UsageCostRow,
 	currentProvider?: string
 ): number | null {
-	const price = pricing[row.model];
+	const price = row.price ?? pricing[row.model];
 	if (!price || (row.promptTokens === null && row.completionTokens === null)) return null;
 	return usageCostUsd(
 		price,

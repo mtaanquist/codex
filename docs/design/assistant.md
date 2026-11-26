@@ -144,7 +144,13 @@ cannot. The adapter attaches Anthropic's `web_search` server tool (the dated
 five searches a turn); the search runs on Anthropic's servers and the answer
 returns as ordinary content, so Codex's tool loop never touches a raw web
 result and the only outbound traffic from the server is still the request to
-the configured endpoint. No other provider has an equivalent Codex can declare,
+the configured endpoint. Each search also bills a flat fee
+(`WEB_SEARCH_FEE_USD`, $10 per 1,000), counted in usage cost; the spend cap
+holds back the fee for five searches, plus a 10k-token allowance per search
+for results, before each searching request. The API cannot limit result size
+and reports usage only when a request ends, so a searching run can end over
+the cap; each searching request logs its reported input against that
+allowance (`assistant.usage.search`) so the figure can be tuned (#1560). No other provider has an equivalent Codex can declare,
 but an OpenAI-compatible endpoint with a search switch of its own reaches the
 same place through `extraParams` below.
 
@@ -307,8 +313,11 @@ the meter, the estimate, and the usage list on the account page; each
 they were kept, which price at the plain rate) and the provider it went to,
 so the list prices a row's cache reads at that provider's rate after a
 switch (null on rows from before #1373, which price at the saved provider's
-rate). A cost figure is only ever shown or enforced when
-the resolved model actually has a price there: with no price the pre-flight
+rate). Each row also stores the model's price when it was sent (#1520; with
+the search fee pinned on a row that searched), so a later price change or
+switch does not reprice it; a row with no stored price (older, or a model
+that had none then) is priced from the current list. A cost figure is only
+ever shown or enforced when there is a price: with no price the pre-flight
 estimate reports tokens alone, and a set cap is reported as not applied
 rather than guessed at or skipped in silence. The estimate itself
 (`llm/estimate.ts`) assembles the same frame and per-scene deltas the run
