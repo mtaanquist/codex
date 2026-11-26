@@ -155,7 +155,12 @@ export function explainPgvectorError(error: unknown): unknown {
 // Applies pending migrations while holding a session advisory lock, so the app
 // and worker (or several replicas) starting together apply each migration once:
 // drizzle reads the last applied row outside its transaction and takes no lock.
-export async function runMigrations(connectionString: string, migrationsFolder = 'drizzle') {
+export async function runMigrations(
+	connectionString: string,
+	migrationsFolder = 'drizzle',
+	// A seam for the test of a server without pgvector.
+	checks: { hasPgvector: (client: pg.ClientBase) => Promise<boolean> } = { hasPgvector }
+) {
 	const entries = readJournal(migrationsFolder);
 	const bad = outOfOrderMigrations(entries);
 	if (bad.length > 0) {
@@ -170,7 +175,7 @@ export async function runMigrations(connectionString: string, migrationsFolder =
 		if (await hasPendingMigrations(client, entries)) {
 			// Checked first so a server without it stops with directions instead
 			// of postgres's bare "extension is not available".
-			if (!(await hasPgvector(client))) throw new Error(PGVECTOR_MISSING_MESSAGE);
+			if (!(await checks.hasPgvector(client))) throw new Error(PGVECTOR_MISSING_MESSAGE);
 			const cancelled = await holdOffLongReads(client);
 			if (cancelled > 0) {
 				console.log(`Cancelled ${cancelled} long-running read(s) so the migrations can run.`);

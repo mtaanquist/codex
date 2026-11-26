@@ -153,8 +153,14 @@ describe('reviewSettingsKey', () => {
 		});
 		const keys = [
 			plain,
-			reviewSettingsKey(NO_LANGUAGE, null, false, null, { ...NO_PREFERENCES, feedback: 'thorough' }),
-			reviewSettingsKey(NO_LANGUAGE, null, false, null, { ...NO_PREFERENCES, editReasons: 'never' }),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, {
+				...NO_PREFERENCES,
+				feedback: 'thorough'
+			}),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, {
+				...NO_PREFERENCES,
+				editReasons: 'never'
+			}),
 			reviewSettingsKey(NO_LANGUAGE, null, false, null, limits('avoid')),
 			reviewSettingsKey(NO_LANGUAGE, null, false, null, limits('write'))
 		];

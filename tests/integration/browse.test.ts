@@ -499,6 +499,14 @@ describe('the visibility form', () => {
 		expect((await row(s.id)).listedInBrowse).toBe(false);
 	});
 
+	it('saves an unticked box even when Browse is off now', async () => {
+		// The page loaded before an admin turned Browse off.
+		const s = await story('Taken off');
+		expect((await row(s.id)).listedInBrowse).toBe(true);
+		await save(s.id, { visibility: 'public', browseBox: '1' });
+		expect((await row(s.id)).listedInBrowse).toBe(false);
+	});
+
 	it('saves the Browse box while Browse is on, and refuses an unknown visibility', async () => {
 		await saveBrowseEnabled(db, true);
 		const s = await story('Toggled', { listed: false });

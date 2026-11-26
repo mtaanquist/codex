@@ -6,6 +6,7 @@ import pg from 'pg';
 import {
 	CANCEL_ON_MIGRATE_APP_NAME,
 	hasPgvector,
+	PGVECTOR_MISSING_MESSAGE,
 	readJournal,
 	runMigrations
 } from '../../src/lib/server/db/migrate';
@@ -111,6 +112,16 @@ describe('runMigrations during a long read', () => {
 		};
 		return { done, end };
 	}
+
+	it('stops with directions and applies nothing on a server without pgvector', async () => {
+		const folder = folderWithAlter();
+		const before = await query('select count(*)::int as n from drizzle.__drizzle_migrations');
+		await expect(
+			runMigrations(MIGRATE_DATABASE_URL, folder, { hasPgvector: async () => false })
+		).rejects.toThrow(PGVECTOR_MISSING_MESSAGE);
+		const after = await query('select count(*)::int as n from drizzle.__drizzle_migrations');
+		expect(after.rows[0].n).toBe(before.rows[0].n);
+	});
 
 	it('cancels it before applying, and leaves it alone when nothing is pending', async () => {
 		const folder = folderWithAlter();

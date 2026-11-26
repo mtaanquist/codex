@@ -10,6 +10,18 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 1 (2026-11-26, `staging/v4.0.0`, #1817 to
+#1821 and the lane lows #1812, #1814, #1816). Five reviewers split by area
+(database, moderation, preferences, spend, MCP card). The review run's
+settings key now also covers feedback, reasons and content limits, each only
+when set so a run keyed before keeps its key. An untick of "List in Browse"
+is always saved, since delisting is always safe; only a tick waits for Browse
+to be on. A warning merge now carries only "Keep it off the page" limits,
+since carrying "Write freely" widens what the Assistant writes. Databases
+created under musl keep no recorded collation version (`REFRESH COLLATION
+VERSION` refuses to go from none to one); left as is, a superuser can record
+it by hand. The notes fence still passes two-hyphen runs on purpose (#1816).
+
 v4.0.0 lane follow-ups (2026-11-26, `staging/v4.0.0`, #1794, #1795, #1798,
 #1799, #1806, #1807). The Browse setting cache stays (the root layout reads it on
 every page), but the two places that act on it, the story settings save and

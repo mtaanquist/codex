@@ -414,15 +414,20 @@ export const actions: Actions = {
 			return fail(400, { action: 'publish', message: 'Pick a visibility.' });
 		}
 		const isAdult = data.get('isAdult') === 'on';
-		// The Browse choice is saved only when the form showed the box and Browse
-		// is on now. Either can be out of step with the other: the page may have
-		// loaded on a process with a stale copy of the setting, or before an
-		// admin changed it. Otherwise the stored choice is kept.
+		// The Browse choice is saved only when the form showed the box. The page
+		// may have loaded on a process with a stale copy of the setting, or before
+		// an admin changed it, so a tick is saved only while Browse is on now; an
+		// untick always is, since taking a story off Browse is always safe.
+		// Otherwise the stored choice is kept.
 		const boxShown = data.get('browseBox') === '1';
-		const listed =
-			boxShown && (await browseEnabled(db, { fresh: true }))
-				? data.get('listedInBrowse') === 'on'
-				: null;
+		const ticked = data.get('listedInBrowse') === 'on';
+		const listed = !boxShown
+			? null
+			: !ticked
+				? false
+				: (await browseEnabled(db, { fresh: true }))
+					? true
+					: null;
 		await saveStoryVisibility(db, story.id, visibility, isAdult, listed);
 		return { action: 'publish', saved: true };
 	},
