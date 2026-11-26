@@ -26,6 +26,7 @@ import {
 import {
 	addListEntries,
 	checkTagNames,
+	renameTag,
 	setStoryList,
 	setStoryTags,
 	storyTagView
@@ -619,6 +620,26 @@ describe('newStoryFromDraft', () => {
 			assistantPreferences: { quoteMarks: 'single', filterVerbs: 'leave' },
 			assistantNotes: 'Keep the dialect.'
 		});
+	});
+
+	it('copies the content limits as they stand, not as the page read them', async () => {
+		const slug = `draft-copy-gore-${Date.now()}`;
+		const [warning] = await db
+			.insert(tags)
+			.values({ kind: 'warning', name: slug, slug })
+			.returning();
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { [`warning:${slug}`]: 'avoid' } })
+			.where(eq(stories.id, storyId));
+		const id = await save();
+		// The page loaded the story, then an admin renamed the warning.
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		expect(await renameTag(db, 'warning', warning.id, `${slug} renamed`)).toEqual({ ok: true });
+		const result = await newStoryFromDraft(db, ownerId, story, id, 'Copy');
+		if (!result.ok) throw new Error('expected a new story');
+		const [copy] = await db.select().from(stories).where(eq(stories.slug, result.slug));
+		expect(copy.assistantPreferences).toEqual({ [`warning:${slug}-renamed`]: 'avoid' });
 	});
 
 	it("carries the story's tags, fandoms, genres and warnings over", async () => {

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { isUuid } from '../slug.ts';
 import { scenes, stories, tags, universes } from './db/schema.ts';
@@ -7,10 +7,13 @@ import { mcpAccountEnabled, mcpInstanceEnabled } from './mcp/settings.ts';
 import { MAX_MERGE_DEPTH } from './tags.ts';
 import {
 	effectivePreferences,
+	limitChanges,
 	NO_PREFERENCES,
+	normalisePreferences,
 	type LiveWarning,
 	type PreferenceChanges,
 	type PreferenceSetting,
+	type StoredPreferences,
 	WARNING_PREFIX
 } from '../assistant-preferences.ts';
 
@@ -129,6 +132,72 @@ export async function workPreferences(
 	return NO_PREFERENCES;
 }
 
+// A story's stored preferences, read inside a transaction that copies them
+// to a new row: the warnings its limits name are share-locked first, so a
+// rename (which updates the warning, then moves the limits on every row it
+// can see) either finishes before the read or waits until the copy commits
+// and then moves the copy's limits too. Read again until every slug read is
+// locked, in case a rename moved one in between.
+export async function storyPreferencesForCopy(tx: Database, storyId: string): Promise<unknown> {
+	const locked = new Set<string>();
+	for (;;) {
+		const [row] = await tx
+			.select({ preferences: stories.assistantPreferences })
+			.from(stories)
+			.where(eq(stories.id, storyId));
+		const preferences = row?.preferences ?? {};
+		const slugs = Object.keys(preferences as Record<string, unknown>)
+			.filter((key) => key.startsWith(WARNING_PREFIX))
+			.map((key) => key.slice(WARNING_PREFIX.length))
+			.filter((slug) => !locked.has(slug));
+		if (slugs.length === 0) return preferences;
+		await tx
+			.select({ id: tags.id })
+			.from(tags)
+			.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, slugs)))
+			.orderBy(asc(tags.id))
+			.for('share');
+		for (const slug of slugs) locked.add(slug);
+	}
+}
+
+// Preferences from an import with the content limits this site cannot use
+// taken out: a limit on a slug that is neither a live warning nor merged into
+// one would never apply, and would come back to life if a warning by that
+// name were added later. Inside a transaction the warnings the limits name
+// are share-locked first, as in savePreferences.
+export async function usableContentLimits(
+	db: Database,
+	preferences: StoredPreferences
+): Promise<{ preferences: StoredPreferences; dropped: number }> {
+	const slugs = Object.keys(preferences)
+		.filter((key) => key.startsWith(WARNING_PREFIX))
+		.map((key) => key.slice(WARNING_PREFIX.length));
+	if (slugs.length === 0) return { preferences, dropped: 0 };
+	await db
+		.select({ id: tags.id })
+		.from(tags)
+		.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, slugs)))
+		.orderBy(asc(tags.id))
+		.for('share');
+	const usable = new Set(
+		(await liveWarnings(db)).flatMap((warning) => [warning.slug, ...warning.merged])
+	);
+	const kept = Object.fromEntries(
+		Object.entries(preferences).filter(
+			([key]) => !key.startsWith(WARNING_PREFIX) || usable.has(key.slice(WARNING_PREFIX.length))
+		)
+	) as StoredPreferences;
+	return { preferences: kept, dropped: slugs.filter((slug) => !usable.has(slug)).length };
+}
+
+// The import notice for limits usableContentLimits took out.
+export function droppedLimitsProblem(dropped: number): string {
+	return dropped === 1
+		? "story.md: one Assistant content limit is for a content warning this site's list does not have, so it was left off."
+		: `story.md: ${dropped} Assistant content limits are for content warnings this site's list does not have, so they were left off.`;
+}
+
 // Whether the settings pages show the preferences form: wherever the
 // preferences reach a prompt, so with the Assistant tab on (tabEnabled, from
 // assistantLayout) or with connected apps switched on for the account.
@@ -166,11 +235,17 @@ export const OUTDATED_WARNINGS =
 // Saves the preferences form of a story or a universe the caller owns:
 // 'missing' when there is no such live row of theirs. Notes left undefined
 // (the post did not carry the field) are kept. Content limits are checked
-// again against the live warnings, under a share lock on them, so a limit
-// saved while an admin renames or merges its warning is either moved by the
-// rename or left out ('outdated'), never stored under a slug that no longer
-// applies. Locking only the posted slugs' rows is enough: a rename updates
-// the row it renames.
+// again against the live warnings, after a share lock on the posted slugs'
+// rows, so a limit saved while an admin renames, merges or removes its
+// warning is either moved by that change or left out ('outdated'), never
+// stored under a slug that no longer applies. Locking only the posted rows is
+// enough: a rename, a merge or a removal updates the row it changes.
+//
+// The form shows each warning's limit folded with the ones merged into it, so
+// a limit is compared with that and, where the writer changed it, replaces
+// this row's limits on the merged warnings too (limitChanges). A slug merged
+// away between the page's check and this one still counts, through its
+// survivor, and is stored as posted.
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
@@ -179,36 +254,40 @@ export async function savePreferences(
 ): Promise<'saved' | 'missing' | 'outdated'> {
 	const notes = input.notes === undefined ? {} : { assistantNotes: input.notes };
 	const table = 'storyId' in target ? stories : universes;
+	const owned = and(
+		'storyId' in target ? eq(stories.id, target.storyId) : eq(universes.id, target.universeId),
+		eq(table.ownerId, ownerId),
+		isNull(table.deletedAt)
+	);
 	return db.transaction(async (tx) => {
 		let changes = input.changes;
 		let outdated = false;
-		const limitKeys = Object.keys(changes).filter((key) => key.startsWith(WARNING_PREFIX));
-		if (limitKeys.length > 0) {
-			// A warning merged into another still counts (its limits fold into
-			// the survivor); one renamed away or removed outright does not.
-			const live = new Set(
-				(
-					await tx
-						.select({ slug: tags.slug })
-						.from(tags)
-						.where(
-							and(
-								eq(tags.kind, 'warning'),
-								inArray(
-									tags.slug,
-									limitKeys.map((key) => key.slice(WARNING_PREFIX.length))
-								),
-								or(isNull(tags.removedAt), isNotNull(tags.mergedIntoId))
-							)
-						)
-						.for('share')
-				).map(({ slug }) => slug)
-			);
-			outdated = limitKeys.some((key) => !live.has(key.slice(WARNING_PREFIX.length)));
+		const limitSlugs = Object.keys(changes)
+			.filter((key) => key.startsWith(WARNING_PREFIX))
+			.map((key) => key.slice(WARNING_PREFIX.length));
+		if (limitSlugs.length > 0) {
+			await tx
+				.select({ id: tags.id })
+				.from(tags)
+				.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, limitSlugs)))
+				.orderBy(asc(tags.id))
+				.for('share');
+			const warnings = await liveWarnings(tx);
+			const live = new Set(warnings.map(({ slug }) => slug));
+			const merged = new Set(warnings.flatMap((warning) => warning.merged));
+			outdated = limitSlugs.some((slug) => !live.has(slug) && !merged.has(slug));
 			if (outdated) {
 				changes = Object.fromEntries(
 					Object.entries(changes).filter(([key]) => !key.startsWith(WARNING_PREFIX))
 				) as PreferenceChanges;
+			} else if (limitSlugs.every((slug) => live.has(slug))) {
+				const [row] = await tx
+					.select({ preferences: table.assistantPreferences })
+					.from(table)
+					.where(owned)
+					.for('update');
+				if (!row) return 'missing';
+				changes = limitChanges(changes, normalisePreferences(row.preferences), warnings);
 			}
 		}
 		const saved = await tx
@@ -217,15 +296,7 @@ export async function savePreferences(
 				assistantPreferences: mergedPreferences(table.assistantPreferences, changes),
 				...notes
 			})
-			.where(
-				and(
-					'storyId' in target
-						? eq(stories.id, target.storyId)
-						: eq(universes.id, target.universeId),
-					eq(table.ownerId, ownerId),
-					isNull(table.deletedAt)
-				)
-			)
+			.where(owned)
 			.returning({ id: table.id });
 		if (saved.length === 0) return 'missing';
 		return outdated ? 'outdated' : 'saved';

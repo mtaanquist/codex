@@ -175,7 +175,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		assistantPreferencesShown: preferencesShown,
 		// The content warnings the preferences set a limit on, in list order.
 		contentWarnings: preferencesShown
-			? (await liveWarnings(db)).map(({ slug, name }) => ({ slug, name }))
+			? (await liveWarnings(db)).map(({ slug, name, merged }) => ({ slug, name, merged }))
 			: [],
 		story,
 		universe,

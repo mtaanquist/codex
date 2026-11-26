@@ -584,13 +584,46 @@ async function survivorOf(tx: Database, id: string): Promise<{ id: string; ended
 	return row ?? { id, ended: true };
 }
 
+// Undoing a merge gives the warning its own limits back. A writer who set
+// "avoid" on the survivor while the two were merged had it cover this one as
+// well, so each row with that "avoid" and no limit of its own on this warning
+// gets "avoid" here too: an undo never lets the Assistant write more freely.
 export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
-	const updated = await db
-		.update(tags)
-		.set({ mergedIntoId: null })
-		.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`))
-		.returning({ id: tags.id });
-	return updated.length > 0;
+	return await db.transaction(async (tx) => {
+		const [tag] = await tx
+			.select({ slug: tags.slug, kind: tags.kind, mergedIntoId: tags.mergedIntoId })
+			.from(tags)
+			.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`))
+			.for('update');
+		if (!tag || !tag.mergedIntoId) return false;
+		const survivor = await survivorOf(tx, tag.mergedIntoId);
+		await tx.update(tags).set({ mergedIntoId: null }).where(eq(tags.id, id));
+		if (tag.kind !== 'warning' || !survivor.ended) return true;
+		const [{ slug: survivorSlug }] = await tx
+			.select({ slug: tags.slug })
+			.from(tags)
+			.where(eq(tags.id, survivor.id));
+		const from = warningKey(survivorSlug);
+		const to = warningKey(tag.slug);
+		const keep = (
+			column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
+		) => ({
+			set: sql`${column} || jsonb_build_object(${to}::text, 'avoid')`,
+			where: sql`${column} ->> ${from}::text = 'avoid' and not jsonb_exists(${column}, ${to}::text)`
+		});
+		// updated_at is kept as it was, as in moveContentLimits.
+		const story = keep(stories.assistantPreferences);
+		await tx
+			.update(stories)
+			.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
+			.where(story.where);
+		const universe = keep(universes.assistantPreferences);
+		await tx
+			.update(universes)
+			.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
+			.where(universe.where);
+		return true;
+	});
 }
 
 export async function setTagRemoved(

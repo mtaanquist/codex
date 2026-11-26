@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
 	effectivePreferences,
+	foldedPreferences,
 	HABIT_CHECKS,
 	HOUSE_STYLE,
 	inheritedLabel,
+	limitChanges,
+	limitNote,
 	MAX_ASSISTANT_NOTES,
 	NO_PREFERENCES,
 	normaliseNotes,
@@ -431,5 +434,65 @@ describe('inheritedLabel', () => {
 		expect(inheritedLabel('warning:death', universe, 'Not set', true)).toBe(
 			'Use the standalone default: Not set'
 		);
+	});
+});
+
+describe('content limits folded with the warnings merged in', () => {
+	const violence = { id: 'v', name: 'Violence', slug: 'violence', merged: ['gore'] };
+
+	it('shows each live warning with its merged limits folded in, avoid first', () => {
+		expect(foldedPreferences({ 'warning:gore': 'avoid' }, [violence])).toEqual({
+			'warning:gore': 'avoid',
+			'warning:violence': 'avoid'
+		});
+		expect(
+			foldedPreferences({ 'warning:gore': 'avoid', 'warning:violence': 'write' }, [violence])
+		).toMatchObject({ 'warning:violence': 'avoid' });
+		expect(foldedPreferences({ 'warning:gore': 'write' }, [violence])).toMatchObject({
+			'warning:violence': 'write'
+		});
+		expect(foldedPreferences({ tense: 'past' }, [violence])).toEqual({ tense: 'past' });
+	});
+
+	it('changes nothing for the value the form showed, and replaces the merged keys for another', () => {
+		const stored = { 'warning:gore': 'avoid', 'warning:violence': 'write' } as const;
+		// An autosave of another field posts the folded value back.
+		expect(
+			limitChanges({ 'warning:violence': 'avoid', tense: 'past' }, stored, [violence])
+		).toEqual({ tense: 'past' });
+		expect(limitChanges({ 'warning:violence': 'write' }, stored, [violence])).toEqual({
+			'warning:violence': 'write',
+			'warning:gore': null
+		});
+		expect(limitChanges({ 'warning:violence': null }, stored, [violence])).toEqual({
+			'warning:violence': null,
+			'warning:gore': null
+		});
+		// A warning with nothing merged works as before.
+		const plain = { ...violence, merged: [] };
+		expect(limitChanges({ 'warning:violence': 'write' }, stored, [plain])).toEqual({});
+		expect(limitChanges({ 'warning:violence': 'avoid' }, stored, [plain])).toEqual({
+			'warning:violence': 'avoid'
+		});
+	});
+
+	it('notes a limit that comes from a merged warning or from the universe', () => {
+		expect(limitNote({ 'warning:gore': 'avoid' }, null, violence)).toBe('merged');
+		expect(limitNote({ 'warning:violence': 'avoid' }, null, violence)).toBeNull();
+		expect(limitNote({}, { 'warning:gore': 'avoid' }, violence)).toBeNull();
+		expect(limitNote({ 'warning:violence': 'write' }, { 'warning:gore': 'avoid' }, violence)).toBe(
+			'universe'
+		);
+		// The story's own limit on the merged warning wins over the universe's.
+		expect(
+			limitNote(
+				{ 'warning:violence': 'write', 'warning:gore': 'write' },
+				{ 'warning:gore': 'avoid' },
+				violence
+			)
+		).toBeNull();
+		expect(
+			limitNote({ 'warning:violence': 'write' }, { 'warning:violence': 'avoid' }, violence)
+		).toBeNull();
 	});
 });

@@ -824,9 +824,16 @@ These cut across the surfaces and the architecture.
   any resolves to `write`. Folding after resolving, rather than per row, means
   a universe's `avoid` on a merged warning is not undone by a story's `write`
   on the survivor, and a writer's save that races a merge still counts.
-  Undoing a merge leaves nothing behind, since each warning's own key was
-  never touched. The form shows and saves only the writer's own key for each
-  live warning, never the folded value, so a save cannot write the fold back.
+  Undoing a merge gives each warning its own key back, and an `avoid` on the
+  survivor's key is added to the unmerged warning's key in each row that has
+  none (`unmergeTag`), so an undo only narrows. The form shows each live
+  warning's limit folded within its own row (`foldedPreferences`), with a
+  note when the other level or a merged warning decides what applies. A save
+  compares each posted limit with that folded value (`limitChanges`): the
+  same value changes nothing, so an autosave of another field cannot write
+  the fold back or drop a merged `avoid`; a different value is stored and
+  clears that row's keys on the warnings merged into it, so the writer's
+  choice is the one that applies at that level.
   Renaming a warning changes its slug, so the writer's limit moves to the new
   key (`moveContentLimits` in `tags.ts`); a stray key already under the new
   slug gives way, except that an `avoid` on either key is kept, and renaming
