@@ -11,7 +11,7 @@ Codex is one Docker image run as three long-lived parts plus your database:
 - **worker**: runs background jobs. Mention indexing, outgoing email,
   publishing exports, scheduled backups, and the account and universe purges.
   Nothing in the app sends email or takes a backup directly; the worker does.
-- **db**: PostgreSQL 18. Holds everything.
+- **db**: PostgreSQL 18 with the pgvector extension. Holds everything.
 - Optional: **caddy** for TLS, and **rustfs** as a local S3 bucket for testing.
 
 Run both the app and the worker. Without the worker, mentions never index (the
@@ -20,7 +20,9 @@ Reference panel stays empty), no email is sent, and no backups are taken.
 ## Requirements
 
 - A host with Docker and Docker Compose.
-- A PostgreSQL 18 database (the bundled `db` service, or your own).
+- A PostgreSQL 18 database with the pgvector extension available (the
+  bundled `db` service, or your own). Managed databases usually offer it as
+  the `vector` extension.
 - A public hostname and a TLS certificate for any real deployment, served by
   the bundled Caddy or a reverse proxy of your own.
 - Optional but recommended: an S3-compatible bucket for off-site backups, and
@@ -434,6 +436,36 @@ your objects across before switching, or uploaded images will not load:
    `docker compose up -d --remove-orphans` to stop MinIO.
 4. Once images load, remove the old volume with
    `docker volume rm codex_minio-data`.
+
+### Updating to 4.0.0: change the database image first
+
+From 4.0.0, Codex needs the pgvector extension in its database. The bundled
+`db` service now uses `pgvector/pgvector:0.8.7-pg18-trixie` instead of
+`postgres:18.6-alpine3.24`. Change the database image before you start the new
+version of the app, or the app and worker stop with a message saying pgvector
+is missing (nothing is changed when that happens).
+
+1. Take a backup (or check that the scheduled backups are recent).
+2. Stop the app and worker: `docker compose stop app worker`.
+3. In your compose file, set the `db` service's image to
+   `pgvector/pgvector:0.8.7-pg18-trixie` and, in the same edit, the Codex
+   image tag to 4.0.0 or later. Keep the same volume; the data carries over.
+   Do not run an older Codex against the new database image, even briefly:
+   until 4.0.0 has rebuilt the indexes, it can write rows the indexes miss.
+4. Run `docker compose pull` and then `docker compose up -d`.
+
+The first start of the new version rebuilds the database's indexes if the
+data was created by the old image, because the new image sorts text slightly
+differently. This runs once, inside the migration, and takes a moment on a
+large database. To go back to an earlier version afterwards, restore the
+backup from step 1 onto the old image; switching the image back without a
+restore leaves the indexes out of order again.
+
+If you run your own PostgreSQL 18 server, install pgvector on it (the
+`postgresql-18-pgvector` package on Debian and Ubuntu) before updating. Only
+a superuser can create the extension, so if the database user in
+`DATABASE_URL` is not one, connect to the Codex database as a superuser and
+run `CREATE EXTENSION vector;` first.
 
 ## Scaling and replicas
 
