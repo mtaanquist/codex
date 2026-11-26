@@ -10,6 +10,17 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 7 (2026-11-26, `staging/v4.0.0`, #1848,
+#1849). The one medium was the content limits form again: after an outdated
+save the select kept the unsaved value, so the selects are now rebuilt from
+what is stored when the warning list changes, and the form saves one at a
+time so a slower earlier save cannot land last. Undoing a merge narrows rows
+that had "write" while a merged key said "avoid", but skips stories that only
+inherit, so they keep following their universe. Leaving the page after a
+refused save is not held; that is the shared autosave helper's rule for every
+form, so it stayed. A takedown now records the newer edition the moderator
+saw by id, and reports recheck that readers can still open the edition.
+
 v4.0.0 staging review, round 6 (2026-11-26, `staging/v4.0.0`, #1845,
 #1846). Every round had found another stale-page hole in content limits,
 because the preferences form autosaved every limit select with any other
