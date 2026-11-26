@@ -31,6 +31,7 @@ BEGIN
 			JOIN pg_namespace n ON n.oid = c.relnamespace
 			WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
 				AND c.relkind IN ('r', 'm')
+				AND c.relpersistence <> 't'
 		LOOP
 			IF NOT t.owned THEN
 				RAISE WARNING 'Not rebuilding the indexes of %, which another role owns. Run REINDEX TABLE % as its owner.', t.rel, t.rel;
@@ -39,7 +40,7 @@ BEGIN
 			BEGIN
 				EXECUTE format('REINDEX TABLE %s', t.rel);
 			EXCEPTION WHEN unique_violation THEN
-				RAISE EXCEPTION 'Rebuilding the indexes of % found duplicate rows, likely written while the new database image ran an older version of Codex. Restore the backup taken before the update (see "Updating to 4.0.0" in docs/SELF-HOSTING.md).', t.rel
+				RAISE EXCEPTION 'Rebuilding the indexes of % found duplicate rows, likely written while the new database image ran an older version of Codex. Restore the backup taken before the update (see "Updating to 4.0.0" in docs/SELF-HOSTING.md). If that fails the same way, the rows differ only in letter case and one of each pair must be removed by hand.', t.rel
 					USING DETAIL = SQLERRM;
 			END;
 		END LOOP;

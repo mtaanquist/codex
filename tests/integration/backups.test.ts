@@ -392,6 +392,11 @@ describe('pg_dump round trip', () => {
 			roleUrl.password = 'restore';
 			// Twice: onto the empty database, then over the restored one.
 			await restoreDumpFile(roleUrl.toString(), dumpFile);
+			const added = new pg.Client({ connectionString: roleUrl.toString() });
+			await added.connect();
+			// A sequence owned by its column goes with the table, not on its own.
+			await added.query('create table added_later (id int generated always as identity)');
+			await added.end();
 			await restoreDumpFile(roleUrl.toString(), dumpFile);
 
 			const check = new pg.Client({ connectionString: roleUrl.toString() });
@@ -399,9 +404,10 @@ describe('pg_dump round trip', () => {
 			try {
 				const { rows } = await check.query(
 					`select (select count(*)::int from pg_extension where extname = 'vector') as vector,
-						to_regclass('public.users') is not null as users`
+						to_regclass('public.users') is not null as users,
+						to_regclass('public.added_later') is null as cleared`
 				);
-				expect(rows[0]).toEqual({ vector: 1, users: true });
+				expect(rows[0]).toEqual({ vector: 1, users: true, cleared: true });
 			} finally {
 				await check.end();
 			}

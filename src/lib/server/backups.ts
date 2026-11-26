@@ -403,7 +403,8 @@ export async function listRecentBackupRuns(db: Database, limit = 10) {
 	return await db.select().from(backupRuns).orderBy(desc(backupRuns.startedAt)).limit(limit);
 }
 
-// Empties the public schema except for extensions. pgvector can only be
+// Empties the public schema except for extensions; objects owned by another
+// object (an identity column's sequence) go with it. pgvector can only be
 // created by a superuser, so dropping the schema (which drops the extension
 // with it) would leave a restore by any other role unable to bring it back.
 const CLEAR_PUBLIC = `CREATE SCHEMA IF NOT EXISTS public;
@@ -420,8 +421,11 @@ BEGIN
 			AND d.classid <> 'pg_extension'::regclass
 			AND NOT EXISTS (
 				SELECT 1 FROM pg_depend e
-				WHERE e.classid = d.classid AND e.objid = d.objid AND e.deptype = 'e'
+				WHERE e.classid = d.classid AND e.objid = d.objid AND e.deptype IN ('e', 'i')
 			)
+			-- Extended statistics have no DROP form under their type name and go
+			-- with their table anyway.
+			AND d.classid <> 'pg_statistic_ext'::regclass
 	LOOP
 		EXECUTE format('DROP %s IF EXISTS %s CASCADE', o.type, o.identity);
 	END LOOP;
