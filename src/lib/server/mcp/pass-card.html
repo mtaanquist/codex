@@ -405,10 +405,14 @@
 							text: 'This app cannot accept edits from the card. Open the note in Codex to decide on them.'
 						};
 					}
-					// A revision that landed while the writer typed: they read it first.
+					// A revision that landed while the writer typed: their wording stays in
+					// the box, and they are told the suggestion above is the new one.
 					if (editingId === edit.id && editingStamp !== edit.stamp) {
-						editingId = null;
-						if (!message) message = { failure: true, text: 'This edit changed. Read it again.' };
+						editingStamp = edit.stamp;
+						message = {
+							failure: true,
+							text: 'The app changed this edit while you were writing. Read the new suggestion above; your own wording is kept below.'
+						};
 					}
 					if (editingId === edit.id) {
 						var box = el('textarea', { 'aria-label': 'Your wording' });
