@@ -1,16 +1,20 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import * as schema from '../../src/lib/server/db/schema';
 import {
+	browseEnabled,
+	clearBrowseCache,
 	effectiveSmtp,
 	instanceType,
+	saveBrowseEnabled,
 	saveInstanceType,
 	saveSignupMode,
 	saveSmtp,
 	signupMode,
-	smtpView
+	smtpView,
+	writeSetting
 } from '../../src/lib/server/settings';
 import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
@@ -36,6 +40,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	await pool.query('truncate table app_settings');
+	clearBrowseCache();
 	for (const key of SMTP_ENV) delete process.env[key];
 });
 
@@ -148,5 +153,29 @@ describe('instanceType', () => {
 		expect(await instanceType(db)).toBe('service');
 		await saveInstanceType(db, 'personal');
 		expect(await instanceType(db)).toBe('personal');
+	});
+});
+
+describe('browseEnabled', () => {
+	it('is off until saved on, and a save shows at once', async () => {
+		expect(await browseEnabled(db)).toBe(false);
+		await saveBrowseEnabled(db, true);
+		expect(await browseEnabled(db)).toBe(true);
+		await saveBrowseEnabled(db, false);
+		expect(await browseEnabled(db)).toBe(false);
+	});
+
+	it('answers from its cache until the cache is cleared or expires', async () => {
+		expect(await browseEnabled(db)).toBe(false);
+		// A write that bypasses the save, as another process would make.
+		await writeSetting(db, 'browse', { enabled: true });
+		expect(await browseEnabled(db)).toBe(false);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			vi.setSystemTime(Date.now() + 61_000);
+			expect(await browseEnabled(db)).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

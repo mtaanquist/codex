@@ -1,5 +1,5 @@
 {
-	"id": "b4d52b2e-586d-47c3-85c8-b8b50e79583f",
+	"id": "1afcca0f-9bf8-45bc-8abe-975f249b0cfc",
 	"prevId": "07ff10a7-0603-42bb-a0fa-3c826ba36285",
 	"version": "7",
 	"dialect": "postgresql",
@@ -1259,12 +1259,6 @@
 				"web_search_requests": {
 					"name": "web_search_requests",
 					"type": "integer",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"price": {
-					"name": "price",
-					"type": "jsonb",
 					"primaryKey": false,
 					"notNull": false
 				},
@@ -4757,6 +4751,28 @@
 					],
 					"isUnique": true,
 					"where": "\"publications\".\"is_current\"",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				},
+				"publications_browse": {
+					"name": "publications_browse",
+					"columns": [
+						{
+							"expression": "published_at",
+							"isExpression": false,
+							"asc": false,
+							"nulls": "first"
+						},
+						{
+							"expression": "id",
+							"isExpression": false,
+							"asc": false,
+							"nulls": "first"
+						}
+					],
+					"isUnique": false,
+					"where": "\"publications\".\"is_current\" and \"publications\".\"removed_at\" is null",
 					"concurrently": false,
 					"method": "btree",
 					"with": {}
