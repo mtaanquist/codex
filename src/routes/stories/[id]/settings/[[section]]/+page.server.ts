@@ -58,6 +58,7 @@ import { readPreferencesForm } from '#lib/assistant-preferences';
 import {
 	assistantPreferencesShown,
 	liveWarnings,
+	OUTDATED_WARNINGS,
 	savePreferences
 } from '#lib/server/assistant-preferences';
 import {
@@ -296,8 +297,15 @@ export const actions: Actions = {
 				submitted: read.submitted
 			});
 		}
-		if (!(await savePreferences(db, locals.user!.id, { storyId: story.id }, read))) {
-			error(404, 'Not found');
+		const result = await savePreferences(db, locals.user!.id, { storyId: story.id }, read);
+		if (result === 'missing') error(404, 'Not found');
+		if (result === 'outdated') {
+			// No submitted values: the form shows the stored ones once reloaded.
+			return fail(409, {
+				action: 'assistant-preferences',
+				message: OUTDATED_WARNINGS,
+				submitted: null
+			});
 		}
 		return { action: 'assistant-preferences', saved: true };
 	},

@@ -112,7 +112,7 @@ export async function publishStory(
 		return { ok: false, reason: 'There is nothing to publish yet.' };
 	}
 
-	// Inline images the frozen prose points at, so the reader can serve them
+	// Inline images the frozen prose and description point at, so the reader can serve them
 	// to anonymous visitors without exposing every asset by id. Only the
 	// author's own existing assets: prose can name any id, including another
 	// user's private image or one that does not exist on this instance.
@@ -121,7 +121,8 @@ export async function publishStory(
 			...content.chapters.flatMap((chapter) =>
 				chapter.scenes.flatMap((scene) => findAssetReferences(scene.bodyMd))
 			),
-			...content.unfiled.flatMap((scene) => findAssetReferences(scene.bodyMd))
+			...content.unfiled.flatMap((scene) => findAssetReferences(scene.bodyMd)),
+			...findAssetReferences(frontMatter.descriptionMd ?? '')
 		])
 	];
 	const shownLabels = (await tagsForStories(db, [story.id])).get(story.id) ?? [];

@@ -353,7 +353,13 @@ export function effectivePreferences(
 }
 
 export type PreferencesForm =
-	| { ok: true; changes: PreferenceChanges; notes: string | null | undefined }
+	| {
+			ok: true;
+			changes: PreferenceChanges;
+			notes: string | null | undefined;
+			// The form showed a warning no longer on the list (see readPreferencesForm).
+			outdated?: true;
+	  }
 	| { ok: false; reason: string; submitted: SubmittedPreferences };
 
 // The keys a form carried: a value to store, or null to clear back to not
@@ -374,16 +380,25 @@ const FIELD_KEYS = [
 ];
 
 // The preferences form as submitted: one select per key (blank is not set),
-// the draft length (blank is not set), one select per live content warning
-// (warningSlugs, the ones the form showed), and the notes (undefined when the
-// post lacks the field, so they are kept). A value that is not on its list is
-// refused rather than dropped, so a tampered form does not silently clear a
-// setting.
+// the draft length (blank is not set), one select per content warning, and
+// the notes (undefined when the post lacks the field, so they are kept). A
+// value that is not on its list is refused rather than dropped, so a tampered
+// form does not silently clear a setting.
+//
+// The form posts a select for every warning it shows, and a warning is read
+// only when it is on the live list (liveSlugs). A form that posts a warning no
+// longer on the list was opened before that warning was renamed, merged away
+// or removed, and is marked outdated: a merge may have set "Keep it off the
+// page" on a warning it still shows as not set, so savePreferences refuses it
+// any change to a warning other than "Keep it off the page".
 export function readPreferencesForm(
 	data: FormData,
-	warningSlugs: readonly string[] = []
+	liveSlugs: readonly string[] = []
 ): PreferencesForm {
-	const warningKeys = warningSlugs.map(warningKey).filter(isWarningKey);
+	const live = new Set(liveSlugs);
+	const posted = [...new Set(data.keys())].filter((key) => key.startsWith(WARNING_PREFIX));
+	const outdated = posted.some((key) => !live.has(key.slice(WARNING_PREFIX.length)));
+	const warningKeys = liveSlugs.map(warningKey).filter((key) => isWarningKey(key) && data.has(key));
 	const submitted: SubmittedPreferences = {};
 	for (const key of [...FIELD_KEYS, ...warningKeys]) {
 		const raw = data.get(key);
@@ -410,7 +425,6 @@ export function readPreferencesForm(
 		changes[key] = raw || null;
 	}
 	for (const key of warningKeys) {
-		if (!data.has(key)) continue;
 		const raw = submitted[key].trim();
 		if (raw && !LIMIT_CHOICES.includes(raw)) return refuse('Pick each setting from its list.');
 		changes[key] = raw || null;
@@ -434,5 +448,5 @@ export function readPreferencesForm(
 	if (notes && notes.length > MAX_ASSISTANT_NOTES) {
 		return refuse(`Keep your notes to ${MAX_ASSISTANT_NOTES} characters or fewer.`);
 	}
-	return { ok: true, changes, notes };
+	return outdated ? { ok: true, changes, notes, outdated } : { ok: true, changes, notes };
 }

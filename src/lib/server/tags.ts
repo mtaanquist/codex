@@ -449,7 +449,12 @@ export async function renameTag(
 		};
 	}
 	try {
-		await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
+		await db.transaction(async (tx) => {
+			await tx.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
+			if (tag.kind === 'warning' && slug !== tag.slug) {
+				await moveContentLimits(tx, tag.slug, slug);
+			}
+		});
 	} catch (err) {
 		// Another rename, or a writer adding that tag, took the slug since the check.
 		if (isUniqueViolation(err)) return { ok: false, message: clashMessage };
@@ -566,6 +571,37 @@ async function carryContentLimits(
 		.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
 		.where(story.where);
 	const universe = carry(universes.assistantPreferences);
+	await tx
+		.update(universes)
+		.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
+		.where(universe.where);
+}
+
+// A writer's limit (Assistant preferences) on a renamed warning moves to its
+// new slug. The new slug is free on the list, but a key under it can be left
+// from older data or an import; that key was never chosen for this warning, so
+// it gives way, except that an "avoid" on either key is kept, which only keeps
+// the Assistant more careful. Renaming back moves the limit back.
+async function moveContentLimits(tx: Database, fromSlug: string, toSlug: string) {
+	const from = warningKey(fromSlug);
+	const to = warningKey(toSlug);
+	const move = (
+		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
+	) => ({
+		set: sql`(${column} - ${from}::text - ${to}::text) || case
+			when ${column} ->> ${from}::text = 'avoid' or ${column} ->> ${to}::text = 'avoid'
+				then jsonb_build_object(${to}::text, 'avoid')
+			when ${column} ->> ${from}::text = 'write' then jsonb_build_object(${to}::text, 'write')
+			else '{}'::jsonb end`,
+		where: sql`jsonb_exists_any(${column}, array[${from}, ${to}]::text[])`
+	});
+	// updated_at is kept as it was: this is the site's change, not the writer's.
+	const story = move(stories.assistantPreferences);
+	await tx
+		.update(stories)
+		.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
+		.where(story.where);
+	const universe = move(universes.assistantPreferences);
 	await tx
 		.update(universes)
 		.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })

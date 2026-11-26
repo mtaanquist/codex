@@ -396,6 +396,72 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Slow Burn', 'Slow-Burning']);
 	});
 
+	it("moves writers' content limits along with a renamed warning", async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Death', slug: 'death' }
+		]);
+		const [universe] = await db.select().from(universes);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'avoid', tense: 'past' } })
+			.where(eq(stories.id, storyId));
+		// A key left under the new slug (older data or an import) gives way,
+		// except that an "avoid" on either key is kept.
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'write', 'warning:graphic-gore': 'avoid' } })
+			.where(eq(stories.id, otherStoryId));
+		await db
+			.update(universes)
+			.set({
+				assistantPreferences: { 'warning:death': 'avoid', 'warning:graphic-gore': 'write' }
+			})
+			.where(eq(universes.id, universe.id));
+		const prefs = async (id: string) =>
+			(await db.select().from(stories).where(eq(stories.id, id)))[0];
+		const universePrefs = async () =>
+			(await db.select().from(universes).where(eq(universes.id, universe.id)))[0]
+				.assistantPreferences;
+		const updatedAt = (await prefs(storyId)).updatedAt;
+
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		const one = await prefs(storyId);
+		expect(one.assistantPreferences).toEqual({ 'warning:graphic-gore': 'avoid', tense: 'past' });
+		expect(one.updatedAt).toEqual(updatedAt);
+		expect((await prefs(otherStoryId)).assistantPreferences).toEqual({
+			'warning:graphic-gore': 'avoid'
+		});
+		// Gore had no limit here, so the stray "write" is not taken over.
+		expect(await universePrefs()).toEqual({ 'warning:death': 'avoid' });
+
+		// Renaming back moves the limits back.
+		expect(await renameTag(db, 'warning', await tagId('graphic-gore'), 'Gore')).toEqual({
+			ok: true
+		});
+		expect((await prefs(storyId)).assistantPreferences).toEqual({
+			'warning:gore': 'avoid',
+			tense: 'past'
+		});
+		expect((await prefs(otherStoryId)).assistantPreferences).toEqual({ 'warning:gore': 'avoid' });
+
+		// A name change that keeps the slug, and a rename of another kind, leave
+		// the limits alone.
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'GORE')).toEqual({ ok: true });
+		expect((await prefs(storyId)).assistantPreferences).toMatchObject({ 'warning:gore': 'avoid' });
+		await db.insert(tags).values({ kind: 'genre', name: 'Death', slug: 'death-genre' });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:death-genre': 'write' } })
+			.where(eq(stories.id, storyId));
+		expect(await renameTag(db, 'genre', await tagId('death-genre'), 'Mortality')).toEqual({
+			ok: true
+		});
+		expect((await prefs(storyId)).assistantPreferences).toEqual({ 'warning:death-genre': 'write' });
+	});
+
 	it('names a removed entry that blocks a rename or a merge, so it can be restored', async () => {
 		await tagStory(storyId, ['Slowburn', 'Slow Burn']);
 		await setTagRemoved(db, 'tag', await tagId('slow-burn'), true, ownerId);

@@ -245,6 +245,39 @@ describe('takedown and covers', () => {
 		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
 	});
 
+	it("serves the images in an edition's description too", async () => {
+		const [asset] = await db
+			.insert(assets)
+			.values({
+				ownerId: authorId,
+				universeId,
+				kind: 'inline',
+				filename: 'banner.png',
+				contentType: 'image/png',
+				byteSize: 8,
+				storageKey: 'codex-assets/banner'
+			})
+			.returning();
+		const [described] = await db
+			.insert(stories)
+			.values({
+				universeId,
+				ownerId: authorId,
+				title: 'Described',
+				visibility: 'public',
+				descriptionMd: `A banner: ![banner](/assets/${asset.id})`
+			})
+			.returning();
+		await db.insert(scenes).values({ storyId: described.id, globalPosition: 1, bodyMd: 'Prose.' });
+		expect(await publishStory(db, authorId, described.id)).toMatchObject({ ok: true });
+		expect(await isPublicAsset(db, asset.id)).toBe(true);
+		const [current] = (await allEditions()).filter(
+			(row) => row.title === 'Described' && row.isCurrent
+		);
+		await takedownPublication(db, current.id, null, 'other');
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+	});
+
 	it('lets a moderator see the images of a withdrawn story only once it was taken down', async () => {
 		const [asset] = await db
 			.insert(assets)

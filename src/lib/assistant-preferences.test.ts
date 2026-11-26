@@ -233,9 +233,9 @@ describe('feedback, length and content limits', () => {
 				summaryLength: '',
 				draftWords: ' 1000 ',
 				'warning:gore': 'avoid',
-				'warning:unlisted': 'avoid'
+				'warning:romance': ''
 			}),
-			['gore', 'romance']
+			['gore', 'romance', 'death']
 		);
 		expect(read).toEqual({
 			ok: true,
@@ -243,7 +243,8 @@ describe('feedback, length and content limits', () => {
 				feedback: 'normal',
 				summaryLength: null,
 				draftWords: 1000,
-				'warning:gore': 'avoid'
+				'warning:gore': 'avoid',
+				'warning:romance': null
 			},
 			notes: undefined
 		});
@@ -251,6 +252,23 @@ describe('feedback, length and content limits', () => {
 			ok: true,
 			changes: { draftWords: null }
 		});
+	});
+
+	it('marks a form that shows a warning no longer on the list as outdated', () => {
+		// Blood was merged into Gore, or renamed, since the form opened.
+		const read = readPreferencesForm(
+			form({ 'warning:gore': '', 'warning:blood': 'avoid', tense: 'past' }),
+			['gore', 'death']
+		);
+		expect(read).toEqual({
+			ok: true,
+			changes: { tense: 'past', 'warning:gore': null },
+			notes: undefined,
+			outdated: true
+		});
+		expect(
+			readPreferencesForm(form({ 'warning:gore': 'sometimes', 'warning:blood': '' }), ['gore'])
+		).toMatchObject({ ok: false });
 	});
 
 	it('refuses a draft length out of range and a value off a list', () => {
