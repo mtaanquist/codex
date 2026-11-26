@@ -10,6 +10,22 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 4 (2026-11-26, `staging/v4.0.0`). Content
+limits on a merged warning now fold at read time instead of being copied at
+merge: each live warning takes the limits of every warning merged into it,
+story over universe per slug, and avoid wins. Copying lost a save that landed
+after the merge and could let a story's "write" on the survivor beat a
+universe "avoid" on the merged-away one. Renames still move the keys, which
+never widens a limit. Run keys record limits by tag id. Rolling back 4.0.0 is
+now a copy of the database volume taken before the update, since a dump
+restore leaves the reindexed job-queue indexes behind. The guided pass card
+needs Leave suggestions as well as Apply, and spend is metered at the provider
+a request went to. Kept as is: the card still works through a resolved note,
+as the in-app pass does; 0131 skips tables owned by another role with only a
+warning (bundled installs own every table); and pattern runs capped before
+4.0.0 restart once after the upgrade, since their key now counts preferences
+and style notes.
+
 v4.0.0 staging review, round 3 (2026-11-26, `staging/v4.0.0`, #1828 to
 #1833). A moderator now reads an edition only when it is the current edition
 of a shared story, has an open report, or has a report closed by a takedown
