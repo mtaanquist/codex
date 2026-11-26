@@ -165,6 +165,16 @@ describe('browseEnabled', () => {
 		expect(await browseEnabled(db)).toBe(false);
 	});
 
+	it('a fresh read skips a copy another process left stale', async () => {
+		expect(await browseEnabled(db)).toBe(false);
+		// Another web process saves: this process's cached copy is not cleared.
+		await writeSetting(db, 'browse', { enabled: true });
+		expect(await browseEnabled(db)).toBe(false);
+		expect(await browseEnabled(db, { fresh: true })).toBe(true);
+		// The fresh read refreshes the cache for the cached readers too.
+		expect(await browseEnabled(db)).toBe(true);
+	});
+
 	it('answers from its cache until the cache is cleared or expires', async () => {
 		expect(await browseEnabled(db)).toBe(false);
 		// A write that bypasses the save, as another process would make.

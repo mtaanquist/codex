@@ -35,14 +35,25 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	db: Database;
 	pool: pg.Pool;
 };
-const { resetRateLimits } = await import('#lib/server/rate-limit');
+const { resetRateLimits, slidingRateLimit } = await import('#lib/server/rate-limit');
+const { readGate, stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
+const { MAX_READ_CALLS_WAITING, STAGING_CALLS_PER_MINUTE } =
+	await import('#lib/server/mcp/constants');
+const { saveMcpInstanceEnabled } = await import('#lib/server/mcp/settings');
+const { NO_UNIVERSE_RESULT } = await import('#lib/server/mcp/tools');
 const { saveStoryLlmOverride } = await import('#lib/server/llm/config');
 const { TOOLS } = await import('#lib/server/llm/tools/registry');
 const { registerClient } = await import('#lib/server/mcp/clients');
-const { createAuthorizationCode, exchangeCode, resolveBearer } =
+const { createAuthorizationCode, exchangeCode, resolveBearer, revokeGrant } =
 	await import('#lib/server/mcp/oauth');
-const { CARD_KEY_META, PASS_CARD_MIME, PASS_CARD_URI, cardKeyValid } =
-	await import('#lib/server/mcp/pass-card');
+const {
+	CARD_KEY_META,
+	MAX_CARD_CHARS,
+	MAX_CARD_EDITS,
+	PASS_CARD_MIME,
+	PASS_CARD_URI,
+	cardKeyValid
+} = await import('#lib/server/mcp/pass-card');
 const { addComment, ensureSuggestionThread } = await import('#lib/server/review');
 const route = await import('../../src/routes/api/mcp/+server');
 
@@ -184,7 +195,14 @@ type CardEdit = {
 	stamp: string | null;
 	placed: boolean;
 };
-type Pass = { noteId: string; universeId: string; name: string; link: string; edits: CardEdit[] };
+type Pass = {
+	noteId: string;
+	universeId: string;
+	name: string;
+	link: string;
+	edits: CardEdit[];
+	more: number;
+};
 type Answer = {
 	text: string;
 	isError: boolean;
@@ -339,6 +357,41 @@ describe('open_guided_pass', () => {
 		expect(await open(alice.token, alice, own)).toMatchObject({ text: NO_NOTE, isError: true });
 	});
 
+	it('sends at most MAX_CARD_EDITS edits and counts the rest as more', async () => {
+		const words = Array.from({ length: MAX_CARD_EDITS + 5 }, (_, n) => `word${n}x`);
+		await db
+			.update(scenes)
+			.set({ bodyMd: words.join(' ') })
+			.where(eq(scenes.id, alice.sceneId));
+		const edits = words.map((word) => ({ original: word, replacement: `${word}y` }));
+		// One call carries at most 40 edits; a second with the same opening adds to the note.
+		const noteId = await patternNote(alice.token, alice, PATTERN, edits.slice(0, 40));
+		expect(await patternNote(alice.token, alice, PATTERN, edits.slice(40))).toBe(noteId);
+		const opened = await open(alice.token, alice, noteId);
+		expect(opened.pass!.edits).toHaveLength(MAX_CARD_EDITS);
+		expect(opened.pass!.more).toBe(5);
+		expect(Object.keys(opened.keys!)).toHaveLength(MAX_CARD_EDITS);
+	});
+
+	it('sends the edits past MAX_CARD_CHARS as more', async () => {
+		const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot'];
+		await db
+			.update(scenes)
+			.set({ bodyMd: words.join(' ') })
+			.where(eq(scenes.id, alice.sceneId));
+		// Each wording is just under a fifth of the cap, so the sixth goes past it.
+		const long = 'z'.repeat(Math.floor(MAX_CARD_CHARS / 5) - 100);
+		const noteId = await patternNote(
+			alice.token,
+			alice,
+			PATTERN,
+			words.map((word) => ({ original: word, replacement: long }))
+		);
+		const opened = await open(alice.token, alice, noteId);
+		expect(opened.pass!.edits).toHaveLength(5);
+		expect(opened.pass!.more).toBe(1);
+	});
+
 	it('gives the not-found of any universe for one that is not the writers', async () => {
 		const noteId = await patternNote(alice.token, alice);
 		const opened = await call(alice.token, 'open_guided_pass', {
@@ -491,5 +544,81 @@ describe('decide_suggestion', () => {
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 		expect((await decide(alice.token, accepting(noteId, now, again.keys!))).isError).toBe(false);
 		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'closed door'));
+	});
+
+	it('answers busy, changes nothing and gives the call back while the lock is held', async () => {
+		const { noteId, pass, keys } = await opened();
+		const grantId = (await resolveBearer(db, alice.token))!.grantId;
+		// Spend all but one of the connection's accepts for this minute.
+		for (let i = 0; i < STAGING_CALLS_PER_MINUTE - 1; i++) {
+			slidingRateLimit(`mcp:card:grant:${grantId}`, STAGING_CALLS_PER_MINUTE, 60_000);
+		}
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select pg_advisory_xact_lock(hashtext($1))', [stagingKey(alice.userId)]);
+			expect(await decide(alice.token, accepting(noteId, pass.edits[0], keys))).toMatchObject({
+				text: 'Another call is still running. Try again.',
+				isError: true
+			});
+		} finally {
+			await holder.query('rollback');
+			holder.release();
+		}
+		expect(await sceneBody(alice.sceneId)).toBe(BODY);
+		// The busy call was given back, so the last accept of the minute still goes.
+		expect((await decide(alice.token, accepting(noteId, pass.edits[0], keys))).isError).toBe(false);
+		expect((await decide(alice.token, accepting(noteId, pass.edits[1], keys))).text).toMatch(
+			/^Too many calls/
+		);
+	});
+
+	it('changes nothing when the connection is revoked while the accept waits its turn', async () => {
+		const { noteId, pass, keys } = await opened();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const grantId = (await resolveBearer(db, alice.token))!.grantId;
+		expect(await revokeGrant(db, alice.userId, grantId)).toBe(true);
+		release();
+		await ahead;
+		expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+		expect(await sceneBody(alice.sceneId)).toBe(BODY);
+		expect(new Set(await statuses())).toEqual(new Set(['pending']));
+	});
+
+	it('changes nothing when access for apps is turned off while the accept waits its turn', async () => {
+		const { noteId, pass, keys } = await opened();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		await saveMcpInstanceEnabled(db, false);
+		release();
+		await ahead;
+		expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+		expect(await sceneBody(alice.sceneId)).toBe(BODY);
+	});
+
+	it('reports the accept even when the pass cannot be built again afterwards', async () => {
+		const { noteId, pass, keys } = await opened();
+		// Fill the writer's reading line, so building the pass again is turned away.
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const held = Array.from({ length: 2 + MAX_READ_CALLS_WAITING }, () =>
+			readGate.run(alice.userId, () => gate)
+		);
+		try {
+			const result = await decide(alice.token, accepting(noteId, pass.edits[0], keys));
+			expect(result).toMatchObject({ text: 'Accepted.', isError: false });
+			expect(result.pass).toBeUndefined();
+		} finally {
+			release();
+			await Promise.all(held);
+		}
+		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
 	});
 });

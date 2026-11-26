@@ -313,6 +313,19 @@ function webSearches(usage: { server_tool_use?: unknown }): number {
 	return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
+// The searches to bill: the reported count, or, when no usage report counted
+// any (the stream dropped before message_delta), the web_search calls seen
+// in the stream, so a cut-off stream never bills fewer searches than it ran.
+// guessed is set when the count comes from the calls.
+function billedSearches(reported: number, calls: number): { count: number; guessed: boolean } {
+	return reported > 0 ? { count: reported, guessed: false } : { count: calls, guessed: calls > 0 };
+}
+
+function isSearchCall(block: unknown): boolean {
+	const call = block as { type?: unknown; name?: unknown } | undefined;
+	return call?.type === 'server_tool_use' && call.name === 'web_search';
+}
+
 function parseUsage(raw: unknown): TokenUsage | undefined {
 	const usage = raw as
 		| {
@@ -350,6 +363,8 @@ type StreamProgress = {
 	// message_delta has reported an input count; until then the results are
 	// estimated from their characters.
 	resultChars: number;
+	// web_search calls streamed, billed when no usage report counts them.
+	searchCalls: number;
 	deltaInput: boolean;
 	sawDelta: boolean;
 	sawThinking: boolean;
@@ -392,13 +407,13 @@ function partialUsage(
 	const completion = progress.sawDelta
 		? counted
 		: Math.max(counted, estimatedOutput(progress, !cancelled));
-	const searches = webSearches(raw);
+	const searches = billedSearches(webSearches(raw), progress.searchCalls);
 	return {
 		promptTokens: prompt,
 		completionTokens: completion,
 		...cacheShares(raw),
-		...(searches > 0 ? { webSearchRequests: searches } : {}),
-		...(progress.sawDelta && guessed === 0 ? {} : { estimated: true })
+		...(searches.count > 0 ? { webSearchRequests: searches.count } : {}),
+		...(progress.sawDelta && guessed === 0 && !searches.guessed ? {} : { estimated: true })
 	};
 }
 
@@ -492,6 +507,7 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 	const input: Block = {};
 	let completionTokens: number | undefined;
 	let searches = 0;
+	let searchCalls = 0;
 	let streamedChars = 0;
 	// Search results streamed, and whether message_delta has counted them (see
 	// unreportedResults).
@@ -503,14 +519,17 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 		const prompt = promptTotal(input) + guessed;
 		const promptTokens = Number.isFinite(prompt) ? prompt : undefined;
 		if (promptTokens === undefined && completionTokens === undefined) return undefined;
+		const billed = billedSearches(searches, searchCalls);
 		return {
 			type: 'usage',
 			usage: {
 				promptTokens: promptTokens ?? 0,
 				completionTokens: completionTokens ?? tokensForChars(streamedChars),
 				...cacheShares(input),
-				...(searches > 0 ? { webSearchRequests: searches } : {}),
-				...(completionTokens === undefined || guessed > 0 ? { estimated: true } : {})
+				...(billed.count > 0 ? { webSearchRequests: billed.count } : {}),
+				...(completionTokens === undefined || guessed > 0 || billed.guessed
+					? { estimated: true }
+					: {})
 			}
 		};
 	};
@@ -532,6 +551,7 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 				if (frame.content_block?.type === 'web_search_tool_result') {
 					resultChars += JSON.stringify(frame.content_block).length;
 				}
+				if (isSearchCall(frame.content_block)) searchCalls++;
 				continue;
 			}
 			if (frame.type === 'message_delta') {
@@ -619,6 +639,7 @@ async function assembleMessage(
 	const progress: StreamProgress = {
 		outputChars: 0,
 		resultChars: 0,
+		searchCalls: 0,
 		deltaInput: false,
 		sawDelta: false,
 		sawThinking: false,
@@ -643,6 +664,14 @@ async function assembleMessage(
 		const guessed = unreportedResults(progress);
 		if (guessed > 0) {
 			usage.input_tokens = count(usage.input_tokens) + guessed;
+			message.estimated = true;
+		}
+		const searches = billedSearches(webSearches(usage), progress.searchCalls);
+		if (searches.guessed) {
+			usage.server_tool_use = {
+				...(usage.server_tool_use as Block | undefined),
+				web_search_requests: searches.count
+			};
 			message.estimated = true;
 		}
 		return message;
@@ -699,6 +728,7 @@ async function assembleFrames(
 					if (type === 'web_search_tool_result') {
 						progress.resultChars += JSON.stringify(frame.content_block).length;
 					}
+					if (isSearchCall(frame.content_block)) progress.searchCalls++;
 				}
 				break;
 			case 'content_block_delta':

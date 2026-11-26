@@ -409,7 +409,7 @@ export const actions: Actions = {
 			story.id,
 			visibility,
 			isAdult,
-			(await browseEnabled(db)) ? data.get('listedInBrowse') === 'on' : null
+			(await browseEnabled(db, { fresh: true })) ? data.get('listedInBrowse') === 'on' : null
 		);
 		return { action: 'publish', saved: true };
 	},

@@ -1016,6 +1016,29 @@ describe('anthropicProvider.respond over a stream', () => {
 		expect(billedUsage(err)).toEqual({
 			promptTokens: 9 + Math.ceil(JSON.stringify(searchResult).length / 4),
 			completionTokens: 5,
+			// No usage report counted the search, so the call seen is billed.
+			webSearchRequests: 1,
+			estimated: true
+		});
+	});
+
+	it('bills the searches of a stream that dropped before message_delta', async () => {
+		// Everything up to the text block, then an error instead of message_delta.
+		const frames = searchTurn({ output_tokens: 5 }).slice(0, 5);
+		frames.push(frame({ type: 'error', error: { type: 'overloaded_error', message: 'x' } }));
+		const http: HttpRequest = async () => sseResponse(frames);
+		const err = await anthropicProvider.respond(req, conn, http).catch((e: unknown) => e);
+		expect(billedUsage(err)).toMatchObject({ webSearchRequests: 1, estimated: true });
+	});
+
+	it('bills the searches seen when a finished stream reports none', async () => {
+		const http: HttpRequest = async () =>
+			sseResponse(searchTurn({ input_tokens: 2500, output_tokens: 5 }));
+		const result = await anthropicProvider.respond(req, conn, http);
+		expect(result.usage).toEqual({
+			promptTokens: 2500,
+			completionTokens: 5,
+			webSearchRequests: 1,
 			estimated: true
 		});
 	});
@@ -1388,6 +1411,30 @@ describe('anthropicProvider.chatStream', () => {
 				estimated: true
 			}
 		});
+	});
+
+	it('bills the searches of a stream that dropped before message_delta', async () => {
+		const data = (obj: unknown) => `data: ${JSON.stringify(obj)}\n`;
+		const frames = [
+			data({ type: 'message_start', message: { usage: { input_tokens: 9 } } }),
+			data({
+				type: 'content_block_start',
+				index: 0,
+				content_block: { type: 'server_tool_use', id: 's1', name: 'web_search', input: {} }
+			}),
+			data({
+				type: 'content_block_start',
+				index: 1,
+				content_block: { type: 'server_tool_use', id: 's2', name: 'web_search', input: {} }
+			}),
+			data({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } })
+		];
+		const http: HttpRequest = async () => sseResponse(frames);
+		const events = await drain(
+			anthropicProvider.chatStream({ model: 'claude-x', messages: [], maxTokens: 16 }, conn, http)
+		);
+		const usage = events.find((event) => event.type === 'usage');
+		expect(usage).toMatchObject({ usage: { webSearchRequests: 2, estimated: true } });
 	});
 
 	it('carries a max_tokens stop reason on the done frame as length', async () => {

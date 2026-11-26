@@ -10,6 +10,18 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 lane follow-ups (2026-11-26, `staging/v4.0.0`, #1794, #1795, #1798,
+#1799, #1807). The Browse setting cache stays (the root layout reads it on
+every page), but the two places that act on it, the story settings save and
+the admin page, now read it fresh, so a web process with a stale copy never
+drops an author's "List in Browse" tick. Pages elsewhere can still show or
+hide Browse for up to a minute after a change; LISTEN/NOTIFY was not worth it
+for that. A stream that dropped before `message_delta` now bills the
+`web_search` calls it saw, marked estimated. The fandom count's subquery got a
+partial index on `universes.fandom_id` (migration 0131). The card's lock-wait
+test uses the default two-second lock timeout, like the staging dispatch test,
+rather than threading test-only timeouts through `callMcpTool`.
+
 Guided pass card in the AI client (v4.0.0, 2026-11-26, `staging/v4.0.0`,
 #1362). An app with the new `apply` permission can show the guided pass over
 one of its pattern notes as an MCP App: `open_guided_pass` returns the pass
