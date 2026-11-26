@@ -106,7 +106,8 @@ export function storyReviewSettingsKey(
 		reads ? settings.preferences : null,
 		readsNative(parsed, patterns),
 		reads ? settings.styleNotes : null,
-		settings.preferences
+		// Only the sparing pass (no categories) states how much feedback.
+		parsed.length ? { ...settings.preferences, feedback: null } : settings.preferences
 	);
 }
 

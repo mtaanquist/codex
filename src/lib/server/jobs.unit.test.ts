@@ -231,6 +231,17 @@ describe('reviewSettingsKey', () => {
 		}
 	});
 
+	it('keys the feedback amount only for the sparing review, which states it', () => {
+		const settings = { language: NO_LANGUAGE, preferences: NO_PREFERENCES, styleNotes: null };
+		const more = { ...settings, preferences: { ...NO_PREFERENCES, feedback: 'thorough' as const } };
+		expect(storyReviewSettingsKey(more, [], undefined)).not.toBe(
+			storyReviewSettingsKey(settings, [], undefined)
+		);
+		expect(storyReviewSettingsKey(more, ['lore'], undefined)).toBe(
+			storyReviewSettingsKey(settings, ['lore'], undefined)
+		);
+	});
+
 	it('changes with the style notes, which the prose is judged against', () => {
 		const plain = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true);
 		const noir = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, 'Hardboiled noir.');
