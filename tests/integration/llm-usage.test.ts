@@ -482,6 +482,28 @@ describe('recentAssistantUsage', () => {
 		});
 	});
 
+	it('prices a model whose rows reported no counts as unknown, not free', async () => {
+		const price = { prompt: 0.001, completion: 0.002 };
+		await recordAssistantUsage(db, { userId, role: 'chat', model: 'silent', price });
+		await recordAssistantUsage(db, { userId, role: 'chat', model: 'silent', price });
+		await recordAssistantUsage(db, {
+			userId,
+			role: 'chat',
+			model: 'counted',
+			price,
+			usage: { promptTokens: 1000, completionTokens: 0 }
+		});
+		await recordAssistantUsage(db, { userId, role: 'chat', model: 'counted', price });
+		const { byModel } = await recentAssistantUsage(db, userId);
+		const silent = byModel.find((row) => row.model === 'silent')!;
+		expect(silent).toMatchObject({ promptTokens: null, completionTokens: null });
+		expect(usageRowCostUsd({}, silent)).toBeNull();
+		// A group with some counts sums the ones it has.
+		const counted = byModel.find((row) => row.model === 'counted')!;
+		expect(counted).toMatchObject({ promptTokens: 1000, completionTokens: 0 });
+		expect(usageRowCostUsd({}, counted)).toBeCloseTo(1, 10);
+	});
+
 	it('pages fifty at a time, newest first', async () => {
 		for (let i = 0; i < 55; i++) {
 			await recordAssistantUsage(db, {

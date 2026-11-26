@@ -125,8 +125,8 @@ export type UsageSummary = {
 		provider: string | null;
 		model: string;
 		price: TokenPrice | null;
-		promptTokens: number;
-		completionTokens: number;
+		promptTokens: number | null;
+		completionTokens: number | null;
 		cachedPromptTokens: number;
 		cacheWriteTokens: number;
 		cacheWrite1hTokens: number;
@@ -184,8 +184,10 @@ export async function recentAssistantUsage(
 			provider: assistantUsage.provider,
 			model: assistantUsage.model,
 			price: assistantUsage.price,
-			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::int`,
-			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::int`,
+			// Null when no row in the group reported counts, so it prices as
+			// unknown rather than free.
+			promptTokens: sql<number | null>`sum(${assistantUsage.promptTokens})::int`,
+			completionTokens: sql<number | null>`sum(${assistantUsage.completionTokens})::int`,
 			cachedPromptTokens: sql<number>`coalesce(sum(${assistantUsage.cachedPromptTokens}), 0)::int`,
 			cacheWriteTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWriteTokens}), 0)::int`,
 			cacheWrite1hTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWrite1hTokens}), 0)::int`,

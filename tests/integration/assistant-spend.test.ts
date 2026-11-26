@@ -170,6 +170,31 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(withPreferences.estTokens).toBeGreaterThan(bare.estTokens);
 	});
 
+	it('counts the feedback and reasons choices on each scene', async () => {
+		const storyId = await seedStory(2);
+		const bare = await estimateStoryReview(db, { userId, storyId });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { editReasons: 'always' } })
+			.where(eq(stories.id, storyId));
+		const withReasons = await estimateStoryReview(db, { userId, storyId });
+		expect(withReasons.estTokens).toBeGreaterThan(bare.estTokens);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { editReasons: 'always', feedback: 'sparing' } })
+			.where(eq(stories.id, storyId));
+		const sparing = await estimateStoryReview(db, { userId, storyId });
+		expect(sparing.estTokens).toBeGreaterThan(withReasons.estTokens);
+		// A copyedit reports everything, so the feedback choice is not stated.
+		const copyedit = () => estimateStoryReview(db, { userId, storyId, categories: ['mechanics'] });
+		const withFeedback = await copyedit();
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { editReasons: 'always' } })
+			.where(eq(stories.id, storyId));
+		expect((await copyedit()).estTokens).toBe(withFeedback.estTokens);
+	});
+
 	it("counts the story's language lines on each scene", async () => {
 		const storyId = await seedStory(2);
 		const bare = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });

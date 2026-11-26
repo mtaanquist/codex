@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -540,6 +540,69 @@ describe('gateway gating', () => {
 		const [row] = await db.select().from(assistantUsage).where(eq(assistantUsage.userId, userId));
 		expect(row.webSearchRequests).toBe(3);
 		expect(row.price).toEqual(price);
+	});
+
+	it('logs the search allowance at the reply limit each round was sent at', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Faerun', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8,
+			webSearch: true
+		});
+		const sent: number[] = [];
+		// The first round is cut off, so the second goes out with more room.
+		const searching: Provider = {
+			...stubProvider,
+			async respond(req) {
+				sent.push(req.maxTokens ?? 0);
+				return {
+					content: sent.length === 1 ? 'Half a' : 'checked',
+					toolCalls: [],
+					finishReason: sent.length === 1 ? 'length' : 'stop',
+					usage: { promptTokens: 1000, completionTokens: 0, webSearchRequests: 1 }
+				};
+			}
+		};
+		const logged: Record<string, unknown>[] = [];
+		const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+			if (typeof line === 'string' && line.startsWith('{')) logged.push(JSON.parse(line));
+		});
+		try {
+			await completeDetailed(
+				db,
+				{
+					userId,
+					storyId: inCanon.id,
+					role: 'reviewer',
+					enableTools: true,
+					messages: [{ role: 'user', content: 'Check this scene.' }]
+				},
+				{ provider: searching, http: noHttp }
+			);
+		} finally {
+			spy.mockRestore();
+		}
+		expect(sent).toHaveLength(2);
+		expect(sent[1]).toBeGreaterThan(sent[0]);
+		const allowances = logged
+			.filter((line) => line.event === 'assistant.usage.search')
+			.map((line) => line.allowance as number);
+		expect(allowances).toHaveLength(2);
+		// The allowance grows with the reply limit, by the nine later rounds' worth.
+		expect(allowances[1] - allowances[0]).toBe(9 * (sent[1] - sent[0]));
 	});
 
 	it('meters each request at the price stored on its usage row when prices change mid-run', async () => {

@@ -118,4 +118,23 @@ describe('buildReviewReplyMessage', () => {
 		expect(plain).not.toContain('The story is written in');
 		expect(plain).not.toContain('House style');
 	});
+
+	it('states the content limits when it may revise a suggestion', () => {
+		const base = {
+			sceneTitle: 'The Gate',
+			excerpt: 'the passage',
+			transcript: [{ author: 'Author', body: 'Shorter?' }],
+			preferences: {
+				...NO_PREFERENCES,
+				contentLimits: [{ name: 'Gore', limit: 'avoid' as const }]
+			}
+		};
+		const revising = buildReviewReplyMessage({
+			...base,
+			suggestion: { original: 'a', replacement: 'b' }
+		});
+		expect(revising).toContain('Keep these off the page');
+		expect(revising).toContain('Gore');
+		expect(buildReviewReplyMessage({ ...base, suggestion: null })).not.toContain('Gore');
+	});
 });
