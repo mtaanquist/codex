@@ -465,7 +465,9 @@ To make a token:
 2. Under "Personal access tokens", type a name for the tool that will use it.
    Suggestions and comments left with the token are shown under this name.
 3. Leave "Leave suggestions and comments" ticked if the tool should be able to
-   leave them, or untick it to let the tool read only.
+   leave them, or untick it to let the tool read only. Tick "Let you accept its
+   suggestions in the app" only if the tool can show you its notes to accept;
+   see [Connecting an app](/docs/connecting-apps).
 4. Choose how long the token lasts. It stops working after that, and you make
    a new one.
 5. Type your password, and the code from your authenticator app if you use

@@ -34,6 +34,25 @@ empties `public` but keeps its extensions, and leaves out
 our own Alpine image was the alternative; it would have kept the sort order
 but meant publishing and maintaining a database image.
 
+Guided pass card in the AI client (v4.0.0, 2026-11-26, `staging/v4.0.0`,
+#1362). An app with the new `apply` permission can show the guided pass over
+one of its pattern notes as an MCP App: `open_guided_pass` returns the pass
+and the client loads the card page (`ui://codex/guided-pass.html`, plain
+HTML and script, no bundle: the MCP Apps message protocol is a handful of
+postMessage calls, so the 540 KB `@modelcontextprotocol/ext-apps` bundle was
+not worth adding). `decide_suggestion` is the card's Accept. `apply` is never
+ticked for the writer, even when the app asks for it. The hard part is that
+the client, not Codex, decides who calls a tool: `visibility: ["app"]` hides
+the accept from a client's model, but a client that does not know MCP Apps
+lists it to the model like any other tool. So the accept also needs a card
+key for that edit and its wording, sent in the result's `_meta` (which clients pass to the card, not the
+model) and the stamp of the wording shown. That narrows it; it cannot prove a
+person pressed the button, which is why the permission is off by default and
+the help says so. The in-app re-read after an accept is left to the app's
+own model (it can stage a follow-up), and Skip stays in the card. The tools
+are not in the Assistant registry, so the shared-toolbox exception is listed
+in `assistant.md`.
+
 Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
 and Allow in Browse now record the moderator and time (#1531, migration 0130):
 plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping

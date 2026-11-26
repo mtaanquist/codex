@@ -29,8 +29,9 @@ You choose this on the page where you allow the app:
 
 - **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. The app also sees each story's language, its Assistant preferences, and your notes for the Assistant. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash.
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
+- **Let you accept its suggestions in the app.** This is off unless you tick it. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
 
-No app can change your text, delete anything, publish a story, or see another person's writing.
+No app can change your text on its own, delete anything, publish a story, or see another person's writing. An edit only changes your text when you accept it, in Codex or by pressing Accept on the app's card.
 
 ## Ask the app to do something
 
@@ -51,7 +52,19 @@ Nothing the app leaves changes your writing until you decide.
 - **Suggested characters, places and lore entries**, and **proposals to split a scene in two**, are in the universe's settings under Suggestions. See [Planning your world](/docs/planning).
 - **A draft the app wrote for a scene** waits on that scene. Open the scene and select the Assistant tab on the right to read it, change it, and keep or discard it. A universe holds up to 20 drafts from apps at a time; keep or discard some to make room for more. See [Writing in the editor](/docs/editor).
 
-Each of these shows the name of the app that left it. When an app has left a suggested entry, a proposed split or a draft, your library shows how many are waiting beside the universe's name. Select it to see them under Suggestions.
+Each of these shows the name of the app that left it.
+
+## Work through a note in the app
+
+If you ticked "Let you accept its suggestions in the app", you can go through a note's edits without leaving the app. Ask the app to open the note, for example "Let me go through your note on my pet phrases here". The app shows a card with one edit at a time, inside its paragraph:
+
+- **Accept** changes your text to the suggested wording.
+- **Edit** lets you write your own wording, then accept that instead.
+- **Skip** moves on and leaves the edit waiting in Codex.
+- **Discuss** hands the edit back to the conversation, so you can talk it over with the app before you decide.
+- **Open in Codex** opens the same note in Codex.
+
+Only you can accept an edit, by pressing a button on the card. The app cannot accept one for you. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead. When an app has left a suggested entry, a proposed split or a draft, your library shows how many are waiting beside the universe's name. Select it to see them under Suggestions.
 
 ## Disconnect an app
 

@@ -6,6 +6,7 @@ import { buildMcpPrompt, mcpPrompts, type McpPrompt } from './prompts.ts';
 import { workLanguage } from '../language.ts';
 import { workPreferences } from '../assistant-preferences.ts';
 import { callMcpTool, mcpTools } from './tools.ts';
+import { PASS_CARD_HTML, PASS_CARD_MIME, PASS_CARD_URI } from './pass-card.ts';
 
 // The MCP protocol side of the endpoint, on the official SDK. Stateless: a
 // server is built for each request from the connection the route resolved,
@@ -44,13 +45,17 @@ function promptSchema(prompt: McpPrompt) {
 
 function buildServer(connection: Connection): McpServer {
 	const server = new McpServer({ name: 'codex', version: '1' }, { instructions: INSTRUCTIONS });
-	for (const tool of mcpTools(connection.identity.permissions)) {
+	const tools = mcpTools(connection.identity.permissions);
+	for (const tool of tools) {
 		server.registerTool(
 			tool.name,
 			{
 				description: tool.description,
 				inputSchema: schemaFor(tool.name, tool.inputSchema),
-				annotations: { readOnlyHint: tool.readOnly, openWorldHint: false }
+				annotations: { readOnlyHint: tool.readOnly, openWorldHint: false },
+				// MCP Apps: the card the client shows for the tool, and who may call
+				// it. 'ui/resourceUri' is the older spelling some clients still read.
+				...(tool.ui ? { _meta: { ui: tool.ui, 'ui/resourceUri': tool.ui.resourceUri } } : {})
 			},
 			async (args) => {
 				const result = await callMcpTool(
@@ -60,8 +65,36 @@ function buildServer(connection: Connection): McpServer {
 					args,
 					connection.origin
 				);
-				return { content: [{ type: 'text', text: result.text }], isError: result.isError };
+				return {
+					content: [{ type: 'text', text: result.text }],
+					isError: result.isError,
+					...(result.structured ? { structuredContent: result.structured } : {}),
+					...(result.meta ? { _meta: result.meta } : {})
+				};
 			}
+		);
+	}
+	// The guided pass card, for a connection that may be shown it. It is the
+	// same page for everyone and holds no data: the pass comes with the tool
+	// result.
+	if (tools.some((tool) => tool.ui)) {
+		server.registerResource(
+			'guided-pass',
+			PASS_CARD_URI,
+			{
+				title: 'Guided pass',
+				description: 'A card for working through the edits of a pattern note.',
+				mimeType: PASS_CARD_MIME
+			},
+			async () => ({
+				contents: [
+					{
+						uri: PASS_CARD_URI,
+						mimeType: PASS_CARD_MIME,
+						text: PASS_CARD_HTML
+					}
+				]
+			})
 		);
 	}
 	const { identity } = connection;
