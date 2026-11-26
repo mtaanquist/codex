@@ -7,6 +7,7 @@ import {
 import { REVIEW_CATEGORIES } from '../../../review-shape.ts';
 import { NO_LANGUAGE } from '../../../writing-languages.ts';
 import {
+	chatEditReasonLine,
 	contentLimitsLine,
 	habitNotesLine,
 	houseStyleLine,
@@ -367,6 +368,12 @@ describe('feedback, reasons and content limits', () => {
 		expect(
 			buildRereadMessage({ ...reread, preferences: prefs({ editReasons: 'never' }) })
 		).toContain('with no reason');
+	});
+
+	it('states a reasons choice in the chat frame only when it is set', () => {
+		expect(chatEditReasonLine(NO_PREFERENCES)).toBe('');
+		expect(chatEditReasonLine(prefs({ editReasons: 'unobvious' }))).toBe('');
+		expect(chatEditReasonLine(prefs({ editReasons: 'never' }))).toContain('Leave out the reason');
 	});
 
 	it('states the content limits where the Assistant drafts or comments', () => {

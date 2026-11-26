@@ -111,8 +111,8 @@ export const CONTENT_LIMITS = [
 	{ value: 'avoid', label: 'Keep it off the page' }
 ] as const;
 export type ContentLimit = (typeof CONTENT_LIMITS)[number]['value'];
-// A bound on stored warning keys, so an imported or tampered object cannot
-// grow without end; far more than any list an admin keeps.
+// A bound on the warning keys an import brings in, so a crafted file cannot
+// grow the object without end; far more than any list an admin keeps.
 const MAX_WARNING_KEYS = 100;
 const MAX_WARNING_SLUG = 100;
 
@@ -235,10 +235,11 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 	}
 	const words = draftWordsValue(source.draftWords);
 	if (words !== null) out.draftWords = words;
-	const warnings = Object.keys(source)
-		.filter((key) => isWarningKey(key) && LIMIT_CHOICES.includes(source[key] as string))
-		.slice(0, MAX_WARNING_KEYS);
-	for (const key of warnings) out[key] = source[key] as string;
+	for (const key of Object.keys(source)) {
+		if (isWarningKey(key) && LIMIT_CHOICES.includes(source[key] as string)) {
+			out[key] = source[key] as string;
+		}
+	}
 	return out as StoredPreferences;
 }
 
@@ -259,7 +260,13 @@ export function preferencesFromLines(lines: string[]): {
 		const colon = line.lastIndexOf(':');
 		if (colon > 0) raw[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
 	}
-	const preferences = normalisePreferences(raw);
+	// The form only stores warnings on the live list, so an import is the one
+	// way in for any slug; it is capped here.
+	let warnings = 0;
+	const capped = Object.fromEntries(
+		Object.entries(raw).filter(([key]) => !isWarningKey(key) || ++warnings <= MAX_WARNING_KEYS)
+	);
+	const preferences = normalisePreferences(capped);
 	return { preferences, unread: lines.length - Object.keys(preferences).length };
 }
 

@@ -181,6 +181,14 @@ export function editReasonLine(setting: PreferenceSetting): string {
 	}
 }
 
+// The reasons choice for the chat's story frame, where the chat may stage
+// suggested edits. Not set (or "when not obvious") adds nothing.
+export function chatEditReasonLine(setting: PreferenceSetting): string {
+	return setting.editReasons === 'always' || setting.editReasons === 'never'
+		? `When you suggest an edit: ${editReasonLine(setting)}`
+		: '';
+}
+
 // The words a pattern fix's instructions use for its reason: "with a
 // one-sentence reason" unless the writer wants none.
 export function withReason(setting: PreferenceSetting, detail = ''): string {
@@ -203,7 +211,7 @@ export function contentLimitsLine(
 	if (avoid.length) {
 		parts.push(
 			mode === 'check'
-				? `They keep these off the page: ${names(avoid)}. Do not suggest adding them or making them more explicit.`
+				? `They want these kept off the page: ${names(avoid)}. Do not suggest adding them or making them more explicit; where the text shows one outright, you may point it out.`
 				: `Keep these off the page, implied or passed over rather than shown, in anything you write: ${names(avoid)}.${mode === 'chat' ? ' Do not suggest adding them.' : ''}`
 		);
 	}

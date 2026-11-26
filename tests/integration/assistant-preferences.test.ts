@@ -193,6 +193,16 @@ describe('the assistant preferences', () => {
 			{ name: 'Strong language', limit: 'write' }
 		]);
 		expect(await saveStory({ draftWords: '20000' })).toMatchObject({ status: 400 });
+		// A blank warning clears the story's own limit; one left out of the post is kept.
+		await saveStory({ 'warning:gore': '' });
+		expect((await stored()).preferences).toEqual({ feedback: 'sparing', editReasons: 'never' });
+		await saveStory({ 'warning:strong-language': 'avoid' });
+		await saveStory({ feedback: 'normal' });
+		expect((await stored()).preferences).toEqual({
+			feedback: 'normal',
+			editReasons: 'never',
+			'warning:strong-language': 'avoid'
+		});
 	});
 
 	it('gives a standalone story the standalone defaults, and shows them in Details', async () => {

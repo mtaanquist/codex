@@ -345,8 +345,12 @@ export async function summariseStory(
 		) {
 			continue;
 		}
-		// The same request came back empty on the same model and settings.
-		const emptyMark = unusableReplyMark(request.input, await replySettings());
+		// The same request came back empty on the same model and settings. The
+		// fingerprint leaves out the length, so the mark names it.
+		const emptyMark = unusableReplyMark(
+			request.input,
+			length === 'short' ? await replySettings() : `${await replySettings()}|${length}`
+		);
 		if (chapter.summaryInput === emptyMark) continue;
 		try {
 			const text = await generate(

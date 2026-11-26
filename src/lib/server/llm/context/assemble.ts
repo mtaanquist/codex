@@ -34,6 +34,7 @@ import type { LanguageSetting } from '../../../writing-languages.ts';
 import type { PreferenceSetting } from '../../../assistant-preferences.ts';
 import { chatLanguageRule } from '../prompts/language.ts';
 import {
+	chatEditReasonLine,
 	contentLimitsLine,
 	habitNotesLine,
 	houseStyleLine,
@@ -649,6 +650,8 @@ export function renderFrame(
 		if (style) lines.push(style);
 		const limits = contentLimitsLine(preferences, 'chat');
 		if (limits) lines.push(limits);
+		const reasons = chatEditReasonLine(preferences);
+		if (reasons) lines.push(reasons);
 		const leaveAlone = leaveAloneLine(preferences, 'chat');
 		if (leaveAlone) lines.push(leaveAlone);
 		const notes = habitNotesLine(preferences, 'chat');

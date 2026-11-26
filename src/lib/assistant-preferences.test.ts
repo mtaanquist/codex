@@ -277,4 +277,19 @@ describe('feedback, length and content limits', () => {
 		]);
 		expect(preferencesFromLines(lines)).toEqual({ preferences: stored, unread: 0 });
 	});
+
+	it('refuses odd warning keys, and caps the warnings an import brings in', () => {
+		expect(
+			normalisePreferences({
+				'warning:a\nb': 'avoid',
+				'warning:a\u0000b': 'avoid',
+				[`warning:${'x'.repeat(101)}`]: 'avoid',
+				'warning:  ': 'avoid'
+			})
+		).toEqual({});
+		const lines = Array.from({ length: 105 }, (_, i) => `warning:w${i}: avoid`);
+		const { preferences, unread } = preferencesFromLines(lines);
+		expect(Object.keys(preferences)).toHaveLength(100);
+		expect(unread).toBe(5);
+	});
 });

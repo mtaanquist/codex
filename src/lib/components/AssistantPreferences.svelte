@@ -19,6 +19,7 @@
 		MAX_ASSISTANT_NOTES,
 		normaliseNotes,
 		normalisePreferences,
+		WARNING_PREFIX,
 		warningKey
 	} from '#lib/assistant-preferences';
 	import { MAX_DRAFT_WORDS, MIN_DRAFT_WORDS } from '#lib/scene-draft';
@@ -79,7 +80,7 @@
 			ASSISTANT_CHOICES.find((item) => item.key === key);
 		const label = list
 			? list.options.find((option) => option.value === value)?.label
-			: key.startsWith('warning:')
+			: key.startsWith(WARNING_PREFIX)
 				? CONTENT_LIMITS.find((option) => option.value === value)?.label
 				: value === 'leave'
 					? 'Leave alone'
@@ -133,7 +134,10 @@
 		action={ownAction('saveAssistantPreferences')}
 		use:enhance={autosaveSubmit}
 		onchange={autosubmitForm}
+		novalidate
 	>
+		<!-- novalidate: the browser's own check on the draft length would block
+		     every autosave until it was fixed, and never show the server's message. -->
 		<fieldset class="prefs-set">
 			<legend>House style</legend>
 			<p class="field-hint prefs-lead">
@@ -199,9 +203,10 @@
 						</p>
 					{:else if item.key === 'summaryLength'}
 						<p class="field-hint">
-							Scene and chapter summaries, character arcs, and "Catch me up". Detailed ones cost
-							more to write and to send with each request. Summaries already written keep their
-							length until they are written again.
+							Scene and chapter summaries, character arcs, and "Catch me up".{level === 'story'
+								? " Character arcs follow the universe's setting, since an arc spans its stories."
+								: ''} Detailed ones cost more. Summaries already written keep their length until they
+							are written again.
 						</p>
 					{/if}
 				</div>
@@ -222,8 +227,16 @@
 				/>
 				<p class="field-hint">
 					The length a new draft starts with, from {MIN_DRAFT_WORDS} to {MAX_DRAFT_WORDS}. You can
-					still change it for each draft. Leave it blank to use the usual length of the story's
-					scenes.
+					still change it for each draft.
+					{#if inherited}
+						Leave it blank to use {standalone
+							? 'the length for all your standalone stories'
+							: "the universe's length"}{inheritedWords
+							? ` (${inheritedWords} words)`
+							: ", or, where that is blank too, the usual length of the story's scenes"}.
+					{:else}
+						Leave it blank to use the usual length of each story's scenes.
+					{/if}
 				</p>
 			</div>
 		</fieldset>
@@ -238,7 +251,7 @@
 				</p>
 				{#each warnings as warning, index (warning.slug)}
 					{@const key = warningKey(warning.slug)}
-					<!-- A slug may hold spaces, so the element id goes by position. -->
+					<!-- A slug may hold characters an element id cannot, so the id goes by position. -->
 					<div class="field">
 						<label for={id(`warning-${index}`)}>{warning.name}</label>
 						<select id={id(`warning-${index}`)} class="select" name={key} value={values[key] ?? ''}>
