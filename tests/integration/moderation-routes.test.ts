@@ -287,12 +287,26 @@ describe('Admin > Reports actions', () => {
 	it('marks a report about an edition the writer has since replaced', async () => {
 		await fileReport();
 		const load = reportsPage.load as (event: unknown) => Promise<{
-			reports: { newerEdition: 'up' | 'hidden' | null }[];
+			reports: { newerEdition: 'up' | 'hidden' | 'closed' | null }[];
 		}>;
 		const locals = { user: moderator };
 		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: null }]);
 		const newer = await publishStory(db, author.id, storyId);
 		if (!newer.ok) throw new Error(newer.reason);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'up' }]);
+		// Readers cannot open it anyway while the story is private, in the
+		// trash, or its writer is suspended.
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'closed' }]);
+		await db
+			.update(stories)
+			.set({ visibility: 'public', deletedAt: new Date() })
+			.where(eq(stories.id, storyId));
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'closed' }]);
+		await db.update(stories).set({ deletedAt: null }).where(eq(stories.id, storyId));
+		await db.update(users).set({ suspendedAt: new Date() }).where(eq(users.id, author.id));
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'closed' }]);
+		await db.update(users).set({ suspendedAt: null }).where(eq(users.id, author.id));
 		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'up' }]);
 		// Hidden by a pending account deletion (no reason): a takedown still
 		// covers it, but readers cannot open it.
@@ -437,6 +451,27 @@ describe("the moderator's view of an edition", () => {
 		await expect404(loadEdition(publicationId));
 	});
 
+	it('a later takedown with no report does not reopen an edition whose takedown was restored', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect(await takedownPublication(db, newer.publicationId, moderator.id, 'other')).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		await expect404(loadEdition(publicationId));
+		expect((await loadPublished()).takenDown).toMatchObject([
+			{ id: newer.publicationId, viewable: false }
+		]);
+		// A new report on it, closed by a new takedown, opens it again.
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		await act(publishedPage, 'restore', { publicationId: newer.publicationId });
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
+	});
+
 	it('restoring a reported older edition also restores the current one taken down with it', async () => {
 		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
 		const newer = await publishStory(db, author.id, storyId);
@@ -496,7 +531,7 @@ describe('a publish racing a takedown of the same story', () => {
 		expect(rows[0]).toMatchObject({ isCurrent: true, removedReason: 'spam' });
 	});
 
-	it('a takedown that starts while a publish runs waits, then takes down the new edition', async () => {
+	it('a takedown that starts while a publish runs waits, then asks for a reload', async () => {
 		const client = await pool.connect();
 		let newId: string;
 		try {
@@ -515,7 +550,8 @@ describe('a publish racing a takedown of the same story', () => {
 			newId = inserted.rows[0].id;
 			let settled = false;
 			// The moderator acts on the edition they saw, now being replaced.
-			const takingDown = takedownPublication(db, publicationId, moderator.id, 'spam').then(
+			// They have not seen the newer text, so nothing is taken down.
+			const takingDown = act(publishedPage, 'takedown', { publicationId, reason: 'spam' }).then(
 				(value) => {
 					settled = true;
 					return value;
@@ -524,7 +560,10 @@ describe('a publish racing a takedown of the same story', () => {
 			await new Promise((resolve) => setTimeout(resolve, 200));
 			expect(settled).toBe(false);
 			await client.query('commit');
-			expect(await takingDown).toBe(true);
+			expect(await takingDown).toMatchObject({
+				status: 409,
+				data: { message: 'This story has a newer edition. Reload the page and try again.' }
+			});
 		} finally {
 			// After a failed expect the transaction is still open; never return
 			// a client holding the story lock to the pool.
@@ -532,7 +571,7 @@ describe('a publish racing a takedown of the same story', () => {
 			client.release();
 		}
 		const [current] = await db.select().from(publications).where(eq(publications.id, newId!));
-		expect(current).toMatchObject({ isCurrent: true, removedReason: 'spam' });
-		expect(await publishStory(db, author.id, storyId)).toMatchObject({ ok: false });
+		expect(current).toMatchObject({ isCurrent: true, removedAt: null, removedReason: null });
+		expect((await edition()).removedReason).toBeNull();
 	});
 });

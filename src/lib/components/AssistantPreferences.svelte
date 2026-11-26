@@ -242,7 +242,9 @@
 					What you are comfortable having the Assistant draft or comment on, for each content
 					warning. "Keep it off the page" asks the Assistant to imply or skip past it. "Write
 					freely" tells it the subject is fine where the story calls for it. The Assistant's own
-					rules still apply either way.
+					rules still apply either way. A limit you set on a warning that was later merged into
+					another still applies to the one it was merged into. Where the two differ, "Keep it off
+					the page" wins.
 				</p>
 				{#each warnings as warning, index (warning.slug)}
 					{@const key = warningKey(warning.slug)}

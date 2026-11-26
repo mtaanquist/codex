@@ -11,6 +11,7 @@ import {
 	MAX_ASSISTANT_NOTES,
 	NO_PREFERENCES
 } from '../../src/lib/assistant-preferences';
+import { NO_LANGUAGE } from '../../src/lib/writing-languages';
 import { ensureTestDatabase } from './test-db';
 
 // The Assistant preferences on a universe and a story, saved through the
@@ -31,8 +32,11 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 };
 const { createStoryInUniverse, standaloneUniverse } =
 	await import('../../src/lib/server/story-create');
-const { storyAssistantPreferences, universePreferences, workPreferences } =
+const { savePreferences, storyAssistantPreferences, universePreferences, workPreferences } =
 	await import('../../src/lib/server/assistant-preferences');
+const { mergeTag, renameTag, setTagRemoved, unmergeTag } =
+	await import('../../src/lib/server/tags');
+const { reviewSettingsKey } = await import('../../src/lib/server/review-runs');
 const { saveMcpInstanceEnabled } = await import('../../src/lib/server/mcp/settings');
 const universePage = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
@@ -204,8 +208,8 @@ describe('the assistant preferences', () => {
 			.where(eq(universes.id, universeId));
 		expect(row.preferences).not.toHaveProperty('warning:made-up');
 		expect((await universePreferences(db, universeId)).contentLimits).toEqual([
-			{ slug: 'gore', name: 'Gore', limit: 'avoid' },
-			{ slug: 'strong-language', name: 'Strong language', limit: 'write' }
+			{ id: gore.id, name: 'Gore', limit: 'avoid' },
+			{ id: language.id, name: 'Strong language', limit: 'write' }
 		]);
 		expect(await saveStory({ draftWords: '20000' })).toMatchObject({ status: 400 });
 		// A blank warning clears the story's own limit; one left out of the post is kept.
@@ -227,7 +231,6 @@ describe('the assistant preferences', () => {
 			{ kind: 'warning', name: 'Death', slug: 'death' },
 			{ kind: 'warning', name: 'Language', slug: 'language' }
 		]);
-		const { mergeTag, renameTag } = await import('../../src/lib/server/tags');
 		const tagId = async (slug: string) =>
 			(await db.select().from(tags).where(eq(tags.slug, slug)))[0].id;
 		// The form as the page showed it: every warning not set but Blood and Death.
@@ -240,8 +243,15 @@ describe('the assistant preferences', () => {
 		await saveStory(opened);
 		await saveUniverse(opened);
 		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
-		const moved = { 'warning:gore': 'avoid', 'warning:death': 'avoid' };
-		expect((await stored()).preferences).toMatchObject(moved);
+		// Nothing is copied: Gore folds in Blood's limit when it is read.
+		expect((await stored()).preferences).toEqual({
+			'warning:blood': 'avoid',
+			'warning:death': 'avoid'
+		});
+		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toMatchObject([
+			{ name: 'Death', limit: 'avoid' },
+			{ name: 'Gore', limit: 'avoid' }
+		]);
 
 		const notice = {
 			action: 'assistant-preferences',
@@ -276,8 +286,8 @@ describe('the assistant preferences', () => {
 			ok: true
 		});
 		const afterRename = limitsOf((await stored()).preferences);
-		expect(afterRename).toMatchObject({
-			'warning:gore': 'avoid',
+		expect(afterRename).toEqual({
+			'warning:blood': 'avoid',
 			'warning:character-death': 'avoid'
 		});
 		const renamedForm = {
@@ -310,8 +320,8 @@ describe('the assistant preferences', () => {
 			notes: 'Longer chapters.'
 		});
 		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toEqual([
-			{ slug: 'character-death', name: 'Character death', limit: 'avoid' },
-			{ slug: 'gore', name: 'Gore', limit: 'avoid' }
+			{ id: await tagId('character-death'), name: 'Character death', limit: 'avoid' },
+			{ id: await tagId('gore'), name: 'Gore', limit: 'avoid' }
 		]);
 
 		// A form opened now can clear and set them.
@@ -322,12 +332,19 @@ describe('the assistant preferences', () => {
 				'warning:language': 'write'
 			})
 		).toEqual({ action: 'assistant-preferences', saved: true });
-		// Blood's own key stays, so undoing the merge gives it back.
+		// Blood's own key stays, so undoing the merge gives it back, and while
+		// merged it still keeps Gore off the page. Character death now comes
+		// from the universe.
 		expect((await stored()).preferences).toEqual({
 			'warning:blood': 'avoid',
 			'warning:language': 'write',
 			tense: 'present'
 		});
+		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toMatchObject([
+			{ name: 'Character death', limit: 'avoid' },
+			{ name: 'Gore', limit: 'avoid' },
+			{ name: 'Language', limit: 'write' }
+		]);
 	});
 
 	it('gives a standalone story the standalone defaults, and shows them in Details', async () => {
@@ -513,5 +530,151 @@ describe('the assistant preferences', () => {
 		} finally {
 			await instanceDefault();
 		}
+	});
+});
+
+describe('content limits across merges, renames and removals', () => {
+	const tagId = async (slug: string) =>
+		(await db.select().from(tags).where(eq(tags.slug, slug)))[0].id;
+	const limits = async () =>
+		(await storyAssistantPreferences(db, storyId)).contentLimits.map(({ name, limit }) => [
+			name,
+			limit
+		]);
+	const allPreferences = async () => ({
+		story: (await stored()).preferences,
+		universe: (
+			await db
+				.select({ preferences: universes.assistantPreferences })
+				.from(universes)
+				.where(eq(universes.id, universeId))
+		)[0].preferences
+	});
+
+	beforeEach(async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Blood', slug: 'blood' }
+		]);
+	});
+
+	it("folds an avoid across rows: the universe's on the merged warning beats the story's write", async () => {
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'write']
+		]);
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+	});
+
+	it('takes a write on the merged warning when the survivor has none', async () => {
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it('gives each warning its own limits back on an undone merge, leaving nothing behind', async () => {
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		const before = await allPreferences();
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'write']
+		]);
+	});
+
+	it('applies a save that lands just after a merge, through the fold', async () => {
+		// The form was read before the merge, so it posted Blood as live.
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await savePreferences(
+			db,
+			user.id,
+			{ storyId },
+			{ changes: { 'warning:blood': 'avoid' }, notes: undefined }
+		);
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+	});
+
+	it('leaves out a limit posted for a warning renamed or removed since the form was read', async () => {
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		await setTagRemoved(db, 'warning', await tagId('blood'), true, user.id);
+		const result = await savePreferences(
+			db,
+			user.id,
+			{ storyId },
+			{
+				changes: { 'warning:gore': 'avoid', 'warning:blood': 'avoid', feedback: 'thorough' },
+				notes: undefined
+			}
+		);
+		expect(result).toBe('outdated');
+		const [row] = await db
+			.select({ preferences: stories.assistantPreferences })
+			.from(stories)
+			.where(eq(stories.id, storyId));
+		expect(row.preferences).toEqual({ feedback: 'thorough' });
+	});
+
+	it('follows a chain of merges, and drops the chain with a removed survivor', async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
+		// A chain two steps deep, as older data could hold.
+		await db
+			.update(tags)
+			.set({ mergedIntoId: await tagId('gore') })
+			.where(eq(tags.id, await tagId('blood')));
+		await db
+			.update(tags)
+			.set({ mergedIntoId: await tagId('violence') })
+			.where(eq(tags.id, await tagId('gore')));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:blood': 'avoid', 'warning:violence': 'write' } })
+			.where(eq(stories.id, storyId));
+		expect(await limits()).toEqual([['Violence', 'avoid']]);
+		await setTagRemoved(db, 'warning', await tagId('violence'), true, user.id);
+		expect(await limits()).toEqual([]);
+	});
+
+	it('keeps the limit and the review run key through a rename', async () => {
+		await saveStory({ 'warning:gore': 'avoid' });
+		const runKey = async () =>
+			reviewSettingsKey(
+				NO_LANGUAGE,
+				null,
+				false,
+				null,
+				await storyAssistantPreferences(db, storyId)
+			);
+		const before = await runKey();
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		expect(await limits()).toEqual([['Graphic gore', 'avoid']]);
+		expect(await runKey()).toBe(before);
+	});
+
+	it("drops a removed warning's limit, and a restore brings it back", async () => {
+		await saveStory({ 'warning:gore': 'avoid' });
+		await saveUniverse({ 'warning:blood': 'write' });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		expect(await limits()).toEqual([['Blood', 'write']]);
+		await setTagRemoved(db, 'warning', await tagId('gore'), false, user.id);
+		expect(await limits()).toEqual([
+			['Blood', 'write'],
+			['Gore', 'avoid']
+		]);
+		// One merged away and then removed still counts toward its survivor,
+		// which its stories keep showing.
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await saveStory({ 'warning:gore': '' });
+		await setTagRemoved(db, 'warning', await tagId('blood'), true, user.id);
+		expect(await limits()).toEqual([['Gore', 'write']]);
 	});
 });

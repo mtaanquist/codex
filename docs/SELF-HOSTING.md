@@ -447,10 +447,15 @@ From 4.0.0, Codex needs the pgvector extension in its database. The bundled
 version of the app, or the app and worker stop with a message saying pgvector
 is missing (nothing is changed when that happens).
 
-1. Take a backup, and write down its object key (the admin page lists the
-   backups). You need that key, not `latest`, to go back: the scheduled
-   backups keep running after the update.
-2. Stop the app and worker: `docker compose stop app worker`.
+1. Stop Codex, including the database: `docker compose stop`.
+2. Copy the database volume to a file, so you can go back. With the bundled
+   compose file the volume is `codex_db-data` (`docker volume ls` lists it):
+
+   ```bash
+   docker run --rm -v codex_db-data:/data -v "$PWD":/backup postgres:18.6-alpine3.24 \
+     tar -C /data -czf /backup/codex-db-before-4.0.tgz .
+   ```
+
 3. In your compose file, set the `db` service's image to
    `pgvector/pgvector:0.8.7-pg18-trixie` and, in the same edit, the Codex
    image tag to 4.0.0 or later. Keep the same volume; the data carries over.
@@ -459,25 +464,28 @@ is missing (nothing is changed when that happens).
 4. Run `docker compose pull` and then `docker compose up -d`. If you build
    Codex from source, run `docker compose up -d --build` instead.
 
-The first start of the new version rebuilds the database's indexes if the
-data was created by the old image, because the new image sorts text slightly
-differently. This runs once, inside the migration, and takes a moment on a
-large database. Wait for the app's log to show that the migrations finished;
-if `docker compose up -d` reports the app as unhealthy while they run, run it
-again once they are done. To go back to an earlier version afterwards:
+The first start of the new database image takes over the data files, and the
+first start of the new version rebuilds the database's indexes if the data
+was created by the old image, because the new image sorts text slightly
+differently. Both run once and take a while on a large database. Wait for the
+app's log to show that the migrations finished; if `docker compose up -d`
+reports `db` or `app` as unhealthy meanwhile, run it again once they are done.
 
-1. Stop the app and worker (`docker compose stop app worker`), and set both
-   the `db` image and the Codex image tag back to what they were.
-2. Start only the database: `docker compose up -d db`.
-3. Restore the backup from step 1 with the earlier Codex, naming its object
-   key: `docker compose run --rm app node scripts/restore-backup.ts <key>`.
-   Everything written since the update is lost.
-4. Rebuild the indexes (the restore leaves the job queue's tables alone, so
-   their indexes would stay out of order):
-   `docker compose exec db psql -U codex -d codex -c 'DROP EXTENSION IF EXISTS vector;' -c 'REINDEX DATABASE codex;'`
-5. Start the rest: `docker compose up -d`.
+To go back to the earlier version, put the copy from step 2 back. Everything
+written since the update is lost.
 
-Switching the image back without these steps leaves the indexes out of order.
+1. Stop Codex: `docker compose stop`.
+2. Replace the volume's contents with the copy:
+
+   ```bash
+   docker run --rm -v codex_db-data:/data -v "$PWD":/backup postgres:18.6-alpine3.24 \
+     sh -c 'find /data -mindepth 1 -delete && tar -C /data -xzpf /backup/codex-db-before-4.0.tgz'
+   ```
+
+3. Set the `db` image and the Codex image tag back to what they were, and run
+   `docker compose up -d`.
+
+Switching the image back without the copy leaves the indexes out of order.
 Keep the `-trixie` tag of the database image pinned: a new Debian release can
 change the sort order again, and Postgres does not warn about it for a
 database first created by the old image. If you move to another Debian base,

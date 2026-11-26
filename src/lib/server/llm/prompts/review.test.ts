@@ -356,7 +356,7 @@ describe('buildConfirmMessage', () => {
 	it("states the writer's content limits, and nothing when none are set", () => {
 		const limited = {
 			...NO_PREFERENCES,
-			contentLimits: [{ slug: 'gore', name: 'Gore', limit: 'avoid' as const }]
+			contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
 		};
 		for (const text of [
 			buildConfirmMessage('claim', [], 100, limited),

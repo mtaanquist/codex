@@ -64,9 +64,10 @@ export function reviewSettingsKey(
 	// reasons on edits and the content limits.
 	choices: PreferenceSetting | null = null
 ): string {
-	// By slug, so an admin renaming a warning does not restart a capped run.
+	// By the warning's id, which a rename keeps (the name and slug change), so
+	// an admin renaming a warning does not restart a capped run.
 	const limits = [...(choices?.contentLimits ?? [])]
-		.map(({ slug, limit }) => `${slug}:${limit}`)
+		.map(({ id, limit }) => `${id}:${limit}`)
 		.sort();
 	const input = JSON.stringify({
 		language: language.language,
@@ -105,7 +106,8 @@ export function storyReviewSettingsKey(
 		reads ? settings.preferences : null,
 		readsNative(parsed, patterns),
 		reads ? settings.styleNotes : null,
-		settings.preferences
+		// Only the sparing pass (no categories) states how much feedback.
+		parsed.length ? { ...settings.preferences, feedback: null } : settings.preferences
 	);
 }
 

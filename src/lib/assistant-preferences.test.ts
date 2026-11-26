@@ -203,11 +203,11 @@ describe('feedback, length and content limits', () => {
 				},
 				notes: null
 			},
-			new Map([
-				['gore', 'Gore'],
-				['strong-language', 'Strong language'],
-				['romance', 'Romance']
-			])
+			[
+				{ id: 'g', name: 'Gore', slug: 'gore', merged: [] },
+				{ id: 's', name: 'Strong language', slug: 'strong-language', merged: [] },
+				{ id: 'r', name: 'Romance', slug: 'romance', merged: [] }
+			]
 		);
 		expect(setting).toMatchObject({
 			feedback: 'sparing',
@@ -215,8 +215,8 @@ describe('feedback, length and content limits', () => {
 			summaryLength: null,
 			draftWords: 1500,
 			contentLimits: [
-				{ name: 'Gore', limit: 'write' },
-				{ name: 'Strong language', limit: 'avoid' }
+				{ id: 'g', name: 'Gore', limit: 'write' },
+				{ id: 's', name: 'Strong language', limit: 'avoid' }
 			]
 		});
 		// Without the live list there are no limits to state.
@@ -224,6 +224,32 @@ describe('feedback, length and content limits', () => {
 			effectivePreferences({ preferences: { 'warning:gore': 'avoid' }, notes: null }, null)
 				.contentLimits
 		).toEqual([]);
+	});
+
+	it('folds in the limits on warnings merged into a warning, avoid first', () => {
+		const gore = (merged: string[]) => [{ id: 'g', name: 'Gore', slug: 'gore', merged }];
+		const limits = (story: object, universe: object, merged = ['blood']) =>
+			effectivePreferences(
+				{ preferences: story, notes: null },
+				{ preferences: universe, notes: null },
+				gore(merged)
+			).contentLimits.map(({ limit }) => limit);
+		// Each key resolves story over universe before the fold, so the
+		// universe's "avoid" on the merged warning is not undone by the story's
+		// "write" on the survivor.
+		expect(limits({ 'warning:gore': 'write' }, { 'warning:blood': 'avoid' })).toEqual(['avoid']);
+		expect(limits({}, { 'warning:blood': 'write' })).toEqual(['write']);
+		expect(limits({ 'warning:blood': 'write' }, { 'warning:gore': 'write' })).toEqual(['write']);
+		// The story's own key for the merged warning wins over the universe's.
+		expect(limits({ 'warning:blood': 'write' }, { 'warning:blood': 'avoid' })).toEqual(['write']);
+		expect(
+			limits({ 'warning:gore': 'write' }, {}, ['blood', 'death']).concat(
+				limits({ 'warning:death': 'avoid' }, {}, ['blood', 'death'])
+			)
+		).toEqual(['write', 'avoid']);
+		expect(limits({}, {})).toEqual([]);
+		// Not merged in, a key on another slug counts for nothing.
+		expect(limits({ 'warning:blood': 'avoid' }, {}, [])).toEqual([]);
 	});
 
 	it('reads the form, a warning only when the page listed it', () => {
@@ -321,6 +347,11 @@ describe('feedback, length and content limits', () => {
 		const { preferences, unread } = preferencesFromLines(lines);
 		expect(Object.keys(preferences)).toHaveLength(100);
 		expect(unread).toBe(5);
+		// Only a valid limit counts toward the cap.
+		const junk = Array.from({ length: 150 }, (_, i) => `warning:junk${i}: maybe`);
+		const mixed = preferencesFromLines([...junk, 'warning:gore: avoid']);
+		expect(mixed.preferences).toEqual({ 'warning:gore': 'avoid' });
+		expect(mixed.unread).toBe(150);
 	});
 });
 

@@ -175,7 +175,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		assistantPreferencesShown: preferencesShown,
 		// The content warnings the preferences set a limit on, in list order.
 		contentWarnings: preferencesShown
-			? [...(await liveWarnings(db))].map(([slug, name]) => ({ slug, name }))
+			? (await liveWarnings(db)).map(({ slug, name }) => ({ slug, name }))
 			: [],
 		story,
 		universe,
@@ -287,9 +287,10 @@ export const actions: Actions = {
 	},
 	saveAssistantPreferences: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);
-		const read = readPreferencesForm(await request.formData(), [
-			...(await liveWarnings(db)).keys()
-		]);
+		const read = readPreferencesForm(
+			await request.formData(),
+			(await liveWarnings(db)).map(({ slug }) => slug)
+		);
 		if (!read.ok) {
 			return fail(400, {
 				action: 'assistant-preferences',
@@ -300,7 +301,7 @@ export const actions: Actions = {
 		const result = await savePreferences(db, locals.user!.id, { storyId: story.id }, read);
 		if (result === 'missing') error(404, 'Not found');
 		// Saved, with a notice that the limits were left alone.
-		if (read.outdated) {
+		if (read.outdated || result === 'outdated') {
 			return { action: 'assistant-preferences', saved: true, notice: OUTDATED_WARNINGS };
 		}
 		return { action: 'assistant-preferences', saved: true };

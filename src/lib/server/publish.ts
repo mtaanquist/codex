@@ -597,22 +597,29 @@ export async function takedownPublication(
 	reason: ReportReason
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
-		// Only an edition the moderator may read: a current edition of a story
-		// the author made private is not public, so there is nothing to act on.
 		const [target] = await tx
 			.select({ storyId: publications.storyId })
 			.from(publications)
-			.innerJoin(stories, eq(stories.id, publications.storyId))
-			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
+			.where(eq(publications.id, publicationId));
 		if (!target) return false;
 		// The same lock publishStory takes, so a publish running at the same
-		// moment either finishes first (and its edition is taken down here)
-		// or waits and then sees the takedown.
+		// moment either finishes first or waits and then sees the takedown.
 		await tx
 			.select({ id: stories.id })
 			.from(stories)
 			.where(eq(stories.id, target.storyId))
 			.for('update');
+		// Checked under the lock, so a publish that just finished is seen.
+		// Only an edition the moderator may read: a current edition of a story
+		// the author made private is not public, so there is nothing to act on,
+		// and an unreported edition a publish has just replaced is one the
+		// moderator has not seen the newer text of (editionReplaced says so).
+		const [readable] = await tx
+			.select({ id: publications.id })
+			.from(publications)
+			.innerJoin(stories, eq(stories.id, publications.storyId))
+			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
+		if (!readable) return false;
 		const updated = await tx
 			.update(publications)
 			// An edition already down with its author's account deletion gets
@@ -818,12 +825,34 @@ export async function listTakenDown(db: Database) {
 // Whether a moderator may read an edition's text on its own page: it is the
 // current edition of a story still shared (not private, not in the trash), or
 // it has a report that is open, or one closed by a takedown that still holds
-// on the story. A takedown alone does not unlock an edition, so one it put
+// on the story (nothing restored since the report closed). A takedown alone does not unlock an edition, so one it put
 // down only because it was the story's current edition (of a story the author
 // made private) stays unread, and once the takedown is lifted (a mistake) its
 // reports unlock nothing. A dismissed report does not unlock it either.
 function moderatorMayRead() {
-	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or (${publicationReports.resolution} = 'taken_down' and exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null)))))`;
+	// A takedown that closed a report still holds while some edition of the
+	// story is down with a reason and none was restored since the report
+	// closed: a restore lifts every edition's takedown at once, so a later
+	// takedown (of a newer edition, with no report) does not count.
+	const takedownHolds = sql`(exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null) and not exists (select 1 from ${publications} r where r.story_id = ${publications.storyId} and r.restored_at > ${publicationReports.resolvedAt}))`;
+	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or (${publicationReports.resolution} = 'taken_down' and ${takedownHolds}))))`;
+}
+
+// Whether an edition is up but no longer the story's current one: the
+// takedown form names it when a publish replaced the edition the moderator
+// was looking at.
+export async function editionReplaced(db: Database, publicationId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publications.id })
+		.from(publications)
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				eq(publications.isCurrent, false),
+				isNull(publications.removedAt)
+			)
+		);
+	return Boolean(row);
 }
 
 // Whether a moderator may load an uploaded image: one shown inline in an

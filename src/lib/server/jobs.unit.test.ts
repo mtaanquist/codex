@@ -149,7 +149,7 @@ describe('reviewSettingsKey', () => {
 		expect(reviewSettingsKey(NO_LANGUAGE, null, false)).toBe(plain);
 		const limits = (limit: 'avoid' | 'write') => ({
 			...NO_PREFERENCES,
-			contentLimits: [{ slug: 'gore', name: 'Gore', limit }]
+			contentLimits: [{ id: 'gore-id', name: 'Gore', limit }]
 		});
 		const keys = [
 			plain,
@@ -169,23 +169,32 @@ describe('reviewSettingsKey', () => {
 		const two = (a: string, b: string) => ({
 			...NO_PREFERENCES,
 			contentLimits: [
-				{ slug: a.toLowerCase(), name: a, limit: 'avoid' as const },
-				{ slug: b.toLowerCase(), name: b, limit: 'avoid' as const }
+				{ id: a.toLowerCase(), name: a, limit: 'avoid' as const },
+				{ id: b.toLowerCase(), name: b, limit: 'avoid' as const }
 			]
 		});
 		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, two('Gore', 'War'))).toBe(
 			reviewSettingsKey(NO_LANGUAGE, null, false, null, two('War', 'Gore'))
 		);
-		// Keyed by slug: renaming a warning keeps the key, another warning does not.
-		const named = (slug: string, name: string) => ({
+		// Keyed by the warning's id: a rename (new name and slug, same id) keeps
+		// the key, another warning does not.
+		const named = (id: string, name: string) => ({
 			...NO_PREFERENCES,
-			contentLimits: [{ slug, name, limit: 'avoid' as const }]
+			contentLimits: [{ id, name, limit: 'avoid' as const }]
 		});
-		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('gore', 'Gore'))).toBe(
-			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('gore', 'Graphic violence'))
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t1', 'Gore'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t1', 'Graphic violence'))
 		);
-		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('gore', 'Gore'))).not.toBe(
-			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('war', 'Gore'))
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t1', 'Gore'))).not.toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t2', 'Gore'))
+		);
+		// Read through effectivePreferences, a rename moves the slug and keeps the id.
+		const read = (slug: string, name: string) =>
+			effectivePreferences({ preferences: { [`warning:${slug}`]: 'avoid' }, notes: null }, null, [
+				{ id: 't1', name, slug, merged: [] }
+			]);
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, read('gore', 'Gore'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, read('graphic-gore', 'Graphic gore'))
 		);
 	});
 
@@ -220,6 +229,17 @@ describe('reviewSettingsKey', () => {
 				storyReviewSettingsKey(settings, ['lore'], undefined)
 			);
 		}
+	});
+
+	it('keys the feedback amount only for the sparing review, which states it', () => {
+		const settings = { language: NO_LANGUAGE, preferences: NO_PREFERENCES, styleNotes: null };
+		const more = { ...settings, preferences: { ...NO_PREFERENCES, feedback: 'thorough' as const } };
+		expect(storyReviewSettingsKey(more, [], undefined)).not.toBe(
+			storyReviewSettingsKey(settings, [], undefined)
+		);
+		expect(storyReviewSettingsKey(more, ['lore'], undefined)).toBe(
+			storyReviewSettingsKey(settings, ['lore'], undefined)
+		);
 	});
 
 	it('changes with the style notes, which the prose is judged against', () => {

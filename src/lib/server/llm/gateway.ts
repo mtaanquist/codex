@@ -393,11 +393,11 @@ export function capCeilingUsage(
 
 function wouldPassCap(p: Prepared, req: GatewayRequest, request: CappedRequest): boolean {
 	if (!req.meter || req.mayResend) return false;
-	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request), p.price);
+	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request), p.price, p.providerId);
 }
 
 function heldAtCap(p: Prepared, req: GatewayRequest, request: CappedRequest): SpendCapError {
-	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request), p.price));
+	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request), p.price, p.providerId));
 	return new SpendCapError();
 }
 
@@ -727,7 +727,7 @@ function recordUsage(
 	// during the run has none to store (the row's cost is unknown), and the
 	// meter then keeps to the price the run started with rather than count the
 	// request as free.
-	req.meter?.record(p.model, usage, p.price);
+	req.meter?.record(p.model, usage, p.price, p.providerId);
 	const search =
 		p.webSearch && usage?.webSearchRequests
 			? searchAllowanceFields(ceilingPromptTokens(messages, p.tools), maxTokens, usage)

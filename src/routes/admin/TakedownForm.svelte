@@ -24,8 +24,8 @@
 		reportId?: string | null;
 		// A takedown of a replaced edition takes the story's current one down
 		// too: 'up' when readers can open it, 'hidden' when the writer's account
-		// deletion hides it.
-		newer?: 'up' | 'hidden' | null;
+		// deletion hides it, 'closed' when readers cannot open it anyway.
+		newer?: 'up' | 'hidden' | 'closed' | null;
 	} = $props();
 
 	const takedown = $derived(mode === 'takedown');
@@ -35,7 +35,9 @@
 			? 'Readers can no longer open this edition or the newer one that replaced it.'
 			: newer === 'hidden'
 				? "Readers can no longer open this edition. The newer edition that replaced it, which the writer's account deletion hid, is taken down too."
-				: 'Readers can no longer open this edition.'
+				: newer === 'closed'
+					? 'Readers can no longer open this edition. The newer edition that replaced it is taken down too.'
+					: 'Readers can no longer open this edition.'
 	);
 </script>
 

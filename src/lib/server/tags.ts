@@ -27,7 +27,7 @@ export type ShownTag = {
 // Follows merged_into_id from each start id to the surviving tag. A merge
 // keeps every chain one step deep; the cap guards reads against a cycle or a
 // longer chain left by older data.
-const MAX_MERGE_DEPTH = 8;
+export const MAX_MERGE_DEPTH = 8;
 
 // The visible labels on each story, by story id, including the fandom its
 // universe is linked to (marked inherited, unless the story also has it).
@@ -527,62 +527,20 @@ export async function mergeTag(
 			.update(tags)
 			.set({ mergedIntoId: target.id })
 			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
-		if (source.kind === 'warning') {
-			const children = locked.filter((row) => row.mergedIntoId === source.id);
-			await carryContentLimits(
-				tx,
-				source.slug,
-				children.map((row) => row.slug),
-				target.slug
-			);
-		}
+		// A writer's content limits on a merged warning stay under its own slug;
+		// the survivor folds them in when they are read (liveWarnings).
 		return { ok: true };
 	});
-}
-
-// A writer's "Keep it off the page" limit (Assistant preferences) on a warning
-// merged away, or on one merged into it earlier (which the writer can no
-// longer see), is copied to the surviving warning, also over a "Write
-// freely" set on it, as a rename does (moveContentLimits): avoid wins. A
-// "Write freely" limit is not carried: it would widen what the Assistant
-// writes about the survivor, which the writer never chose. The old keys stay,
-// so an undone merge keeps them, and the copied "avoid" stays too, which only
-// keeps the Assistant more careful.
-async function carryContentLimits(
-	tx: Database,
-	sourceSlug: string,
-	childSlugs: string[],
-	toSlug: string
-) {
-	const from = sql`array[${sql.join(
-		[sourceSlug, ...childSlugs].map((slug) => sql`${warningKey(slug)}`),
-		sql`, `
-	)}]::text[]`;
-	const to = warningKey(toSlug);
-	const carry = (
-		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
-	) => ({
-		set: sql`${column} || jsonb_build_object(${to}::text, 'avoid')`,
-		where: sql`jsonb_exists_any(${column}, ${from}) and ${column} ->> ${to}::text is distinct from 'avoid' and exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid')`
-	});
-	// updated_at is kept as it was: this is the site's change, not the writer's.
-	const story = carry(stories.assistantPreferences);
-	await tx
-		.update(stories)
-		.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
-		.where(story.where);
-	const universe = carry(universes.assistantPreferences);
-	await tx
-		.update(universes)
-		.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
-		.where(universe.where);
 }
 
 // A writer's limit (Assistant preferences) on a renamed warning moves to its
 // new slug. The new slug is free on the list, but a key under it can be left
 // from older data or an import; that key was never chosen for this warning, so
 // it gives way, except that an "avoid" on either key is kept, which only keeps
-// the Assistant more careful. Renaming back moves the limit back.
+// the Assistant more careful. Renaming back moves the limit back. In each row
+// an "avoid" stays, a "write" stays or becomes "avoid", and no limit stays
+// none or becomes "avoid", so with a story's key over its universe's the
+// limit read is never wider than before.
 async function moveContentLimits(tx: Database, fromSlug: string, toSlug: string) {
 	const from = warningKey(fromSlug);
 	const to = warningKey(toSlug);

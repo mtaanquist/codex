@@ -114,6 +114,13 @@ describe('SpendMeter', () => {
 		expect(custom.spentUsd).toBeCloseTo(1, 10);
 	});
 
+	it('meters a request at the provider it went to, over the one the run started on', () => {
+		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 900 };
+		const meter = new SpendMeter({ pricing, capUsd: 1, provider: 'anthropic' });
+		meter.record('priced', usage, undefined, 'openai');
+		expect(meter.spentUsd).toBeCloseTo(0.55, 10);
+	});
+
 	it('accrues cost and reaches the cap', () => {
 		const meter = new SpendMeter({ pricing, capUsd: 0.5 });
 		meter.record('priced', { promptTokens: 100, completionTokens: 10 });

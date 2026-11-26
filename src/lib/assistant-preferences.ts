@@ -154,9 +154,13 @@ export type PreferenceSetting = {
 	editReasons: ChoiceValue<'editReasons'> | null;
 	summaryLength: ChoiceValue<'summaryLength'> | null;
 	draftWords: number | null;
-	// slug keys a limit (see reviewSettingsKey); name is what prompts state.
-	contentLimits: { slug: string; name: string; limit: ContentLimit }[];
+	// id keys a limit (see reviewSettingsKey); name is what prompts state.
+	contentLimits: { id: string; name: string; limit: ContentLimit }[];
 };
+
+// A content warning on the admin's live list, with the slugs of the warnings
+// merged into it (see liveWarnings), whose limits it takes on.
+export type LiveWarning = { id: string; name: string; slug: string; merged: string[] };
 
 export const NO_PREFERENCES: PreferenceSetting = {
 	houseStyle: { quoteMarks: null, serialComma: null, thoughts: null, tense: null, narration: null },
@@ -299,7 +303,10 @@ export function preferencesFromLines(lines: string[]): {
 	// way in for any slug; it is capped here.
 	let warnings = 0;
 	const capped = Object.fromEntries(
-		Object.entries(raw).filter(([key]) => !isWarningKey(key) || ++warnings <= MAX_WARNING_KEYS)
+		Object.entries(raw).filter(
+			([key, value]) =>
+				!isWarningKey(key) || (LIMIT_CHOICES.includes(value) && ++warnings <= MAX_WARNING_KEYS)
+		)
 	);
 	const preferences = normalisePreferences(capped);
 	return { preferences, unread: lines.length - Object.keys(preferences).length };
@@ -321,13 +328,19 @@ export function normaliseNotes(raw: unknown): string | null {
 
 // The preferences a story works under: each key the story's own, else the
 // universe's, else not set; the story's notes, else the universe's unless the
-// story turned those off (only the story's own choice counts). warnings
-// maps the slug of each live content warning to its name; a limit on any other
-// slug is left out, and with no map given there are no content limits.
+// story turned those off (only the story's own choice counts). warnings is
+// the live list of content warnings; a limit on a slug not on it, or merged
+// into one on it, is left out, and with no list given there are no content
+// limits.
+//
+// A warning's limit folds in the limits on the warnings merged into it, so a
+// merge needs no copying and an undone merge leaves nothing behind: each of
+// those slugs resolves as the story's own, else the universe's, and the
+// warning is "avoid" when any of them is, else "write" when any is.
 export function effectivePreferences(
 	story: { preferences: unknown; notes: string | null | undefined } | null,
 	universe: { preferences: unknown; notes: string | null | undefined } | null,
-	warnings: ReadonlyMap<string, string> = new Map()
+	warnings: readonly LiveWarning[] = []
 ): PreferenceSetting {
 	const own = normalisePreferences(story?.preferences);
 	const inherited = normalisePreferences(universe?.preferences);
@@ -336,13 +349,19 @@ export function effectivePreferences(
 	for (const { key } of HOUSE_STYLE) {
 		(houseStyle as Record<string, string | null>)[key] = merged[key] ?? null;
 	}
-	const contentLimits = [...warnings]
-		.map(([slug, name]) => ({
-			slug,
-			name,
-			limit: merged[warningKey(slug) as `warning:${string}`]
-		}))
-		.filter((entry): entry is { slug: string; name: string; limit: ContentLimit } =>
+	const contentLimits = warnings
+		.map(({ id, name, slug, merged: folded }) => {
+			const limits = [slug, ...folded].map(
+				(each) => merged[warningKey(each) as `warning:${string}`]
+			);
+			const limit: ContentLimit | undefined = limits.includes('avoid')
+				? 'avoid'
+				: limits.includes('write')
+					? 'write'
+					: undefined;
+			return { id, name, limit };
+		})
+		.filter((entry): entry is { id: string; name: string; limit: ContentLimit } =>
 			Boolean(entry.limit)
 		);
 	return {

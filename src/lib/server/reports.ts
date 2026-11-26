@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import { publicationReports, publications, stories, users } from './db/schema';
 import { notifyUsers } from './notify';
+import { storyIsLive } from './universe-scope';
 import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/report-reasons';
 
 // Readers report a published edition; admins and moderators work the queue.
@@ -79,11 +80,14 @@ export async function listOpenReports(db: Database, limit = 100) {
 			title: publications.title,
 			storyId: publications.storyId,
 			// A newer edition replaced this one and is not taken down, so a
-			// takedown takes that one down too: 'up' while readers can open it,
-			// 'hidden' while the writer's account deletion hides it, else null.
+			// takedown takes that one down too: 'up' while readers can open it
+			// (the checks publicEdition makes), 'hidden' while the writer's
+			// account deletion hides it, 'closed' while readers cannot open it
+			// anyway (the story is private or in the trash, or the writer is
+			// suspended), else null.
 			newerEdition: sql<
-				'up' | 'hidden' | null
-			>`(select case when c.removed_at is null then 'up' else 'hidden' end from ${publications} c where c.story_id = ${publications.storyId} and c.is_current and c.removed_reason is null and c.id <> ${publications.id} limit 1)`,
+				'up' | 'hidden' | 'closed' | null
+			>`(select case when c.removed_at is not null then 'hidden' when ${stories.visibility} <> 'private' and ${storyIsLive()} and ${stories.ownerId} = c.owner_id and exists (select 1 from ${users} o where o.id = c.owner_id and o.suspended_at is null) then 'up' else 'closed' end from ${publications} c where c.story_id = ${publications.storyId} and c.is_current and c.removed_reason is null and c.id <> ${publications.id} limit 1)`,
 			editionRemovedAt: publications.removedAt,
 			// Set only by a moderator's takedown, not by account deletion.
 			editionRemovedReason: publications.removedReason,

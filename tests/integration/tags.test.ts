@@ -182,119 +182,49 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Fam']);
 	});
 
-	it('carries a "Keep it off the page" limit on a merged warning over to its survivor', async () => {
+	it("leaves writers' content limits as stored on a merge and its undo", async () => {
 		await db.insert(tags).values([
 			{ kind: 'warning', name: 'Gore', slug: 'gore' },
 			{ kind: 'warning', name: 'Blood', slug: 'blood' },
 			{ kind: 'warning', name: 'Graphic Violence', slug: 'graphic-violence' }
 		]);
 		const [universe] = await db.select().from(universes);
+		const storyPrefs = { 'warning:gore': 'write', tense: 'past' };
+		const otherPrefs = { 'warning:gore': 'avoid', 'warning:graphic-violence': 'write' };
+		const universePrefs = { 'warning:blood': 'avoid' };
 		await db
 			.update(stories)
-			.set({ assistantPreferences: { 'warning:gore': 'write', tense: 'past' } })
+			.set({ assistantPreferences: storyPrefs })
 			.where(eq(stories.id, storyId));
-		// "Write freely" on the survivor gives way to an "avoid" on the merged one.
 		await db
 			.update(stories)
-			.set({
-				assistantPreferences: { 'warning:gore': 'avoid', 'warning:graphic-violence': 'write' }
-			})
+			.set({ assistantPreferences: otherPrefs })
 			.where(eq(stories.id, otherStoryId));
 		await db
 			.update(universes)
-			.set({ assistantPreferences: { 'warning:blood': 'avoid' } })
+			.set({ assistantPreferences: universePrefs })
 			.where(eq(universes.id, universe.id));
-		const prefs = async (id: string) =>
+		const story = async (id: string) =>
 			(await db.select().from(stories).where(eq(stories.id, id)))[0];
-		const universePrefs = async () =>
-			(await db.select().from(universes).where(eq(universes.id, universe.id)))[0]
-				.assistantPreferences;
-		const updatedAt = (await prefs(storyId)).updatedAt;
+		const universeRow = async () =>
+			(await db.select().from(universes).where(eq(universes.id, universe.id)))[0];
+		const before = { story: await story(storyId), universe: await universeRow() };
+		const unchanged = async () => {
+			expect(await story(storyId)).toEqual(before.story);
+			expect((await story(otherStoryId)).assistantPreferences).toEqual(otherPrefs);
+			expect(await universeRow()).toEqual(before.universe);
+		};
 
-		// Blood into Gore first, so merging Gore moves Blood along with it.
+		// The survivor folds the merged warnings' limits in when they are read
+		// (see tests/integration/assistant-preferences.test.ts), so nothing is copied.
 		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
 		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Graphic Violence')).toEqual({
 			ok: true
 		});
-		// "Write freely" is not carried: it would widen what the Assistant writes.
-		const one = await prefs(storyId);
-		expect(one.assistantPreferences).toEqual({ 'warning:gore': 'write', tense: 'past' });
-		expect(one.updatedAt).toEqual(updatedAt);
-		expect((await prefs(otherStoryId)).assistantPreferences).toEqual({
-			'warning:gore': 'avoid',
-			'warning:graphic-violence': 'avoid'
-		});
-		expect(await universePrefs()).toEqual({
-			'warning:blood': 'avoid',
-			'warning:gore': 'avoid',
-			'warning:graphic-violence': 'avoid'
-		});
-
-		// Undoing the merge leaves the copied "avoid" in place.
+		await unchanged();
 		expect(await unmergeTag(db, 'warning', await tagId('gore'))).toBe(true);
-		expect(await universePrefs()).toMatchObject({
-			'warning:gore': 'avoid',
-			'warning:graphic-violence': 'avoid'
-		});
-		expect((await prefs(storyId)).assistantPreferences).toEqual({
-			'warning:gore': 'write',
-			tense: 'past'
-		});
-	});
-
-	it('carries an "avoid" from the hidden warnings merged into a merged warning', async () => {
-		await db.insert(tags).values([
-			{ kind: 'warning', name: 'Gore', slug: 'gore' },
-			{ kind: 'warning', name: 'Blood', slug: 'blood' },
-			{ kind: 'warning', name: 'Violence', slug: 'violence' }
-		]);
-		await db
-			.update(stories)
-			.set({ assistantPreferences: { 'warning:gore': 'write', 'warning:blood': 'avoid' } })
-			.where(eq(stories.id, storyId));
-		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
-		const [after] = await db.select().from(stories).where(eq(stories.id, storyId));
-		// Avoid wins over the "Write freely" Gore had.
-		expect(after.assistantPreferences).toMatchObject({ 'warning:gore': 'avoid' });
-		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({ ok: true });
-		const [last] = await db.select().from(stories).where(eq(stories.id, storyId));
-		expect(last.assistantPreferences).toMatchObject({ 'warning:violence': 'avoid' });
-
-		await db.insert(tags).values([
-			{ kind: 'warning', name: 'A', slug: 'a' },
-			{ kind: 'warning', name: 'B', slug: 'b' },
-			{ kind: 'warning', name: 'C', slug: 'c' }
-		]);
-		await db
-			.update(stories)
-			.set({ assistantPreferences: { 'warning:a': 'write', 'warning:b': 'avoid' } })
-			.where(eq(stories.id, otherStoryId));
-		expect(await mergeTag(db, 'warning', await tagId('a'), 'C')).toEqual({ ok: true });
-		const [mid] = await db.select().from(stories).where(eq(stories.id, otherStoryId));
-		expect(mid.assistantPreferences).not.toHaveProperty('warning:c');
-		expect(await mergeTag(db, 'warning', await tagId('b'), 'C')).toEqual({ ok: true });
-		const [end] = await db.select().from(stories).where(eq(stories.id, otherStoryId));
-		expect(end.assistantPreferences).toMatchObject({ 'warning:c': 'avoid' });
-	});
-
-	it('an "avoid" on a hidden merged warning wins over "Write freely" on the survivor', async () => {
-		await db.insert(tags).values([
-			{ kind: 'warning', name: 'Gore', slug: 'gore' },
-			{ kind: 'warning', name: 'Blood', slug: 'blood' },
-			{ kind: 'warning', name: 'Violence', slug: 'violence' }
-		]);
-		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
-		// Set after the first merge, as a writer could from data or an import.
-		await db
-			.update(stories)
-			.set({ assistantPreferences: { 'warning:blood': 'avoid', 'warning:violence': 'write' } })
-			.where(eq(stories.id, storyId));
-		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({ ok: true });
-		const [row] = await db.select().from(stories).where(eq(stories.id, storyId));
-		expect(row.assistantPreferences).toEqual({
-			'warning:blood': 'avoid',
-			'warning:violence': 'avoid'
-		});
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		await unchanged();
 	});
 
 	it('a save while merged or removed keeps the old entry, so undoing gives it back', async () => {

@@ -117,6 +117,12 @@ function inputSchema(tool: ToolDef): Record<string, unknown> {
 	};
 }
 
+// The card only opens the app's own notes, so it needs the suggest permission
+// as well as apply.
+function cardAllowed(permissions: readonly McpPermission[]): boolean {
+	return permissions.includes('apply') && permissions.includes('suggest');
+}
+
 export function mcpTools(permissions: readonly McpPermission[]): McpTool[] {
 	const shared = TOOLS.filter((tool) => offered(tool, permissions)).map((tool) => ({
 		name: tool.name,
@@ -124,7 +130,7 @@ export function mcpTools(permissions: readonly McpPermission[]): McpTool[] {
 		inputSchema: inputSchema(tool),
 		readOnly: tool.kind === 'read'
 	}));
-	if (!permissions.includes('apply')) return shared;
+	if (!cardAllowed(permissions)) return shared;
 	return [
 		...shared,
 		...CARD_TOOLS.map((tool) => ({
@@ -182,7 +188,7 @@ export async function callMcpTool(
 	if (
 		!tool ||
 		(shared && !offered(shared, identity.permissions)) ||
-		(card && !identity.permissions.includes('apply'))
+		(card && !cardAllowed(identity.permissions))
 	) {
 		return refuse('unknown_tool', `Unknown tool: ${name}.`);
 	}

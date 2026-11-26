@@ -326,6 +326,9 @@ describe('what a connection is offered', () => {
 		const opened = await open(alice.suggestOnly, alice, noteId);
 		expect(opened.isError).toBe(true);
 		expect(opened.pass).toBeUndefined();
+		// Apply without suggest offers nothing either.
+		const applyOnly = await connect(alice.userId, 'Applier', ['read', 'apply'], 'apply.example');
+		expect((await open(applyOnly, alice, noteId)).isError).toBe(true);
 	});
 });
 

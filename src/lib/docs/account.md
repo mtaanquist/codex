@@ -278,7 +278,7 @@ Your words are sent only to the endpoint you set here.
   first scene; raise the cap or turn web search off if that happens. The
   estimate shown before a review leaves searches out, and says so when web
   search is on. Claude also charges a fee for each search on top of tokens
-  (usually 10 dollars per 1,000 searches, unless your price list sets another). The cost shown includes it, and the spend
+  (10 dollars per 1,000 searches). The cost shown includes it, and the spend
   cap sets aside the fee for the most searches a request can make. Part of
   the room it keeps is a set amount for each search's results, and a search
   can bring back more than that, so a run that searches can end over the
@@ -467,8 +467,9 @@ To make a token:
    Suggestions and comments left with the token are shown under this name.
 3. Leave "Leave suggestions and comments" ticked if the tool should be able to
    leave them, or untick it to let the tool read only. Tick "Let you accept its
-   suggestions in the app" only if the tool can show you its notes to accept;
-   see [Connecting an app](/docs/connecting-apps).
+   suggestions in the app" only if the tool can show you its notes to accept
+   and you trust it: a tool with this ticked can accept edits itself. See
+   [Connecting an app](/docs/connecting-apps).
 4. Choose how long the token lasts. It stops working after that, and you make
    a new one.
 5. Type your password, and the code from your authenticator app if you use
