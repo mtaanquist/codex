@@ -344,8 +344,10 @@
 									fandomId = null;
 									fandomName = null;
 									saveDetails();
-								}}>Unlink</button
+								}}
 							>
+								Unlink
+							</button>
 						</p>
 					{/if}
 					<FandomSuggest

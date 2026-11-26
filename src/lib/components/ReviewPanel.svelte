@@ -222,9 +222,9 @@
 					<button class="btn btn-sm btn-primary" type="submit" disabled={!canSave}>
 						{composer.mode === 'suggest' ? 'Save suggestion' : 'Comment'}
 					</button>
-					<button class="btn btn-sm btn-ghost" type="button" onclick={onCloseComposer}
-						>Cancel</button
-					>
+					<button class="btn btn-sm btn-ghost" type="button" onclick={onCloseComposer}>
+						Cancel
+					</button>
 				</div>
 			</form>
 		</div>

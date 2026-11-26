@@ -260,11 +260,11 @@
 				{#if item.kind === 'sep'}
 					<span class="md-sep"></span>
 				{:else if item.kind === 'cmd'}
-					<span class="md-tool"
-						>{#if item.icon}<Icon name={item.icon} size={16} />{:else}<span class="md-tool-label"
-								>{item.label}</span
-							>{/if}</span
-					>
+					<span class="md-tool">
+						{#if item.icon}<Icon name={item.icon} size={16} />{:else}<span class="md-tool-label">
+								{item.label}
+							</span>{/if}
+					</span>
 				{:else}
 					<span class="md-tool"><Icon name={item.icon} size={16} /></span>
 				{/if}

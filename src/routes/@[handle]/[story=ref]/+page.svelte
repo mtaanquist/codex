@@ -89,8 +89,10 @@
 							href={resolve('/@[handle]/universes/[universe=ref]', {
 								handle: data.handle,
 								universe: data.universe.slug
-							})}>{data.universe.name}</a
-						>{/if}
+							})}
+						>
+							{data.universe.name}
+						</a>{/if}
 				</p>
 				<h1 class="reader-title">{data.title}</h1>
 				<p class="reader-byline">

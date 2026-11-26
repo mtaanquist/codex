@@ -285,9 +285,9 @@
 								{result.created
 									? 'The scene was added back to the working draft.'
 									: 'The scene in the working draft now has this text. The text it replaced is in its History.'}
-								<a href={withQuery(workingHref, { scene: result.restoredSceneId })}
-									>Open the scene</a
-								>
+								<a href={withQuery(workingHref, { scene: result.restoredSceneId })}>
+									Open the scene
+								</a>
 							</p>
 						{/if}
 						{#if comparing[scene.id] && state === 'changed'}

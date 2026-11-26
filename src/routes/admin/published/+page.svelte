@@ -133,8 +133,10 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Allow {story.title} in Browse again">Allow in Browse again</button
+									aria-label="Allow {story.title} in Browse again"
 								>
+									Allow in Browse again
+								</button>
 							</form>
 						</div>
 					</div>
@@ -181,8 +183,10 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Restore {edition.title}">Restore</button
+									aria-label="Restore {edition.title}"
 								>
+									Restore
+								</button>
 							</form>
 						</div>
 					</div>

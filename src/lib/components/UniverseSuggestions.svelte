@@ -94,15 +94,19 @@
 								name="decision"
 								value="accept"
 								class="btn btn-primary btn-sm"
-								aria-label="Accept {entry.name}">Accept</button
+								aria-label="Accept {entry.name}"
 							>
+								Accept
+							</button>
 							<button
 								type="submit"
 								name="decision"
 								value="dismiss"
 								class="btn btn-ghost btn-sm"
-								aria-label="Dismiss {entry.name}">Dismiss</button
+								aria-label="Dismiss {entry.name}"
 							>
+								Dismiss
+							</button>
 						</form>
 					</div>
 				{/each}
@@ -137,8 +141,10 @@
 								<a
 									href={withQuery(resolve('/stories/[id]', { id: split.storyId }), {
 										scene: split.sceneId
-									})}>{sceneName}</a
+									})}
 								>
+									{sceneName}
+								</a>
 								in {split.storyTitle}
 							</div>
 							<div class="list-sub">Proposed by {split.from}.</div>
@@ -154,15 +160,19 @@
 								name="decision"
 								value="confirm"
 								class="btn btn-primary btn-sm"
-								aria-label="Split here: {sceneName}">Split here</button
+								aria-label="Split here: {sceneName}"
 							>
+								Split here
+							</button>
 							<button
 								type="submit"
 								name="decision"
 								value="dismiss"
 								class="btn btn-ghost btn-sm"
-								aria-label="Dismiss the split of {sceneName}">Dismiss</button
+								aria-label="Dismiss the split of {sceneName}"
 							>
+								Dismiss
+							</button>
 						</form>
 					</div>
 				{/each}
@@ -206,8 +216,10 @@
 									scene: draft.sceneId,
 									draft: 'show'
 								})}
-								aria-label="Open the draft for {sceneName}">Open draft</a
+								aria-label="Open the draft for {sceneName}"
 							>
+								Open draft
+							</a>
 						</div>
 					</div>
 				{/each}

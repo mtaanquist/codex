@@ -35,8 +35,10 @@
 	{#each items as item, index (item.slug)}{#if index > 0},
 		{/if}{#if page.data.browse}<a
 				href={browseHref(key, item.slug)}
-				data-sveltekit-preload-data="tap">{item.name}</a
-			>{:else}{item.name}{/if}{/each}
+				data-sveltekit-preload-data="tap"
+			>
+				{item.name}
+			</a>{:else}{item.name}{/if}{/each}
 {/snippet}
 
 <dl class="story-labels">

@@ -107,9 +107,9 @@
 										<span class="bell-item-detail">{item.detail}</span>
 									{/if}
 								</span>
-								<span class="bell-age"
-									>{relativeShort(item.createdAt, page.data.timeZone, now())}</span
-								>
+								<span class="bell-age">
+									{relativeShort(item.createdAt, page.data.timeZone, now())}
+								</span>
 							</button>
 						</li>
 					{/each}

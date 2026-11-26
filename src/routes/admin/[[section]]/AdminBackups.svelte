@@ -49,12 +49,9 @@
 			<span class="dot"></span>
 			<span>
 				<span class="v">Backups are on</span>
-				{#if lastBackup}<span class="x"
-						>- last run {lastBackup.status} on {formatDate(
-							lastBackup.startedAt,
-							page.data.timeZone
-						)}</span
-					>{/if}
+				{#if lastBackup}<span class="x">
+						- last run {lastBackup.status} on {formatDate(lastBackup.startedAt, page.data.timeZone)}
+					</span>{/if}
 			</span>
 			<span class="when">
 				<form method="POST" action="?/runBackup">

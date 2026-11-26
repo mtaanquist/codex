@@ -64,9 +64,9 @@
 					onclick={() => onSelect(tab.id)}
 					onkeydown={(event) => onKeydown(event, tab.id)}
 				>
-					{tab.label}{#if tab.count !== undefined && tab.count > 0}<span class="seg-count"
-							>{tab.count}</span
-						>{/if}
+					{tab.label}{#if tab.count !== undefined && tab.count > 0}<span class="seg-count">
+							{tab.count}
+						</span>{/if}
 				</button>
 			{/each}
 		</div>

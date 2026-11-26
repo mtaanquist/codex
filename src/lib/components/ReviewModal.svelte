@@ -468,11 +468,11 @@
 								{#each estimate.lines as line, i (i)}
 									<li>
 										<span class="rm-line-label">{line.label}</span>
-										<span class="rm-line-value"
-											>{line.tokens !== undefined
+										<span class="rm-line-value">
+											{line.tokens !== undefined
 												? `${formatNumber(line.tokens)} tokens`
-												: line.note}</span
-										>
+												: line.note}
+										</span>
 									</li>
 								{/each}
 							</ul>
@@ -553,9 +553,9 @@
 									Look for habits that repeat in the prose
 									<span class="choice-hint">
 										one note per habit, with the fixes linked to it.
-										<a href={resolve('/docs/[topic]', { topic: 'reviewing' })} target="_blank"
-											>How this works</a
-										>
+										<a href={resolve('/docs/[topic]', { topic: 'reviewing' })} target="_blank">
+											How this works
+										</a>
 									</span>
 								</span>
 							</label>
@@ -597,9 +597,9 @@
 				{#if progress}
 					<button class="btn btn-sm btn-primary" type="button" onclick={close}>Close</button>
 				{:else if estimate}
-					<button class="btn btn-sm btn-secondary" type="button" onclick={() => (estimate = null)}
-						>Back</button
-					>
+					<button class="btn btn-sm btn-secondary" type="button" onclick={() => (estimate = null)}>
+						Back
+					</button>
 					<button class="btn btn-sm btn-primary" type="button" onclick={run}>
 						{warned ? 'Start anyway' : 'Start review'}
 					</button>

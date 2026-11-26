@@ -93,9 +93,9 @@
 			aria-label={ariaLabel ?? addLabel}
 		/>
 	{:else}
-		<button type="button" id={inputId} class="chip dashed" onclick={startAdding}
-			>+ {addLabel}</button
-		>
+		<button type="button" id={inputId} class="chip dashed" onclick={startAdding}>
+			+ {addLabel}
+		</button>
 	{/if}
 	{#if suggestions.length > 0}
 		<datalist id="{listId}-list">

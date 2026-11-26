@@ -235,8 +235,9 @@
 			</div>
 
 			<div class="settings-actions">
-				<button type="submit" formaction="?/testEmail" class="btn btn-ghost">Send test email</button
-				>
+				<button type="submit" formaction="?/testEmail" class="btn btn-ghost">
+					Send test email
+				</button>
 				<button type="submit" class="btn btn-primary">Save</button>
 			</div>
 		</form>

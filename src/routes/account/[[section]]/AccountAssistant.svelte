@@ -296,16 +296,18 @@
 <div class="admin-block">
 	<form method="POST" action="?/toggleAssistant">
 		<div class="killswitch" class:engaged={assistantOff}>
-			<span class="ks-ic"
-				><svg
+			<span class="ks-ic">
+				<svg
 					viewBox="0 0 24 24"
 					fill="none"
 					stroke="currentColor"
 					stroke-width="1.8"
 					stroke-linecap="round"
-					stroke-linejoin="round"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></svg
-				></span
-			>
+					stroke-linejoin="round"
+				>
+					<path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+				</svg>
+			</span>
 			<div class="ks-body">
 				<div class="ks-titlerow">
 					<span class="ks-title">Assistant kill switch</span>
@@ -344,19 +346,20 @@
 	<div class="admin-card tight">
 		<div class="attn-list">
 			<div class="list-row">
-				<span class="list-ic"
-					><svg
+				<span class="list-ic">
+					<svg
 						viewBox="0 0 24 24"
 						fill="none"
 						stroke="currentColor"
 						stroke-width="1.8"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path d="m9 11 3 3L22 4" /><path
+					>
+						<path d="m9 11 3 3L22 4" /><path
 							d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"
-						/></svg
-					></span
-				>
+						/>
+					</svg>
+				</span>
 				<div class="list-main">
 					<div class="list-title">Only when you ask</div>
 					<div class="list-sub">
@@ -366,19 +369,18 @@
 				</div>
 			</div>
 			<div class="list-row">
-				<span class="list-ic"
-					><svg
+				<span class="list-ic">
+					<svg
 						viewBox="0 0 24 24"
 						fill="none"
 						stroke="currentColor"
 						stroke-width="1.8"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><rect x="3" y="11" width="18" height="11" rx="2" /><path
-							d="M7 11V7a5 5 0 0 1 10 0v4"
-						/></svg
-					></span
-				>
+					>
+						<rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+					</svg>
+				</span>
 				<div class="list-main">
 					<div class="list-title">Your words stay yours</div>
 					<div class="list-sub">
@@ -387,17 +389,18 @@
 				</div>
 			</div>
 			<div class="list-row">
-				<span class="list-ic"
-					><svg
+				<span class="list-ic">
+					<svg
 						viewBox="0 0 24 24"
 						fill="none"
 						stroke="currentColor"
 						stroke-width="1.8"
 						stroke-linecap="round"
 						stroke-linejoin="round"
-						><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></svg
-					></span
-				>
+					>
+						<path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" />
+					</svg>
+				</span>
 				<div class="list-main">
 					<div class="list-title">Off in one tap</div>
 					<div class="list-sub">
@@ -442,9 +445,9 @@
 					<label for="assistant_style">Style</label>
 					<select id="assistant_style" name="persona" class="select">
 						{#each data.personas as preset (preset.id)}
-							<option value={preset.id} selected={data.assistant.persona === preset.id}
-								>{preset.label} - {preset.description}</option
-							>
+							<option value={preset.id} selected={data.assistant.persona === preset.id}>
+								{preset.label} - {preset.description}
+							</option>
 						{/each}
 					</select>
 					<p class="field-hint">
@@ -491,9 +494,9 @@
 					</select>
 					{#if activePreset}
 						<p class="field-hint">
-							<a href={activePreset.docsUrl} target="_blank" rel="external noopener noreferrer"
-								>Get an API key</a
-							>
+							<a href={activePreset.docsUrl} target="_blank" rel="external noopener noreferrer">
+								Get an API key
+							</a>
 							from {activePreset.label}.
 						</p>
 					{/if}
@@ -520,9 +523,9 @@
 							placeholder="http://ollama.local:11434/v1"
 						/>
 						<p class="field-hint">
-							Example: <code style="font-family: var(--font-mono); font-size: 12px;"
-								>http://ollama.local:11434/v1</code
-							> for Ollama, or any other OpenAI-compatible endpoint.
+							Example: <code style="font-family: var(--font-mono); font-size: 12px;">
+								http://ollama.local:11434/v1
+							</code> for Ollama, or any other OpenAI-compatible endpoint.
 						</p>
 					{/if}
 				</div>
@@ -597,12 +600,12 @@
 				<div class="field">
 					<label for="tool_profile">Tools offered</label>
 					<select id="tool_profile" name="toolProfile" class="select">
-						<option value="full" selected={data.assistant.toolProfile !== 'minimal'}
-							>All tools</option
-						>
-						<option value="minimal" selected={data.assistant.toolProfile === 'minimal'}
-							>Fewer tools</option
-						>
+						<option value="full" selected={data.assistant.toolProfile !== 'minimal'}>
+							All tools
+						</option>
+						<option value="minimal" selected={data.assistant.toolProfile === 'minimal'}>
+							Fewer tools
+						</option>
 					</select>
 					<p class="field-hint">
 						The assistant can look things up in your work and hand suggestions back. Pick Fewer
@@ -678,9 +681,9 @@
 							success={form?.scope === 'assistant-endpoint' && form.saved ? 'Saved.' : null}
 						/>
 					{/if}
-					<button type="submit" class="btn btn-ghost" formaction={ownAction('testAssistant')}
-						>Test connection</button
-					>
+					<button type="submit" class="btn btn-ghost" formaction={ownAction('testAssistant')}>
+						Test connection
+					</button>
 				</div>
 			</form>
 		</div>
@@ -728,24 +731,27 @@
 							</div>
 							<div class="role-row-controls">
 								<select class="select" name={role.id}>
-									<option value="" selected={!savedModels[role.id]}>{unpickedLabel(role.id)}</option
-									>
+									<option value="" selected={!savedModels[role.id]}>
+										{unpickedLabel(role.id)}
+									</option>
 									{#each modelOptions as model (model)}
-										<option value={model} selected={savedModels[role.id] === model}
-											>{modelLabel(model)}</option
-										>
+										<option value={model} selected={savedModels[role.id] === model}>
+											{modelLabel(model)}
+										</option>
 									{/each}
 								</select>
 								<div class="role-row-tune">
-									<span class="role-row-summary" title={tuningSummary(role.id)}
-										>{tuningSummary(role.id)}</span
-									>
+									<span class="role-row-summary" title={tuningSummary(role.id)}>
+										{tuningSummary(role.id)}
+									</span>
 									<button
 										type="button"
 										class="btn btn-ghost btn-sm"
 										aria-label="Tune {role.name}"
-										onclick={(event) => openTuning(role, event)}>Tune</button
+										onclick={(event) => openTuning(role, event)}
 									>
+										Tune
+									</button>
 								</div>
 							</div>
 						</div>
@@ -862,8 +868,10 @@
 					<button
 						type="submit"
 						class="btn btn-ghost"
-						formaction={ownAction('discoverAssistantModels')}>Discover models</button
+						formaction={ownAction('discoverAssistantModels')}
 					>
+						Discover models
+					</button>
 				</div>
 			</form>
 		</div>

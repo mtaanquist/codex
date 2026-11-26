@@ -24,8 +24,8 @@
 		<button class="btn btn-sm btn-secondary" type="button" disabled={paused} onclick={onLoadNewer}>
 			Load newer version
 		</button>
-		<button class="btn btn-sm btn-primary" type="button" disabled={paused} onclick={onKeepMine}
-			>Keep mine</button
-		>
+		<button class="btn btn-sm btn-primary" type="button" disabled={paused} onclick={onKeepMine}>
+			Keep mine
+		</button>
 	</div>
 </div>
