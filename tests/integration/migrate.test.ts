@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import pg from 'pg';
 import {
 	CANCEL_ON_MIGRATE_APP_NAME,
+	hasPgvector,
 	readJournal,
 	runMigrations
 } from '../../src/lib/server/db/migrate';
@@ -45,6 +46,18 @@ describe('runMigrations', () => {
 		const { rows } = await query('select count(*)::int as n from drizzle.__drizzle_migrations');
 		expect(rows[0].n).toBe(readJournal('drizzle').length);
 	}, 30_000);
+
+	it('installs pgvector, which the database image provides', async () => {
+		const client = new pg.Client({ connectionString: MIGRATE_DATABASE_URL });
+		await client.connect();
+		try {
+			expect(await hasPgvector(client)).toBe(true);
+		} finally {
+			await client.end();
+		}
+		const { rows } = await query(`select extname from pg_extension where extname = 'vector'`);
+		expect(rows).toHaveLength(1);
+	});
 });
 
 describe('runMigrations during a long read', () => {

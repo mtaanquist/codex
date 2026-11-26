@@ -10,6 +10,25 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+pgvector required (v4.0.0, 2026-11-26, `staging/v4.0.0`, #1783). Mads
+chose to make pgvector required in the major release rather than optional, so
+the embeddings work in v4.1.0 (#1784 to #1788) can rely on it. The shipped
+database image moved from `postgres:18.6-alpine3.24` to
+`pgvector/pgvector:0.8.7-pg18-trixie`, since pgvector publishes no Alpine
+image. That switch is not just an image swap: Alpine's musl and Debian's glibc
+sort text differently under `en_US.utf8`, and an existing volume opened by the
+new image had out-of-order text indexes (checked with amcheck on a database
+migrated to 0127 under the old image). Migration 0128 detects that case (the
+database records no collation version while the server reports one, which is
+what a musl-created database looks like under glibc) and reindexes every table
+the role owns before creating the extension; databases created under glibc
+skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
+version, so the version stays unrecorded; the migration runs once anyway. The
+migrator checks `pg_available_extensions` first so a server without pgvector
+stops with directions instead of a bare Postgres error. Building pgvector into
+our own Alpine image was the alternative; it would have kept the sort order
+but meant publishing and maintaining a database image.
+
 Bug round 5 (2026-11-25, `staging/bug-fixes-5`). The 17 open bug issues
 (#1523 to #1571, less #1550, which shipped with #1572) were fixed in five
 lanes, then reviewed by four fresh area reviewers per round (Browse and public
