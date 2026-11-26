@@ -393,11 +393,11 @@ export function capCeilingUsage(
 
 function wouldPassCap(p: Prepared, req: GatewayRequest, request: CappedRequest): boolean {
 	if (!req.meter || req.mayResend) return false;
-	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request));
+	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request), p.price);
 }
 
 function heldAtCap(p: Prepared, req: GatewayRequest, request: CappedRequest): SpendCapError {
-	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request)));
+	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request), p.price));
 	return new SpendCapError();
 }
 
@@ -721,7 +721,8 @@ function recordUsage(
 	messages: ChatMessage[],
 	usage?: TokenUsage
 ): Promise<void> {
-	req.meter?.record(p.model, usage);
+	// Metered at the price the row stores, so the cap and the row agree.
+	req.meter?.record(p.model, usage, p.price);
 	const search =
 		p.webSearch && usage?.webSearchRequests
 			? searchAllowanceFields(ceilingPromptTokens(messages, p.tools), p.maxTokens, usage)

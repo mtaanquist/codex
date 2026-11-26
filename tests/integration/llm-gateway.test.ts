@@ -498,7 +498,9 @@ describe('gateway gating', () => {
 			toolCallBudget: 8,
 			webSearch: true
 		});
-		const price = { prompt: 0.00001, completion: 0 };
+		// A fee other than the default, so a meter or row that fell back to
+		// WEB_SEARCH_FEE_USD would not match.
+		const price = { prompt: 0.00001, completion: 0, webSearch: 0.025 };
 		await saveModelPricing(db, userId, { 'claude-opus-5': price });
 		let offered: boolean | undefined;
 		const searching: Provider = {
@@ -512,8 +514,10 @@ describe('gateway gating', () => {
 				};
 			}
 		};
+		// Built with the default fee: the gateway meters at the saved price it
+		// stores on the row, not at the meter's own snapshot.
 		const meter = new SpendMeter({
-			pricing: { 'claude-opus-5': price },
+			pricing: { 'claude-opus-5': { prompt: price.prompt, completion: 0 } },
 			provider: 'anthropic',
 			capUsd: 100
 		});
@@ -530,11 +534,58 @@ describe('gateway gating', () => {
 			{ provider: searching, http: noHttp }
 		);
 		expect(offered).toBe(true);
-		const expected = 1000 * price.prompt + 3 * WEB_SEARCH_FEE_USD;
+		const expected = 1000 * price.prompt + 3 * price.webSearch;
+		expect(price.webSearch).not.toBe(WEB_SEARCH_FEE_USD);
 		expect(meter.spentUsd).toBeCloseTo(expected, 10);
 		const [row] = await db.select().from(assistantUsage).where(eq(assistantUsage.userId, userId));
 		expect(row.webSearchRequests).toBe(3);
-		expect(row.price).toEqual({ ...price, webSearch: WEB_SEARCH_FEE_USD });
+		expect(row.price).toEqual(price);
+	});
+
+	it('meters each request at the price stored on its usage row when prices change mid-run', async () => {
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'custom',
+			endpoint: 'https://llm.example',
+			apiKey: 'sk',
+			models: { reviewer: 'priced-model' },
+			toolCallBudget: 8
+		});
+		const before = { prompt: 0.001, completion: 0 };
+		const after = { prompt: 0.003, completion: 0 };
+		await saveModelPricing(db, userId, { 'priced-model': before });
+		const provider: Provider = {
+			...stubProvider,
+			async respond() {
+				return {
+					content: 'ok',
+					toolCalls: [],
+					usage: { promptTokens: 100, completionTokens: 0 }
+				};
+			}
+		};
+		// The run's meter is built once, from the prices at the start.
+		const meter = new SpendMeter({ pricing: { 'priced-model': before }, capUsd: 1 });
+		const send = () =>
+			completeDetailed(
+				db,
+				{
+					userId,
+					role: 'reviewer',
+					messages: [{ role: 'user', content: 'Check this scene.' }],
+					maxTokens: 10,
+					meter
+				},
+				{ provider, http: noHttp }
+			);
+		await send();
+		await saveModelPricing(db, userId, { 'priced-model': after });
+		await send();
+		const rows = await db.select().from(assistantUsage).where(eq(assistantUsage.userId, userId));
+		expect(rows.map((r) => r.price)).toEqual(expect.arrayContaining([before, after]));
+		expect(meter.spentUsd).toBeCloseTo(100 * before.prompt + 100 * after.prompt, 10);
 	});
 
 	it('counts every round of the search loop over the prompt before a capped send', async () => {

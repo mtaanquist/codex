@@ -199,10 +199,11 @@ function normalisePricing(raw: unknown): ModelPricing | undefined {
 	const out: ModelPricing = {};
 	for (const [model, value] of Object.entries(raw as Record<string, unknown>)) {
 		if (!value || typeof value !== 'object') continue;
-		const { prompt, completion, cacheRead } = value as {
+		const { prompt, completion, cacheRead, webSearch } = value as {
 			prompt?: unknown;
 			completion?: unknown;
 			cacheRead?: unknown;
+			webSearch?: unknown;
 		};
 		if (typeof prompt !== 'number' || typeof completion !== 'number') continue;
 		if (!Number.isFinite(prompt) || !Number.isFinite(completion)) continue;
@@ -213,7 +214,12 @@ function normalisePricing(raw: unknown): ModelPricing | undefined {
 			typeof cacheRead === 'number' && Number.isFinite(cacheRead) && cacheRead >= 0
 				? { cacheRead }
 				: {};
-		out[model] = { prompt, completion, ...read };
+		// Likewise a search fee, leaving WEB_SEARCH_FEE_USD.
+		const search =
+			typeof webSearch === 'number' && Number.isFinite(webSearch) && webSearch >= 0
+				? { webSearch }
+				: {};
+		out[model] = { prompt, completion, ...read, ...search };
 	}
 	return Object.keys(out).length > 0 ? out : undefined;
 }
