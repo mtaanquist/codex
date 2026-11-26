@@ -137,6 +137,21 @@ export async function hasPgvector(client: pg.ClientBase): Promise<boolean> {
 	return rows[0].ok;
 }
 
+// pgvector is not a trusted extension, so a role that is not a superuser
+// passes the availability check yet fails to create it.
+export function explainPgvectorError(error: unknown): unknown {
+	const cause = (error as { cause?: unknown })?.cause ?? error;
+	const { code, message } = (cause ?? {}) as { code?: string; message?: string };
+	if (code === '42501' && message?.includes('"vector"')) {
+		return new Error(
+			'The database user may not create the pgvector extension. Connect to the Codex database as a ' +
+				'superuser, run CREATE EXTENSION vector; and start Codex again. See "Updating" in docs/SELF-HOSTING.md.',
+			{ cause: error }
+		);
+	}
+	return error;
+}
+
 // Applies pending migrations while holding a session advisory lock, so the app
 // and worker (or several replicas) starting together apply each migration once:
 // drizzle reads the last applied row outside its transaction and takes no lock.
@@ -161,7 +176,9 @@ export async function runMigrations(connectionString: string, migrationsFolder =
 				console.log(`Cancelled ${cancelled} long-running read(s) so the migrations can run.`);
 			}
 		}
-		await migrate(drizzle(client), { migrationsFolder });
+		await migrate(drizzle(client), { migrationsFolder }).catch((error: unknown) => {
+			throw explainPgvectorError(error);
+		});
 	} finally {
 		// Ending the session releases the lock, also when migrate threw.
 		await client.end();

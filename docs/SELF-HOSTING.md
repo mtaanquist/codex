@@ -448,14 +448,18 @@ is missing (nothing is changed when that happens).
 1. Take a backup (or check that the scheduled backups are recent).
 2. Stop the app and worker: `docker compose stop app worker`.
 3. In your compose file, set the `db` service's image to
-   `pgvector/pgvector:0.8.7-pg18-trixie`. Keep the same volume; the data
-   carries over.
-4. Pull the new Codex version and run `docker compose up -d`.
+   `pgvector/pgvector:0.8.7-pg18-trixie` and, in the same edit, the Codex
+   image tag to 4.0.0 or later. Keep the same volume; the data carries over.
+   Do not run an older Codex against the new database image, even briefly:
+   until 4.0.0 has rebuilt the indexes, it can write rows the indexes miss.
+4. Run `docker compose pull` and then `docker compose up -d`.
 
 The first start of the new version rebuilds the database's indexes if the
 data was created by the old image, because the new image sorts text slightly
 differently. This runs once, inside the migration, and takes a moment on a
-large database.
+large database. To go back to an earlier version afterwards, restore the
+backup from step 1 onto the old image; switching the image back without a
+restore leaves the indexes out of order again.
 
 If you run your own PostgreSQL 18 server, install pgvector on it (the
 `postgresql-18-pgvector` package on Debian and Ubuntu) before updating. Only

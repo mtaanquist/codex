@@ -91,6 +91,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # The first start after switching images re-owns every data file.
+      start_period: 2m
 
 volumes:
   db-data:

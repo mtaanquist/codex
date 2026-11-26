@@ -131,6 +131,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # The first start after switching images re-owns every data file.
+      start_period: 2m
 
   # A local S3-compatible bucket for assets (and backups, if pointed at
   # it). Opt in with COMPOSE_PROFILES=rustfs. This keeps the objects on the

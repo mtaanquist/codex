@@ -25,7 +25,12 @@ the role owns before creating the extension; databases created under glibc
 skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
 version, so the version stays unrecorded; the migration runs once anyway. The
 migrator checks `pg_available_extensions` first so a server without pgvector
-stops with directions instead of a bare Postgres error. Building pgvector into
+stops with directions instead of a bare Postgres error, and a refused
+`CREATE EXTENSION` (pgvector is not a trusted extension) is reworded the same
+way. Review found that a restore dropped `public` with the extension in it, so
+a role that is not a superuser could never restore again; the restore now
+empties `public` but keeps its extensions, and leaves out
+`COMMENT ON EXTENSION`, which only the extension's owner may run. Building pgvector into
 our own Alpine image was the alternative; it would have kept the sort order
 but meant publishing and maintaining a database image.
 
