@@ -19,15 +19,17 @@ vi.mock('#lib/server/db', async () => {
 	return { db: drizzle(testPool, { schema: schemaModule }), pool: testPool };
 });
 
-// The bucket, in memory.
+// The bucket, in memory: every key holds BYTES except MISSING_KEY.
 const BYTES = Buffer.from('PNGBYTES');
+const MISSING_KEY = 'codex-assets/gone';
 vi.mock('#lib/server/assets', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('../../src/lib/server/assets')>();
 	return {
 		...actual,
 		effectiveAssetConfig: async () => ({ region: 'auto', bucket: 'test', prefix: '' }),
 		s3AssetStore: () => ({
-			async get() {
+			async get(key: string) {
+				if (key === MISSING_KEY) throw new actual.ObjectNotFoundError(key);
 				return Readable.from([BYTES]);
 			}
 		})
@@ -53,10 +55,10 @@ async function user(email: string, role: Role) {
 	return row;
 }
 
-async function fetchAsset(who: { id: string; role: Role } | null): Promise<Response> {
+async function fetchAsset(who: { id: string; role: Role } | null, id = assetId): Promise<Response> {
 	try {
 		return (await route.GET({
-			params: { id: assetId },
+			params: { id },
 			locals: { user: who, session: null }
 		} as never)) as Response;
 	} catch (err) {
@@ -134,6 +136,13 @@ describe('the image route', () => {
 		const response = await fetchAsset({ id: authorId, role: 'user' });
 		expect(response.status).toBe(200);
 		expect(response.headers.get('cache-control')).toBe('private, max-age=31536000, immutable');
+	});
+
+	it('answers 404 for an unknown id, or an image whose file is gone from storage', async () => {
+		expect((await fetchAsset(null, '00000000-0000-4000-8000-000000000000')).status).toBe(404);
+		await pool.query('update assets set storage_key = $1 where id = $2', [MISSING_KEY, assetId]);
+		expect((await fetchAsset(null)).status).toBe(404);
+		expect((await fetchAsset({ id: authorId, role: 'user' })).status).toBe(404);
 	});
 
 	it("shows a taken-down edition's image to a moderator only, and never caches it", async () => {
