@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	clientDisplayName,
 	GRANTABLE_PERMISSIONS,
+	OFF_BY_DEFAULT,
 	parsePermissions,
 	permissionsFromScope,
 	scopeFromPermissions
@@ -21,8 +22,9 @@ describe('permissions', () => {
 		expect(scopeFromPermissions(['suggest', 'read'])).toBe('read suggest');
 	});
 
-	it('does not offer the apply permission yet', () => {
-		expect(GRANTABLE_PERMISSIONS).toEqual(['read', 'suggest']);
+	it('offers the apply permission, but never ticked for the writer', () => {
+		expect(GRANTABLE_PERMISSIONS).toEqual(['read', 'suggest', 'apply']);
+		expect(OFF_BY_DEFAULT).toEqual(['apply']);
 	});
 });
 
@@ -52,7 +54,7 @@ describe('discovery documents', () => {
 		expect(protectedResourceMetadata(origin)).toMatchObject({
 			resource: 'https://codex.example/api/mcp',
 			authorization_servers: [origin],
-			scopes_supported: ['read', 'suggest']
+			scopes_supported: ['read', 'suggest', 'apply']
 		});
 	});
 

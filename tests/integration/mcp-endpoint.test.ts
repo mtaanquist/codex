@@ -379,7 +379,7 @@ describe('who may call the endpoint', () => {
 		expect(challenge).toContain(
 			`Bearer resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/api/mcp"`
 		);
-		expect(challenge).toContain('scope="read suggest"');
+		expect(challenge).toContain('scope="read suggest apply"');
 		expect(challenge).not.toContain('error=');
 	});
 
