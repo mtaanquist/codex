@@ -35,7 +35,7 @@ our own Alpine image was the alternative; it would have kept the sort order
 but meant publishing and maintaining a database image.
 
 Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
-and Allow in Browse now record the moderator and time (#1531, migration 0131):
+and Allow in Browse now record the moderator and time (#1531, migration 0130):
 plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
 only the latest restore or allow, rather than a moderation log table, since
 nothing yet needs the full history. The Published page lists current editions
