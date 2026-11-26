@@ -3,13 +3,30 @@ import { db } from './db';
 import { requireModerator } from './roles';
 import { formText } from './validation';
 import { allowInBrowse, removeFromBrowse } from './browse';
+import { takedownPublication } from './publish';
 import { isUuid } from '#lib/slug';
 import { isReportReason } from '#lib/report-reasons';
 
-// "Remove from Browse" and "Allow in Browse again", shared by the Published
-// and Reports pages. scope is the page's form scope for its messages.
-export function browseModerationActions(scope: string) {
+// "Take down", "Remove from Browse" and "Allow in Browse again", shared by the
+// Published and Reports pages. scope is the page's form scope for its messages.
+export function moderationActions(scope: string) {
 	return {
+		takedown: async ({ request, locals }: RequestEvent) => {
+			requireModerator(locals);
+			const data = await request.formData();
+			const publicationId = formText(data, 'publicationId');
+			const reason = formText(data, 'reason');
+			if (!isReportReason(reason)) {
+				return fail(400, { scope, message: 'Pick a reason for the takedown.' });
+			}
+			if (
+				!isUuid(publicationId) ||
+				!(await takedownPublication(db, publicationId, locals.user!.id, reason))
+			) {
+				return fail(400, { scope, message: 'That edition does not exist or is already down.' });
+			}
+			return { scope, done: true };
+		},
 		removeFromBrowse: async ({ request, locals }: RequestEvent) => {
 			requireModerator(locals);
 			const data = await request.formData();

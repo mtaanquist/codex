@@ -27,10 +27,7 @@
 </div>
 
 {#if form?.scope === 'plans' && form.message && !('planId' in form && form.planId)}
-	<div
-		class="status-banner"
-		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-	>
+	<div class="status-banner error" role="alert">
 		<span class="x">{form.message}</span>
 	</div>
 {/if}

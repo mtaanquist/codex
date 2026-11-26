@@ -301,6 +301,22 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Slow Burn', 'Slow-Burning']);
 	});
 
+	it('names a removed entry that blocks a rename or a merge, so it can be restored', async () => {
+		await tagStory(storyId, ['Slowburn', 'Slow Burn']);
+		await setTagRemoved(db, 'tag', await tagId('slow-burn'), true, ownerId);
+		expect(await renameTag(db, 'tag', await tagId('slowburn'), 'slow burn')).toEqual({
+			ok: false,
+			message:
+				'The removed entry "Slow Burn" has that name. Restore it and merge into it, or pick another name.'
+		});
+		expect(await mergeTag(db, 'tag', await tagId('slowburn'), 'Slow Burn')).toEqual({
+			ok: false,
+			message: '"Slow Burn" is removed. Restore it first, then merge into it.'
+		});
+		await setTagRemoved(db, 'tag', await tagId('slow-burn'), false, ownerId);
+		expect(await mergeTag(db, 'tag', await tagId('slowburn'), 'Slow Burn')).toEqual({ ok: true });
+	});
+
 	it('refuses a rename to a name a writer added since the check', async () => {
 		await tagStory(storyId, ['Slowburn']);
 		const id = await tagId('slowburn');
@@ -384,18 +400,31 @@ describe('fandoms', () => {
 		expect(await addFandoms('Forgotten Realms\n\nMiddle-earth\nforgotten realms')).toEqual({
 			ok: true,
 			added: ['Forgotten Realms', 'Middle-earth'],
-			skipped: []
+			skipped: [],
+			removed: []
 		});
 		expect(await addFandoms('Middle earth\nDiscworld')).toEqual({
 			ok: true,
 			added: ['Discworld'],
-			skipped: ['Middle earth']
+			skipped: ['Middle earth'],
+			removed: []
 		});
 		expect((await listEntries(db, 'fandom')).map((entry) => entry.name)).toEqual([
 			'Discworld',
 			'Forgotten Realms',
 			'Middle-earth'
 		]);
+	});
+
+	it('reports a name matching a removed entry apart from ones already listed', async () => {
+		await addFandoms('Discworld\nMiddle-earth');
+		await setTagRemoved(db, 'fandom', await tagId('discworld'), true, ownerId);
+		expect(await addFandoms('discworld\nMiddle-earth\nNarnia')).toEqual({
+			ok: true,
+			added: ['Narnia'],
+			skipped: ['Middle-earth'],
+			removed: ['discworld']
+		});
 	});
 
 	it('refuses a fandom not on the list, and more than five', async () => {

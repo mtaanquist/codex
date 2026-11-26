@@ -77,10 +77,7 @@
 </div>
 
 {#if form?.scope === 'accounts' && form.message}
-	<div
-		class="status-banner"
-		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-	>
+	<div class="status-banner error" role="alert">
 		<span class="x">{form.message}</span>
 	</div>
 {/if}
@@ -94,14 +91,11 @@
 	</div>
 
 	{#if form?.scope === 'signup' && form.message}
-		<div
-			class="status-banner"
-			style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);margin-bottom:var(--space-4);"
-		>
+		<div class="status-banner error" role="alert" style="margin-bottom:var(--space-4);">
 			<span class="x">{form.message}</span>
 		</div>
 	{:else if form?.scope === 'signup' && form.saved}
-		<div class="status-banner ok" style="margin-bottom:var(--space-4);">
+		<div class="status-banner ok" role="status" style="margin-bottom:var(--space-4);">
 			<span class="dot"></span><span class="v">Saved.</span>
 		</div>
 	{/if}
@@ -267,10 +261,7 @@
 	</div>
 
 	{#if form?.scope === 'invites' && form.message}
-		<div
-			class="status-banner"
-			style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-		>
+		<div class="status-banner error" role="alert">
 			<span class="x">{form.message}</span>
 		</div>
 	{/if}

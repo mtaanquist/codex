@@ -14,6 +14,7 @@ import { isUniqueViolation } from './db-errors.ts';
 import { revokeTokens } from './tokens.ts';
 import type { Role } from '../roles.ts';
 import { revokeAllGrants } from './mcp/oauth.ts';
+import { currentNotTakenDown } from './publication-scope.ts';
 
 export type CreateAdminResult = { ok: true; id: string } | { ok: false; reason: string };
 
@@ -192,7 +193,7 @@ export async function instanceStats(db: Database): Promise<InstanceStats> {
 	const [editionCount] = await db
 		.select({ n: count() })
 		.from(publications)
-		.where(and(eq(publications.isCurrent, true), isNull(publications.removedAt)));
+		.where(currentNotTakenDown());
 	return {
 		writers: writers.n,
 		pending: pending.n,
@@ -216,9 +217,6 @@ export async function setUserArchive(
 	return Boolean(row);
 }
 
-// Suspends or unsuspends an account. Suspending blocks sign-in and revokes the
-// account's live sessions, unused sign-in links and connected apps then and there, so
-// unsuspending later cannot bring old access back to life; it never touches an admin.
 // Makes an account a moderator or a plain user again. Admins are left alone:
 // this is not a way to grant or take away admin.
 export async function setUserRole(
@@ -234,6 +232,9 @@ export async function setUserRole(
 	return !!row;
 }
 
+// Suspends or unsuspends an account. Suspending blocks sign-in and revokes the
+// account's live sessions, unused sign-in links and connected apps then and there, so
+// unsuspending later cannot bring old access back to life; it never touches an admin.
 export async function setUserSuspended(
 	db: Database,
 	userId: string,

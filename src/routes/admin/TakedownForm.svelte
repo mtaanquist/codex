@@ -13,7 +13,8 @@
 		title,
 		reason = 'other',
 		mode = 'takedown',
-		reportId = null
+		reportId = null,
+		superseded = false
 	}: {
 		id: string;
 		title: string;
@@ -21,6 +22,8 @@
 		mode?: 'takedown' | 'browse';
 		// From the report queue: the report a Browse removal answers, which closes.
 		reportId?: string | null;
+		// A takedown of a replaced edition takes the story's current one down too.
+		superseded?: boolean;
 	} = $props();
 
 	const takedown = $derived(mode === 'takedown');
@@ -34,7 +37,7 @@
 	onsubmit={confirmSubmit({
 		title: takedown ? `Take down "${title}"?` : `Remove "${title}" from Browse?`,
 		body: takedown
-			? 'Readers can no longer open this edition. The author sees the reason in the story settings.'
+			? `Readers can no longer open ${superseded ? 'this edition or the newer one that replaced it' : 'this edition'}. The author sees the reason in the story settings.`
 			: 'The story leaves Browse and the author cannot list it again until you allow it. Its pages stay up. The author sees the reason in the story settings.',
 		confirmLabel: label,
 		danger: true

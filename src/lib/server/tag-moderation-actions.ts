@@ -30,8 +30,11 @@ export async function loadTagPage(locals: App.Locals, url: URL, kind: TagKind) {
 	};
 }
 
+// run returns why the action failed, or null. notice is the line shown
+// when it worked.
 async function withId(
 	event: RequestEvent,
+	notice: string,
 	run: (id: string, data: FormData) => Promise<string | null>
 ) {
 	requireModerator(event.locals);
@@ -40,7 +43,7 @@ async function withId(
 	if (!isUuid(id)) return fail(400, { scope: 'tags', message: 'That entry does not exist.' });
 	const message = await run(id, data);
 	if (message) return fail(400, { scope: 'tags', message });
-	return { scope: 'tags', done: true };
+	return { scope: 'tags', done: true, notice };
 }
 
 // The actions of a moderation page for one kind of entry. An id of another
@@ -48,27 +51,27 @@ async function withId(
 export function tagActions(kind: TagKind) {
 	return {
 		rename: (event: RequestEvent) =>
-			withId(event, async (id, data) => {
+			withId(event, 'Renamed.', async (id, data) => {
 				const result = await renameTag(db, kind, id, formText(data, 'name'));
 				return result.ok ? null : result.message;
 			}),
 		merge: (event: RequestEvent) =>
-			withId(event, async (id, data) => {
+			withId(event, 'Merged.', async (id, data) => {
 				const result = await mergeTag(db, kind, id, formText(data, 'target'));
 				return result.ok ? null : result.message;
 			}),
 		unmerge: (event: RequestEvent) =>
-			withId(event, async (id) =>
+			withId(event, 'Merge undone.', async (id) =>
 				(await unmergeTag(db, kind, id)) ? null : 'That entry is not merged.'
 			),
 		remove: (event: RequestEvent) =>
-			withId(event, async (id) =>
+			withId(event, 'Removed.', async (id) =>
 				(await setTagRemoved(db, kind, id, true, event.locals.user!.id))
 					? null
 					: 'That entry does not exist.'
 			),
 		restore: (event: RequestEvent) =>
-			withId(event, async (id) =>
+			withId(event, 'Restored.', async (id) =>
 				(await setTagRemoved(db, kind, id, false, event.locals.user!.id))
 					? null
 					: 'That entry does not exist.'
@@ -84,7 +87,12 @@ export function listActions(kind: ListKind) {
 			requireModerator(locals);
 			const result = await addListEntries(db, kind, formText(await request.formData(), 'names'));
 			if (!result.ok) return fail(400, { scope: 'add', message: result.message });
-			return { scope: 'add', added: result.added, skipped: result.skipped };
+			return {
+				scope: 'add',
+				added: result.added,
+				skipped: result.skipped,
+				removed: result.removed
+			};
 		}
 	};
 }
