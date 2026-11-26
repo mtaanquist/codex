@@ -4,6 +4,7 @@
 	import { refreshAll } from '$app/navigation';
 	import { relativeShort } from '#lib/format';
 	import { now } from '#lib/now.svelte';
+	import { revisionNote, revisionTitle } from '#lib/revision-title';
 
 	type Row = { id: string; reason: string | null; label: string | null; createdAt: Date };
 
@@ -44,19 +45,6 @@
 	);
 
 	const DOT: Record<string, string> = { checkpoint: 'checkpoint', restore: 'import' };
-	const TITLE: Record<string, string> = {
-		checkpoint: 'Checkpoint',
-		restore: 'Restored',
-		suggestion: 'Suggestion accepted',
-		autosave: 'Autosave'
-	};
-
-	// A checkpoint's name is its title; any other label is a note under it
-	// (where a draft was kept from, which app accepted a suggestion).
-	function rowTitle(row: Row) {
-		if (row.reason === 'checkpoint' && row.label) return row.label;
-		return TITLE[row.reason ?? 'autosave'] || 'Autosave';
-	}
 
 	async function checkpoint(event: SubmitEvent) {
 		event.preventDefault();
@@ -93,11 +81,11 @@
 			<div class="hist-row" class:previewing={row.id === previewId}>
 				<span class="revision-dot revision-dot-{DOT[row.reason ?? ''] ?? 'autosave'}"></span>
 				<div class="hist-main">
-					<div class="hist-label">{rowTitle(row)}</div>
+					<div class="hist-label">{revisionTitle(row)}</div>
 					<div class="hist-meta">
 						<span>{relativeShort(row.createdAt, page.data.timeZone, now())}</span>
-						{#if row.label && row.reason !== 'checkpoint'}
-							<span class="hist-note">{row.label}</span>
+						{#if revisionNote(row)}
+							<span class="hist-note">{revisionNote(row)}</span>
 						{/if}
 					</div>
 					{#if row.id !== previewId}

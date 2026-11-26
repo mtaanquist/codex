@@ -1,6 +1,6 @@
 # Connecting an app
 
-If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions. Everything it leaves waits for you to accept or turn down.
+If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions, or, if you allow it, when it accepts one for you. Everything it leaves waits for you to accept or turn down.
 
 Connecting an app is separate from the Assistant inside Codex. You do not need to set up the Assistant to connect an app, and connecting an app does not change how the Assistant works.
 
@@ -31,7 +31,7 @@ You choose this on the page where you allow the app:
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
 - **Let you accept its suggestions in the app.** This is off unless you tick it, and you can tick it only while "Leave suggestions and comments" is ticked. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
 
-No app can change your text on its own, delete anything, publish a story, or see another person's writing. An edit only changes your text when it is accepted, in Codex or with Accept on the app's card. If you tick "Let you accept its suggestions in the app", the app itself must keep that button for you alone, so tick it only for an app you trust (see below). The same goes for a token with it ticked.
+No app can delete anything, publish a story, or see another person's writing. An edit only changes your text when it is accepted, in Codex or with Accept on the app's card. If you tick "Let you accept its suggestions in the app", the app itself must keep that button for you alone, so tick it only for an app you trust (see below). The same goes for a token with it ticked.
 
 ## Ask the app to do something
 
@@ -64,7 +64,7 @@ If you ticked "Let you accept its suggestions in the app", you can go through a 
 - **Discuss** hands the edit back to the conversation, so you can talk it over with the app before you decide.
 - **Open in Codex** opens the same note in Codex.
 
-Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. An edit accepted on the card shows in the scene's History as "Suggestion accepted", with the app's name under it. A very long edit is shown cut short on the card and cannot be accepted there; open it in Codex to decide on it. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
+Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. An edit accepted on the card shows in the scene's History as "Suggestion accepted", with the app's name under it. A very long edit is shown cut short on the card and cannot be accepted there; open it in Codex to decide on it. To turn this off, connect the app again and untick it. For a personal token, delete the token and make a new one without it ticked. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
 
 ## Disconnect an app
 

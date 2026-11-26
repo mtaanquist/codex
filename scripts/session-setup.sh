@@ -46,8 +46,9 @@ fi
 # Bring up Postgres and the asset storage the export and upload paths need.
 # Prefer the compose services used for local dev; in the web sandbox Postgres is
 # pre-installed but not running, so fall back to the service. That server has
-# no pgvector, so migrations stop at 0131 until its pgvector package is
-# installed (for example postgresql-16-pgvector); Docker is the reliable path.
+# no pgvector, so no migrations apply (they run in one transaction) until its
+# pgvector package is installed (for example postgresql-16-pgvector); Docker
+# is the reliable path.
 if command -v docker >/dev/null 2>&1 && [ -f compose.dev.yaml ]; then
   docker compose -f compose.dev.yaml up -d || true
 elif command -v pg_ctlcluster >/dev/null 2>&1; then

@@ -160,6 +160,9 @@ panel instead.
 
 ### Update
 
+Updating from 3.x to 4.0.0? Follow "Updating to 4.0.0" in
+[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) first.
+
 Change the image tag (or pull `latest`), then `docker compose up -d`.
 Pending migrations apply when the app or worker container starts. Migrations
 are forward-only, so take a backup before updating if you are not running the

@@ -34,6 +34,7 @@ import {
 	habitNotesLine,
 	houseStyleLine,
 	leaveAloneLine,
+	reviewPreferenceText,
 	withReason
 } from './preferences.ts';
 
@@ -161,6 +162,34 @@ export function reviewLanguageText(
 	const native =
 		categories.length > 0 && readsWording(categories) ? nativeInterferenceLine(language) : '';
 	return [languageRule(language), native].filter(Boolean).join('\n');
+}
+
+// What the preferences and language add to a scene's review task, for the
+// estimate (see buildReviewMessage, which states each of these lines). The
+// reasons and feedback lines count only where a choice replaces the default
+// line, which the estimate's fixed task size already covers.
+export function reviewSettingsText(
+	categories: ReviewCategory[],
+	preferences: PreferenceSetting,
+	language: LanguageSetting
+): string {
+	const reasons =
+		preferences.editReasons === 'always' || preferences.editReasons === 'never'
+			? editReasonLine(preferences)
+			: '';
+	const feedback =
+		categories.length === 0 && preferences.feedback
+			? feedbackLine(preferences, IN_CONTEXT.where)
+			: '';
+	return [
+		readsWording(categories) ? reviewPreferenceText(preferences) : '',
+		contentLimitsLine(preferences, 'check'),
+		reasons,
+		feedback,
+		reviewLanguageText(language, categories)
+	]
+		.filter(Boolean)
+		.join('\n');
 }
 
 // One theme per comment, so each note can be replied to, resolved, and worked

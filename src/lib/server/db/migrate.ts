@@ -178,6 +178,11 @@ export async function runMigrations(
 		);
 	}
 	const client = new pg.Client({ connectionString });
+	// A migration's warnings (such as 0131 skipping a table it may not
+	// reindex) reach the log rather than only the database server's.
+	client.on('notice', (notice) => {
+		if (notice.severity === 'WARNING') console.warn(`Migration warning: ${notice.message}`);
+	});
 	await client.connect();
 	try {
 		await client.query(`select pg_advisory_lock(hashtext('codex:migrations'))`);

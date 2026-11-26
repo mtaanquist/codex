@@ -13,6 +13,7 @@ import {
 	parsePatterns,
 	patternNoteBody,
 	readsNative,
+	reviewSettingsText,
 	splitPatternChunks,
 	splitSurveyChunks,
 	type SurveyScene
@@ -47,6 +48,45 @@ describe('readsNative', () => {
 
 // The briefs an outside agent gets over MCP say what the staged prompts say,
 // in the same sentences.
+// The estimate counts reviewSettingsText for what the preferences add to a
+// scene's task, so every line of it must be one the task really states.
+describe('reviewSettingsText', () => {
+	const preferences = {
+		...NO_PREFERENCES,
+		houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' as const },
+		leaveAlone: ['epithets' as const],
+		notes: 'I overuse semicolons.',
+		feedback: 'thorough' as const,
+		editReasons: 'always' as const,
+		contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
+	};
+	const language = { language: 'en-GB', native: 'da' };
+	const cases: ReviewCategory[][] = [[], ['prose'], ['mechanics'], ['lore']];
+	for (const categories of cases) {
+		it(`matches the task message for ${categories.join('+') || 'general notes'}`, () => {
+			const message = buildReviewMessage(
+				{ id: 's1', title: 'One' },
+				[],
+				categories,
+				false,
+				false,
+				undefined,
+				language,
+				preferences
+			);
+			const plain = buildReviewMessage({ id: 's1', title: 'One' }, [], categories);
+			const lines = reviewSettingsText(categories, preferences, language)
+				.split('\n')
+				.filter((line) => line.trim());
+			expect(lines.length).toBeGreaterThan(0);
+			for (const line of lines) {
+				expect(message).toContain(line);
+				expect(plain).not.toContain(line);
+			}
+		});
+	}
+});
+
 describe('the briefs for an agent that runs a pass itself', () => {
 	const shared = (brief: string, staged: string) =>
 		brief.split('\n').filter((line) => staged.includes(line));
