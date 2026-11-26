@@ -36,7 +36,7 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 };
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
 const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
-const { createReport } = await import('../../src/lib/server/reports');
+const { createReport, dismissReport } = await import('../../src/lib/server/reports');
 const { scheduleAccountDeletion } = await import('../../src/lib/server/account-deletion');
 const publishedPage = await import('../../src/routes/admin/published/+page.server');
 const reportsPage = await import('../../src/routes/admin/reports/+page.server');
@@ -355,6 +355,27 @@ describe("the moderator's view of an edition", () => {
 		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
 		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
 		expect((await loadEdition(publicationId)).edition).toMatchObject({ readable: false });
+	});
+
+	it('a dismissed report does not open a private story', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		const [report] = await db.select().from(publicationReports);
+		expect(await dismissReport(db, report.id, moderator.id)).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		await expect404(loadEdition(publicationId));
+		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: false }]);
+	});
+
+	it('opens an older edition of a public story only once it was reported', async () => {
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect((await loadEdition(newer.publicationId)).edition).toMatchObject({ readable: true });
+		await expect404(loadEdition(publicationId));
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		expect((await loadEdition(publicationId)).edition).toMatchObject({
+			isCurrent: false,
+			readable: false
+		});
 	});
 
 	it('does not offer the public page when the story has changed hands', async () => {

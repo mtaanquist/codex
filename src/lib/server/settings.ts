@@ -194,9 +194,13 @@ export async function saveInstanceType(db: Database, type: InstanceType): Promis
 // `fresh` so it never acts on a stale copy.
 const BROWSE_CACHE_MS = 60_000;
 let cachedBrowse: { value: boolean; at: number } | null = null;
+// Bumped on every clear, so a read that started before a save and finishes
+// after it does not put the old value back in the cache.
+let browseGeneration = 0;
 
 export function clearBrowseCache(): void {
 	cachedBrowse = null;
+	browseGeneration++;
 }
 
 export async function browseEnabled(
@@ -206,8 +210,9 @@ export async function browseEnabled(
 	if (!options.fresh && cachedBrowse && Date.now() - cachedBrowse.at < BROWSE_CACHE_MS) {
 		return cachedBrowse.value;
 	}
+	const generation = browseGeneration;
 	const value = (await readSetting<{ enabled?: unknown }>(db, BROWSE_KEY))?.enabled === true;
-	cachedBrowse = { value, at: Date.now() };
+	if (generation === browseGeneration) cachedBrowse = { value, at: Date.now() };
 	return value;
 }
 

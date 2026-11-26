@@ -814,7 +814,10 @@ These cut across the surfaces and the architecture.
   `warning:<slug>` (write, avoid) is one content limit per entry of the
   admin's content warning list (decided on #1782), named from the live list
   at read time (`liveWarnings`), so a warning removed or merged away drops
-  out. The limits go to drafts, `/write`, the chat frame and every review,
+  out. Merging a warning copies a writer's `avoid` on it (or on a warning
+  merged into it earlier) to the survivor where the survivor has no limit
+  set; a `write` is not carried, since it would widen what the Assistant
+  writes about the survivor. Undoing the merge leaves the copied `avoid`. The limits go to drafts, `/write`, the chat frame and every review,
   and say they never change the model's own usage policies. The summary
   length changes the request sent, not its fingerprint (the short request is
   hashed whatever the length), so changing it marks nothing out of date and

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
+import type { SQL } from 'drizzle-orm';
 import * as schema from '../../src/lib/server/db/schema';
 import {
 	browseEnabled,
@@ -172,6 +173,35 @@ describe('browseEnabled', () => {
 		expect(await browseEnabled(db)).toBe(false);
 		expect(await browseEnabled(db, { fresh: true })).toBe(true);
 		// The fresh read refreshes the cache for the cached readers too.
+		expect(await browseEnabled(db)).toBe(true);
+	});
+
+	it('a read that started before a save does not cache the old value', async () => {
+		// A database whose answer to the read arrives only after the save.
+		let read!: () => void;
+		const queried = new Promise<void>((resolve) => (read = resolve));
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const slow = {
+			select: (...args: Parameters<Database['select']>) => ({
+				from: (table: typeof schema.appSettings) => ({
+					where: async (where: SQL | undefined) => {
+						const rows = await db
+							.select(...args)
+							.from(table)
+							.where(where);
+						read();
+						await gate;
+						return rows;
+					}
+				})
+			})
+		} as unknown as Database;
+		const pending = browseEnabled(slow);
+		await queried;
+		await saveBrowseEnabled(db, true);
+		release();
+		expect(await pending).toBe(false);
 		expect(await browseEnabled(db)).toBe(true);
 	});
 

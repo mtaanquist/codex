@@ -2,7 +2,14 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { Readable } from 'node:stream';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type pg from 'pg';
-import { assets, scenes, stories, universes, users } from '../../src/lib/server/db/schema';
+import {
+	assets,
+	publicationReports,
+	scenes,
+	stories,
+	universes,
+	users
+} from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import type { Role } from '../../src/lib/roles';
 import { ensureTestDatabase } from './test-db';
@@ -41,6 +48,7 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	pool: pg.Pool;
 };
 const { publishStory, takedownPublication } = await import('#lib/server/publish');
+const { createReport, dismissReport } = await import('#lib/server/reports');
 const route = await import('../../src/routes/assets/[id=uuid]/+server');
 
 let authorId: string;
@@ -156,5 +164,17 @@ describe('the image route', () => {
 			expect(response.status).toBe(200);
 			expect(response.headers.get('cache-control')).toBe('private, no-store');
 		}
+	});
+
+	it("shows a private story's image to a moderator only while it has an open report", async () => {
+		const moderator = await user('moderator@example.com', 'moderator');
+		const asModerator = { id: moderator.id, role: 'moderator' as const };
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		await pool.query(`update stories set visibility = 'private'`);
+		expect((await fetchAsset(null)).status).toBe(404);
+		expect((await fetchAsset(asModerator)).status).toBe(200);
+		const [report] = await db.select().from(publicationReports);
+		expect(await dismissReport(db, report.id, moderator.id)).toBe(true);
+		expect((await fetchAsset(asModerator)).status).toBe(404);
 	});
 });
