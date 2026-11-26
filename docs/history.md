@@ -16,10 +16,11 @@ plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
 only the latest restore or allow, rather than a moderation log table, since
 nothing yet needs the full history. The Published page lists current editions
 an account deletion hid, with a pill and the Take down button (#1529), and a
-moderator can read any edition at `/admin/published/<id>`, linked from
-Published and from the report queue once the edition is down (#1530). Inline
-images there do not load for a down edition, because the image route serves
-only readable editions; widening it for moderators was left as a follow-up.
+moderator can read an edition at `/admin/published/<id>`, linked from
+Published and the report queue (#1530); an edition of a story made private or
+trashed opens there only once taken down or reported, so withdrawn work stays
+unread. Inline images there load only while the edition is public, because the
+image route serves only readable editions; widening it is #1791.
 Route-level tests cover the moderation actions and both orders of a publish
 racing a takedown (#1775), and design.md now names Remove from Browse in the
 report queue (#1777).

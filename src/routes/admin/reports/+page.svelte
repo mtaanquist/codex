@@ -46,15 +46,8 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
-								<!-- A down edition has no public page; moderators read it in Published. -->
-								<a
-									href={report.editionRemovedAt
-										? resolve('/admin/published/[id=uuid]', { id: report.publicationId })
-										: resolve('/@[handle]/[story=ref]', {
-												handle: report.handle,
-												story: report.storyId
-											})}
-								>
+								<!-- The reported edition itself, which may be down or replaced. -->
+								<a href={resolve('/admin/published/[id=uuid]', { id: report.publicationId })}>
 									@{report.handle}/{report.title}
 								</a>
 								{#if report.editionRemovedReason}<span class="pill">

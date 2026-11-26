@@ -804,17 +804,19 @@ export async function listTakenDown(db: Database) {
 		.orderBy(publications.removedAt);
 }
 
-// One edition as a moderator sees it, whatever its state: taken down, hidden
-// by an account deletion, superseded or live. For checking the text of a
-// report before acting on it, or again before a restore.
+// One edition as a moderator sees it: taken down, hidden by an account
+// deletion, superseded or live. For checking the text of a report before
+// acting on it, or again before a restore. An edition of a story the author
+// has since made private or put in the trash opens only when it was taken
+// down or reported, so withdrawn work is not readable by moderators.
 export async function moderatorEdition(db: Database, publicationId: string) {
+	const shared = sql`(${stories.visibility} <> 'private' and ${storyIsLive()})`;
 	const [edition] = await db
 		.select({
 			id: publications.id,
 			storyId: publications.storyId,
 			handle: publications.handle,
 			title: publications.title,
-			author: publications.author,
 			descriptionMd: publications.descriptionMd,
 			isAdult: publications.isAdult,
 			contentWarnings: publications.contentWarnings,
@@ -827,10 +829,27 @@ export async function moderatorEdition(db: Database, publicationId: string) {
 			removedByName: moderatorName(publications.removedBy),
 			restoredAt: publications.restoredAt,
 			restoredByName: moderatorName(publications.restoredBy),
-			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
+			// Whether readers can open it at its public address right now.
+			readable: sql<boolean>`(${shared} and ${publications.isCurrent} and ${publications.removedAt} is null and ${users.suspendedAt} is null)`
 		})
 		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.innerJoin(users, eq(users.id, publications.ownerId))
-		.where(eq(publications.id, publicationId));
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				or(
+					shared,
+					isNotNull(publications.removedReason),
+					exists(
+						db
+							.select({ id: publicationReports.id })
+							.from(publicationReports)
+							.where(eq(publicationReports.publicationId, publications.id))
+					)
+				)
+			)
+		);
 	return edition ? { ...edition, content: edition.content as EditionContent } : null;
 }

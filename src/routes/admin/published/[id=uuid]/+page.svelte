@@ -19,7 +19,6 @@
 			? [{ title: 'Unfiled scenes', scenes: edition.content.unfiled }]
 			: [])
 	]);
-	const live = $derived(edition.isCurrent && !edition.removedAt);
 </script>
 
 <div class="admin-head">
@@ -63,7 +62,7 @@
 		{#if edition.contentWarnings.length > 0}
 			<p class="admin-block-sub">Content warnings: {edition.contentWarnings.join(', ')}</p>
 		{/if}
-		{#if live}
+		{#if edition.readable}
 			<p class="admin-block-sub" style="margin-bottom:0;">
 				<a
 					href={resolve('/@[handle]/[story=ref]', {

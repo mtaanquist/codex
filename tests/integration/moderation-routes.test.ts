@@ -119,7 +119,7 @@ async function loadPublished(locals: Locals = { user: moderator }) {
 
 async function loadEdition(id: string, locals: Locals = { user: moderator }) {
 	const load = editionPage.load as (event: unknown) => Promise<{
-		edition: Record<string, unknown> & { content: { chapters: unknown[] } };
+		edition: Record<string, unknown> & { content: { chapters: unknown[]; unfiled: unknown[] } };
 	}>;
 	return await load({ locals, params: { id }, setHeaders: () => {} });
 }
@@ -295,9 +295,28 @@ describe("the moderator's view of an edition", () => {
 			removedReason: 'copyright',
 			removedByName: 'mod'
 		});
-		expect(
-			shown.content.chapters.length + (shown.content as { unfiled: unknown[] }).unfiled.length
-		).toBe(1);
+		expect(shown.content.chapters.length + shown.content.unfiled.length).toBe(1);
+	});
+
+	it('shows an edition an account deletion hid, to admins too', async () => {
+		await scheduleAccountDeletion(db, author.id);
+		const admin = await user('admin@example.com', 'admin');
+		const { edition: shown } = await loadEdition(publicationId, { user: admin });
+		expect(shown).toMatchObject({ ownerDeletionPending: true, readable: false });
+		expect(shown.removedAt).toBeInstanceOf(Date);
+	});
+
+	it('says whether readers can open the edition', async () => {
+		expect((await loadEdition(publicationId)).edition.readable).toBe(true);
+	});
+
+	it('opens a story made private only once it was reported or taken down', async () => {
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		await expect404(loadEdition(publicationId));
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect((await loadEdition(publicationId)).edition).toMatchObject({ readable: false });
 	});
 
 	it('is a 404 for writers and signed-out visitors, and for an unknown edition', async () => {

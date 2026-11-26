@@ -92,10 +92,10 @@
 								published {formatDate(
 									edition.publishedAt,
 									page.data.timeZone
-								)}{#if edition.restoredAt}, restored
+								)}{#if edition.restoredAt}, last restored
 									{formatDate(edition.restoredAt, page.data.timeZone)}{byName(
 										edition.restoredByName
-									)}{/if}{#if edition.browseAllowedAt}, allowed in Browse again
+									)}{/if}{#if edition.browseAllowedAt}, last allowed in Browse
 									{formatDate(edition.browseAllowedAt, page.data.timeZone)}{byName(
 										edition.browseAllowedByName
 									)}{/if}
