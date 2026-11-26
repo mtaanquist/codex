@@ -196,7 +196,7 @@ describe('takedown and covers', () => {
 		await takedownPublication(db, first.publicationId, null, 'other');
 		// The only current edition is taken down.
 		expect(await isPublicAsset(db, coverId)).toBe(false);
-		await restorePublication(db, first.publicationId);
+		await restorePublication(db, first.publicationId, null);
 		expect(await isPublicAsset(db, coverId)).toBe(true);
 
 		// Making the story private must stop the cover serving, matching

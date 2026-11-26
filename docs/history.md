@@ -18,7 +18,7 @@ database image moved from `postgres:18.6-alpine3.24` to
 image. That switch is not just an image swap: Alpine's musl and Debian's glibc
 sort text differently under `en_US.utf8`, and an existing volume opened by the
 new image had out-of-order text indexes (checked with amcheck on a database
-migrated to 0127 under the old image). Migration 0130 detects that case (the
+migrated to 0127 under the old image). Migration 0131 detects that case (the
 database records no collation version while the server reports one, which is
 what a musl-created database looks like under glibc) and reindexes every table
 the role owns before creating the extension; databases created under glibc
@@ -33,6 +33,21 @@ empties `public` but keeps its extensions, and leaves out
 `COMMENT ON EXTENSION`, which only the extension's owner may run. Building pgvector into
 our own Alpine image was the alternative; it would have kept the sort order
 but meant publishing and maintaining a database image.
+
+Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
+and Allow in Browse now record the moderator and time (#1531, migration 0131):
+plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
+only the latest restore or allow, rather than a moderation log table, since
+nothing yet needs the full history. The Published page lists current editions
+an account deletion hid, with a pill and the Take down button (#1529), and a
+moderator can read an edition at `/admin/published/<id>`, linked from
+Published and the report queue (#1530); an edition of a story made private or
+trashed opens there only once taken down or reported, so withdrawn work stays
+unread. Inline images there load only while the edition is public, because the
+image route serves only readable editions; widening it is #1791.
+Route-level tests cover the moderation actions and both orders of a publish
+racing a takedown (#1775), and design.md now names Remove from Browse in the
+report queue (#1777).
 
 Usage cost and spend (v4.0.0 lane 7, 2026-11-26, `staging/v4.0.0`). #1520:
 each usage row stores the model's price as jsonb (migration 0129) when it is
