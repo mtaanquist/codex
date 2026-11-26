@@ -250,7 +250,8 @@ migrated to 0127 under the old image). Migration 0131 detects that case (the
 database records no collation version while the server reports one, which is
 what a musl-created database looks like under glibc) and, after creating the
 extension, reindexes every table the role owns; databases created under glibc
-skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
+skip it, unless their recorded collation version differs or they sort with C
+over a real locale. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
 version, so the version stays unrecorded; the migration runs once anyway. The
 migrator checks `pg_available_extensions` first so a server without pgvector
 stops with directions instead of a bare Postgres error, and a refused
