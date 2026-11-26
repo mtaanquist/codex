@@ -170,6 +170,9 @@
 				var draft = '';
 				var editingStamp = null;
 				var busy = false;
+				// Set once Codex said accepting in the app was turned off: the
+				// buttons stay off and the card does not ask for the pass again.
+				var turnedOff = false;
 				var message = null;
 				// Set once the client has answered the handshake.
 				var ready = false;
@@ -404,7 +407,8 @@
 					}
 					// An accept goes through the client to Codex, which not every client allows.
 					var canCall = ready && host.capabilities.serverTools;
-					var canAccept = edit.placed && edit.stamp && keys && keys[edit.id] && canCall && !busy;
+					var canAccept =
+						edit.placed && edit.stamp && keys && keys[edit.id] && canCall && !busy && !turnedOff;
 					if (ready && !canCall && !message) {
 						message = {
 							failure: false,
@@ -552,7 +556,7 @@
 				}
 
 				function accept(edit, wording) {
-					if (busy || !keys || !keys[edit.id]) return;
+					if (busy || turnedOff || !keys || !keys[edit.id]) return;
 					busy = true;
 					message = null;
 					render();
@@ -570,6 +574,14 @@
 							if (result && !result.isError) {
 								editingId = null;
 								acceptedHere.push(edit.id);
+								// Shown as accepted even if the pass cannot be loaded again.
+								pass.edits.forEach(function (shown) {
+									if (shown.id === edit.id && shown.status === 'pending') {
+										shown.status = 'accepted';
+										pass.decided += 1;
+									}
+								});
+								delete keys[edit.id];
 								if (result.structuredContent) takeResult(result);
 								else refresh();
 								tellModel();
@@ -578,6 +590,11 @@
 									failure: true,
 									text: textOf(result) || 'The edit could not be accepted.'
 								};
+								if (message.text.indexOf('Accepting in the app was turned off') === 0) {
+									turnedOff = true;
+									render();
+									return;
+								}
 								render();
 								// A revision, a change to the text or an old key: show the pass as
 								// it is now. The writer's own wording stays in the box.
@@ -585,18 +602,26 @@
 								var expired = message.text.indexOf('This card was open for a long time') === 0;
 								// A failed refresh keeps its own message.
 								refresh().then(function (fresh) {
-									if ((stale || expired) && fresh) {
-										// "Press Accept again" holds only while the same edit is shown;
-										// one decided in Codex meanwhile moves the card on.
-										var next = current();
-										var same = next && next.id === edit.id && next.stamp === edit.stamp;
-										message = {
-											failure: true,
-											text:
-												expired && same
-													? 'This card was open for a long time, so it has been refreshed. Press Accept again.'
-													: 'This edit was out of date. Read it again, then decide.'
-										};
+									if (!fresh) return;
+									var next = current();
+									var same = next && next.id === edit.id && next.stamp === edit.stamp;
+									var text = null;
+									if (!same) {
+										// The refusal was about the edit that was shown; the card has
+										// moved on, so the old text would sit under another edit.
+										text =
+											next && next.id === edit.id
+												? 'This edit was changed. Read it again, then decide.'
+												: 'That edit was decided or changed in Codex.' +
+													(next ? ' This is the next one.' : '');
+									} else if (expired) {
+										text =
+											'This card was open for a long time, so it has been refreshed. Press Accept again.';
+									} else if (stale) {
+										text = 'This edit was out of date. Read it again, then decide.';
+									}
+									if (text) {
+										message = { failure: true, text: text };
 										render();
 									}
 								});

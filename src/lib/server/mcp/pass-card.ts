@@ -234,9 +234,15 @@ export function cardKeyValid(key: unknown, target: KeyTarget): boolean {
 	return cardKeyState(key, target) === 'valid';
 }
 
-// The card shows this as it is, after it has fetched fresh keys.
+// When the card fetches fresh keys it puts its own text in place of this; it
+// shows this as it is only when the pass comes back without keys.
 export const CARD_KEY_EXPIRED =
-	'This card was open for a long time. Load it again, then press Accept.';
+	'This card was open for a long time. Ask the app to open the pass again.';
+
+// A card call the connection no longer allows. The card keeps this message and
+// does not ask for the pass again, which could not work. The card matches its
+// start, so the two must be changed together.
+export const CARD_TURNED_OFF = 'Accepting in the app was turned off. Open the note in Codex.';
 
 // The note's story, when the note is one this app opened in a live, unmuted
 // story of the connected writer in this universe, on a scene not in the trash.
