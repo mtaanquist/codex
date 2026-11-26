@@ -64,7 +64,7 @@ If you ticked "Let you accept its suggestions in the app", you can go through a 
 - **Discuss** hands the edit back to the conversation, so you can talk it over with the app before you decide.
 - **Open in Codex** opens the same note in Codex.
 
-Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
+Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. A very long edit is shown cut short on the card and cannot be accepted there; open it in Codex to decide on it. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
 
 ## Disconnect an app
 

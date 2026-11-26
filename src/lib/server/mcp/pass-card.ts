@@ -59,8 +59,15 @@ export const MAX_CARD_EDITS = 50;
 export const MAX_CARD_CHARS = 100_000;
 // How much of the paragraph on each side of a change the card shows.
 const CONTEXT_CHARS = 600;
-// How much of a decided edit's words the card shows.
+// How much of a decided edit's words the card shows, and of one it cannot
+// place.
 const DECIDED_CHARS = 300;
+// The most characters of passage and wording together for an edit the writer
+// may accept on the card. A longer one is shown cut short and cannot be
+// accepted there: a cut wording must never be what an accept writes.
+export const MAX_CARD_EDIT_CHARS = 20_000;
+// How much of an edit's reason the card shows.
+const REASON_CHARS = 2000;
 
 export type CardToolName = 'open_guided_pass' | 'decide_suggestion';
 
@@ -137,9 +144,12 @@ export type CardEdit = {
 	// Sent back with an accept, so a revision made meanwhile is not taken.
 	stamp: string | null;
 	followUp: boolean;
-	// False for an edit still waiting whose spot can no longer be found: it can
-	// only be skipped here.
+	// False for an edit still waiting whose spot can no longer be found, or
+	// that is too long to show whole: it can only be skipped here.
 	placed: boolean;
+	// Not placed because it is too long for the card; the writer decides it in
+	// Codex.
+	tooLong?: boolean;
 };
 
 export type PassCard = {
@@ -306,50 +316,47 @@ async function buildPass(
 			status: s.status,
 			sceneTitle: scene.title,
 			chapterTitle: scene.chapterTitle ?? null,
-			replacement: s.replacement,
-			reason: s.reason,
+			reason: s.reason === null ? null : clipEnd(s.reason, REASON_CHARS),
 			followUp: s.followsId !== null
 		};
-		if (s.status !== 'pending') {
-			return {
-				...base,
-				replacement: clipEnd(s.replacement, DECIDED_CHARS),
-				before: '',
-				after: '',
-				text: clipEnd(s.original, DECIDED_CHARS),
-				stamp: null,
-				placed: true
-			};
-		}
-		if (!s.anchor) {
-			return {
-				...base,
-				before: '',
-				after: '',
-				text: s.original,
-				stamp: s.status === 'pending' ? (s.stamp ?? null) : null,
-				placed: s.status !== 'pending'
-			};
-		}
+		// Shown cut short and never given a key (see passResult): it cannot be
+		// accepted on the card.
+		const unplaced = (text: string, tooLong = false): CardEdit => ({
+			...base,
+			before: '',
+			after: '',
+			text: clipEnd(text, DECIDED_CHARS),
+			replacement: clipEnd(s.replacement, DECIDED_CHARS),
+			stamp: s.status === 'pending' ? (s.stamp ?? null) : null,
+			placed: s.status !== 'pending',
+			...(tooLong ? { tooLong } : {})
+		});
+		if (s.status !== 'pending') return unplaced(s.original);
+		if (!s.anchor) return unplaced(s.original);
 		const body = scene.bodyMd;
+		const text = body.slice(s.anchor.start, s.anchor.end);
+		if (text.length + s.replacement.length > MAX_CARD_EDIT_CHARS) return unplaced(text, true);
 		const span = paragraphWindow(body, s.anchor.start, s.anchor.end);
 		return {
 			...base,
 			before: clipStart(body.slice(Math.min(span.start, s.anchor.start), s.anchor.start)),
 			after: clipEnd(body.slice(s.anchor.end, Math.max(span.end, s.anchor.end))),
-			text: body.slice(s.anchor.start, s.anchor.end),
+			text,
+			replacement: s.replacement,
 			stamp: s.stamp ?? null,
 			placed: true
 		};
 	});
 
 	// Held to a size a client takes in one result: an edit that would go past
-	// it waits in Codex, counted in `more`.
+	// it waits in Codex, counted in `more`. Each edit is bounded above, so the
+	// first one, always sent, fits too.
 	const edits: CardEdit[] = [];
 	let size = 0;
 	for (const edit of all) {
 		size += edit.before.length + edit.text.length + edit.replacement.length + edit.after.length;
-		size += edit.reason?.length ?? 0;
+		size += (edit.reason?.length ?? 0) + (edit.sceneTitle?.length ?? 0);
+		size += edit.chapterTitle?.length ?? 0;
 		if (size > MAX_CARD_CHARS && edits.length > 0) break;
 		edits.push(edit);
 	}

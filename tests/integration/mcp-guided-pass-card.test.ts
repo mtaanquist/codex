@@ -49,6 +49,7 @@ const { createAuthorizationCode, exchangeCode, resolveBearer, revokeGrant } =
 const {
 	CARD_KEY_META,
 	MAX_CARD_CHARS,
+	MAX_CARD_EDIT_CHARS,
 	MAX_CARD_EDITS,
 	PASS_CARD_MIME,
 	PASS_CARD_URI,
@@ -194,6 +195,7 @@ type CardEdit = {
 	after: string;
 	stamp: string | null;
 	placed: boolean;
+	tooLong?: boolean;
 };
 type Pass = {
 	noteId: string;
@@ -257,6 +259,11 @@ async function sceneBody(sceneId: string): Promise<string> {
 async function statuses(): Promise<string[]> {
 	return (await db.select().from(reviewSuggestions)).map((row) => row.status).sort();
 }
+
+// Until `count` of the writer's calls wait at the gate, so a test acts while
+// the call it sent is known to be waiting there.
+const untilWaiting = (gate: typeof stagingGate, userId: string, count = 1) =>
+	vi.waitFor(() => expect(gate.waiting(userId)).toBe(count), { timeout: 5000, interval: 5 });
 
 beforeAll(async () => {
 	await ensureTestDatabase();
@@ -390,6 +397,37 @@ describe('open_guided_pass', () => {
 		const opened = await open(alice.token, alice, noteId);
 		expect(opened.pass!.edits).toHaveLength(5);
 		expect(opened.pass!.more).toBe(1);
+	});
+
+	it('shows an edit too long for the card cut short, with no way to accept it there', async () => {
+		const passage = 'q'.repeat(MAX_CARD_EDIT_CHARS + 1);
+		const body = `${passage} alpha bravo`;
+		await db.update(scenes).set({ bodyMd: body }).where(eq(scenes.id, alice.sceneId));
+		const noteId = await patternNote(alice.token, alice, PATTERN, [
+			{ original: passage, replacement: 'q' },
+			{ original: 'alpha', replacement: 'z'.repeat(MAX_CARD_EDIT_CHARS) },
+			{ original: 'bravo', replacement: 'brave' }
+		]);
+		const opened = await open(alice.token, alice, noteId);
+		const [longPassage, longWording, short] = opened.pass!.edits;
+		for (const edit of [longPassage, longWording]) {
+			expect(edit).toMatchObject({ placed: false, tooLong: true, before: '', after: '' });
+			expect(edit.text.length + edit.replacement.length).toBeLessThan(1000);
+			expect(opened.keys![edit.id]).toBeUndefined();
+		}
+		expect(short).toMatchObject({ placed: true, text: 'bravo', replacement: 'brave' });
+		expect(Object.keys(opened.keys!)).toEqual([short.id]);
+		expect(JSON.stringify(opened.pass).length).toBeLessThan(MAX_CARD_CHARS);
+		// No key the card holds accepts the long edit.
+		const refused = await call(alice.token, 'decide_suggestion', {
+			universeId: alice.universeId,
+			noteId,
+			suggestionId: longWording.id,
+			seen: longWording.stamp,
+			cardKey: opened.keys![short.id]
+		});
+		expect(refused.isError).toBe(true);
+		expect(await sceneBody(alice.sceneId)).toBe(body);
 	});
 
 	it('gives the not-found of any universe for one that is not the writers', async () => {
@@ -591,7 +629,7 @@ describe('decide_suggestion', () => {
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
 		try {
-			await new Promise((resolve) => setTimeout(resolve, 150));
+			await untilWaiting(stagingGate, alice.userId);
 			const grantId = (await resolveBearer(db, alice.token))!.grantId;
 			expect(await revokeGrant(db, alice.userId, grantId)).toBe(true);
 		} finally {
@@ -610,7 +648,7 @@ describe('decide_suggestion', () => {
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
 		try {
-			await new Promise((resolve) => setTimeout(resolve, 150));
+			await untilWaiting(stagingGate, alice.userId);
 			await saveMcpInstanceEnabled(db, false);
 		} finally {
 			release();
@@ -632,6 +670,74 @@ describe('decide_suggestion', () => {
 			const result = await decide(alice.token, accepting(noteId, pass.edits[0], keys));
 			expect(result).toMatchObject({ text: 'Accepted.', isError: false });
 			expect(result.pass).toBeUndefined();
+		} finally {
+			release();
+			await Promise.all(held);
+		}
+		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
+	});
+});
+
+// The checks made again after a call waited for its place. Each layer has a
+// test of its own, so removing either fails one.
+describe('an accept that waited its turn', () => {
+	async function opened() {
+		const noteId = await patternNote(alice.token, alice);
+		const pass = await open(alice.token, alice, noteId);
+		const [first] = pass.pass!.edits;
+		return {
+			universeId: alice.universeId,
+			noteId,
+			suggestionId: first.id,
+			seen: first.stamp,
+			cardKey: pass.keys![first.id]
+		};
+	}
+	const revoke = async () => {
+		const grantId = (await resolveBearer(db, alice.token))!.grantId;
+		expect(await revokeGrant(db, alice.userId, grantId)).toBe(true);
+	};
+
+	it('is refused before it asks for the staging lock once the connection was revoked', async () => {
+		const args = await opened();
+		// Holding the writer's staging lock: an accept that reached its
+		// transaction would answer busy instead of being refused.
+		const holder = await pool.connect();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		try {
+			await holder.query('select pg_advisory_lock(hashtext($1))', [stagingKey(alice.userId)]);
+			const waiting = call(alice.token, 'decide_suggestion', args);
+			await untilWaiting(stagingGate, alice.userId);
+			await revoke();
+			release();
+			await ahead;
+			expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+		} finally {
+			release();
+			await holder.query('select pg_advisory_unlock_all()');
+			holder.release();
+		}
+		expect(await sceneBody(alice.sceneId)).toBe(BODY);
+	});
+
+	it('is not given the pass again once the connection was revoked while that waited', async () => {
+		const args = await opened();
+		// Take both of the writer's reading places, so building the pass again
+		// after the accept has to wait.
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const held = [readGate.run(alice.userId, () => gate), readGate.run(alice.userId, () => gate)];
+		try {
+			const accepting = call(alice.token, 'decide_suggestion', args);
+			await untilWaiting(readGate, alice.userId);
+			await revoke();
+			release();
+			const result = await accepting;
+			expect(result).toMatchObject({ text: 'Accepted.', isError: false });
+			expect(result.pass).toBeUndefined();
+			expect(result.keys).toBeUndefined();
 		} finally {
 			release();
 			await Promise.all(held);

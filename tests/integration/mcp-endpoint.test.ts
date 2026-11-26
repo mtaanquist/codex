@@ -88,6 +88,10 @@ const {
 const { discardSceneDraft, sceneDraftFor } = await import('#lib/server/scene-drafts');
 const { saveSceneBody } = await import('#lib/server/scene-save');
 const { readGate, stagingGate, stagingKey } = await import('#lib/server/mcp/call-gate');
+// Until `count` of the writer's calls wait at the gate, so a test acts while
+// the call it sent is known to be waiting there.
+const untilWaiting = (gate: typeof stagingGate, userId: string, count = 1) =>
+	vi.waitFor(() => expect(gate.waiting(userId)).toBe(count), { timeout: 5000, interval: 5 });
 const { reanchorRange } = await import('#lib/review-anchor');
 const {
 	MAX_APP_DRAFTS_WAITING,
@@ -1412,7 +1416,7 @@ describe('the same call sent several times at once', () => {
 		const gate = new Promise<void>((resolve) => (open = resolve));
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = comment(alice);
-		await new Promise((resolve) => setTimeout(resolve, 150));
+		await untilWaiting(stagingGate, alice.userId);
 		const [grant] = await db
 			.select({ id: oauthGrants.id })
 			.from(oauthGrants)
@@ -1429,7 +1433,7 @@ describe('the same call sent several times at once', () => {
 		const gate = new Promise<void>((resolve) => (open = resolve));
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = comment(alice);
-		await new Promise((resolve) => setTimeout(resolve, 150));
+		await untilWaiting(stagingGate, alice.userId);
 		await saveMcpInstanceEnabled(db, false);
 		open();
 		await ahead;
@@ -1476,7 +1480,7 @@ describe('the same call sent several times at once', () => {
 		}).finally(() => (answered = true));
 		// Another writer is not kept waiting by it.
 		expect((await comment(bob)).text).toContain('Staged a review comment');
-		await new Promise((resolve) => setTimeout(resolve, 150));
+		await untilWaiting(stagingGate, alice.userId);
 		expect(answered).toBe(false);
 		open();
 		await ahead;
@@ -1488,7 +1492,7 @@ describe('the same call sent several times at once', () => {
 		const gate = new Promise<void>((resolve) => (open = resolve));
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = comment(alice);
-		await new Promise((resolve) => setTimeout(resolve, 150));
+		await untilWaiting(stagingGate, alice.userId);
 		await db
 			.update(universes)
 			.set({ deletedAt: new Date() })
@@ -1910,7 +1914,7 @@ describe('a reading call that waited for its place', () => {
 		expect((await read()).text).toContain('Alice Open Book');
 		const letGo = holdReadingPlaces(alice.userId);
 		const waiting = read();
-		await new Promise((resolve) => setTimeout(resolve, 150));
+		await untilWaiting(readGate, alice.userId);
 		const [grant] = await db
 			.select({ id: oauthGrants.id })
 			.from(oauthGrants)
@@ -1923,7 +1927,7 @@ describe('a reading call that waited for its place', () => {
 	it('reads nothing once access for apps was turned off while it waited', async () => {
 		const letGo = holdReadingPlaces(alice.userId);
 		const waiting = read();
-		await new Promise((resolve) => setTimeout(resolve, 150));
+		await untilWaiting(readGate, alice.userId);
 		await saveMcpInstanceEnabled(db, false);
 		await letGo();
 		expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
