@@ -16,6 +16,9 @@ export type ToolKind = 'read' | 'write';
 // MCP endpoint (see #lib/server/mcp/tools). The in-app Assistant never gets
 // one: it already knows the open universe and story from the page. These are
 // the listed exceptions to "one toolbox for both"; keep the list short.
+// The guided pass card's tools (open_guided_pass, decide_suggestion) are not
+// here at all: they live in #lib/server/mcp/pass-card, so an accept can never
+// be offered to a model run inside Codex.
 export type ToolDef = ToolSpec & { kind: ToolKind; scoped?: boolean; external?: boolean };
 
 function obj(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {

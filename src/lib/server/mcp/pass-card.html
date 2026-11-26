@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Guided pass</title>
+		<style>
+			/* The client's own colours and fonts when it sends them, Codex's otherwise. */
+			:root {
+				color-scheme: light dark;
+				--bg: var(--color-background-primary, #ffffff);
+				--bg-soft: var(--color-background-secondary, #f4f5f8);
+				--ink: var(--color-text-primary, #1b1e26);
+				--ink-soft: var(--color-text-secondary, #5d6372);
+				--line: var(--color-border-primary, #dfe2ea);
+				--accent: #3f6fe0;
+				--del: #b3261e;
+				--ins: #1f7a3a;
+				--radius: var(--border-radius-md, 9px);
+				--font: var(--font-sans, system-ui, -apple-system, sans-serif);
+				--prose: Georgia, 'Times New Roman', serif;
+			}
+			:root[data-theme='dark'] {
+				--bg: var(--color-background-primary, #16181d);
+				--bg-soft: var(--color-background-secondary, #1f2229);
+				--ink: var(--color-text-primary, #e8eaf0);
+				--ink-soft: var(--color-text-secondary, #a2a8b6);
+				--line: var(--color-border-primary, #30343e);
+				--accent: #7ea2ff;
+				--del: #ff8a80;
+				--ins: #7fd99a;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				padding: 16px;
+				background: var(--bg);
+				color: var(--ink);
+				font: 14px/1.5 var(--font);
+			}
+			h1 {
+				margin: 0;
+				font-size: 15px;
+				font-weight: 600;
+			}
+			.meta {
+				margin: 2px 0 12px;
+				color: var(--ink-soft);
+				font-size: 12.5px;
+			}
+			.card {
+				border: 1px solid var(--line);
+				border-radius: var(--radius);
+				padding: 14px;
+				background: var(--bg);
+			}
+			.where {
+				color: var(--ink-soft);
+				font-size: 12.5px;
+				margin-bottom: 8px;
+			}
+			.prose {
+				font-family: var(--prose);
+				font-size: 16px;
+				line-height: 1.6;
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+			}
+			del {
+				color: var(--del);
+			}
+			ins {
+				color: var(--ins);
+				text-decoration: underline;
+			}
+			.reason {
+				margin-top: 10px;
+				color: var(--ink-soft);
+				font-size: 13px;
+			}
+			.badge {
+				display: inline-block;
+				margin-left: 6px;
+				padding: 0 6px;
+				border: 1px solid var(--line);
+				border-radius: 99px;
+				font-size: 11.5px;
+				color: var(--ink-soft);
+			}
+			.actions {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+				margin-top: 14px;
+			}
+			button {
+				font: inherit;
+				font-size: 13.5px;
+				padding: 6px 12px;
+				border-radius: var(--radius);
+				border: 1px solid var(--line);
+				background: var(--bg-soft);
+				color: var(--ink);
+				cursor: pointer;
+			}
+			button.primary {
+				background: var(--accent);
+				border-color: var(--accent);
+				color: #ffffff;
+			}
+			button:disabled {
+				opacity: 0.55;
+				cursor: default;
+			}
+			button.link {
+				border: none;
+				background: none;
+				padding: 0;
+				color: var(--accent);
+				text-decoration: underline;
+			}
+			textarea {
+				width: 100%;
+				min-height: 80px;
+				margin-top: 10px;
+				padding: 8px;
+				font: 15px/1.5 var(--prose);
+				color: var(--ink);
+				background: var(--bg);
+				border: 1px solid var(--line);
+				border-radius: var(--radius);
+			}
+			.message {
+				margin-top: 10px;
+				font-size: 13px;
+			}
+			.message.failure {
+				color: var(--del);
+			}
+			.footer {
+				margin-top: 12px;
+				font-size: 12.5px;
+				color: var(--ink-soft);
+			}
+		</style>
+	</head>
+	<body>
+		<main id="root">
+			<p class="meta">Loading the guided pass...</p>
+		</main>
+		<script>
+			(function () {
+				'use strict';
+				var PROTOCOL = '2026-01-26';
+				var root = document.getElementById('root');
+				var nextId = 1;
+				var waiting = {};
+				var host = { capabilities: {} };
+				var pass = null;
+				// The keys of the edits the writer may accept, by edit id, from the
+				// last result; null until a result brought them.
+				var keys = null;
+				// Skipped in this card: still waiting in Codex, but behind the writer.
+				var skipped = {};
+				var acceptedHere = [];
+				// The edit whose wording the writer is changing, and what they typed.
+				var editingId = null;
+				var draft = '';
+				var editingStamp = null;
+				var busy = false;
+				var message = null;
+				// Set once the client has answered the handshake.
+				var ready = false;
+
+				function send(payload) {
+					window.parent.postMessage(Object.assign({ jsonrpc: '2.0' }, payload), '*');
+				}
+				function request(method, params) {
+					var id = nextId++;
+					send({ id: id, method: method, params: params || {} });
+					return new Promise(function (resolve, reject) {
+						waiting[id] = { resolve: resolve, reject: reject };
+					});
+				}
+				function notify(method, params) {
+					send({ method: method, params: params || {} });
+				}
+
+				window.addEventListener('message', function (event) {
+					if (event.source !== window.parent) return;
+					var data = event.data;
+					if (!data || data.jsonrpc !== '2.0') return;
+					if (data.id !== undefined && waiting[data.id] && !data.method) {
+						var entry = waiting[data.id];
+						delete waiting[data.id];
+						if (data.error) entry.reject(new Error(data.error.message || 'Request failed'));
+						else entry.resolve(data.result);
+						return;
+					}
+					if (data.method === 'ui/notifications/tool-result') {
+						takeResult(data.params);
+						// A client may leave the keys out of what it hands the card; the
+						// card asks for the pass itself to get one.
+						if (pass && !keys) refresh();
+					} else if (data.method === 'ui/notifications/tool-cancelled') {
+						if (!pass) {
+							message = {
+								failure: true,
+								text: 'The pass was not opened. Ask the app to open it again.'
+							};
+							render();
+						}
+					} else if (data.method === 'ui/notifications/host-context-changed') {
+						applyContext(data.params);
+					} else if (data.id !== undefined && data.method) {
+						// Requests from the client: answered, nothing to tear down.
+						if (data.method === 'ping' || data.method === 'ui/resource-teardown') {
+							send({ id: data.id, result: {} });
+						} else {
+							send({ id: data.id, error: { code: -32601, message: 'Method not found' } });
+						}
+					}
+				});
+
+				function applyContext(context) {
+					if (!context) return;
+					if (context.theme) document.documentElement.setAttribute('data-theme', context.theme);
+					var variables = context.styles && context.styles.variables;
+					if (variables) {
+						Object.keys(variables).forEach(function (name) {
+							if (variables[name])
+								document.documentElement.style.setProperty(name, variables[name]);
+						});
+					}
+				}
+
+				// A result from open_guided_pass or decide_suggestion.
+				function takeResult(result) {
+					if (!result) return;
+					var cardKeys = result._meta && result._meta['codex/cardKeys'];
+					if (cardKeys) keys = cardKeys;
+					if (result.isError || !result.structuredContent) {
+						message = { failure: true, text: textOf(result) || 'Something went wrong.' };
+					} else {
+						pass = result.structuredContent;
+					}
+					render();
+				}
+
+				function textOf(result) {
+					var parts = (result && result.content) || [];
+					return parts
+						.filter(function (part) {
+							return part.type === 'text';
+						})
+						.map(function (part) {
+							return part.text;
+						})
+						.join(' ');
+				}
+
+				function callTool(name, args) {
+					return request('tools/call', { name: name, arguments: args });
+				}
+
+				function refresh() {
+					if (!pass) return Promise.resolve();
+					return callTool('open_guided_pass', { universeId: pass.universeId, noteId: pass.noteId })
+						.then(function (result) {
+							takeResult(result);
+							if (!keys && !message) {
+								message = {
+									failure: true,
+									text: 'This app cannot show the buttons for this pass. Open it in Codex instead.'
+								};
+								render();
+							}
+						})
+						.catch(function () {
+							message = { failure: true, text: 'Could not load the pass again. Try again.' };
+							render();
+						});
+				}
+				function current() {
+					if (!pass) return null;
+					var open = pass.edits.filter(function (edit) {
+						return edit.status === 'pending';
+					});
+					var ahead = open.filter(function (edit) {
+						return !skipped[edit.id];
+					});
+					return ahead[0] || null;
+				}
+
+				function el(tag, attrs, children) {
+					var node = document.createElement(tag);
+					Object.keys(attrs || {}).forEach(function (name) {
+						if (name === 'text') node.textContent = attrs[name];
+						else if (name === 'onclick') node.addEventListener('click', attrs[name]);
+						else node.setAttribute(name, attrs[name]);
+					});
+					(children || []).forEach(function (child) {
+						if (child) node.appendChild(child);
+					});
+					return node;
+				}
+
+				function place(edit) {
+					var parts = [edit.chapterTitle, edit.sceneTitle || 'Untitled scene'].filter(Boolean);
+					return parts.join(', ');
+				}
+
+				// Rebuilding the card drops the focus, so it goes back to the first
+				// button of the new card, unless the writer had moved it elsewhere.
+				function render() {
+					var active = document.activeElement;
+					var hadFocus = !active || active === document.body || root.contains(active);
+					paint();
+					if (!hadFocus) return;
+					var target =
+						root.querySelector('textarea') ||
+						root.querySelector('.card button:not([disabled])') ||
+						root.querySelector('.card');
+					if (target) target.focus({ preventScroll: true });
+				}
+
+				function paint() {
+					root.textContent = '';
+					if (!pass) {
+						root.appendChild(
+							el('p', {
+								class: message && message.failure ? 'message failure' : 'meta',
+								text: message ? message.text : 'Loading the guided pass...'
+							})
+						);
+						return;
+					}
+					var open = pass.edits.filter(function (edit) {
+						return edit.status === 'pending';
+					});
+					var done = pass.edits.length - open.length;
+					var step = current();
+					root.appendChild(el('h1', { text: pass.name || 'Guided pass' }));
+					root.appendChild(
+						el('p', {
+							class: 'meta',
+							text:
+								pass.storyTitle +
+								'. ' +
+								open.length +
+								(open.length === 1 ? ' edit' : ' edits') +
+								' waiting, ' +
+								done +
+								' decided.'
+						})
+					);
+					root.appendChild(step ? stepCard(step) : endCard(open));
+					root.appendChild(
+						el('p', {
+							class: message && message.failure ? 'message failure' : 'message',
+							role: 'status',
+							text: message ? message.text : ''
+						})
+					);
+					root.appendChild(
+						el('p', { class: 'footer' }, [
+							el('button', { class: 'link', text: 'Open in Codex', onclick: openInCodex })
+						])
+					);
+				}
+
+				function stepCard(edit) {
+					var prose = el('div', { class: 'prose' }, [
+						document.createTextNode(edit.before),
+						edit.text ? el('del', { text: edit.text }) : null,
+						edit.replacement ? el('ins', { text: edit.replacement }) : null,
+						document.createTextNode(edit.after)
+					]);
+					var where = el('div', { class: 'where', text: place(edit) }, [
+						edit.followUp ? el('span', { class: 'badge', text: 'Follow-up' }) : null
+					]);
+					var card = el(
+						'section',
+						{ class: 'card', 'aria-label': 'Current edit', tabindex: '-1' },
+						[where, prose]
+					);
+					if (edit.reason)
+						card.appendChild(el('p', { class: 'reason', text: 'Why: ' + edit.reason }));
+					if (!edit.placed) {
+						card.appendChild(
+							el('p', {
+								class: 'message',
+								text: 'The text this edit applies to has changed. Skip it, or turn it down in Codex.'
+							})
+						);
+					}
+					// An accept goes through the client to Codex, which not every client allows.
+					var canCall = ready && host.capabilities.serverTools;
+					var canAccept = edit.placed && edit.stamp && keys && keys[edit.id] && canCall && !busy;
+					if (ready && !canCall && !message) {
+						message = {
+							failure: false,
+							text: 'This app cannot accept edits from the card. Open the note in Codex to decide on them.'
+						};
+					}
+					// A revision that landed while the writer typed: their wording stays in
+					// the box, and they are told the suggestion above is the new one.
+					if (editingId === edit.id && editingStamp !== edit.stamp) {
+						editingStamp = edit.stamp;
+						message = {
+							failure: true,
+							text: 'The app changed this edit while you were writing. Read the new suggestion above; your own wording is kept below.'
+						};
+					}
+					if (editingId === edit.id) {
+						var box = el('textarea', { 'aria-label': 'Your wording' });
+						box.value = draft;
+						box.addEventListener('input', function () {
+							draft = box.value;
+						});
+						card.appendChild(box);
+						card.appendChild(
+							el('div', { class: 'actions' }, [
+								el('button', {
+									class: 'primary',
+									text: 'Accept my wording',
+									onclick: function () {
+										if (!draft.trim() && edit.replacement !== '') {
+											message = {
+												failure: true,
+												text: 'Write the wording to use, or skip this edit.'
+											};
+											render();
+											return;
+										}
+										accept(edit, draft);
+									}
+								}),
+								el('button', {
+									text: 'Cancel',
+									onclick: function () {
+										editingId = null;
+										render();
+									}
+								})
+							])
+						);
+					} else {
+						card.appendChild(
+							el('div', { class: 'actions' }, [
+								el('button', {
+									class: 'primary',
+									text: 'Accept',
+									onclick: function () {
+										accept(edit, undefined);
+									}
+								}),
+								el('button', {
+									text: 'Edit',
+									onclick: function () {
+										editingId = edit.id;
+										editingStamp = edit.stamp;
+										draft = edit.replacement;
+										message = null;
+										render();
+									}
+								}),
+								el('button', {
+									text: 'Skip',
+									onclick: function () {
+										skipped[edit.id] = true;
+										message = null;
+										render();
+									}
+								}),
+								ready && host.capabilities.message
+									? el('button', {
+											text: 'Discuss',
+											onclick: function () {
+												discuss(edit);
+											}
+										})
+									: null
+							])
+						);
+					}
+					card.querySelectorAll('button').forEach(function (button) {
+						var label = button.textContent;
+						if (
+							(label === 'Accept' || label === 'Accept my wording' || label === 'Edit') &&
+							!canAccept
+						) {
+							button.disabled = true;
+						}
+						if (busy) button.disabled = true;
+					});
+					return card;
+				}
+
+				function endCard(open) {
+					var card = el('section', {
+						class: 'card',
+						'aria-label': 'End of the pass',
+						tabindex: '-1'
+					});
+					if (open.length === 0) {
+						card.appendChild(el('p', { text: 'You have been through every edit in this note.' }));
+					} else {
+						card.appendChild(
+							el('p', {
+								text:
+									'You skipped ' +
+									open.length +
+									(open.length === 1 ? ' edit. It is' : ' edits. They are') +
+									' still waiting in Codex.'
+							})
+						);
+						card.appendChild(
+							el('div', { class: 'actions' }, [
+								el('button', {
+									text: 'Go through skipped edits',
+									onclick: function () {
+										skipped = {};
+										render();
+									}
+								})
+							])
+						);
+					}
+					if (pass.more > 0) {
+						card.appendChild(
+							el('p', {
+								class: 'message',
+								text:
+									pass.more +
+									(pass.more === 1
+										? ' more edit in this note is'
+										: ' more edits in this note are') +
+									' only shown in Codex.'
+							})
+						);
+					}
+					return card;
+				}
+
+				function accept(edit, wording) {
+					if (busy || !keys || !keys[edit.id]) return;
+					busy = true;
+					message = null;
+					render();
+					var args = {
+						universeId: pass.universeId,
+						noteId: pass.noteId,
+						suggestionId: edit.id,
+						seen: edit.stamp,
+						cardKey: keys[edit.id]
+					};
+					if (wording !== undefined) args.replacement = wording;
+					callTool('decide_suggestion', args)
+						.then(function (result) {
+							busy = false;
+							if (result && !result.isError) {
+								editingId = null;
+								acceptedHere.push(edit.id);
+								if (result.structuredContent) takeResult(result);
+								else refresh();
+								tellModel();
+							} else {
+								message = {
+									failure: true,
+									text: textOf(result) || 'The edit could not be accepted.'
+								};
+								render();
+								// A revision, a change to the text or an old key: show the pass as
+								// it is now. The writer's own wording stays in the box.
+								var stale = message.text.indexOf('Only the guided pass card') === 0;
+								refresh().then(function () {
+									if (stale && keys) {
+										message = {
+											failure: true,
+											text: 'This edit was out of date. Read it again, then decide.'
+										};
+										render();
+									}
+								});
+							}
+						})
+						.catch(function () {
+							busy = false;
+							message = { failure: true, text: 'The edit could not be accepted. Try again.' };
+							render();
+						});
+				}
+
+				// What the writer did here, so the conversation can carry on from it.
+				function tellModel() {
+					if (!host.capabilities.updateModelContext) return;
+					var summary =
+						'In the guided pass on the note ' +
+						pass.noteId +
+						', the writer accepted these edits: ' +
+						acceptedHere.join(', ') +
+						'.';
+					request('ui/update-model-context', {
+						content: [{ type: 'text', text: summary }]
+					}).catch(function () {});
+				}
+
+				function discuss(edit) {
+					var text =
+						"Let's talk about this edit from your pattern note " +
+						pass.noteId +
+						' (edit ' +
+						edit.id +
+						', universe ' +
+						pass.universeId +
+						') before I decide.\n\nNow: "' +
+						edit.text +
+						'"\nSuggested: "' +
+						edit.replacement +
+						'"';
+					if (edit.reason) text += '\nWhy: ' + edit.reason;
+					request('ui/message', { role: 'user', content: [{ type: 'text', text: text }] })
+						.then(function (result) {
+							if (result && result.isError) throw new Error('refused');
+						})
+						.catch(function () {
+							message = { failure: true, text: 'Could not hand this edit to the conversation.' };
+							render();
+						});
+				}
+
+				// The page's own height, measured so it can shrink as well as grow.
+				function watchSize() {
+					if (typeof ResizeObserver !== 'function') return;
+					var sent = { width: 0, height: 0 };
+					var report = function () {
+						var html = document.documentElement;
+						var previous = html.style.height;
+						html.style.height = 'max-content';
+						var height = Math.ceil(html.getBoundingClientRect().height);
+						html.style.height = previous;
+						var width = Math.ceil(window.innerWidth);
+						if (width === sent.width && height === sent.height) return;
+						sent = { width: width, height: height };
+						notify('ui/notifications/size-changed', { width: width, height: height });
+					};
+					var observer = new ResizeObserver(report);
+					observer.observe(document.documentElement);
+					observer.observe(document.body);
+					report();
+				}
+
+				function openInCodex() {
+					if (!pass) return;
+					request('ui/open-link', { url: pass.link }).catch(function () {
+						message = { failure: false, text: 'Open this address in your browser: ' + pass.link };
+						render();
+					});
+				}
+
+				request('ui/initialize', {
+					protocolVersion: PROTOCOL,
+					appInfo: { name: 'Codex guided pass', version: '1' },
+					appCapabilities: {}
+				})
+					.then(function (result) {
+						host.capabilities = (result && result.hostCapabilities) || {};
+						applyContext(result && result.hostContext);
+						notify('ui/notifications/initialized', {});
+						ready = true;
+						render();
+						watchSize();
+					})
+					.catch(function () {
+						message = { failure: true, text: 'This app could not start the card.' };
+						render();
+					});
+			})();
+		</script>
+	</body>
+</html>
