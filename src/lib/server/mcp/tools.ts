@@ -14,7 +14,8 @@ import {
 	STAGING_CALLS_PER_MINUTE_PER_USER,
 	TOOL_RESULT_MAX_CHARS
 } from './constants.ts';
-import { GateBusyError, readGate } from './call-gate.ts';
+import { GateBusyError, readGate, stagingGate } from './call-gate.ts';
+import { CARD_TOOLS, callCardTool, cardTool, PASS_CARD_URI, type CardTool } from './pass-card.ts';
 import { credentialLive, type BearerIdentity } from './oauth.ts';
 import { mcpInstanceEnabled } from './settings.ts';
 
@@ -29,6 +30,9 @@ export type McpTool = {
 	description: string;
 	inputSchema: Record<string, unknown>;
 	readOnly: boolean;
+	// For the guided pass card's tools: the card they show, and who may call
+	// them (see pass-card.ts).
+	ui?: { resourceUri: string; visibility: CardTool['visibility'] };
 };
 
 // What a tool needs the connection to have been allowed.
@@ -114,15 +118,32 @@ function inputSchema(tool: ToolDef): Record<string, unknown> {
 }
 
 export function mcpTools(permissions: readonly McpPermission[]): McpTool[] {
-	return TOOLS.filter((tool) => offered(tool, permissions)).map((tool) => ({
+	const shared = TOOLS.filter((tool) => offered(tool, permissions)).map((tool) => ({
 		name: tool.name,
 		description: tool.description,
 		inputSchema: inputSchema(tool),
 		readOnly: tool.kind === 'read'
 	}));
+	if (!permissions.includes('apply')) return shared;
+	return [
+		...shared,
+		...CARD_TOOLS.map((tool) => ({
+			name: tool.name,
+			description: tool.description,
+			inputSchema: tool.inputSchema,
+			readOnly: tool.kind === 'read',
+			ui: { resourceUri: PASS_CARD_URI, visibility: tool.visibility }
+		}))
+	];
 }
 
-export type McpToolResult = { text: string; isError: boolean };
+export type McpToolResult = {
+	text: string;
+	isError: boolean;
+	// What the guided pass card reads (see pass-card.ts).
+	structured?: Record<string, unknown>;
+	meta?: Record<string, unknown>;
+};
 
 // A result that would not fit is cut with a note, so the client does not cut
 // it silently somewhere else.
@@ -155,13 +176,20 @@ export async function callMcpTool(
 		return { text, isError: true };
 	};
 
-	const tool = TOOLS.find((entry) => entry.name === name);
-	if (!tool || !offered(tool, identity.permissions)) {
+	const shared = TOOLS.find((entry) => entry.name === name);
+	const card = shared ? undefined : cardTool(name);
+	const tool = shared ?? card;
+	if (
+		!tool ||
+		(shared && !offered(shared, identity.permissions)) ||
+		(card && !identity.permissions.includes('apply'))
+	) {
 		return refuse('unknown_tool', `Unknown tool: ${name}.`);
 	}
 
 	// Staging has its own, tighter budget, so a burst of reads cannot be spent
-	// on notes and a burst of notes does not stop the app reading.
+	// on notes and a burst of notes does not stop the app reading. An accept
+	// from the card counts as staging.
 	const windowMs = 60 * 1000;
 	const staging = tool.kind === 'write';
 	const perGrant = staging ? STAGING_CALLS_PER_MINUTE : READ_CALLS_PER_MINUTE;
@@ -217,6 +245,18 @@ export async function callMcpTool(
 			universeId = universeArgument;
 		}
 
+		if (card) {
+			const result = await callCardTool(card.name, {
+				db,
+				identity,
+				universeId,
+				args: rest,
+				origin
+			});
+			log(result.isError ? 'refused' : staging ? 'accepted' : 'ok');
+			return { ...result, text: capped(result.text) };
+		}
+
 		const outcome = await dispatchToolCall(
 			{
 				db,
@@ -256,7 +296,9 @@ export async function callMcpTool(
 
 	try {
 		// Reading calls take a place before they touch the database; staging
-		// calls take theirs in the dispatcher, around the transaction.
+		// calls take theirs in the dispatcher, around the transaction. The card's
+		// accept is not dispatched, so it takes its place here.
+		if (card && staging) return await stagingGate.run(identity.userId, run);
 		return staging ? await run() : await readGate.run(identity.userId, run);
 	} catch (err) {
 		if (err instanceof GateBusyError) {

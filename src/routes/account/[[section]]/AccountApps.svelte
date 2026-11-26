@@ -342,6 +342,13 @@
 				</p>
 			</div>
 			<div class="field">
+				<label class="check-row">
+					<input type="checkbox" name="permission" value="apply" />
+					{PERMISSION_TEXT.apply.label}
+				</label>
+				<p class="field-hint">{PERMISSION_TEXT.apply.description}</p>
+			</div>
+			<div class="field">
 				<label for="token-expiry">Expires after</label>
 				<select id="token-expiry" class="select" name="expiresInDays">
 					{#each access.tokenExpiryDays as days (days)}
