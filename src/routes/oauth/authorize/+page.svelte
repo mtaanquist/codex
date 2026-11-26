@@ -16,6 +16,21 @@
 	// which no longer carries the app's request, so it is shown on its own
 	// and not under what the load made of that address.
 	const refusal = $derived(form && 'message' in form && form.message ? form.message : null);
+
+	// Accepting goes through the app's card, which also needs suggestions, so
+	// its box stays off and unticked until suggestions are ticked.
+	const startsTicked = (id: string) =>
+		data.status === 'ok' && data.permissions.some((p) => p.id === id && p.checked);
+	let suggestOn = $derived(startsTicked('suggest'));
+	let applyOn = $derived(startsTicked('apply'));
+	function onTick(id: string, checked: boolean) {
+		if (id === 'suggest') {
+			suggestOn = checked;
+			if (!checked) applyOn = false;
+		} else if (id === 'apply') {
+			applyOn = checked;
+		}
+	}
 </script>
 
 <!-- The name is the app's own word for itself, so it is shown as a claim, on
@@ -125,8 +140,13 @@
 							type="checkbox"
 							name="permission"
 							value={permission.id}
-							checked={permission.checked || permission.required}
-							disabled={permission.required}
+							checked={permission.id === 'suggest'
+								? suggestOn
+								: permission.id === 'apply'
+									? applyOn
+									: permission.checked || permission.required}
+							disabled={permission.required || (permission.id === 'apply' && !suggestOn)}
+							onchange={(event) => onTick(permission.id, event.currentTarget.checked)}
 							aria-describedby="consent-{permission.id}-hint"
 						/>
 						<span>
@@ -139,8 +159,9 @@
 				{/each}
 			</fieldset>
 			<p class="auth-note">
-				The app can never change, delete or publish your writing. You can disconnect it at any time
-				under Account, Connected apps.
+				The app can never delete or publish your writing. It only changes your text when you accept
+				one of its suggestions, or, if you allow it, when you accept one on the app's own card. You
+				can disconnect it at any time under Account, Connected apps.
 			</p>
 			<div class="auth-actions">
 				<button class="btn btn-primary" type="submit">Allow</button>

@@ -182,6 +182,89 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Fam']);
 	});
 
+	it("leaves writers' content limits as stored on a merge and its undo", async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Blood', slug: 'blood' },
+			{ kind: 'warning', name: 'Graphic Violence', slug: 'graphic-violence' }
+		]);
+		const [universe] = await db.select().from(universes);
+		const storyPrefs = { 'warning:gore': 'write', tense: 'past' };
+		const otherPrefs = { 'warning:gore': 'avoid', 'warning:graphic-violence': 'write' };
+		const universePrefs = { 'warning:blood': 'avoid' };
+		await db
+			.update(stories)
+			.set({ assistantPreferences: storyPrefs })
+			.where(eq(stories.id, storyId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: otherPrefs })
+			.where(eq(stories.id, otherStoryId));
+		await db
+			.update(universes)
+			.set({ assistantPreferences: universePrefs })
+			.where(eq(universes.id, universe.id));
+		const story = async (id: string) =>
+			(await db.select().from(stories).where(eq(stories.id, id)))[0];
+		const universeRow = async () =>
+			(await db.select().from(universes).where(eq(universes.id, universe.id)))[0];
+		const before = { story: await story(storyId), universe: await universeRow() };
+		const unchanged = async () => {
+			expect(await story(storyId)).toEqual(before.story);
+			expect((await story(otherStoryId)).assistantPreferences).toEqual(otherPrefs);
+			expect(await universeRow()).toEqual(before.universe);
+		};
+
+		// The survivor folds the merged warnings' limits in when they are read
+		// (see tests/integration/assistant-preferences.test.ts), so nothing is copied.
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Graphic Violence')).toEqual({
+			ok: true
+		});
+		await unchanged();
+		// An undo never leaves a warning wider than while merged: Blood's "avoid"
+		// covered Gore inside Graphic Violence, so Gore keeps it in the universe,
+		// and over the first story's own "write". updated_at stays as it was.
+		expect(await unmergeTag(db, 'warning', await tagId('gore'))).toBe(true);
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		const after = { story: await story(storyId), universe: await universeRow() };
+		expect(after.story.assistantPreferences).toEqual({ 'warning:gore': 'avoid', tense: 'past' });
+		expect(after.story.updatedAt).toEqual(before.story.updatedAt);
+		expect((await story(otherStoryId)).assistantPreferences).toEqual(otherPrefs);
+		expect(after.universe.assistantPreferences).toEqual({
+			'warning:blood': 'avoid',
+			'warning:gore': 'avoid'
+		});
+		expect(after.universe.updatedAt).toEqual(before.universe.updatedAt);
+	});
+
+	it('refuses to merge an entry already merged into another', async () => {
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Fam', slug: 'fam' },
+			{ kind: 'tag', name: 'Found Family', slug: 'found-family' },
+			{ kind: 'tag', name: 'Kin', slug: 'kin' }
+		]);
+		expect(await mergeTag(db, 'tag', await tagId('fam'), 'Found Family')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'tag', await tagId('fam'), 'Kin')).toEqual({
+			ok: false,
+			message: expect.stringContaining('Undo its merge first')
+		});
+		const [fam] = await db.select().from(tags).where(eq(tags.slug, 'fam'));
+		expect(fam.mergedIntoId).toBe(await tagId('found-family'));
+
+		// Two merges of one entry at once: the second sees the first's once it
+		// has the lock.
+		expect(await unmergeTag(db, 'tag', fam.id)).toBe(true);
+		const results = await Promise.all([
+			mergeTag(db, 'tag', fam.id, 'Found Family'),
+			mergeTag(db, 'tag', fam.id, 'Kin')
+		]);
+		expect(results.filter((result) => result.ok)).toHaveLength(1);
+		expect(results.find((result) => !result.ok)).toMatchObject({
+			message: expect.stringContaining('Undo its merge first')
+		});
+	});
+
 	it('a save while merged or removed keeps the old entry, so undoing gives it back', async () => {
 		await tagStory(storyId, ['Fam', 'Spoilers', 'Kept']);
 		await tagStory(otherStoryId, ['Found Family']);
@@ -301,6 +384,91 @@ describe('story tags', () => {
 		expect(await names(storyId)).toEqual(['Slow Burn', 'Slow-Burning']);
 	});
 
+	it("moves writers' content limits along with a renamed warning", async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Death', slug: 'death' }
+		]);
+		const [universe] = await db.select().from(universes);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'avoid', tense: 'past' } })
+			.where(eq(stories.id, storyId));
+		// A key left under the new slug (older data or an import) gives way,
+		// except that an "avoid" on either key is kept.
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'write', 'warning:graphic-gore': 'avoid' } })
+			.where(eq(stories.id, otherStoryId));
+		await db
+			.update(universes)
+			.set({
+				assistantPreferences: { 'warning:death': 'avoid', 'warning:graphic-gore': 'write' }
+			})
+			.where(eq(universes.id, universe.id));
+		const prefs = async (id: string) =>
+			(await db.select().from(stories).where(eq(stories.id, id)))[0];
+		const universePrefs = async () =>
+			(await db.select().from(universes).where(eq(universes.id, universe.id)))[0]
+				.assistantPreferences;
+		const updatedAt = (await prefs(storyId)).updatedAt;
+
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		const one = await prefs(storyId);
+		expect(one.assistantPreferences).toEqual({ 'warning:graphic-gore': 'avoid', tense: 'past' });
+		expect(one.updatedAt).toEqual(updatedAt);
+		expect((await prefs(otherStoryId)).assistantPreferences).toEqual({
+			'warning:graphic-gore': 'avoid'
+		});
+		// Gore had no limit here, so the row is left as it was.
+		expect(await universePrefs()).toEqual({
+			'warning:death': 'avoid',
+			'warning:graphic-gore': 'write'
+		});
+
+		// Renaming back moves the limits back.
+		expect(await renameTag(db, 'warning', await tagId('graphic-gore'), 'Gore')).toEqual({
+			ok: true
+		});
+		expect((await prefs(storyId)).assistantPreferences).toEqual({
+			'warning:gore': 'avoid',
+			tense: 'past'
+		});
+		expect((await prefs(otherStoryId)).assistantPreferences).toEqual({ 'warning:gore': 'avoid' });
+
+		// A name change that keeps the slug, and a rename of another kind, leave
+		// the limits alone.
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'GORE')).toEqual({ ok: true });
+		expect((await prefs(storyId)).assistantPreferences).toMatchObject({ 'warning:gore': 'avoid' });
+		await db.insert(tags).values({ kind: 'genre', name: 'Death', slug: 'death-genre' });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:death-genre': 'write' } })
+			.where(eq(stories.id, storyId));
+		expect(await renameTag(db, 'genre', await tagId('death-genre'), 'Mortality')).toEqual({
+			ok: true
+		});
+		expect((await prefs(storyId)).assistantPreferences).toEqual({ 'warning:death-genre': 'write' });
+	});
+
+	it('names a removed entry that blocks a rename or a merge, so it can be restored', async () => {
+		await tagStory(storyId, ['Slowburn', 'Slow Burn']);
+		await setTagRemoved(db, 'tag', await tagId('slow-burn'), true, ownerId);
+		expect(await renameTag(db, 'tag', await tagId('slowburn'), 'slow burn')).toEqual({
+			ok: false,
+			message:
+				'The removed entry "Slow Burn" has that name. Restore it and merge into it, or pick another name.'
+		});
+		expect(await mergeTag(db, 'tag', await tagId('slowburn'), 'Slow Burn')).toEqual({
+			ok: false,
+			message: '"Slow Burn" is removed. Restore it first, then merge into it.'
+		});
+		await setTagRemoved(db, 'tag', await tagId('slow-burn'), false, ownerId);
+		expect(await mergeTag(db, 'tag', await tagId('slowburn'), 'Slow Burn')).toEqual({ ok: true });
+	});
+
 	it('refuses a rename to a name a writer added since the check', async () => {
 		await tagStory(storyId, ['Slowburn']);
 		const id = await tagId('slowburn');
@@ -315,6 +483,71 @@ describe('story tags', () => {
 			ok: false,
 			message: 'Another entry already has that name. Merge them instead.'
 		});
+	});
+
+	// Two renames of one warning that run at once (a double submit, or two
+	// moderators) both start from its old slug; the second must move the
+	// limits from wherever the first left them.
+	async function renameTwiceAtOnce(first: string, second: string) {
+		await db.insert(tags).values({ kind: 'warning', name: 'Gore', slug: 'gore' });
+		const id = await tagId('gore');
+		const [universe] = await db.select().from(universes);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'write' } })
+			.where(eq(stories.id, storyId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'avoid' } })
+			.where(eq(stories.id, otherStoryId));
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { 'warning:gore': 'write' } })
+			.where(eq(universes.id, universe.id));
+		const holder = await pool.connect();
+		let results: unknown[];
+		try {
+			await holder.query('begin');
+			await holder.query('select id from tags where id = $1 for update', [id]);
+			const pending = Promise.all([
+				renameTag(db, 'warning', id, first),
+				renameTag(db, 'warning', id, second)
+			]);
+			for (let i = 0; i < 300; i++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n >= 2) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await holder.query('commit');
+			results = await pending;
+		} finally {
+			holder.release();
+		}
+		const [tag] = await db.select().from(tags).where(eq(tags.id, id));
+		const key = `warning:${tag.slug}`;
+		const own = async (sid: string) =>
+			(await db.select().from(stories).where(eq(stories.id, sid)))[0].assistantPreferences;
+		expect(await own(storyId)).toEqual({ [key]: 'write' });
+		expect(await own(otherStoryId)).toEqual({ [key]: 'avoid' });
+		expect((await db.select().from(universes))[0].assistantPreferences).toEqual({
+			[key]: 'write'
+		});
+		return { results, slug: tag.slug };
+	}
+
+	it('keeps every limit when the same rename runs twice at once', async () => {
+		const { results, slug } = await renameTwiceAtOnce('Graphic violence', 'Graphic violence');
+		expect(results).toEqual([{ ok: true }, { ok: true }]);
+		expect(slug).toBe('graphic-violence');
+	});
+
+	it('keeps every limit when two renames to different names run at once', async () => {
+		const { results, slug } = await renameTwiceAtOnce('Blood', 'Carnage');
+		expect(results).toEqual([{ ok: true }, { ok: true }]);
+		expect(['blood', 'carnage']).toContain(slug);
 	});
 });
 
@@ -384,18 +617,31 @@ describe('fandoms', () => {
 		expect(await addFandoms('Forgotten Realms\n\nMiddle-earth\nforgotten realms')).toEqual({
 			ok: true,
 			added: ['Forgotten Realms', 'Middle-earth'],
-			skipped: []
+			skipped: [],
+			removed: []
 		});
 		expect(await addFandoms('Middle earth\nDiscworld')).toEqual({
 			ok: true,
 			added: ['Discworld'],
-			skipped: ['Middle earth']
+			skipped: ['Middle earth'],
+			removed: []
 		});
 		expect((await listEntries(db, 'fandom')).map((entry) => entry.name)).toEqual([
 			'Discworld',
 			'Forgotten Realms',
 			'Middle-earth'
 		]);
+	});
+
+	it('reports a name matching a removed entry apart from ones already listed', async () => {
+		await addFandoms('Discworld\nMiddle-earth');
+		await setTagRemoved(db, 'fandom', await tagId('discworld'), true, ownerId);
+		expect(await addFandoms('discworld\nMiddle-earth\nNarnia')).toEqual({
+			ok: true,
+			added: ['Narnia'],
+			skipped: ['Middle-earth'],
+			removed: ['discworld']
+		});
 	});
 
 	it('refuses a fandom not on the list, and more than five', async () => {
@@ -584,6 +830,26 @@ describe('a universe linked to a fandom', () => {
 		expect((await findFandoms(db, ['A', 'B', 'C', 'D', 'F'], ['discworld'], 6)).ok).toBe(true);
 		const more = await findFandoms(db, ['A', 'B', 'C', 'D', 'E', 'F'], ['discworld'], 6);
 		expect(more).toMatchObject({ ok: false, message: expect.stringMatching(/universe/) });
+	});
+
+	it('counts stories that get the fandom from their universe in its uses, each once', async () => {
+		const universeId = await linked();
+		const discworld = await tagId('discworld');
+		const [elsewhere] = await db.insert(universes).values({ ownerId, name: 'V' }).returning();
+		const [third] = await db
+			.insert(stories)
+			.values({ universeId: elsewhere.id, ownerId, title: 'Three', slug: 'three' })
+			.returning();
+		await setUniverseFandom(db, universeId, discworld);
+		// One story has it both ways, one only from the universe, one only directly.
+		await setStoryList(db, storyId, 'fandom', [discworld]);
+		await setStoryList(db, third.id, 'fandom', [discworld]);
+		const uses = async (name: string) =>
+			(await listTagsForModeration(db, 'fandom')).rows.find((row) => row.name === name)?.uses;
+		expect(await uses('Discworld')).toBe(3);
+		expect(await uses('Forgotten Realms')).toBe(0);
+		await setUniverseFandom(db, universeId, null);
+		expect(await uses('Discworld')).toBe(2);
 	});
 
 	it('suggests close matches from the list as a writer types', async () => {

@@ -39,7 +39,7 @@ const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
 const { listTakenDown, publishStory, restorePublication, takedownPublication } =
 	await import('../../src/lib/server/publish');
-const { createReport, dismissReport, listOpenReports, countOpenReports } =
+const { createReport, dismissReport, listOpenReports, listRecentlyResolved, countOpenReports } =
 	await import('../../src/lib/server/reports');
 const { scheduleAccountDeletion, cancelAccountDeletion } =
 	await import('../../src/lib/server/account-deletion');
@@ -128,6 +128,88 @@ describe('createReport', () => {
 		expect(await db.select().from(publicationReports)).toHaveLength(0);
 		expect(await db.select().from(notifications)).toHaveLength(0);
 	});
+
+	it('files nothing once readers can no longer open the edition', async () => {
+		const [edition] = await db
+			.select()
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, edition.storyId));
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(false);
+		await db
+			.update(stories)
+			.set({ visibility: 'public', deletedAt: new Date() })
+			.where(eq(stories.id, edition.storyId));
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(false);
+		await db.update(stories).set({ deletedAt: null }).where(eq(stories.id, edition.storyId));
+		const newer = await publishStory(db, author.id, edition.storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(false);
+		expect(await db.select().from(publicationReports)).toHaveLength(0);
+		expect(await createReport(db, newer.publicationId, 'spam', '')).toBe(true);
+	});
+
+	it('a report filed while the writer makes the story private waits and files nothing', async () => {
+		const client = await pool.connect();
+		try {
+			await client.query('begin');
+			await client.query(
+				`update stories set visibility = 'private' where id = (select story_id from publications where id = $1)`,
+				[publicationId]
+			);
+			let settled = false;
+			const filing = createReport(db, publicationId, 'spam', '').then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await filing).toBe(false);
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		expect(await db.select().from(publicationReports)).toHaveLength(0);
+	});
+
+	for (const [what, statement] of [
+		[
+			'trashes the universe',
+			`update universes set deleted_at = now() where id = (select universe_id from stories where id = (select story_id from publications where id = $1))`
+		],
+		[
+			'is suspended',
+			`update users set suspended_at = now() where id = (select owner_id from publications where id = $1)`
+		],
+		[
+			// As a publish does: the story row locked, the edition replaced.
+			'publishes a newer edition',
+			`with s as (select id from stories where id = (select story_id from publications where id = $1) for update)
+			 update publications set is_current = false where id = $1 and exists (select 1 from s)`
+		]
+	]) {
+		it(`a report filed while the writer ${what} waits and files nothing`, async () => {
+			const client = await pool.connect();
+			try {
+				await client.query('begin');
+				await client.query(statement, [publicationId]);
+				let settled = false;
+				const filing = createReport(db, publicationId, 'spam', '').then((value) => {
+					settled = true;
+					return value;
+				});
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				expect(settled).toBe(false);
+				await client.query('commit');
+				expect(await filing).toBe(false);
+			} finally {
+				await client.query('rollback').catch(() => {});
+				client.release();
+			}
+			expect(await db.select().from(publicationReports)).toHaveLength(0);
+		});
+	}
 
 	it('a report filed while a takedown runs waits for it and files nothing', async () => {
 		await user('mod@example.com', 'moderator');
@@ -239,8 +321,8 @@ describe('the queue', () => {
 		expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/taken down/) });
 		expect(await db.select().from(publications)).toHaveLength(1);
 
-		expect(await restorePublication(db, publicationId)).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(false);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
 
@@ -250,7 +332,7 @@ describe('the queue', () => {
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
-		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await restorePublication(db, publicationId, null)).toBe(false);
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
@@ -263,11 +345,11 @@ describe('the queue', () => {
 			.where(eq(publications.id, publicationId));
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
 		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await restorePublication(db, publicationId, null)).toBe(false);
 
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(false);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		// The restore lifts the hold but does not make the edition public; the
 		// writer publishes again if they want it back.
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
@@ -279,7 +361,7 @@ describe('the queue', () => {
 		expect(await takedownPublication(db, publicationId, mod.id, 'spam')).toBe(true);
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
 	});
 
@@ -298,7 +380,7 @@ describe('the queue', () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await legacyDeletionHide();
 		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
 	});
 
@@ -323,9 +405,9 @@ describe('the queue', () => {
 
 		await pool.query(repairSql);
 		await takedownPublication(db, publicationId, mod.id, 'copyright');
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
-		expect(await restorePublication(db, second.publicationId)).toBe(true);
+		expect(await restorePublication(db, second.publicationId, null)).toBe(true);
 		const [up] = await db
 			.select()
 			.from(publications)
@@ -351,7 +433,7 @@ describe('the queue', () => {
 
 		await pool.query(repairSql);
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
 	});
 
@@ -368,6 +450,47 @@ describe('the queue', () => {
 		]);
 	});
 
+	it('a restore that starts while a takedown runs waits, then lifts all of it', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		await takedownPublication(db, publicationId, mod.id, 'spam');
+		const [edition] = await db
+			.select()
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const client = await pool.connect();
+		try {
+			// Another moderator's action in progress holds the story row, as
+			// takedownPublication does, and puts down an edition the restore has
+			// not seen yet.
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [edition.storyId]);
+			await client.query(
+				`insert into publications (story_id, owner_id, handle, title, content, is_current, removed_at, removed_reason, taken_down_at)
+				 values ($1, $2, 'teller', 'The Toll', '{"chapters":[],"unfiled":[]}', false, now(), 'spam', now())`,
+				[edition.storyId, author.id]
+			);
+			let settled = false;
+			const restoring = restorePublication(db, publicationId, null).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await restoring).toBe(true);
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		// No edition of the story is left down, so the story is not split.
+		const rows = await db
+			.select()
+			.from(publications)
+			.where(eq(publications.storyId, edition.storyId));
+		expect(rows).toHaveLength(2);
+		expect(rows.map((row) => row.removedReason)).toEqual([null, null]);
+	});
+
 	it('a restore waits for a deletion being scheduled, then refuses', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await takedownPublication(db, publicationId, mod.id, 'spam');
@@ -380,7 +503,7 @@ describe('the queue', () => {
 				[author.id]
 			);
 			let settled = false;
-			const restoring = restorePublication(db, publicationId).then((value) => {
+			const restoring = restorePublication(db, publicationId, null).then((value) => {
 				settled = true;
 				return value;
 			});
@@ -415,6 +538,38 @@ describe('the queue', () => {
 		expect(await dismissReport(db, open.id, mod.id)).toBe(false);
 		expect(await countOpenReports(db)).toBe(0);
 	});
+
+	it('lists closed reports without the title once the moderator may not open the edition', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		await createReport(db, publicationId, 'spam', '');
+		const [open] = await listOpenReports(db);
+		expect(await dismissReport(db, open.id, mod.id)).toBe(true);
+		expect(await listRecentlyResolved(db)).toMatchObject([{ id: open.id, title: 'The Toll' }]);
+
+		// Private: a dismissed report does not open the edition.
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await listRecentlyResolved(db)).toMatchObject([
+			{ id: open.id, handle: 'teller', title: null, resolution: 'dismissed' }
+		]);
+
+		// A report closed by a takedown that still holds opens it, so the title
+		// shows there and in the Taken down list, until the takedown is lifted.
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		await createReport(db, publicationId, 'copyright', '');
+		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		const closed = await listRecentlyResolved(db);
+		expect(closed.find((row) => row.resolution === 'taken_down')?.title).toBe('The Toll');
+		expect(closed.find((row) => row.resolution === 'dismissed')?.title).toBe('The Toll');
+		expect(await listTakenDown(db)).toMatchObject([{ id: publicationId, title: 'The Toll' }]);
+
+		expect(await restorePublication(db, publicationId, mod.id)).toBe(true);
+		expect((await listRecentlyResolved(db)).map((row) => row.title)).toEqual([null, null]);
+	});
 });
 
 describe('the report form', () => {
@@ -437,6 +592,41 @@ describe('the report form', () => {
 		for (let i = 0; i < 5; i++) expect(await report({ reason: 'spam' })).toEqual({ sent: true });
 		expect(await report({ reason: 'spam' })).toMatchObject({ status: 429 });
 		expect(await report({ reason: 'spam' }, '198.51.100.1')).toEqual({ sent: true });
+	});
+
+	it('refuses a report on an edition other than the one the page showed', async () => {
+		expect(
+			await report({ reason: 'spam', editionId: '00000000-0000-4000-8000-000000000000' })
+		).toMatchObject({ status: 409 });
+		expect(await report({ reason: 'spam', editionId: publicationId })).toEqual({ sent: true });
+		expect(await countOpenReports(db)).toBe(1);
+	});
+
+	it('does not thank the reader when the story went private while the report was filed', async () => {
+		const [edition] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const client = await pool.connect();
+		try {
+			// The writer's save holds the story row; the report waits on it.
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [edition.storyId]);
+			const filing = report({ reason: 'spam' });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			await client.query(`update stories set visibility = 'private' where id = $1`, [
+				edition.storyId
+			]);
+			await client.query('commit');
+			expect(await filing).toMatchObject({
+				status: 409,
+				data: { message: 'This story is no longer available, so your report was not sent.' }
+			});
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		expect(await countOpenReports(db)).toBe(0);
 	});
 
 	it('is a 404 for a story readers cannot open', async () => {

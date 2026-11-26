@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { publicationReports, publications, stories, tags } from './db/schema.ts';
 import { pattern } from './search.ts';
@@ -8,6 +8,8 @@ import { authorName } from '../author-name.ts';
 import { slugAddress } from '../slug.ts';
 import { BROWSE_PAGE_SIZE, encodeCursor, type BrowseQuery } from '../browse.ts';
 import type { ReportReason } from '../report-reasons.ts';
+import { microsText } from './db-clock.ts';
+import { moderatorMayRead } from './publication-scope.ts';
 
 // The public Browse page: current editions of public stories their authors
 // listed, across the whole instance. Unlisted and private stories never show.
@@ -15,10 +17,13 @@ import type { ReportReason } from '../report-reasons.ts';
 const MAX_MERGE_DEPTH = 8;
 
 // The condition every listed story meets. Expects publications p, stories s
-// and users u in the FROM.
-const listed = sql`
+// and users u in the FROM. The owner check is wrapped in coalesce (a no-op,
+// both columns are not null) because as a plain join equality the planner
+// takes it as independent of p.story_id = s.id, guesses a few dozen rows,
+// and sorts the whole set instead of reading publications_browse in order.
+export const listedInBrowseCondition = sql`
 	p.is_current and p.removed_at is null
-	and s.owner_id = p.owner_id
+	and coalesce(s.owner_id = p.owner_id, false)
 	and s.deleted_at is null
 	and exists (select 1 from universes lu where lu.id = s.universe_id and lu.deleted_at is null)
 	and s.visibility = 'public' and s.listed_in_browse and s.browse_blocked_at is null
@@ -71,7 +76,7 @@ export async function resolveFilterTag(
 			where st.tag_id in (${sql.join(
 				ids.map((id) => sql`${id}::uuid`),
 				sql`, `
-			)}) and ${listed}
+			)}) and ${listedInBrowseCondition}
 			limit 1
 		`);
 		if (used.rows.length === 0) return null;
@@ -180,7 +185,7 @@ export async function browseStories(
 	const filtered = filterConditions(query, filters);
 	if (!filtered) return { books: [], next: null };
 
-	const conditions: SQL[] = [listed, ...filtered];
+	const conditions: SQL[] = [listedInBrowseCondition, ...filtered];
 	if (query.q) {
 		const like = pattern(query.q);
 		conditions.push(sql`(
@@ -190,8 +195,10 @@ export async function browseStories(
 		)`);
 	}
 	if (query.after) {
+		// Compared as a timestamp, not as MICROS, so the publications_browse
+		// index serves the cursor as well as the order.
 		conditions.push(
-			sql`(${MICROS}, p.id) < (${query.after.micros}::bigint, ${query.after.id}::uuid)`
+			sql`(p.published_at, p.id) < (timestamptz 'epoch' + ${query.after.micros}::bigint * interval '1 microsecond', ${query.after.id}::uuid)`
 		);
 	}
 
@@ -282,7 +289,7 @@ export async function browseAuthors(db: Database, query: BrowseQuery, filters: B
 		join stories s on s.id = p.story_id
 		join users u on u.id = p.owner_id
 		join universes un on un.id = s.universe_id
-		where ${sql.join([listed, ...filtered, sql`${shownName} ilike ${like}`], sql` and `)}
+		where ${sql.join([listedInBrowseCondition, ...filtered, sql`${shownName} ilike ${like}`], sql` and `)}
 		group by p.handle, u.pen_name, u.display_name
 		order by count(distinct p.story_id) desc, p.handle
 		limit 6
@@ -310,7 +317,7 @@ export async function browseTagSuggestions(db: Database): Promise<string[]> {
 		from publications p
 		join stories s on s.id = p.story_id
 		join users u on u.id = p.owner_id
-		where ${listed}
+		where ${listedInBrowseCondition}
 		order by p.published_at desc
 		limit 500
 	`);
@@ -352,8 +359,8 @@ export async function saveStoryVisibility(
 }
 
 // A moderator takes a story off Browse and keeps it off until allowed again.
-// Its pages stay up; that is what a takedown is for. Open reports on the
-// story's editions close as handled.
+// Its pages stay up; that is what a takedown is for. The report acted on
+// closes; others stay open.
 export async function removeFromBrowse(
 	db: Database,
 	storyId: string,
@@ -361,47 +368,123 @@ export async function removeFromBrowse(
 	reason: ReportReason,
 	// The report the moderator acted on, which closes. Other reports on the
 	// story stay open: its pages are still up, so they may need a takedown.
+	// When that report is already closed (another moderator got there first),
+	// nothing changes and the result is 'report-closed'.
 	reportId: string | null = null
-): Promise<boolean> {
-	return await db.transaction(async (tx) => {
-		const updated = await tx
-			.update(stories)
-			.set({
-				listedInBrowse: false,
-				browseBlockedAt: sql`now()`,
-				browseBlockedBy: by,
-				browseBlockedReason: reason
-			})
-			.where(and(eq(stories.id, storyId), isNull(stories.browseBlockedAt)))
-			.returning({ id: stories.id });
-		if (updated.length === 0) return false;
-		if (!reportId) return true;
-		await tx
-			.update(publicationReports)
-			.set({ resolvedAt: sql`now()`, resolvedBy: by, resolution: 'removed_from_browse' })
-			.where(
-				and(
-					eq(publicationReports.id, reportId),
-					isNull(publicationReports.resolvedAt),
-					inArray(
-						publicationReports.publicationId,
-						tx
-							.select({ id: publications.id })
-							.from(publications)
-							.where(eq(publications.storyId, storyId))
+	// 'withdrawn' when the moderator may not read the story's current edition
+	// (the writer made it private or moved it to the trash, or never published
+	// it) nor the open report's edition.
+): Promise<boolean | 'report-closed' | 'withdrawn'> {
+	const closed = Symbol('report-closed');
+	return await db
+		.transaction(async (tx) => {
+			// The lock saveStoryVisibility's update and the takedown also take, so
+			// the check below sees a visibility change that just committed.
+			const [story] = await tx
+				.select({ id: stories.id })
+				.from(stories)
+				.where(eq(stories.id, storyId))
+				.for('update');
+			if (!story) return false;
+			const [readable] = await tx
+				.select({ id: publications.id })
+				.from(publications)
+				.innerJoin(stories, eq(stories.id, publications.storyId))
+				.where(
+					and(
+						eq(publications.storyId, storyId),
+						moderatorMayRead(),
+						// The current edition, or the edition of the report acted on,
+						// which an open report lets the moderator read.
+						reportId
+							? or(
+									eq(publications.isCurrent, true),
+									inArray(
+										publications.id,
+										tx
+											.select({ id: publicationReports.publicationId })
+											.from(publicationReports)
+											.where(eq(publicationReports.id, reportId))
+									)
+								)
+							: eq(publications.isCurrent, true)
 					)
 				)
-			);
-		return true;
-	});
+				.limit(1);
+			if (!readable) return 'withdrawn' as const;
+			const updated = await tx
+				.update(stories)
+				.set({
+					listedInBrowse: false,
+					browseBlockedAt: sql`now()`,
+					browseBlockedBy: by,
+					browseBlockedReason: reason
+				})
+				.where(and(eq(stories.id, storyId), isNull(stories.browseBlockedAt)))
+				.returning({ id: stories.id });
+			if (updated.length === 0) return false;
+			if (!reportId) return true;
+			const resolved = await tx
+				.update(publicationReports)
+				.set({ resolvedAt: sql`now()`, resolvedBy: by, resolution: 'removed_from_browse' })
+				.where(
+					and(
+						eq(publicationReports.id, reportId),
+						isNull(publicationReports.resolvedAt),
+						inArray(
+							publicationReports.publicationId,
+							tx
+								.select({ id: publications.id })
+								.from(publications)
+								.where(eq(publications.storyId, storyId))
+						)
+					)
+				)
+				.returning({ id: publicationReports.id });
+			if (resolved.length === 0) throw closed;
+			return true;
+		})
+		.catch((caught) => {
+			if (caught === closed) return 'report-closed' as const;
+			throw caught;
+		});
 }
 
 // Lets the author list the story again. It does not list it for them.
-export async function allowInBrowse(db: Database, storyId: string): Promise<boolean> {
+export async function allowInBrowse(
+	db: Database,
+	storyId: string,
+	allowedBy: string | null,
+	// When the moderator's page showed the story removed, as microsText
+	// (listBrowseBlocked's browseBlockedMicros). Refused with 'changed' when
+	// the removal now is a later one; left out, nothing is checked.
+	{ blockedShown }: { blockedShown?: string } = {}
+): Promise<boolean | 'changed'> {
 	const updated = await db
 		.update(stories)
-		.set({ browseBlockedAt: null, browseBlockedBy: null, browseBlockedReason: null })
-		.where(and(eq(stories.id, storyId), sql`${stories.browseBlockedAt} is not null`))
+		.set({
+			browseBlockedAt: null,
+			browseBlockedBy: null,
+			browseBlockedReason: null,
+			browseAllowedAt: sql`now()`,
+			browseAllowedBy: allowedBy
+		})
+		.where(
+			and(
+				eq(stories.id, storyId),
+				sql`${stories.browseBlockedAt} is not null`,
+				// In SQL, to the microsecond: a JS Date would drop them.
+				blockedShown === undefined
+					? undefined
+					: sql`${microsText(stories.browseBlockedAt)} = ${blockedShown}`
+			)
+		)
 		.returning({ id: stories.id });
-	return updated.length > 0;
+	if (updated.length > 0) return true;
+	if (blockedShown === undefined) return false;
+	const [still] = await db
+		.select({ id: stories.id })
+		.from(stories)
+		.where(and(eq(stories.id, storyId), isNotNull(stories.browseBlockedAt)));
+	return still ? 'changed' : false;
 }

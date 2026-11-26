@@ -11,12 +11,12 @@
 		{
 			value: 'personal',
 			name: 'Private',
-			desc: 'For you and the people you invite. The front page is short: a title and the sign-in button.'
+			desc: 'The front page is short: a title, the sign-in button, and a line on who can get an account.'
 		},
 		{
 			value: 'service',
 			name: 'Public service',
-			desc: 'Anyone can find it and ask for an account. The front page introduces Codex in full.'
+			desc: 'The front page introduces Codex in full, for visitors who have not heard of it.'
 		}
 	] as const;
 </script>
@@ -32,21 +32,18 @@
 		<div>
 			<h2 class="admin-block-title">Type</h2>
 			<p class="admin-block-sub">
-				Changes the front page that visitors see before they sign in. A private Codex shows a short
-				page with the sign-in button; a public service shows the full introduction.
+				Changes only the front page that visitors see before they sign in. Who can get an account is
+				set under Users &amp; access, in Sign-up.
 			</p>
 		</div>
 	</div>
 
 	{#if form?.scope === 'instance-type' && form.message}
-		<div
-			class="status-banner"
-			style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);margin-bottom:var(--space-4);"
-		>
+		<div class="status-banner error" role="alert" style="margin-bottom:var(--space-4);">
 			<span class="x">{form.message}</span>
 		</div>
 	{:else if form?.scope === 'instance-type' && form.saved}
-		<div class="status-banner ok" style="margin-bottom:var(--space-4);">
+		<div class="status-banner ok" role="status" style="margin-bottom:var(--space-4);">
 			<span class="dot"></span><span class="v">Saved.</span>
 		</div>
 	{/if}
@@ -127,10 +124,7 @@
 	</div>
 
 	{#if !data.secretsAvailable}
-		<div
-			class="status-banner"
-			style="background:color-mix(in oklab, var(--status-draft) 12%, transparent);border:1px solid color-mix(in oklab, var(--status-draft) 32%, transparent);"
-		>
+		<div class="status-banner warn">
 			<span class="x">
 				Set APP_SECRET on the server to store a password here. Without it you can still seed SMTP
 				from environment variables.
@@ -141,18 +135,15 @@
 	<div class="admin-card">
 		<form method="POST" action="?/saveSmtp">
 			{#if form?.scope === 'smtp' && form.message}
-				<div
-					class="status-banner"
-					style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-				>
+				<div class="status-banner error" role="alert">
 					<span class="x">{form.message}</span>
 				</div>
 			{:else if form?.scope === 'smtp' && form.saved}
-				<div class="status-banner ok">
+				<div class="status-banner ok" role="status">
 					<span class="dot"></span><span class="v">Saved.</span>
 				</div>
 			{:else if form?.scope === 'smtp' && form.tested}
-				<div class="status-banner ok">
+				<div class="status-banner ok" role="status">
 					<span class="dot"></span><span class="v">Test email sent to {form.testTo}.</span>
 				</div>
 			{/if}

@@ -110,12 +110,31 @@ describe('buildReviewReplyMessage', () => {
 			suggestion: { original: 'a', replacement: 'b' }
 		});
 		expect(revising).toContain('The story is written in British English.');
-		expect(revising).toContain('House style for this story: single quotation marks');
+		expect(revising).toContain('House style: single quotation marks');
 		expect(revising).toContain('Keep to it.');
 		expect(revising.indexOf('House style')).toBeLessThan(revising.indexOf('The thread so far'));
 
 		const plain = buildReviewReplyMessage({ ...base, suggestion: null });
 		expect(plain).not.toContain('The story is written in');
 		expect(plain).not.toContain('House style');
+	});
+
+	it('states the content limits when it may revise a suggestion', () => {
+		const base = {
+			sceneTitle: 'The Gate',
+			excerpt: 'the passage',
+			transcript: [{ author: 'Author', body: 'Shorter?' }],
+			preferences: {
+				...NO_PREFERENCES,
+				contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
+			}
+		};
+		const revising = buildReviewReplyMessage({
+			...base,
+			suggestion: { original: 'a', replacement: 'b' }
+		});
+		expect(revising).toContain('Keep these off the page');
+		expect(revising).toContain('Gore');
+		expect(buildReviewReplyMessage({ ...base, suggestion: null })).not.toContain('Gore');
 	});
 });

@@ -1,11 +1,12 @@
-import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { storyTags, tags, universes } from './db/schema.ts';
+import { stories, storyTags, tags, universes } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
 import { pageIndex } from './paging.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
 import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
+import { warningKey } from '../assistant-preferences.ts';
 
 // Free-form tags and the curated lists (fandoms, genres, content warnings).
 // Reads always follow a merge to the surviving entry and hide removed ones, so
@@ -26,7 +27,7 @@ export type ShownTag = {
 // Follows merged_into_id from each start id to the surviving tag. A merge
 // keeps every chain one step deep; the cap guards reads against a cycle or a
 // longer chain left by older data.
-const MAX_MERGE_DEPTH = 8;
+export const MAX_MERGE_DEPTH = 8;
 
 // The visible labels on each story, by story id, including the fandom its
 // universe is linked to (marked inherited, unless the story also has it).
@@ -373,8 +374,12 @@ export async function listEntries(
 
 const PAGE_SIZE = 50;
 
-// The tags or fandoms with how many stories carry each directly, for the
-// moderation pages. Removed ones are listed too, so they can be restored.
+// The tags or fandoms with how many stories carry each, for the moderation
+// pages. A fandom counts stories that get it from their universe too, each
+// story once. Stories in the trash count until they are purged. A merge only
+// points the entry at its survivor, so a merged-away entry keeps its own count
+// and the survivor's count does not include it. Removed ones are listed too,
+// so they can be restored.
 export async function listTagsForModeration(
 	db: Database,
 	kind: TagKind,
@@ -391,7 +396,15 @@ export async function listTagsForModeration(
 			removedAt: tags.removedAt,
 			mergedIntoId: tags.mergedIntoId,
 			mergedIntoName: sql<string | null>`${target}`,
-			uses: sql<number>`(select count(*)::int from story_tags st where st.tag_id = ${tags.id})`
+			// tags.id is written out by hand: in a select from one table, drizzle
+			// strips the table name from a column placed directly in a selection
+			// field's sql, and a bare id here would resolve to the subquery's s.id.
+			uses: sql<number>`(select count(*)::int from (
+				select st.story_id from story_tags st where st.tag_id = tags.id
+				union
+				select s.id from stories s join universes u on u.id = s.universe_id
+				where u.fandom_id = tags.id
+			) used)`
 		})
 		.from(tags)
 		.where(and(eq(tags.kind, kind), query ? ilike(tags.name, pattern(query)) : undefined))
@@ -417,25 +430,41 @@ export async function renameTag(
 	const cleaned = cleanTagName(rawName);
 	if (!cleaned.ok) return { ok: false, message: cleaned.reason };
 	const slug = tagSlug(cleaned.name);
-	const [tag] = await db
-		.select()
-		.from(tags)
-		.where(and(eq(tags.id, id), eq(tags.kind, kind)));
-	if (!tag) return { ok: false, message: 'That entry does not exist.' };
 	const clashMessage = 'Another entry already has that name. Merge them instead.';
-	const [clash] = await db
-		.select({ id: tags.id })
-		.from(tags)
-		.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
-	if (clash && clash.id !== id) return { ok: false, message: clashMessage };
 	try {
-		await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
+		return await db.transaction(async (tx): Promise<ModResult> => {
+			// Locked and read here, so a second rename (a double submit, or two
+			// moderators at once) waits for the first and moves the limits from
+			// the slug the first one left, not from the slug both started with.
+			const [tag] = await tx
+				.select()
+				.from(tags)
+				.where(and(eq(tags.id, id), eq(tags.kind, kind)))
+				.for('update');
+			if (!tag) return { ok: false, message: 'That entry does not exist.' };
+			const [clash] = await tx
+				.select({ id: tags.id, name: tags.name, removedAt: tags.removedAt })
+				.from(tags)
+				.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
+			if (clash && clash.id !== id) {
+				return {
+					ok: false,
+					message: clash.removedAt
+						? `The removed entry "${clash.name}" has that name. Restore it and merge into it, or pick another name.`
+						: clashMessage
+				};
+			}
+			await tx.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
+			if (tag.kind === 'warning' && slug !== tag.slug) {
+				await moveContentLimits(tx, tag.slug, slug);
+			}
+			return { ok: true };
+		});
 	} catch (err) {
 		// Another rename, or a writer adding that tag, took the slug since the check.
 		if (isUniqueViolation(err)) return { ok: false, message: clashMessage };
 		throw err;
 	}
-	return { ok: true };
 }
 
 // Points a tag at another of the same kind. Reads follow it, so every story
@@ -454,12 +483,20 @@ export async function mergeTag(
 			.from(tags)
 			.where(and(eq(tags.id, sourceId), eq(tags.kind, kind)));
 		if (!source) return { ok: false, message: 'That entry does not exist.' };
+		if (source.removedAt) return removedSource(source.name);
+		if (source.mergedIntoId) return mergedSource(source.name);
 		const notFound = `There is no ${source.kind} called "${targetName.trim()}".`;
 		const [named] = await tx
 			.select()
 			.from(tags)
 			.where(and(eq(tags.kind, source.kind), eq(tags.slug, tagSlug(targetName))));
-		if (!named || named.removedAt) return { ok: false, message: notFound };
+		if (!named) return { ok: false, message: notFound };
+		if (named.removedAt) {
+			return {
+				ok: false,
+				message: `"${named.name}" is removed. Restore it first, then merge into it.`
+			};
+		}
 		if (named.id === source.id) return { ok: false, message: 'Pick a different entry.' };
 		const survivor = await survivorOf(tx, named.id);
 		if (!survivor.ended) {
@@ -481,18 +518,89 @@ export async function mergeTag(
 		if (survivorId === source.id) {
 			return { ok: false, message: `"${named.name}" is already merged into "${source.name}".` };
 		}
-		// A merge that committed while this one waited can have moved the target.
+		// A merge that committed while this one waited can have moved the target,
+		// and a removal the source.
+		const lockedSource = locked.find((row) => row.id === source.id);
+		if (lockedSource?.removedAt) return removedSource(source.name);
+		if (lockedSource?.mergedIntoId) return mergedSource(source.name);
 		const target = locked.find((row) => row.id === survivorId);
 		if (!target || target.mergedIntoId) {
 			return { ok: false, message: 'That entry changed while you were working. Try again.' };
 		}
-		if (target.removedAt) return { ok: false, message: notFound };
+		if (target.removedAt) {
+			return {
+				ok: false,
+				message: `"${target.name}" is removed. Restore it first, then merge into it.`
+			};
+		}
 		await tx
 			.update(tags)
 			.set({ mergedIntoId: target.id })
 			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
+		// A writer's content limits on a merged warning stay under its own slug;
+		// the survivor folds them in when they are read (liveWarnings).
 		return { ok: true };
 	});
+}
+
+// A removed entry is not merged: its stories do not show it, and a removed
+// warning's limits do not apply, so a merge would bring them back unseen.
+// Restoring it first shows it again, and merging it then is the usual merge.
+function removedSource(name: string): ModResult {
+	return { ok: false, message: `"${name}" is removed. Restore it first, then merge it.` };
+}
+
+// An entry already merged into another is moved by undoing that merge first:
+// a second merge would point it elsewhere without the undo's care for limits.
+function mergedSource(name: string): ModResult {
+	return {
+		ok: false,
+		message: `"${name}" is merged into another entry. Undo its merge first, then merge it.`
+	};
+}
+
+// A writer's limit (Assistant preferences) on a renamed warning moves to its
+// new slug. Only rows with a key under the old slug change. The new slug is
+// free on the list, but a key under it can be left from older data or an
+// import; where a row has both, that key was never chosen for this warning,
+// so it gives way, except that an "avoid" on either key is kept, which only
+// keeps the Assistant more careful. Renaming back moves the limit back. A row
+// with no key under the old slug is left as it is, so a key under the new
+// slug (one that a rename which committed first moved there) is never
+// cleared.
+async function moveContentLimits(tx: Database, fromSlug: string, toSlug: string) {
+	const from = warningKey(fromSlug);
+	const to = warningKey(toSlug);
+	const move = (
+		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
+	) => ({
+		set: sql`(${column} - ${from}::text - ${to}::text) || case
+			when ${column} ->> ${from}::text = 'avoid' or ${column} ->> ${to}::text = 'avoid'
+				then jsonb_build_object(${to}::text, 'avoid')
+			when ${column} ->> ${from}::text = 'write' then jsonb_build_object(${to}::text, 'write')
+			else '{}'::jsonb end`,
+		where: sql`jsonb_exists(${column}, ${from}::text)`
+	});
+	// updated_at is kept as it was: this is the site's change, not the writer's.
+	const story = move(stories.assistantPreferences);
+	await lockInOrder(tx, stories, story.where);
+	await tx
+		.update(stories)
+		.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
+		.where(story.where);
+	const universe = move(universes.assistantPreferences);
+	await lockInOrder(tx, universes, universe.where);
+	await tx
+		.update(universes)
+		.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
+		.where(universe.where);
+}
+
+// Locks the rows a bulk update of the limits is about to change, in id order.
+// An update locks rows in whatever order it scans them, so a rename and an
+// undone merge each changing many rows could otherwise deadlock.
+async function lockInOrder(tx: Database, table: typeof stories | typeof universes, where: SQL) {
+	await tx.select({ id: table.id }).from(table).where(where).orderBy(asc(table.id)).for('update');
 }
 
 // The entry a tag's merges end at (the tag itself when it is not merged).
@@ -512,13 +620,108 @@ async function survivorOf(tx: Database, id: string): Promise<{ id: string; ended
 	return row ?? { id, ended: true };
 }
 
+// Undoing a merge gives the warning its own limits back, but never wider than
+// while merged, and each row keeps what it read while merged. In each row (a
+// story read over its universe) where the survivor's limit, folded with every
+// warning merged into it, was "avoid", the unmerged warning gets "avoid" too,
+// over a "write" of that row's own. A story that would inherit the "avoid"
+// from its universe anyway (it has no key of its own on the warning, and the
+// universe's row gets "avoid" here) is left alone. A story whose own "write"
+// overrode the universe's "avoid", so that it read "write" while merged, gets
+// "write" on the warning, where it would otherwise inherit the universe's new
+// "avoid". A removed survivor's limits did not apply while merged, so then
+// no row is changed. The survivor's row is locked too, so a writer's save of
+// the survivor's limit waits for the undo (see savePreferences), and so are
+// the other warnings merged into it, so a rename of one waits for the undo
+// instead of moving its limit from under the fold read here.
 export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
-	const updated = await db
-		.update(tags)
-		.set({ mergedIntoId: null })
-		.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`))
-		.returning({ id: tags.id });
-	return updated.length > 0;
+	return await db.transaction(async (tx) => {
+		// The entries are locked in id order, as mergeTag locks, and read again
+		// in case a merge moved the entry meanwhile.
+		let survivor: { id: string; ended: boolean; slug: string; removed: boolean } | null = null;
+		let tag: { slug: string; kind: TagKind; mergedIntoId: string | null } | undefined;
+		let merged: { slug: string }[] = [];
+		for (let attempt = 0; attempt < 3 && !survivor; attempt++) {
+			const [row] = await tx
+				.select({ mergedIntoId: tags.mergedIntoId })
+				.from(tags)
+				.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`));
+			if (!row?.mergedIntoId) return false;
+			const found = await survivorOf(tx, row.mergedIntoId);
+			const locked = await tx
+				.select({
+					id: tags.id,
+					slug: tags.slug,
+					kind: tags.kind,
+					mergedIntoId: tags.mergedIntoId,
+					removed: sql<boolean>`${tags.removedAt} is not null`
+				})
+				.from(tags)
+				.where(or(inArray(tags.id, [id, found.id]), eq(tags.mergedIntoId, found.id)))
+				.orderBy(asc(tags.id))
+				.for('update');
+			tag = locked.find((each) => each.id === id);
+			if (!tag?.mergedIntoId) return false;
+			const now = await survivorOf(tx, tag.mergedIntoId);
+			if (now.id !== found.id) continue;
+			const top = locked.find((each) => each.id === found.id);
+			survivor = { ...found, slug: top?.slug ?? '', removed: top?.removed ?? false };
+			// A removed entry's limits did not apply while merged (liveWarnings).
+			merged = locked.filter((each) => each.mergedIntoId === found.id && !each.removed);
+		}
+		if (!survivor || !tag) return false;
+		await tx.update(tags).set({ mergedIntoId: null }).where(eq(tags.id, id));
+		if (tag.kind !== 'warning' || !survivor.ended || survivor.removed) return true;
+		const to = warningKey(tag.slug);
+		const folded = [survivor.slug, ...merged.map((each) => each.slug)].map((slug) =>
+			warningKey(slug)
+		);
+		const keys = sql`array[${sql.join(
+			folded.map((key) => sql`${key}`),
+			sql`, `
+		)}]::text[]`;
+		const avoidIn = (limit: (key: SQL) => SQL) =>
+			sql`exists (select 1 from unnest(${keys}) as fold(key) where ${limit(sql`fold.key`)} = 'avoid')`;
+		const own = stories.assistantPreferences;
+		const ofUniverse = sql`(select ${universes.assistantPreferences} from ${universes} where ${universes.id} = ${stories.universeId})`;
+		const universeAvoids = (preferences: SQL | typeof universes.assistantPreferences) =>
+			avoidIn((key) => sql`${preferences} ->> ${key}`);
+		const storyAvoided = avoidIn(
+			(key) => sql`coalesce(${own} ->> ${key}, ${ofUniverse} ->> ${key})`
+		);
+		const hasOwn = sql`jsonb_exists(${own}, ${to}::text)`;
+		// Stories first, against their universe's limits as they were while
+		// merged. updated_at is kept as it was, as in moveContentLimits.
+		const storyRows = or(
+			and(
+				storyAvoided,
+				sql`${own} ->> ${to}::text is distinct from 'avoid'`,
+				sql`(${hasOwn} or not ${universeAvoids(ofUniverse)})`
+			),
+			and(sql`not ${storyAvoided}`, universeAvoids(ofUniverse), sql`not ${hasOwn}`)
+		) as SQL;
+		await lockInOrder(tx, stories, storyRows);
+		await tx
+			.update(stories)
+			.set({
+				assistantPreferences: sql`${own} || jsonb_build_object(${to}::text, case when ${storyAvoided} then 'avoid' else 'write' end)`,
+				updatedAt: sql`${stories.updatedAt}`
+			})
+			.where(storyRows);
+		const universeRows = and(
+			universeAvoids(universes.assistantPreferences),
+			sql`${universes.assistantPreferences} ->> ${to}::text is distinct from 'avoid'`
+		) as SQL;
+		await lockInOrder(tx, universes, universeRows);
+		await tx
+			.update(universes)
+			.set({
+				assistantPreferences: sql`${universes.assistantPreferences} || jsonb_build_object(${to}::text, 'avoid')`,
+				updatedAt: sql`${universes.updatedAt}`
+			})
+			.where(universeRows);
+		return true;
+	});
 }
 
 export async function setTagRemoved(
@@ -537,13 +740,17 @@ export async function setTagRemoved(
 }
 
 // Adds entries to a curated list from a multi-line box, one name per line.
-// Names already on the list (by slug, removed ones included) are skipped and
-// reported.
+// Names already on the list (by slug) are skipped and reported: in skipped,
+// or in removed when the entry they match was removed, since only a restore
+// brings that one back.
 export async function addListEntries(
 	db: Database,
 	kind: ListKind,
 	text: string
-): Promise<{ ok: true; added: string[]; skipped: string[] } | { ok: false; message: string }> {
+): Promise<
+	| { ok: true; added: string[]; skipped: string[]; removed: string[] }
+	| { ok: false; message: string }
+> {
 	const wanted = new Map<string, string>();
 	for (const line of text.split('\n')) {
 		const cleaned = cleanTagName(line);
@@ -561,10 +768,31 @@ export async function addListEntries(
 		.onConflictDoNothing({ target: [tags.kind, tags.slug] })
 		.returning({ slug: tags.slug, name: tags.name });
 	const addedSlugs = new Set(inserted.map((row) => row.slug));
+	const existing = [...wanted].filter(([slug]) => !addedSlugs.has(slug));
+	const removedSlugs = new Set(
+		existing.length === 0
+			? []
+			: (
+					await db
+						.select({ slug: tags.slug })
+						.from(tags)
+						.where(
+							and(
+								eq(tags.kind, kind),
+								inArray(
+									tags.slug,
+									existing.map(([slug]) => slug)
+								),
+								isNotNull(tags.removedAt)
+							)
+						)
+				).map((row) => row.slug)
+	);
 	return {
 		ok: true,
 		added: inserted.map((row) => row.name),
-		skipped: [...wanted].filter(([slug]) => !addedSlugs.has(slug)).map(([, name]) => name)
+		skipped: existing.filter(([slug]) => !removedSlugs.has(slug)).map(([, name]) => name),
+		removed: existing.filter(([slug]) => removedSlugs.has(slug)).map(([, name]) => name)
 	};
 }
 

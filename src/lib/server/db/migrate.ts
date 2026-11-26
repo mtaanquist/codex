@@ -124,10 +124,52 @@ export async function holdOffLongReads(client: pg.ClientBase): Promise<number> {
 	return cancelled.size;
 }
 
+export const PGVECTOR_MISSING_MESSAGE =
+	'The database has no pgvector extension, which Codex needs from version 4.0.0. ' +
+	'Switch the database image to pgvector/pgvector:0.8.7-pg18-trixie (or install pgvector ' +
+	'on your own PostgreSQL 18 server) and start Codex again. See "Updating" in docs/SELF-HOSTING.md.';
+
+/** Whether pgvector is installed in this database or can be installed. */
+export async function hasPgvector(client: pg.ClientBase): Promise<boolean> {
+	const { rows } = await client.query<{ ok: boolean }>(
+		`select exists (select 1 from pg_available_extensions where name = 'vector') as ok`
+	);
+	return rows[0].ok;
+}
+
+// pgvector is not a trusted extension, so a role that is not a superuser
+// passes the availability check yet fails to create it.
+export function explainPgvectorError(error: unknown): unknown {
+	const cause = (error as { cause?: unknown })?.cause ?? error;
+	const { code, message } = (cause ?? {}) as { code?: string; message?: string };
+	if (code === '42501' && message?.includes('"vector"')) {
+		return new Error(
+			'The database user may not create the pgvector extension. Connect to the Codex database as a ' +
+				'superuser, run CREATE EXTENSION vector; and start Codex again. See "Updating" in docs/SELF-HOSTING.md.',
+			{ cause: error }
+		);
+	}
+	// Any other refusal to create it, such as a managed service's allow-list.
+	if (message && /extension "vector"|vector\.control/.test(message)) {
+		return new Error(
+			`The database could not create the pgvector extension (${message}). Install or allow ` +
+				'pgvector on the database server, or ask your provider to, and start Codex again. See ' +
+				'"Updating" in docs/SELF-HOSTING.md.',
+			{ cause: error }
+		);
+	}
+	return error;
+}
+
 // Applies pending migrations while holding a session advisory lock, so the app
 // and worker (or several replicas) starting together apply each migration once:
 // drizzle reads the last applied row outside its transaction and takes no lock.
-export async function runMigrations(connectionString: string, migrationsFolder = 'drizzle') {
+export async function runMigrations(
+	connectionString: string,
+	migrationsFolder = 'drizzle',
+	// A seam for the test of a server without pgvector.
+	checks: { hasPgvector: (client: pg.ClientBase) => Promise<boolean> } = { hasPgvector }
+) {
 	const entries = readJournal(migrationsFolder);
 	const bad = outOfOrderMigrations(entries);
 	if (bad.length > 0) {
@@ -136,16 +178,30 @@ export async function runMigrations(connectionString: string, migrationsFolder =
 		);
 	}
 	const client = new pg.Client({ connectionString });
+	// A migration's warnings (such as 0131 skipping a table it may not
+	// reindex) reach the log rather than only the database server's.
+	client.on('notice', (notice) => {
+		// SQLSTATE class 01 is a warning; the severity text is translated.
+		if (notice.code?.startsWith('01')) console.warn(`Migration warning: ${notice.message}`);
+	});
 	await client.connect();
 	try {
 		await client.query(`select pg_advisory_lock(hashtext('codex:migrations'))`);
 		if (await hasPendingMigrations(client, entries)) {
+			// Checked first so a server without it stops with directions instead
+			// of postgres's bare "extension is not available".
+			if (!(await checks.hasPgvector(client))) throw new Error(PGVECTOR_MISSING_MESSAGE);
+			// Some migrations rebuild indexes, which on a large database takes long
+			// enough to look like a hang.
+			console.log('Applying migrations. On a large database this can take several minutes.');
 			const cancelled = await holdOffLongReads(client);
 			if (cancelled > 0) {
 				console.log(`Cancelled ${cancelled} long-running read(s) so the migrations can run.`);
 			}
 		}
-		await migrate(drizzle(client), { migrationsFolder });
+		await migrate(drizzle(client), { migrationsFolder }).catch((error: unknown) => {
+			throw explainPgvectorError(error);
+		});
 	} finally {
 		// Ending the session releases the lock, also when migrate threw.
 		await client.end();

@@ -16,6 +16,9 @@ export type ToolKind = 'read' | 'write';
 // MCP endpoint (see #lib/server/mcp/tools). The in-app Assistant never gets
 // one: it already knows the open universe and story from the page. These are
 // the listed exceptions to "one toolbox for both"; keep the list short.
+// The guided pass card's tools (open_guided_pass, decide_suggestion) are not
+// here at all: they live in #lib/server/mcp/pass-card, so an accept can never
+// be offered to a model run inside Codex.
 export type ToolDef = ToolSpec & { kind: ToolKind; scoped?: boolean; external?: boolean };
 
 function obj(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
@@ -30,7 +33,7 @@ export const TOOLS: ToolDef[] = [
 		external: true,
 		name: 'list_universes',
 		description:
-			"List the writer's universes with each one's id, name, description, language and spelling convention (null when not set), Assistant preferences (the default for its stories) and number of stories. Every other tool needs a universe id from this list.",
+			"List the writer's universes with each one's id, name, description, language and spelling convention (null when not set), Assistant preferences (the default for its stories; the fields are those list_stories describes) and number of stories. Every other tool needs a universe id from this list.",
 		parameters: obj({}, [])
 	},
 	{
@@ -38,7 +41,7 @@ export const TOOLS: ToolDef[] = [
 		external: true,
 		name: 'list_stories',
 		description:
-			"List the stories in this universe with each one's id, title, one-line brief, language and spelling convention (null when not set; then work it out from the text), Assistant preferences and number of scenes. The preferences hold the house style (quoteMarks, serialComma, thoughts, tense, narration; null when not set, then follow the text), leaveAlone (habits the writer uses on purpose: do not flag them) and notes (the writer's own notes on habits to look for or leave alone). Use list_scenes for their chapters and scenes.",
+			"List the stories in this universe with each one's id, title, one-line brief, language and spelling convention (null when not set; then work it out from the text), Assistant preferences and number of scenes. The preferences hold the house style (quoteMarks, serialComma, thoughts, tense, narration; null when not set, then follow the text), leaveAlone (habits the writer uses on purpose: do not flag them), notes (the writer's own notes on habits to look for or leave alone), feedback (how much a review points out: sparing, normal or thorough), editReasons (when to give a reason with a suggested edit: always, unobvious or never), summaryLength (short or detailed summaries), draftWords (about how many words a drafted scene runs to) and contentLimits (name and limit for each content warning the writer set a limit on: avoid means keep it off the page, implied or passed over rather than shown, and do not suggest adding it; write means the writer is comfortable with it where the story calls for it). A null preference is not set. Use list_scenes for their chapters and scenes.",
 		parameters: obj({}, [])
 	},
 	{
@@ -110,7 +113,7 @@ export const TOOLS: ToolDef[] = [
 					'The proposed replacement text, as manuscript prose with *asterisks* only for italics and no other Markdown (empty string to delete the passage).'
 				),
 				reason: str(
-					'Optional: one short sentence on why this change helps, so the author can learn the habit. Leave it out for an obvious fix such as a typo, a spelling slip or missing punctuation.'
+					'Optional: one short sentence on why this change helps, so the author can learn the habit. Give one or leave it out as your instructions say; with nothing said, leave it out for an obvious fix such as a typo, a spelling slip or missing punctuation.'
 				)
 			},
 			['sceneId', 'original', 'replacement']
@@ -201,7 +204,7 @@ export const TOOLS: ToolDef[] = [
 								'The proposed replacement text, as manuscript prose with *asterisks* only for italics.'
 							),
 							reason: str(
-								'Optional: one short sentence on why this change helps, so the author can learn the habit. Leave it out for an obvious fix such as a typo, a spelling slip or missing punctuation.'
+								'Optional: one short sentence on why this change helps, so the author can learn the habit. Give one or leave it out as your instructions say; with nothing said, leave it out for an obvious fix such as a typo, a spelling slip or missing punctuation.'
 							)
 						},
 						['original', 'replacement']

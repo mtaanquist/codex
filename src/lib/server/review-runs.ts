@@ -6,6 +6,7 @@ import { parseCategories, type PatternScope, type ReviewCategory } from '../revi
 import type { PreferenceSetting } from '../assistant-preferences.ts';
 import type { LanguageSetting } from '../writing-languages.ts';
 import { hintedNative } from './llm/prompts/language.ts';
+import { readsNative, readsWording } from './llm/prompts/review.ts';
 
 // Progress storage for the background review job. The job writes its state as
 // it advances (one row per pg-boss job id), so the status endpoint can report
@@ -47,10 +48,10 @@ export function reviewScopeKey(input: ScopeInput): string {
 }
 
 // A short hash of the settings a review's prompts read: the story language,
-// for a pass that reads the wording the Assistant preferences and the story's
-// style notes (null for one that does not, so changing them does not restart a
-// lore-only review), and the native language only where the prompts hint at it
-// (see readsNative). Kept
+// the Assistant preferences each pass states (see storyReviewSettingsKey for
+// which), the story's style notes for a pass that reads the wording (null
+// otherwise, so changing them does not restart a lore-only review), and the
+// native language only where the prompts hint at it (see readsNative). Kept
 // on the run state rather than in the scope key, so the queue still holds one
 // job per scope, and compared when a capped run is adopted: a changed setting
 // starts a fresh run instead of carrying the old notes forward as done.
@@ -58,8 +59,16 @@ export function reviewSettingsKey(
 	language: LanguageSetting,
 	preferences: PreferenceSetting | null,
 	readsNative: boolean,
-	styleNotes: string | null = null
+	styleNotes: string | null = null,
+	// The choices every pass states whatever it reads: how much feedback, the
+	// reasons on edits and the content limits.
+	choices: PreferenceSetting | null = null
 ): string {
+	// By the warning's id, which a rename keeps (the name and slug change), so
+	// an admin renaming a warning does not restart a capped run.
+	const limits = [...(choices?.contentLimits ?? [])]
+		.map(({ id, limit }) => `${id}:${limit}`)
+		.sort();
 	const input = JSON.stringify({
 		language: language.language,
 		native: readsNative ? hintedNative(language) : null,
@@ -70,9 +79,36 @@ export function reviewSettingsKey(
 		},
 		// Only when set, so a run made before style notes were keyed, on a story
 		// without them, keeps its key.
-		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {})
+		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {}),
+		// Each only when set, so a run made before these were keyed keeps its key.
+		...(choices?.feedback ? { feedback: choices.feedback } : {}),
+		// "When not obvious" gives the same prompt as not set.
+		...(choices?.editReasons && choices.editReasons !== 'unobvious'
+			? { editReasons: choices.editReasons }
+			: {}),
+		...(limits.length ? { contentLimits: limits } : {})
 	});
 	return createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+// The settings key for a story review run. The preferences and style notes
+// count where the scene passes read the wording, which covers every review a
+// pattern pass runs in (see runPatternScope).
+export function storyReviewSettingsKey(
+	settings: ReviewSettings,
+	categories: ReviewCategory[] | undefined,
+	patterns: PatternScope | undefined
+): string {
+	const parsed = parseCategories(categories);
+	const reads = readsWording(parsed);
+	return reviewSettingsKey(
+		settings.language,
+		reads ? settings.preferences : null,
+		readsNative(parsed, patterns),
+		reads ? settings.styleNotes : null,
+		// Only the sparing pass (no categories) states how much feedback.
+		parsed.length ? { ...settings.preferences, feedback: null } : settings.preferences
+	);
 }
 
 // The settings a review run reads once when it opens: what it keys itself on

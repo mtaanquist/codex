@@ -69,8 +69,10 @@ test('the usage list shows each priced request and the total cost', async ({ pag
 	const unpriced = row('unpriced-model');
 	await expect(unpriced.locator('.list-sub')).toContainText('5,000 in / 100 out');
 	await expect(unpriced.locator('.list-sub')).not.toContainText('$');
-	// The total counts only what has a price.
-	await expect(usage.getByText(/Last 30 days: 2 requests/)).toContainText('about $0.40.');
+	// The total counts only what has a price, and says the rest is left out.
+	await expect(usage.getByText(/Last 30 days: 2 requests/)).toContainText(
+		'about $0.40, and some requests could not be priced'
+	);
 });
 
 test('moving the endpoint to another server clears typed prices and says so', async ({ page }) => {

@@ -25,6 +25,7 @@ universe
 - **Database**: Postgres
 - **Content format**: Markdown in `text` columns (rendered on display/export)
 - **Search**: `tsvector` for full-text, `pg_trgm` for fuzzy name matching
+- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; nothing uses it yet. It is required now so the database image change, and the index rebuild that comes with it, happen once at a major version rather than in the release that first stores vectors
 - **Case-insensitive handles**: `citext` for the public profile handle (requires the `citext` extension)
 - **Squishy fields**: `jsonb` with GIN indexes where queried
 
@@ -227,6 +228,8 @@ stories (
   browse_blocked_at   timestamptz,                      -- a moderator removed it from Browse; the author cannot list it again until cleared
   browse_blocked_reason text,                           -- a report reason key (#lib/report-reasons)
   browse_blocked_by   uuid references users on delete set null,
+  browse_allowed_at   timestamptz,                      -- the last time a moderator allowed it back into Browse; kept when it is removed again
+  browse_allowed_by   uuid references users on delete set null,
   cover_asset_id      uuid references assets(id),       -- null renders a default cover from title and author
   cover_color         text,                             -- palette token tinting the default cover; random on insert, null on rows from before it
   llm_config          jsonb not null default '{}',  -- Assistant config; '{}' until configured
@@ -791,10 +794,13 @@ publications (
   version_label   text,                  -- optional, e.g. 'Edition 2'
   source_draft_id uuid references story_drafts(id) on delete set null,  -- the saved draft it came from, if any
   is_current      boolean not null default true,
-  removed_at      timestamptz,           -- set by a takedown (admin or moderator); hides the edition without deleting the source
+  removed_at      timestamptz,           -- set by a takedown (admin or moderator) or an account deletion; hides the edition without deleting the source
   removed_by      uuid references users on delete set null, -- who took it down
   removed_reason  text,                  -- a REPORT_REASONS key (#lib/report-reasons), shown to the author
+  taken_down_at   timestamptz,           -- when the takedown happened (removed_at keeps an earlier account-deletion hide); cleared by a restore, null on takedowns before 0133
   hidden_by_account_deletion boolean not null default false, -- set when the author schedules deletion; a restore then leaves the edition down
+  restored_at     timestamptz,           -- the last time a moderator restored it after a takedown; kept through a later takedown
+  restored_by     uuid references users on delete set null,
   published_at    timestamptz not null
 )
 

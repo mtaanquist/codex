@@ -55,7 +55,12 @@ import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
-import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
+import {
+	assistantPreferencesShown,
+	liveWarnings,
+	OUTDATED_WARNINGS,
+	savePreferences
+} from '#lib/server/assistant-preferences';
 import {
 	checkTagNames,
 	findFandoms,
@@ -168,6 +173,10 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 			? await scopeModelSettings(db, locals.user!.id, { storyId: story.id })
 			: null,
 		assistantPreferencesShown: preferencesShown,
+		// The content warnings the preferences set a limit on, in list order.
+		contentWarnings: preferencesShown
+			? (await liveWarnings(db)).map(({ slug, name, merged }) => ({ slug, name, merged }))
+			: [],
 		story,
 		universe,
 		timeline,
@@ -278,7 +287,10 @@ export const actions: Actions = {
 	},
 	saveAssistantPreferences: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);
-		const read = readPreferencesForm(await request.formData());
+		const read = readPreferencesForm(
+			await request.formData(),
+			(await liveWarnings(db)).map(({ slug }) => slug)
+		);
 		if (!read.ok) {
 			return fail(400, {
 				action: 'assistant-preferences',
@@ -286,8 +298,11 @@ export const actions: Actions = {
 				submitted: read.submitted
 			});
 		}
-		if (!(await savePreferences(db, locals.user!.id, { storyId: story.id }, read))) {
-			error(404, 'Not found');
+		const result = await savePreferences(db, locals.user!.id, { storyId: story.id }, read);
+		if (result === 'missing') error(404, 'Not found');
+		// Saved, with a notice that the limits were left alone.
+		if (read.outdated || result === 'outdated') {
+			return { action: 'assistant-preferences', saved: true, notice: OUTDATED_WARNINGS };
 		}
 		return { action: 'assistant-preferences', saved: true };
 	},
@@ -404,13 +419,23 @@ export const actions: Actions = {
 			return fail(400, { action: 'publish', message: 'Pick a visibility.' });
 		}
 		const isAdult = data.get('isAdult') === 'on';
-		await saveStoryVisibility(
-			db,
-			story.id,
-			visibility,
-			isAdult,
-			(await browseEnabled(db)) ? data.get('listedInBrowse') === 'on' : null
-		);
+		// The Browse choice is saved only when the form showed the box. The page
+		// may have loaded on a process with a stale copy of the setting, or before
+		// an admin changed it, so a tick is saved only while Browse is on now; an
+		// untick always is, since taking a story off Browse is always safe.
+		// Otherwise the stored choice is kept while the story stays public; an
+		// unlisted or private story is always taken off Browse
+		// (saveStoryVisibility).
+		const boxShown = data.get('browseBox') === '1';
+		const ticked = data.get('listedInBrowse') === 'on';
+		const listed = !boxShown
+			? null
+			: !ticked
+				? false
+				: (await browseEnabled(db, { fresh: true }))
+					? true
+					: null;
+		await saveStoryVisibility(db, story.id, visibility, isAdult, listed);
 		return { action: 'publish', saved: true };
 	},
 	saveTags: async ({ request, params, locals }) => {

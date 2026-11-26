@@ -3,7 +3,13 @@
 	import { resolve } from '$app/paths';
 	import type { PageData, ActionData } from './$types';
 	import { formatDate, formatDateTime } from '#lib/format';
-	import { isReportReason, reportReasonLabel } from '#lib/report-reasons';
+	import {
+		isReportReason,
+		moderationEditionName,
+		moderationRowName,
+		reportReasonLabel
+	} from '#lib/report-reasons';
+	import { confirmSubmit } from '#lib/confirm.svelte';
 	import TakedownForm from '../TakedownForm.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -26,10 +32,7 @@
 </div>
 
 {#if form?.scope === 'reports' && form.message}
-	<div
-		class="status-banner"
-		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-	>
+	<div class="status-banner error" role="alert">
 		<span class="x">{form.message}</span>
 	</div>
 {/if}
@@ -46,13 +49,9 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
-								<a
-									href={resolve('/@[handle]/[story=ref]', {
-										handle: report.handle,
-										story: report.storyId
-									})}
-								>
-									@{report.handle}/{report.title}
+								<!-- The reported edition itself, which may be down or replaced. -->
+								<a href={resolve('/admin/published/[id=uuid]', { id: report.publicationId })}>
+									{moderationRowName(report.handle, report.title)}
 								</a>
 								{#if report.editionRemovedReason}<span class="pill">
 										taken down
@@ -77,7 +76,13 @@
 								<TakedownForm
 									id={report.publicationId}
 									title={report.title}
+									handle={report.handle}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
+									reportId={report.id}
+									newer={report.newerEdition}
+									newerId={report.newerEditionId}
+									current={report.editionCurrent}
+									readable={report.editionReadable}
 								/>
 							{/if}
 							{#if report.listedInBrowse && !report.browseBlockedAt}
@@ -86,15 +91,27 @@
 									id={report.storyId}
 									reportId={report.id}
 									title={report.title}
+									handle={report.handle}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 								/>
 							{/if}
-							<form method="POST" action="?/dismiss">
+							<form
+								method="POST"
+								action="?/dismiss"
+								onsubmit={confirmSubmit({
+									title: `Dismiss the report about ${moderationEditionName(report.handle, report.title)}?`,
+									body: 'The report closes and nothing else changes.',
+									confirmLabel: 'Dismiss report'
+								})}
+							>
 								<input type="hidden" name="reportId" value={report.id} />
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Dismiss report about {report.title}"
+									aria-label="Dismiss report about {moderationEditionName(
+										report.handle,
+										report.title
+									)}"
 								>
 									Dismiss
 								</button>
@@ -119,7 +136,17 @@
 				{#each data.resolved as report (report.id)}
 					<div class="list-row">
 						<div class="list-main">
-							<div class="list-title">@{report.handle}/{report.title}</div>
+							<div class="list-title">
+								{#if report.title === null}
+									<span
+										title="This edition is no longer shared, or was replaced, and this report no longer opens it."
+									>
+										{moderationRowName(report.handle, report.title)}
+									</span>
+								{:else}
+									{moderationRowName(report.handle, report.title)}
+								{/if}
+							</div>
 							<div class="list-sub">
 								{reportReasonLabel(report.reason)} - {RESOLUTION_LABELS[report.resolution ?? ''] ??
 									'Closed'}{report.resolvedByName ? ` by ${report.resolvedByName}` : ''}

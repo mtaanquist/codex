@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import pg from 'pg';
 import {
 	CANCEL_ON_MIGRATE_APP_NAME,
+	hasPgvector,
+	PGVECTOR_MISSING_MESSAGE,
 	readJournal,
 	runMigrations
 } from '../../src/lib/server/db/migrate';
@@ -45,6 +47,18 @@ describe('runMigrations', () => {
 		const { rows } = await query('select count(*)::int as n from drizzle.__drizzle_migrations');
 		expect(rows[0].n).toBe(readJournal('drizzle').length);
 	}, 30_000);
+
+	it('installs pgvector, which the database image provides', async () => {
+		const client = new pg.Client({ connectionString: MIGRATE_DATABASE_URL });
+		await client.connect();
+		try {
+			expect(await hasPgvector(client)).toBe(true);
+		} finally {
+			await client.end();
+		}
+		const { rows } = await query(`select extname from pg_extension where extname = 'vector'`);
+		expect(rows).toHaveLength(1);
+	});
 });
 
 describe('runMigrations during a long read', () => {
@@ -98,6 +112,16 @@ describe('runMigrations during a long read', () => {
 		};
 		return { done, end };
 	}
+
+	it('stops with directions and applies nothing on a server without pgvector', async () => {
+		const folder = folderWithAlter();
+		const before = await query('select count(*)::int as n from drizzle.__drizzle_migrations');
+		await expect(
+			runMigrations(MIGRATE_DATABASE_URL, folder, { hasPgvector: async () => false })
+		).rejects.toThrow(PGVECTOR_MISSING_MESSAGE);
+		const after = await query('select count(*)::int as n from drizzle.__drizzle_migrations');
+		expect(after.rows[0].n).toBe(before.rows[0].n);
+	});
 
 	it('cancels it before applying, and leaves it alone when nothing is pending', async () => {
 		const folder = folderWithAlter();

@@ -465,9 +465,26 @@ describe('runImport', () => {
 		const settings = {
 			styleNotes: 'Epic fantasy serial,\nomniscient narrator.',
 			language: 'en-GB',
-			assistantPreferences: { quoteMarks: 'single', tense: 'past', epithets: 'leave' },
+			assistantPreferences: {
+				quoteMarks: 'single',
+				tense: 'past',
+				epithets: 'leave',
+				feedback: 'thorough',
+				editReasons: 'never',
+				summaryLength: 'detailed',
+				draftWords: 1800,
+				useUniverseNotes: 'no',
+				// A slug may hold a colon; the line splits at the last one.
+				'warning:graphic:violence': 'avoid',
+				'warning:death': 'write'
+			},
 			assistantNotes: 'Keep "ye" and "thee".\n\nLeave the dialect alone.'
 		};
+		// Limits come in only for warnings on this site's list.
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Graphic: violence', slug: 'graphic:violence' },
+			{ kind: 'warning', name: 'Death', slug: 'death' }
+		]);
 		await db.update(stories).set(settings).where(eq(stories.id, original.id));
 		const [configured] = await db.select().from(stories).where(eq(stories.id, original.id));
 		const plan = await exportPlan(configured);
@@ -476,6 +493,45 @@ describe('runImport', () => {
 		const result = await runImport(db, universe, plan);
 		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
 		expect(imported).toMatchObject(settings);
+	});
+
+	it('reports and leaves off content limits for warnings this site does not list', async () => {
+		const original = await seedStory();
+		const [gore, blood] = await db
+			.insert(tags)
+			.values([
+				{ kind: 'warning', name: 'Gore', slug: 'gore' },
+				{ kind: 'warning', name: 'Blood', slug: 'blood' },
+				{ kind: 'warning', name: 'Old', slug: 'old', removedAt: new Date() }
+			])
+			.returning();
+		await db.update(tags).set({ mergedIntoId: gore.id }).where(eq(tags.id, blood.id));
+		await db
+			.update(stories)
+			.set({
+				assistantPreferences: {
+					tense: 'past',
+					'warning:gore': 'write',
+					// Merged into a live warning, so it still applies.
+					'warning:blood': 'avoid',
+					'warning:old': 'avoid',
+					'warning:elsewhere': 'avoid'
+				}
+			})
+			.where(eq(stories.id, original.id));
+		const [configured] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const plan = await exportPlan(configured);
+		const problem =
+			"story.md: 2 Assistant content limits are for content warnings this site's list does not have, so they were left off.";
+		expect((await previewImport(db, universe, plan)).problems).toContain(problem);
+		const result = await runImport(db, universe, plan);
+		expect(result.problems).toContain(problem);
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported.assistantPreferences).toEqual({
+			tense: 'past',
+			'warning:gore': 'write',
+			'warning:blood': 'avoid'
+		});
 	});
 
 	it('round-trips text with line and paragraph separators, emoji, quotes, indents and blank lines', async () => {

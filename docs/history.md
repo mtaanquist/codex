@@ -10,6 +10,330 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 14 (2026-11-26, `staging/v4.0.0`, #1871).
+The loop's last round: every area found only lows, after content limits had
+turned up a medium in each of rounds 4 to 12. The lows were fixed before the
+staging-to-main merge, as Mads asked: stale moderation undo actions now match
+the takedown or block they were shown to the microsecond, the guided pass
+card got its first tests (Playwright, loading the card in a frame with a fake
+host), and estimate notes compare figures to the cent as they are shown.
+
+v4.0.0 staging review, round 13 (2026-11-26, `staging/v4.0.0`, #1868,
+#1869). The first round in which content limits turned up only lows. The one
+medium was older than the branch: the review window called its estimate the
+cost "to send" and then added the replies again, though the figure already
+held them. Lows covered stale moderation actions (a Browse removal on a
+report already closed, a reader thanked for a report that was not filed),
+the guided pass card's refresh message, and help on the apply permission.
+Two corrections to older entries here: the CI collation check (#1806) starts
+from the previous release's last migration (0096 for 3.22), not from 0130;
+and 0131 runs again after any pre-4.0 dump is restored, rebuilding indexes
+again only on a database the old image created.
+
+v4.0.0 staging review, round 12 (2026-11-26, `staging/v4.0.0`, #1865,
+#1866). The content limits form skipped its warning-list check while a save's
+own refresh ran, so a change made in that window could outlive a failed save
+and go out under the new list. The `refreshing` early return is gone: the
+check always runs, sparing only the save in flight and an outdated save whose
+refresh is landing. The draft copy now shares the save's savepoint relock
+(`lockUntilSettled`). Moderation, connected apps, usage help and self-hosting
+had lows only. Mads chose to hide titles a moderator may not open.
+
+v4.0.0 staging review, round 11 (2026-11-26, `staging/v4.0.0`, #1860 to
+#1863). Content limits again: an outdated answer that came back after the
+warning list moved left its change in place, so a queued save sent it with
+the new list's fingerprint and the server took it. The outdated case is now
+handled like a failure when the list moved. The total on the usage page no
+longer says "at least": cached tokens and provider-wide read rates mean the
+priced part is not a floor. Admin lists hide titles of editions a moderator
+may not open (preview-only and trashed stories), the option recommended to
+Mads; if he keeps the old behaviour this is a revert of one commit. The CI
+upgrade check gained the duplicate-row case for 0131.
+
+v4.0.0 staging review, round 10 (2026-11-26, `staging/v4.0.0`, #1857,
+#1858). The medium was the round 9 change meeting renames: a story's choice
+is written to the merged entries' keys, but the save locked only the posted
+warning, so a rename of a merged entry slipped between. The save now
+share-locks the merged entries too and rereads until the set is stable; a
+racing save comes back outdated. Removed merged entries are carried apart
+from the fold so a new choice still overwrites them, and a story save no
+longer reads the universe at all. Skipping the list-change effect while a
+save is in flight was rejected: a failed save could then resend an old pick
+against the new list, so the effect keeps only what the save carries. Mads
+chose to keep looping after ten rounds.
+
+v4.0.0 staging review, round 9 (2026-11-26, `staging/v4.0.0`, #1854,
+#1855). The medium was in renaming a warning: the slug was read outside the
+transaction, so a double submit moved limits a second time and erased
+"Write freely" keys. The rename now locks the tag row and the move only
+touches rows that still have the old key. A story's choice now applies to
+the entries merged into the warning it sees, so it can beat its universe
+there, and removed merged entries stop counting. After a refused save, a
+changed warning list drops the unsaved limit picks with a note rather than
+saving them later against merges the writer never saw. A card accept that
+waited rereads the grant's permissions.
+
+v4.0.0 staging review, round 8 (2026-11-26, `staging/v4.0.0`, #1851,
+#1852). The medium was the round 7 queue: a save refused as outdated cleared
+its limits from the changed set, so the save queued behind it said "Saved."
+and the limit went quietly back. A refused limit now stays marked until a
+save stores it or the writer sees the notice. Undo of a merge keeps a story's
+own "write" and does nothing for a removed survivor; it and rename lock rows
+in id order. Moving `saving = false` after the refresh was tried on paper and
+dropped: a pick during the refresh would then be queued behind a refresh that
+writes the old value back, so picks made then are put back instead. The usage
+total is a tested helper and says "about" when any count is an estimate.
+
+v4.0.0 staging review, round 7 (2026-11-26, `staging/v4.0.0`, #1848,
+#1849). The one medium was the content limits form again: after an outdated
+save the select kept the unsaved value, so the selects are now rebuilt from
+what is stored when the warning list changes, and the form saves one at a
+time so a slower earlier save cannot land last. Undoing a merge narrows rows
+that had "write" while a merged key said "avoid", but skips stories that only
+inherit, so they keep following their universe. Leaving the page after a
+refused save is not held; that is the shared autosave helper's rule for every
+form, so it stayed. A takedown now records the newer edition the moderator
+saw by id, and reports recheck that readers can still open the edition.
+
+v4.0.0 staging review, round 6 (2026-11-26, `staging/v4.0.0`, #1845,
+#1846). Every round had found another stale-page hole in content limits,
+because the preferences form autosaved every limit select with any other
+field. The form now posts only the limits the writer changed on the page,
+with a fingerprint of the warning list it was built from (each live warning
+and its merged slugs); the save recomputes it under the tag and row locks and
+leaves limits alone on a mismatch. Merging a removed entry is refused. A
+report's unlock is tied to the takedown that closed it by `taken_down_at`
+equal to the report's `resolved_at` (same transaction), so takedowns and
+restores from before 0130 and 0133 no longer unlock anything. 0131 now
+rebuilds whenever the recorded collation version differs from the server's,
+and keeps the old version when it had to skip a table. Playwright runs
+locally with the preinstalled Chromium through a config that sets
+`launchOptions.executablePath`; the export steps of the core flow need asset
+storage and fail without it.
+
+v4.0.0 staging review, round 5 (2026-11-26, `staging/v4.0.0`, #1840 to
+#1843). The preferences form now shows each warning's limit folded within its
+row, so a limit that came from a merged warning is visible and can be
+changed: a different choice is stored and clears that row's keys for the
+merged warnings, while an autosave of the shown value changes nothing (taking
+the brief's "clear on save" literally would have let any autosave loosen a
+merged avoid). Undoing a merge copies the survivor's avoid onto the unmerged
+warning where it has none, so an undo only narrows. Takedowns get their own
+date (`taken_down_at`, migration 0133; older rows fall back to `removed_at`
+at read time rather than a backfill). A guided pass card accept is labelled
+"Accepted in <app>" on the revision, so History tells it apart from one made
+in Codex.
+
+v4.0.0 staging review, round 4 (2026-11-26, `staging/v4.0.0`). Content
+limits on a merged warning now fold at read time instead of being copied at
+merge: each live warning takes the limits of every warning merged into it,
+story over universe per slug, and avoid wins. Copying lost a save that landed
+after the merge and could let a story's "write" on the survivor beat a
+universe "avoid" on the merged-away one. Renames still move the keys, which
+never widens a limit. Run keys record limits by tag id. Rolling back 4.0.0 is
+now a copy of the database volume taken before the update, since a dump
+restore leaves the reindexed job-queue indexes behind. The guided pass card
+needs Leave suggestions as well as Apply, and spend is metered at the provider
+a request went to. Kept as is: the card still works through a resolved note,
+as the in-app pass does; 0131 skips tables owned by another role with only a
+warning (bundled installs own every table); and pattern runs capped before
+4.0.0 restart once after the upgrade, since their key now counts preferences
+and style notes.
+
+v4.0.0 staging review, round 3 (2026-11-26, `staging/v4.0.0`, #1828 to
+#1833). A moderator now reads an edition only when it is the current edition
+of a shared story, has an open report, or has a report closed by a takedown
+that still holds; a takedown alone no longer unlocks a private edition, and
+takedown refuses an edition the moderator may not read. Restore lifts the
+whole takedown. Avoid wins on warning merges as on renames. An out-of-date
+preferences form saves everything but content limits and says so, rather
+than refusing (which lost typed notes). Review run keys record limits by
+slug. Editions published before 4.0.0 never recorded description images in
+`publication_assets`; no backfill, they load once the author republishes.
+
+v4.0.0 staging review, round 2 (2026-11-26, `staging/v4.0.0`, #1823 to
+#1826). Content limits are keyed by warning slug, so a warning rename now
+moves them in the same transaction, never widening one. A preferences form
+opened before a merge or rename posts a warning key that is no longer live;
+such a save is refused with a reload message when it would clear or widen a
+limit, rather than answering Saved and dropping the choice. Rollback after
+4.0.0 restores the recorded backup key with the earlier Codex, then drops
+the vector extension and reindexes. Migration 0131 was left untouched (its
+comment about Postgres warning on a later collation change does not hold for
+databases first made under musl; SELF-HOSTING says to keep the image tag
+pinned instead).
+
+v4.0.0 staging review, round 1 (2026-11-26, `staging/v4.0.0`, #1817 to
+#1821 and the lane lows #1812, #1814, #1816). Five reviewers split by area
+(database, moderation, preferences, spend, MCP card). The review run's
+settings key now also covers feedback, reasons and content limits, each only
+when set so a run keyed before keeps its key. An untick of "List in Browse"
+is always saved, since delisting is always safe; only a tick waits for Browse
+to be on. A warning merge now carries only "Keep it off the page" limits,
+since carrying "Write freely" widens what the Assistant writes. Databases
+created under musl keep no recorded collation version (`REFRESH COLLATION
+VERSION` refuses to go from none to one); left as is, a superuser can record
+it by hand. The notes fence still passes two-hyphen runs on purpose (#1816).
+
+v4.0.0 lane follow-ups (2026-11-26, `staging/v4.0.0`, #1794, #1795, #1798,
+#1799, #1806, #1807). The Browse setting cache stays (the root layout reads it on
+every page), but the two places that act on it, the story settings save and
+the admin page, now read it fresh, and the save only takes the box when the
+form showed it (a hidden `browseBox` field), so neither a stale process nor a
+stale page drops or clears an author's "List in Browse" choice. Pages elsewhere can still show or
+hide Browse for up to a minute after a change; LISTEN/NOTIFY was not worth it
+for that. A stream that dropped before `message_delta` now bills the
+`web_search` calls it saw, marked estimated. The fandom count's subquery got a
+partial index on `universes.fandom_id` (migration 0132). The card's lock-wait
+test uses the default two-second lock timeout, like the staging dispatch test,
+rather than threading test-only timeouts through `callMcpTool`. #1806 added
+the "Old database image upgrade" CI job (`.github/scripts/collation-upgrade.sh`):
+a volume migrated to 0130 under the old Alpine image is opened by the pgvector
+image, where amcheck must find broken text indexes before migration 0131 and
+none after. It checks the breakage first so the job cannot pass vacuously.
+
+Moderation polish (v4.0.0 lane 4, 2026-11-26, `staging/v4.0.0`). #1539: the
+admin form banners use `.status-banner.error` with `role="alert"` (and `.ok`
+with `role="status"`) instead of inline colours, across the whole admin area
+since the inline style was copied into every section; tag and list actions now
+say what they did. #1538: Take down moved into the shared moderation actions,
+so Published and Reports refuse an edition already down with the same words;
+the confirm for a replaced edition says the newer one comes down too; Dismiss
+asks first; removing a merged entry says its stories keep the survivor;
+renaming or merging into a removed entry names it and says to restore it, and
+the add box lists names that match removed entries apart; FandomSuggest reads
+out its result count, including none; "Stay off Browse" has a Save button
+without JavaScript. The `/admin?section=published` redirect was already gone.
+#1791: the image route serves a moderator the images of an edition they may
+read on its moderation page, with `no-store`. #1797: the overview count and
+Published share `currentNotTakenDown()` (its own module, so the admin script
+does not pull in publish.ts). #1800: `readable` checks the story owner as
+`publicEdition` does. Tests for #1796 and the trash case.
+
+Assistant preferences polish (v4.0.0 lane 6, 2026-11-26, `staging/v4.0.0`).
+#1553: a story's settings show the universe's (or standalone default's) notes
+read only below its own, and a `useUniverseNotes: "no"` key in the same JSON
+stops them standing in for blank story notes; only the story's own key counts.
+#1802: a content limit on a warning merged away now carries to the survivor
+at merge time (in `mergeTag`, for stories and universes, without touching
+`updated_at`) where the survivor has none: the merged warning's own limit, else the more
+careful of the hidden ones merged into it earlier; old keys are not pruned, so an undone merge or a restored warning
+keeps its limit, as tag rows do. The house style and content limit lines no
+longer say "for this story" (an MCP prompt can name only a universe); the
+continuity confirm stage and its MCP brief state the reasons choice; a
+universe select keeps a stored value that equals the default instead of
+showing blank and clearing it on the next autosave. #1566: the notes fence
+drops invisible characters and treats dash lookalikes as hyphens before
+spacing out runs (prompt only, stored notes unchanged). #1554: scene review
+already read the settings once per run; the estimate now does too.
+`checkBookFit` still reads its own (one call per page). #1568: the small
+uppercase legend is the shared `.field-set`. #1803: the blank-choice label
+moved to `inheritedLabel` with unit tests, plus tests for draft defaults, the
+import round trip of the new keys and the empty-reply mark per length.
+
+Assistant preference choices (2026-11-26, v4.0.0 lane 5, `staging/v4.0.0`).
+#1778 to #1782, the rest of #1344, built as more keys in the existing
+`assistant_preferences` JSON, so no migration: how much a default review
+points out, reasons on suggested edits, one summary length for scene and
+chapter summaries, arcs and recaps (Mads chose one switch over one per kind),
+a default draft length, and a content limit per entry of the admin's content
+warning list (Mads chose that list over a fixed one, so Browse and the
+Assistant share it). Warning limits are stored by slug and named from the
+live list at read time, so a removed or merged-away warning drops out rather
+than being followed. The summary length is kept out of the fingerprint of
+chapter summaries and arcs, as the language already was, so changing it marks
+nothing out of date and starts no spend; summaries take the new length when
+next written. Export lines now split at the last colon, since a warning slug
+may contain one.
+
+pgvector required (v4.0.0, 2026-11-26, `staging/v4.0.0`, #1783). Mads
+chose to make pgvector required in the major release rather than optional, so
+the embeddings work in v4.1.0 (#1784 to #1788) can rely on it. The shipped
+database image moved from `postgres:18.6-alpine3.24` to
+`pgvector/pgvector:0.8.7-pg18-trixie`, since pgvector publishes no Alpine
+image. That switch is not just an image swap: Alpine's musl and Debian's glibc
+sort text differently under `en_US.utf8`, and an existing volume opened by the
+new image had out-of-order text indexes (checked with amcheck on a database
+migrated to 0127 under the old image). Migration 0131 detects that case (the
+database records no collation version while the server reports one, which is
+what a musl-created database looks like under glibc) and, after creating the
+extension, reindexes every table the role owns; databases created under glibc
+skip it, unless their recorded collation version differs or they sort with C
+over a real locale. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
+version, so the version stays unrecorded; the migration runs once anyway. The
+migrator checks `pg_available_extensions` first so a server without pgvector
+stops with directions instead of a bare Postgres error, and a refused
+`CREATE EXTENSION` (pgvector is not a trusted extension) is reworded the same
+way. Review found that a restore dropped `public` with the extension in it, so
+a role that is not a superuser could never restore again; the restore now
+empties `public` but keeps its extensions, and leaves out
+`COMMENT ON EXTENSION`, which only the extension's owner may run. Building pgvector into
+our own Alpine image was the alternative; it would have kept the sort order
+but meant publishing and maintaining a database image.
+
+Guided pass card in the AI client (v4.0.0, 2026-11-26, `staging/v4.0.0`,
+#1362). An app with the new `apply` permission can show the guided pass over
+one of its pattern notes as an MCP App: `open_guided_pass` returns the pass
+and the client loads the card page (`ui://codex/guided-pass.html`, plain
+HTML and script, no bundle: the MCP Apps message protocol is a handful of
+postMessage calls, so the 540 KB `@modelcontextprotocol/ext-apps` bundle was
+not worth adding). `decide_suggestion` is the card's Accept. `apply` is never
+ticked for the writer, even when the app asks for it. The hard part is that
+the client, not Codex, decides who calls a tool: `visibility: ["app"]` hides
+the accept from a client's model, but a client that does not know MCP Apps
+lists it to the model like any other tool. So the accept also needs a card
+key for that edit and its wording, sent in the result's `_meta` (which clients pass to the card, not the
+model) and the stamp of the wording shown. That narrows it; it cannot prove a
+person pressed the button, which is why the permission is off by default and
+the help says so. The in-app re-read after an accept is left to the app's
+own model (it can stage a follow-up), and Skip stays in the card. The tools
+are not in the Assistant registry, so the shared-toolbox exception is listed
+in `assistant.md`.
+
+Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
+and Allow in Browse now record the moderator and time (#1531, migration 0130):
+plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
+only the latest restore or allow, rather than a moderation log table, since
+nothing yet needs the full history. The Published page lists current editions
+an account deletion hid, with a pill and the Take down button (#1529), and a
+moderator can read an edition at `/admin/published/<id>`, linked from
+Published and the report queue (#1530); an edition of a story made private or
+trashed opens there only once taken down or reported, so withdrawn work stays
+unread. Inline images there loaded only while the edition was public; lane 4 widened
+the image route for moderators (#1791).
+Route-level tests cover the moderation actions and both orders of a publish
+racing a takedown (#1775), and design.md now names Remove from Browse in the
+report queue (#1777).
+
+Usage cost and spend (v4.0.0 lane 7, 2026-11-26, `staging/v4.0.0`). #1520:
+each usage row stores the model's price as jsonb (migration 0129) when it is
+recorded, and the account page prices from it, falling back to the current
+list only for older rows; the 30-day sums group by price as well as model and
+provider, so rows sent at different prices are priced apart. A price, not a
+computed cost, so the cache rates stay in one place. #1555: Anthropic's search
+fee ($10 per 1,000) is a constant in `assistant-cost.ts`, counted in every cost
+and pinned on the stored price of a row that searched; the cap reserves it for
+`WEB_SEARCH_MAX_USES` searches per searching request. #1560: the API has no
+per-search result size limit and reports usage only when a request ends, so
+the 10k allowance stays (Mads); each searching request logs
+`assistant.usage.search` with its reported input against the room held, to
+tune it from data. #1567: the over-cap note names the longest scene and says
+"or sooner", the legacy queue cleanup moved to `src/worker/legacy-queues.ts`
+with a test, and the continuity over-cap case has a test.
+
+Browse performance (v4.0.0, 2026-11-26, `staging/v4.0.0`). The Browse
+setting is cached in process for a minute like the asset storage settings, and
+a save clears it (#1769). The admin sections already loaded published editions
+only on their own page since bug round 5 (#1770). Migration 0128 adds the
+partial index `publications_browse` on (published_at, id), both descending
+with nulls first to match the ORDER BY, where the edition is current and not
+taken down (#1771). EXPLAIN on 60,000 editions showed the index was ignored at
+first: the `s.owner_id = p.owner_id` guard, as a join equality, made the
+planner guess about 40 rows instead of 20,000, so it sorted everything. The
+guard is now wrapped in coalesce, which keeps it but stops the misestimate, and
+the page cursor compares published_at as a timestamp so the index serves later
+pages too. The first page went from about 20 ms to about 1 ms there.
+
 Bug round 5 (2026-11-25, `staging/bug-fixes-5`). The 17 open bug issues
 (#1523 to #1571, less #1550, which shipped with #1572) were fixed in five
 lanes, then reviewed by four fresh area reviewers per round (Browse and public

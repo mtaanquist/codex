@@ -8,14 +8,21 @@ import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts
 import { PLAIN_TEXT_FORMAT } from './format.ts';
 import { writeInLine } from './language.ts';
 
+// How long summaries, arcs and recaps run: the writer's choice in the
+// Assistant preferences, short when not set.
+export type SummaryLength = 'short' | 'detailed';
+
 export function buildSceneSummaryMessage(
 	title: string | null,
 	bodyMd: string,
-	language: LanguageSetting = NO_LANGUAGE
+	language: LanguageSetting = NO_LANGUAGE,
+	length: SummaryLength = 'short'
 ): string {
 	const name = title?.trim() ? `the scene "${title.trim()}"` : 'this scene';
 	return [
-		`Summarise ${name} in one or two sentences: what happens in it, plainly.`,
+		length === 'detailed'
+			? `Summarise ${name} in a short paragraph of three to five sentences: what happens in it, who is involved, and what changes, plainly.`
+			: `Summarise ${name} in one or two sentences: what happens in it, plainly.`,
 		'Reply with only the summary - no preamble, no heading, no quotation marks. Keep it factual and spoiler-plain; this is a note to the writer, not back-cover copy.',
 		writeInLine(language, 'Write in the same language as the scene.'),
 		PLAIN_TEXT_FORMAT,
@@ -28,11 +35,19 @@ export function buildSceneSummaryMessage(
 // The chapter summary states no language: it is written from scene summaries
 // that already follow the story's, and its request is the fingerprint that
 // says whether a stored summary is current, so naming the language would
-// mark every chapter summary out of date when the setting changed.
-export function buildChapterSummaryMessage(title: string | null, sceneSummaries: string[]): string {
+// mark every chapter summary out of date when the setting changed. The
+// fingerprint is taken from the short request whatever the length, for the
+// same reason (see chapterSummaryRequest).
+export function buildChapterSummaryMessage(
+	title: string | null,
+	sceneSummaries: string[],
+	length: SummaryLength = 'short'
+): string {
 	const name = title?.trim() ? `the chapter "${title.trim()}"` : 'this chapter';
 	return [
-		`Summarise ${name} in one or two sentences, drawing on its scene summaries below.`,
+		length === 'detailed'
+			? `Summarise ${name} in a short paragraph of three to five sentences, drawing on its scene summaries below.`
+			: `Summarise ${name} in one or two sentences, drawing on its scene summaries below.`,
 		'Reply with only the summary - no preamble, no heading. Capture the through-line of the chapter, not a list of every scene.',
 		'Write in the same language as the summaries.',
 		PLAIN_TEXT_FORMAT,

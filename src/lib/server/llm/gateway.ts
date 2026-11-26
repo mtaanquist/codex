@@ -49,6 +49,7 @@ import {
 	type ToolSpec,
 	billedUsage
 } from './providers/types.ts';
+import type { TokenPrice } from '../../assistant-cost.ts';
 import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatModelSettings } from '../../assistant-chat.ts';
 
@@ -205,6 +206,26 @@ export function searchingPromptTokens(promptTokens: number, maxTokens: number): 
 	return SERVER_LOOP_MAX_ROUNDS * promptTokens + results + later * maxTokens;
 }
 
+// How a searching request's reported input compares with the room the cap held
+// for it, so the per-search ceiling above can be tuned from real figures (see
+// #1560). Undefined unless the endpoint reported searches and real counts.
+// maxTokens is the reply limit the round was sent at, which a round resent
+// after a cut-off reply raises.
+export function searchAllowanceFields(
+	promptTokens: number,
+	maxTokens: number,
+	usage?: TokenUsage
+): { searches: number; reported: number; allowance: number; overAllowance: boolean } | undefined {
+	if (!usage?.webSearchRequests || usage.estimated) return undefined;
+	const allowance = searchingPromptTokens(promptTokens, maxTokens);
+	return {
+		searches: usage.webSearchRequests,
+		reported: usage.promptTokens,
+		allowance,
+		overAllowance: usage.promptTokens > allowance
+	};
+}
+
 // The persona system message the gateway puts at the front of every turn.
 export function personaMessage(config: {
 	assistantName: string;
@@ -312,7 +333,7 @@ async function respondWithRetry(
 		} catch (err) {
 			const billed = billedUsage(err);
 			if (billed) {
-				await recordUsage(db, p, req, request.messages, billed);
+				await recordUsage(db, p, req, request.messages, billed, request.maxTokens);
 				failedUsage = addUsage(failedUsage, billed);
 			}
 			if (attempt >= RETRY_DELAYS_MS.length || req.signal?.aborted || !isTransientFailure(err)) {
@@ -338,8 +359,9 @@ async function respondWithRetry(
 // job. The prompt is counted high (ceilingPromptTokens) and as written to
 // Claude's cache, the dearest way it can be billed. A request that may search
 // is counted as every round of the search loop (searchingPromptTokens), all at
-// the write rate. A caller with its own mayResend hook holds its
-// own ceiling (drafting, against the cap in force at each request).
+// the write rate, plus the fee for every search it may make. A caller with its
+// own mayResend hook holds its own ceiling (drafting, against the cap in force
+// at each request).
 type CappedRequest = Pick<CompletionRequest, 'messages' | 'maxTokens' | 'tools'>;
 
 function ceilingUsage(p: Prepared, request: CappedRequest): TokenUsage {
@@ -364,17 +386,18 @@ export function capCeilingUsage(
 		promptTokens,
 		completionTokens: maxTokens,
 		cacheWriteTokens: written,
-		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0
+		cacheWrite1hTokens: p.cacheTtl === '1h' ? written : 0,
+		...(p.webSearch ? { webSearchRequests: WEB_SEARCH_MAX_USES } : {})
 	};
 }
 
 function wouldPassCap(p: Prepared, req: GatewayRequest, request: CappedRequest): boolean {
 	if (!req.meter || req.mayResend) return false;
-	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request));
+	return req.meter.wouldPassCap(p.model, ceilingUsage(p, request), p.price, p.providerId);
 }
 
 function heldAtCap(p: Prepared, req: GatewayRequest, request: CappedRequest): SpendCapError {
-	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request)));
+	req.meter?.hold(req.meter.exceedsCap(p.model, ceilingUsage(p, request), p.price, p.providerId));
 	return new SpendCapError();
 }
 
@@ -502,6 +525,8 @@ type Prepared = {
 	provider: Provider;
 	// The account's provider id, recorded on each usage row.
 	providerId: ProviderId;
+	// The model's price now, recorded on each usage row; undefined when none.
+	price?: TokenPrice;
 	// Set only when tools are active this turn (enabled, story owned, endpoint
 	// capable); the agent loop runs when present.
 	tools?: ToolSpec[];
@@ -651,6 +676,7 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 		http: deps.http ?? egressHttpRequest(policy),
 		provider: deps.provider ?? providerFor(resolved.config.provider),
 		providerId: resolved.config.provider,
+		price: resolved.config.modelPricing?.[model],
 		tools,
 		toolContext,
 		toolBudget:
@@ -693,15 +719,32 @@ function recordUsage(
 	p: Prepared,
 	req: GatewayRequest,
 	messages: ChatMessage[],
-	usage?: TokenUsage
+	usage?: TokenUsage,
+	// The reply limit this round was sent at, for the search log.
+	maxTokens = p.maxTokens
 ): Promise<void> {
-	req.meter?.record(p.model, usage);
+	// Metered at the price the row stores. A model whose price was removed
+	// during the run has none to store (the row's cost is unknown), and the
+	// meter then keeps to the price the run started with rather than count the
+	// request as free.
+	req.meter?.record(p.model, usage, p.price, p.providerId);
+	const search =
+		p.webSearch && usage?.webSearchRequests
+			? searchAllowanceFields(ceilingPromptTokens(messages, p.tools), maxTokens, usage)
+			: undefined;
+	if (search) {
+		logEvent(search.overAllowance ? 'warn' : 'info', 'assistant.usage.search', {
+			model: p.model,
+			...search
+		});
+	}
 	return recordAssistantUsage(db, {
 		userId: req.userId,
 		storyId: req.storyId,
 		role: req.role,
 		provider: p.providerId,
 		model: p.model,
+		price: p.price,
 		usage,
 		// Only worth the pass over the messages when there is a reported count to
 		// compare it against (see ./usage).
@@ -793,7 +836,7 @@ async function runAgent(db: Database, p: Prepared, req: GatewayRequest): Promise
 				webSearch: p.webSearch,
 				cacheTtl: p.cacheTtl
 			});
-			await recordUsage(db, p, req, messages, result.usage);
+			await recordUsage(db, p, req, messages, result.usage, maxTokens);
 			usage = addUsage(addUsage(usage, result.failedUsage), result.usage);
 			return result;
 		};

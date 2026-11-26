@@ -429,6 +429,8 @@ primitive's own class too, but do not copy the pattern.
 - `.btn` with `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`,
   `.btn-accept`, size modifier `.btn-sm`. Defined in `pages.css`. This is
   the only general button system.
+- `.btn-ghost.danger` is a quiet destructive action in a row of ghost
+  buttons (Delete, Take down). Use it instead of inlining `--danger-ink`.
 - `.btn-accept` is the affirmative decision (accept a suggestion, approve a
   pass), built on `--status-final`. It is a variant, not a second family.
 - Every variant carries `:hover:not(:disabled)`, `:active`,
@@ -453,6 +455,10 @@ primitive's own class too, but do not copy the pattern.
 
 - Wrapper: `.field` with a `<label>`, optional `.field-hint`, laid out with
   `.field-grid` when two-up. Action row: `.settings-actions`.
+- A group of fields under a heading: a `<fieldset class="field-set">` whose
+  `<legend>` is the small uppercase heading (the review window's options, the
+  Assistant preferences). Do not restyle the legend locally; set only the
+  spacing between groups.
 - Controls: `.input`, `.textarea`, `.select`, `.toggle` inside `.toggle-row`
   (its checkbox has no visible label of its own, so give it an `aria-label`
   matching the row title),
@@ -809,7 +815,11 @@ inline ad-hoc SVG in components.
   controls. There is no custom tooltip primitive; do not build one ad hoc.
 - Banners: `.revision-banner` for the past-revision state is the reference
   pattern for a centre-column banner. `SceneConflictBanner.svelte` is
-  built on it.
+  built on it. In the admin area a form result is a `.status-banner`:
+  `.error` with `role="alert"` for a refusal, `.ok` (with a `.dot` and a
+  `.v` line) with `role="status"` for a success, and `.warn` for a standing
+  notice (a setting missing, files waiting to be copied). Do not inline
+  those colours.
 
 ### Assistant text
 

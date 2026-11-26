@@ -289,9 +289,7 @@
 								aria-label="Current password"
 								required
 							/>
-							<button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger-ink);">
-								Turn off
-							</button>
+							<button type="submit" class="btn btn-ghost btn-sm danger"> Turn off </button>
 						</form>
 					</div>
 				{:else if data.twoFactor.status === 'pending'}

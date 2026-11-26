@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isReportReason, reportReasonLabel } from './report-reasons';
+import {
+	isReportReason,
+	moderationEditionName,
+	moderationRowName,
+	reportReasonLabel
+} from './report-reasons';
 
 describe('report reasons', () => {
 	it('accepts only listed keys', () => {
@@ -13,5 +18,12 @@ describe('report reasons', () => {
 		expect(reportReasonLabel('spam')).toBe('Spam');
 		expect(reportReasonLabel(null)).toBe('No reason given');
 		expect(reportReasonLabel('gone')).toBe('No reason given');
+	});
+
+	it('names an edition by handle alone when its title is hidden', () => {
+		expect(moderationRowName('ann', 'Tide')).toBe('@ann/Tide');
+		expect(moderationRowName('ann', null)).toBe('@ann, an edition you cannot open here');
+		expect(moderationEditionName('ann', 'Tide')).toBe('"Tide"');
+		expect(moderationEditionName('ann', null)).toBe('an edition by @ann you cannot open here');
 	});
 });

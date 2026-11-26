@@ -22,6 +22,7 @@ import { sql } from 'drizzle-orm';
 import type { EntityDetail, EntitySnapshot } from '../../entity-snapshot.ts';
 import type { DraftContent } from '../../drafts.ts';
 import type { ChatAttachment, ChatModelSettings } from '../../assistant-chat.ts';
+import type { TokenPrice } from '../../assistant-cost.ts';
 import { randomCoverColor } from '../../entity-color.ts';
 import { NOTIFICATION_KINDS, type NotificationPayload } from '../../notifications.ts';
 import { SCENE_STATUSES } from '../../scene-status.ts';
@@ -238,7 +239,11 @@ export const universes = pgTable(
 			.where(sql`${table.deletedAt} is null`),
 		uniqueIndex('universes_one_standalone_idx')
 			.on(table.ownerId)
-			.where(sql`${table.standalone}`)
+			.where(sql`${table.standalone}`),
+		// The fandom moderation page counts each fandom's uses through it.
+		index('universes_fandom_idx')
+			.on(table.fandomId)
+			.where(sql`${table.fandomId} is not null`)
 	]
 );
 
@@ -291,6 +296,12 @@ export const stories = pgTable(
 		browseBlockedAt: timestamp('browse_blocked_at', { withTimezone: true }),
 		browseBlockedReason: text('browse_blocked_reason'),
 		browseBlockedBy: uuid('browse_blocked_by').references((): AnyPgColumn => users.id, {
+			onDelete: 'set null'
+		}),
+		// The last time a moderator allowed the story back into Browse, and who.
+		// Kept when it is removed again, so the latest allow stays on record.
+		browseAllowedAt: timestamp('browse_allowed_at', { withTimezone: true }),
+		browseAllowedBy: uuid('browse_allowed_by').references((): AnyPgColumn => users.id, {
 			onDelete: 'set null'
 		}),
 		// References assets(id); null renders a generated default cover on the
@@ -1081,10 +1092,18 @@ export const publications = pgTable(
 		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
 		// A key from REPORT_REASONS (#lib/report-reasons), shown to the author.
 		removedReason: text('removed_reason'),
+		// When the takedown happened. removed_at keeps the earlier date when an
+		// account deletion hid the edition first. Null on a takedown made before
+		// migration 0133, where removed_at is the date to show.
+		takenDownAt: timestamp('taken_down_at', { withTimezone: true }),
 		// Set on every edition of an author who schedules account deletion, so a
 		// later restore of a takedown clears the reason but leaves the edition
 		// down, as cancelling the deletion leaves the others.
 		hiddenByAccountDeletion: boolean('hidden_by_account_deletion').notNull().default(false),
+		// The last time a moderator restored this edition after a takedown, and
+		// who. Kept through a later takedown, so the latest restore stays on record.
+		restoredAt: timestamp('restored_at', { withTimezone: true }),
+		restoredBy: uuid('restored_by').references(() => users.id, { onDelete: 'set null' }),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
@@ -1092,7 +1111,13 @@ export const publications = pgTable(
 		// would create a second hits this and rolls back.
 		uniqueIndex('publications_one_current_per_story')
 			.on(table.storyId)
-			.where(sql`${table.isCurrent}`)
+			.where(sql`${table.isCurrent}`),
+		// Browse: listed editions newest first, with the page cursor. Nulls first
+		// to match the plain DESC of its ORDER BY; the WHERE matches the start
+		// of the `listed` condition in #lib/server/browse.
+		index('publications_browse')
+			.on(table.publishedAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+			.where(sql`${table.isCurrent} and ${table.removedAt} is null`)
 	]
 );
 
@@ -1780,6 +1805,11 @@ export const assistantUsage = pgTable(
 		estimated: boolean('estimated').notNull().default(false),
 		// Server-side web searches the endpoint reported, billed per search.
 		webSearchRequests: integer('web_search_requests'),
+		// The model's price when the request was sent, so a later price change or
+		// provider switch does not reprice it. Null when the model had no price,
+		// and on every row from before it was stored; such a row is priced from
+		// the account's current list.
+		price: jsonb('price').$type<TokenPrice>(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [index('assistant_usage_user_idx').on(table.userId, table.createdAt)]

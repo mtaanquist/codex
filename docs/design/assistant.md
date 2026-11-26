@@ -144,7 +144,13 @@ cannot. The adapter attaches Anthropic's `web_search` server tool (the dated
 five searches a turn); the search runs on Anthropic's servers and the answer
 returns as ordinary content, so Codex's tool loop never touches a raw web
 result and the only outbound traffic from the server is still the request to
-the configured endpoint. No other provider has an equivalent Codex can declare,
+the configured endpoint. Each search also bills a flat fee
+(`WEB_SEARCH_FEE_USD`, $10 per 1,000), counted in usage cost; the spend cap
+holds back the fee for five searches, plus a 10k-token allowance per search
+for results, before each searching request. The API cannot limit result size
+and reports usage only when a request ends, so a searching run can end over
+the cap; each searching request logs its reported input against that
+allowance (`assistant.usage.search`) so the figure can be tuned (#1560). No other provider has an equivalent Codex can declare,
 but an OpenAI-compatible endpoint with a search switch of its own reaches the
 same place through `extraParams` below.
 
@@ -307,8 +313,11 @@ the meter, the estimate, and the usage list on the account page; each
 they were kept, which price at the plain rate) and the provider it went to,
 so the list prices a row's cache reads at that provider's rate after a
 switch (null on rows from before #1373, which price at the saved provider's
-rate). A cost figure is only ever shown or enforced when
-the resolved model actually has a price there: with no price the pre-flight
+rate). Each row also stores the model's price when it was sent (#1520; with
+the search fee pinned on a row that searched), so a later price change or
+switch does not reprice it; a row with no stored price (older, or a model
+that had none then) is priced from the current list. A cost figure is only
+ever shown or enforced when there is a price: with no price the pre-flight
 estimate reports tokens alone, and a set cap is reported as not applied
 rather than guessed at or skipped in silence. The estimate itself
 (`llm/estimate.ts`) assembles the same frame and per-scene deltas the run
@@ -763,7 +772,7 @@ These cut across the surfaces and the architecture.
   `language` in story.md and in universe.md, left out when not set, and the
   story import reads a story's back (a tag this site does not list is left
   off and reported). Models and editor preferences stay out of the export.
-- **Assistant preferences (#1344, items 1 to 3).** A universe and a story each
+- **Assistant preferences (#1344).** A universe and a story each
   carry `assistant_preferences`, a jsonb object of known keys from
   `#lib/assistant-preferences` (absent is not set), and `assistant_notes`, one
   markdown field capped at 1,000 characters (migration 0123). The keys are a
@@ -793,17 +802,133 @@ These cut across the surfaces and the architecture.
   language, the house style, the habits to leave alone (which the chat does
   not flag or change unprompted, but discusses when the writer asks) and the
   fenced notes.
+  Items 4 to 8 (#1778 to #1782) add keys to the same object, so no migration:
+  `feedback` (sparing, normal, thorough) swaps the default review's "specific
+  and sparing" line (the exhaustive passes ignore it); `editReasons` (always,
+  unobvious, never) words the reason clause of `suggest_edit` and the "with a
+  one-sentence reason" of the pattern lines; `summaryLength` (short,
+  detailed) words scene and chapter summaries, arcs (the universe's choice,
+  since an arc spans stories) and the recap, and raises their reply limits;
+  `draftWords` (a whole number from 100 to 6,000) is the length the draft
+  forms open with and the MCP draft prompts fall back to, over the median;
+  `warning:<slug>` (write, avoid) is one content limit per entry of the
+  admin's content warning list (decided on #1782), named from the live list
+  at read time (`liveWarnings`), so a warning removed drops out with its
+  limits (the confirmation on Admin > Content warnings says so, and that
+  merging it instead keeps them; one merged away and removed afterwards drops
+  out of its survivor's fold too, which its confirmation also says, and an undone merge leaves it out; a removed
+  warning cannot be merged until it is restored, so its limits never come
+  back unseen, and a limit the writer sets on a survivor also replaces the
+  keys of the removed warnings merged into it, which `liveWarnings` carries
+  apart from the fold, so restoring one never brings back a limit the
+  writer replaced). A merge copies nothing: `liveWarnings`
+  gives each live warning the slugs of the warnings merged into it (along
+  the whole chain), and `effectivePreferences` folds them in at read time.
+  Each of those keys resolves as the story's own, else the universe's, and
+  the warning's limit is `avoid` if any resolves to `avoid`, else `write` if
+  any resolves to `write`. Folding after resolving, rather than per row, means
+  a universe's `avoid` on a merged warning is not undone by a story's `write`
+  on the survivor, and a limit saved just before a merge still counts.
+  Undoing a merge gives each warning its own key back, and in each row where
+  the survivor's limit was `avoid` while merged (folded over every warning
+  merged into it, a story's keys read over its universe's), the unmerged
+  warning's key is set to `avoid`, over a `write` of that row's own
+  (`unmergeTag`). A story with no key of its own on the warning is left alone
+  when its universe's row gets that `avoid`, since it inherits it. A story
+  that read `write` while merged, because its own `write` overrode the
+  universe's `avoid`, gets `write` on the unmerged warning, so it keeps its
+  own choice rather than inheriting the universe's new `avoid`. So the
+  unmerged warning reads in every row what it read while merged, or `avoid`
+  where that row's own key was wider (the survivor itself goes back to its
+  own keys, which can be wider). Undoing a merge into a removed survivor
+  changes no limits, since none of them applied while it was removed. The
+  undo locks the entry, the survivor and the other warnings merged into it,
+  in id order, so a rename of one of them waits for it, and it and a
+  rename's `moveContentLimits` lock the story and universe rows they change
+  in id order before updating them, so the two cannot deadlock.
+  `updated_at` is kept, as for a rename. `mergeTag` refuses a source already
+  merged into another entry: its merge is undone first. The form shows each live warning's limit as `shownLimit` reads
+  it: on a universe, folded within its own row (`foldedPreferences`); on a
+  story, blank (following the universe) when the story has no key of its own
+  on the warning or one merged into it, else the limit that applies, each key
+  the story's own, else the universe's, folded (`shownPreferences`). A note
+  says when a merged warning or the universe decides what applies
+  (`limitNote`). The form posts a limit only
+  for a select the writer changed on the page (`changedLimits`), so an
+  autosave of another field never touches a limit, along with a fingerprint
+  of the warning list it was built from (`warningListFingerprint`: each live
+  slug with its sorted merged slugs). `savePreferences` share-locks the
+  posted warnings' rows and those of the warnings merged into them (removed
+  or not), in one statement in id order (taken again from scratch, under a
+  savepoint, when a merge committed while it waited adds a row), then locks
+  the row being saved and reads the live
+  list; when it differs from the form's, no limit is changed and the save
+  answers with the outdated notice below. So a rename, removal or restore of
+  a merged warning waits for the save, or lands before it reads the list.
+  `mergeTag` and `unmergeTag` lock the survivor's row, so a merge into or out
+  of a posted warning waits for the save. A changed limit that the row
+  already holds changes nothing (`limitChanges`): on a universe, one equal to
+  the folded value; on a story, one every key of the warning and of those
+  merged into it already holds (a blank: none of them set). The story's own
+  keys decide, not its universe's, which the save does not lock. Another
+  value is the writer's choice for the warning they see, so it is made the
+  one that applies: on a universe it is stored on the warning's key and
+  clears the row's keys on the warnings merged into it; on a story it is
+  stored on all of those keys, so it wins over the universe's limit on any of
+  them (a blank clears them all, so the story follows the universe again).
+  The keys of warnings merged in and removed since are cleared or overridden
+  the same way, though they stay out of the fold.
+  Renaming a warning changes its slug, so the writer's limit moves to the new
+  key (`moveContentLimits` in `tags.ts`). Only rows with a key under the old
+  slug change, so a key already under the new slug in a row without one stays;
+  where a row has both, an `avoid` on either is kept, else the old key's
+  value. Renaming back moves the limit back. `renameTag` locks the tag's row
+  and reads its slug inside its transaction, so a second rename at the same
+  time (a double submit, or two moderators) waits and moves the limits from
+  the slug the first one left. A preferences form opened before the list
+  changed (a merge, an undone merge, a rename, a removal or a restore) that
+  changes a limit is outdated (`readPreferencesForm` catches a posted slug no
+  longer live, `savePreferences` a fingerprint that no longer matches): its
+  save writes every other field and the notes as usual, writes no limit at
+  all, so every stored limit stays as it is, and answers with a notice that
+  the limits were not changed and the page needs a reload to set them. A refresh that brings a changed list to the open page some other way (another
+  section's save, or moving between sections after a refused save) drops the
+  limit changes not yet saved, puts their selects back to what is stored and
+  says so, so a later save cannot post the rebuilt select as the change.
+  That holds during the refresh of the form's own save too, and for a change
+  whose save already failed before the new list landed. A change the form's
+  save in flight carries is left to that save: kept if it lands, and dropped
+  with the note if the save fails or is outdated, so a save queued behind it
+  never sends it with the new list. This includes a save started while an
+  earlier save's refresh is landing, which posted the list the page showed
+  before. The one exception is an outdated save's own changes while its
+  refresh lands: its handler puts their selects back to what is stored once
+  the refresh is done. Saving a draft copies the story's preferences
+  (`storyPreferencesForCopy`) after share-locking the warnings its limits
+  name, in one statement in id order. It reads the row again after the lock,
+  and when a rename or an undone merge added a slug meanwhile, the savepoint
+  is rolled back and every lock taken again from scratch, as for a save, so
+  the copy never waits on a lower id while holding a higher one. Review runs key the limits by the warning's tag id, which a rename
+  keeps, so a rename does not restart a capped run. The limits go to drafts, `/write`, the chat frame and every
+  review (the continuity confirm stage and the MCP continuity brief
+  included), and say they never change the model's own usage policies. The summary
+  length changes the request sent, not its fingerprint (the short request is
+  hashed whatever the length), so changing it marks nothing out of date and
+  causes no spend; a summary takes the new length when it is next written.
   Not set, every prompt reads byte for byte as before. The continuation is
   left out on purpose (short follow-on text that copies the prose around
   it). There is no free-form
-  system prompt, and the rest of #1344 (feedback amount, reasons on edits,
-  summary and draft lengths, content limits) is not built. Exports carry the
+  system prompt. Exports carry the
   preferences and the notes, with the story's style notes (#1547): story.md
   and universe.md list each set key as an `assistant-preferences` line
-  (`key: value`) and write `assistant-notes` (and story.md `style-notes`) as
+  (`key: value`, split at the last colon, since a warning slug may hold one) and write `assistant-notes` (and story.md `style-notes`) as
   one JSON-quoted line, every key left out when not set. The story import
   reads them back, leaving off and reporting keys it does not know and notes
-  over the cap; there is no universe import, so a universe's stay in the
+  over the cap, and a content limit only for a warning on the live list or
+  merged into one (`usableContentLimits`). A limit on a warning renamed since
+  the export is dropped with the same notice, as is one whose import waits
+  on a rename and reads the new list: the slug alone cannot follow a rename.
+  There is no universe import, so a universe's stay in the
   archive. The settings pages show the form
   with the Assistant tab on or with connected apps on for the account
   (`assistantPreferencesShown`), since both read the preferences, and a save
@@ -1213,8 +1338,10 @@ nothing set. `list_universes` and `list_stories` return the setting as
 `language` (the tag) and `languageName`, null when not set; a story's is its
 effective one. The Assistant preferences are looked up the same way
 (`workPreferences`), and both list tools return them as `preferences`: the
-five house-style keys (null when not set), `leaveAlone` (the habit keys) and
-`notes`; a story's is its effective one, a universe's is the default for its
+five house-style keys (null when not set), `leaveAlone` (the habit keys),
+`notes`, `feedback`, `editReasons`, `summaryLength` and `draftWords` (each
+null when not set) and `contentLimits` (the warning's name and the limit); a
+story's is its effective one, a universe's is the default for its
 stories. The prompts that stage
 notes are offered only to a connection that may suggest. `rewrite` stages its
 result as a suggested edit when the connection may suggest. `write`, `draft`
@@ -1241,6 +1368,38 @@ Exceptions to "one toolbox for both", each with its reason:
   writes the row; the model does not start one unasked.
 - `propose_scene_split` is one tool with two outcomes: a card in the chat in
   the app, a stored proposal over MCP, because an app has no chat in Codex.
+- `open_guided_pass` and `decide_suggestion` are offered over MCP only, and
+  only to a connection the writer gave `apply` (#1362). They are not in the
+  Assistant's registry at all (`mcp/pass-card.ts`), so no model run inside
+  Codex can be handed an accept. `open_guided_pass` returns the pass over one
+  of the app's own pattern notes (`structuredContent`) for the card at
+  `ui://codex/guided-pass.html`, a small page the client loads as an MCP App;
+  the in-app guided pass is the page itself. `decide_suggestion` is the
+  card's Accept (with the writer's own wording for Edit), marked for the card
+  alone (`_meta.ui.visibility: ["app"]`), so the client hides it from its
+  model; that is the real guard. Codex cannot see who pressed what, so the
+  accept must also carry the card key for that edit: an HMAC of the grant,
+  the note, the edit, the stamp of its wording and an expiry (two hours),
+  sent in the result's `_meta`. The reference client hands `_meta` to the
+  card; the spec does not promise it stays away from the model, so the key
+  narrows the risk and the guarantee rests on the client. The residual risk is an arbitrary write, not only an accept: Edit sends the card's own `replacement`, so a client that leaked the key to its model would let the model write any wording into the scene (the help says to tick the permission only for a trusted app). A revised edit
+  needs a new key. Skip stays in the card (the edit waits in Codex). Discuss
+  sends the edit to the conversation as the writer's message (`ui/message`),
+  and each accept is told to the model through `ui/update-model-context`;
+  the in-app re-read after an accept is not run, since the app's own model
+  can stage a follow-up with `followsSuggestionId`. An accept runs like a
+  staging call (one transaction with the lock and transaction timeouts, the
+  writer's staging lock, the connection checked again inside it) on a budget
+  of its own with the staging limits; the pass is built again afterwards as
+  a read. A pass holds at most 50 edits each way and about 100,000
+  characters; the rest wait in Codex. A client that cannot show cards gets
+  the link to the pass in
+  Codex.
+- A draft prompt over MCP with no length asked for and none in the
+  preferences asks for 800 words. The in-app `/draft` falls back to the
+  median length of the story's scenes instead, which it works out from the
+  story it is drafting in; a prompt is text handed to the app, and the help
+  names its fixed fallback.
 
 ### Background jobs
 

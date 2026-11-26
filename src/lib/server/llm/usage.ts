@@ -1,4 +1,5 @@
 import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { WEB_SEARCH_FEE_USD, type TokenPrice } from '../../assistant-cost.ts';
 import type { Database } from '../auth.ts';
 import { assistantUsage } from '../db/schema.ts';
 import { logEvent } from '../log.ts';
@@ -21,6 +22,9 @@ export type UsageEntry = {
 	provider?: string;
 	model: string;
 	usage?: TokenUsage;
+	// The model's price in force now, stored so the row keeps its cost after
+	// the price list changes (see UsageCostRow.price).
+	price?: TokenPrice;
 	// The gateway's own chars/4 estimate for the request it just sent, when it
 	// computed one. Logged against the endpoint's report, never stored.
 	estimatedPromptTokens?: number;
@@ -44,6 +48,14 @@ function logEstimateAccuracy(entry: UsageEntry): void {
 	});
 }
 
+// The price as it stands, with the search fee pinned when the request searched
+// so a later change to the fee does not reprice it either.
+function storedPrice(price: TokenPrice, usage?: TokenUsage): TokenPrice {
+	return usage?.webSearchRequests
+		? { ...price, webSearch: price.webSearch ?? WEB_SEARCH_FEE_USD }
+		: price;
+}
+
 // Recording must never break a generation; a failed insert is logged and
 // dropped.
 export async function recordAssistantUsage(db: Database, entry: UsageEntry): Promise<void> {
@@ -61,7 +73,8 @@ export async function recordAssistantUsage(db: Database, entry: UsageEntry): Pro
 			cacheWriteTokens: entry.usage?.cacheWriteTokens ?? null,
 			cacheWrite1hTokens: entry.usage?.cacheWrite1hTokens ?? null,
 			estimated: entry.usage?.estimated ?? false,
-			webSearchRequests: entry.usage?.webSearchRequests ?? null
+			webSearchRequests: entry.usage?.webSearchRequests ?? null,
+			price: entry.price ? storedPrice(entry.price, entry.usage) : null
 		});
 	} catch (err) {
 		logEvent('warn', 'assistant.usage', {
@@ -85,6 +98,8 @@ export type UsageRow = {
 	cacheWrite1hTokens: number | null;
 	estimated: boolean;
 	webSearchRequests: number | null;
+	// The price stored when the request was sent (see recordAssistantUsage).
+	price: TokenPrice | null;
 	createdAt: Date;
 };
 
@@ -103,16 +118,21 @@ export type UsageSummary = {
 		estimatedRequests: number;
 		webSearchRequests: number;
 	};
-	// Thirty-day token sums per model and provider, so a caller holding
-	// per-model prices can estimate the period's cost at each provider's rates.
+	// Thirty-day token sums per model, provider and stored price, so a caller
+	// can price the period at the price each request was sent at, falling back
+	// to its current prices for rows from before the price was stored.
 	byModel: {
 		provider: string | null;
 		model: string;
-		promptTokens: number;
-		completionTokens: number;
+		price: TokenPrice | null;
+		promptTokens: number | null;
+		completionTokens: number | null;
 		cachedPromptTokens: number;
 		cacheWriteTokens: number;
 		cacheWrite1hTokens: number;
+		webSearchRequests: number;
+		// Requests in the group that reported no token counts at all.
+		unreported: number;
 	}[];
 };
 
@@ -139,6 +159,7 @@ export async function recentAssistantUsage(
 			cacheWrite1hTokens: assistantUsage.cacheWrite1hTokens,
 			estimated: assistantUsage.estimated,
 			webSearchRequests: assistantUsage.webSearchRequests,
+			price: assistantUsage.price,
 			createdAt: assistantUsage.createdAt
 		})
 		.from(assistantUsage)
@@ -152,27 +173,35 @@ export async function recentAssistantUsage(
 	const [totals] = await db
 		.select({
 			requests: sql<number>`count(*)::int`,
-			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::int`,
-			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::int`,
+			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::float8`,
+			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::float8`,
 			estimatedRequests: sql<number>`(count(*) filter (where ${assistantUsage.estimated}))::int`,
-			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::int`
+			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::float8`
 		})
 		.from(assistantUsage)
 		.where(and(eq(assistantUsage.userId, userId), gte(assistantUsage.createdAt, since)));
 
+	// Sums are float8, not int: thirty days of tokens can pass 2^31, and float8
+	// holds whole numbers exactly far beyond that and reaches here as a number.
 	const byModel = await db
 		.select({
 			provider: assistantUsage.provider,
 			model: assistantUsage.model,
-			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::int`,
-			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::int`,
-			cachedPromptTokens: sql<number>`coalesce(sum(${assistantUsage.cachedPromptTokens}), 0)::int`,
-			cacheWriteTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWriteTokens}), 0)::int`,
-			cacheWrite1hTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWrite1hTokens}), 0)::int`
+			price: assistantUsage.price,
+			// Null when no row in the group reported counts, so it prices as
+			// unknown rather than free.
+			promptTokens: sql<number | null>`sum(${assistantUsage.promptTokens})::float8`,
+			completionTokens: sql<number | null>`sum(${assistantUsage.completionTokens})::float8`,
+			cachedPromptTokens: sql<number>`coalesce(sum(${assistantUsage.cachedPromptTokens}), 0)::float8`,
+			cacheWriteTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWriteTokens}), 0)::float8`,
+			cacheWrite1hTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWrite1hTokens}), 0)::float8`,
+			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::float8`,
+			// Requests in the group that reported no counts, which a sum leaves out.
+			unreported: sql<number>`(count(*) filter (where ${assistantUsage.promptTokens} is null and ${assistantUsage.completionTokens} is null))::int`
 		})
 		.from(assistantUsage)
 		.where(and(eq(assistantUsage.userId, userId), gte(assistantUsage.createdAt, since)))
-		.groupBy(assistantUsage.model, assistantUsage.provider);
+		.groupBy(assistantUsage.model, assistantUsage.provider, assistantUsage.price);
 
 	return {
 		recent,

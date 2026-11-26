@@ -13,11 +13,13 @@ import {
 	parsePatterns,
 	patternNoteBody,
 	readsNative,
+	reviewSettingsText,
 	splitPatternChunks,
 	splitSurveyChunks,
 	type SurveyScene
 } from './review';
 import type { ReviewCategory } from '../../../review-shape';
+import { NO_PREFERENCES } from '../../../assistant-preferences';
 
 // The capped-run settings key keys on the native language only where this
 // says the prompts read it, so it must match what a scene's review says.
@@ -46,6 +48,45 @@ describe('readsNative', () => {
 
 // The briefs an outside agent gets over MCP say what the staged prompts say,
 // in the same sentences.
+// The estimate counts reviewSettingsText for what the preferences add to a
+// scene's task, so every line of it must be one the task really states.
+describe('reviewSettingsText', () => {
+	const preferences = {
+		...NO_PREFERENCES,
+		houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' as const },
+		leaveAlone: ['epithets' as const],
+		notes: 'I overuse semicolons.',
+		feedback: 'thorough' as const,
+		editReasons: 'always' as const,
+		contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
+	};
+	const language = { language: 'en-GB' as const, native: 'da' as const };
+	const cases: ReviewCategory[][] = [[], ['prose'], ['mechanics'], ['lore']];
+	for (const categories of cases) {
+		it(`matches the task message for ${categories.join('+') || 'general notes'}`, () => {
+			const message = buildReviewMessage(
+				{ id: 's1', title: 'One' },
+				[],
+				categories,
+				false,
+				false,
+				undefined,
+				language,
+				preferences
+			);
+			const plain = buildReviewMessage({ id: 's1', title: 'One' }, [], categories);
+			const lines = reviewSettingsText(categories, preferences, language)
+				.split('\n')
+				.filter((line) => line.trim());
+			expect(lines.length).toBeGreaterThan(0);
+			for (const line of lines) {
+				expect(message).toContain(line);
+				expect(plain).not.toContain(line);
+			}
+		});
+	}
+});
+
 describe('the briefs for an agent that runs a pass itself', () => {
 	const shared = (brief: string, staged: string) =>
 		brief.split('\n').filter((line) => staged.includes(line));
@@ -338,6 +379,33 @@ describe('buildConfirmMessage', () => {
 		expect(message).toContain('The harbour lay east.');
 		expect(message).toContain('[story: Second Dawn]');
 		expect(message).toContain('discarded');
+	});
+
+	it("states the writer's reasons choice for a staged edit, and nothing when it is not set", () => {
+		const never = { ...NO_PREFERENCES, editReasons: 'never' as const };
+		expect(buildConfirmMessage('claim', [], 100, never)).toContain(
+			'When you suggest an edit: Leave out the reason'
+		);
+		expect(buildContinuityBrief({ scope: 'universe', preferences: never })).toContain(
+			'When you suggest an edit: Leave out the reason'
+		);
+		expect(buildConfirmMessage('claim', [], 100)).not.toContain('When you suggest an edit');
+		expect(buildContinuityBrief({ scope: 'universe' })).not.toContain('When you suggest an edit');
+	});
+
+	it("states the writer's content limits, and nothing when none are set", () => {
+		const limited = {
+			...NO_PREFERENCES,
+			contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
+		};
+		for (const text of [
+			buildConfirmMessage('claim', [], 100, limited),
+			buildContinuityBrief({ scope: 'story', storyId: 'story-1', preferences: limited })
+		]) {
+			expect(text).toContain('They want these kept off the page: Gore.');
+		}
+		expect(buildConfirmMessage('claim', [], 100)).not.toContain('content limits');
+		expect(buildContinuityBrief({ scope: 'universe' })).not.toContain('content limits');
 	});
 
 	it('caps a long body and marks the cut', () => {

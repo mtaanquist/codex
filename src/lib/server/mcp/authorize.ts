@@ -2,7 +2,9 @@ import type { Database } from '../auth.ts';
 import {
 	BASE_PERMISSION,
 	GRANTABLE_PERMISSIONS,
+	OFF_BY_DEFAULT,
 	permissionsFromScope,
+	withUsableApply,
 	type McpPermission
 } from '../../mcp-access.ts';
 import { findClient, type FetchClientDocument, type OauthClient } from './clients.ts';
@@ -117,8 +119,12 @@ export async function checkAuthorizeRequest(
 		GRANTABLE_PERMISSIONS.includes(permission)
 	);
 	const wanted = asked.length > 0 ? asked : [...GRANTABLE_PERMISSIONS];
+	// Accepting edits outside Codex starts unticked even when the app asks for
+	// it: the writer turns it on themselves.
 	const requested = GRANTABLE_PERMISSIONS.filter(
-		(permission) => permission === BASE_PERMISSION || wanted.includes(permission)
+		(permission) =>
+			permission === BASE_PERMISSION ||
+			(wanted.includes(permission) && !OFF_BY_DEFAULT.includes(permission))
 	);
 	return {
 		kind: 'ok',
@@ -136,7 +142,7 @@ export function chosenPermissions(
 	offered: readonly McpPermission[],
 	ticked: readonly string[]
 ): McpPermission[] {
-	return offered.filter(
-		(permission) => permission === BASE_PERMISSION || ticked.includes(permission)
+	return withUsableApply(
+		offered.filter((permission) => permission === BASE_PERMISSION || ticked.includes(permission))
 	);
 }

@@ -22,5 +22,6 @@
 		query={data.query}
 		kind="tag"
 		message={form?.scope === 'tags' && 'message' in form ? (form.message ?? null) : null}
+		notice={form?.scope === 'tags' && 'notice' in form ? (form.notice ?? null) : null}
 	/>
 </div>

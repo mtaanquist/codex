@@ -4,9 +4,12 @@
 export const MCP_PERMISSIONS = ['read', 'suggest', 'apply'] as const;
 export type McpPermission = (typeof MCP_PERMISSIONS)[number];
 
-// The permissions a writer can hand out today. 'apply' is stored and
-// understood, but nothing acts on it yet, so it is not offered.
-export const GRANTABLE_PERMISSIONS: readonly McpPermission[] = ['read', 'suggest'];
+// The permissions a writer can hand out.
+export const GRANTABLE_PERMISSIONS: readonly McpPermission[] = ['read', 'suggest', 'apply'];
+
+// Never ticked for the writer, whatever an app asks for: accepting edits
+// outside Codex is only allowed when the writer chose it themselves.
+export const OFF_BY_DEFAULT: readonly McpPermission[] = ['apply'];
 
 // Every grant includes this one: an app that cannot read has nothing to do.
 export const BASE_PERMISSION: McpPermission = 'read';
@@ -20,17 +23,26 @@ export const PERMISSION_TEXT: Record<McpPermission, { label: string; description
 	suggest: {
 		label: 'Leave suggestions and comments',
 		description:
-			'Add suggested edits, comments, suggested entries, scene split proposals and scene drafts for you to accept or turn down. It cannot change your text.'
+			'Add suggested edits, comments, suggested entries, scene split proposals and scene drafts for you to accept or turn down. On its own it cannot change your text.'
 	},
 	apply: {
-		label: 'Show you its suggestions to accept',
-		description: 'Let you accept or skip its suggestions without opening Codex.'
+		label: 'Let you accept its suggestions in the app',
+		description:
+			'Show a card in the app where you can accept, reword or skip the edits of its notes, without opening Codex. Accept is meant for you alone, but Codex cannot check that a person pressed it, so tick this only for an app you trust: an app that misuses it could change any of your text. It works only when the app may also leave its suggestions.'
 	}
 };
 
 // The known permissions among the given values, in the one canonical order.
 export function parsePermissions(values: readonly string[]): McpPermission[] {
 	return MCP_PERMISSIONS.filter((permission) => values.includes(permission));
+}
+
+// Accepting works only through the card, which also needs suggest, so apply
+// without suggest would be granted and do nothing.
+export function withUsableApply(permissions: readonly McpPermission[]): McpPermission[] {
+	return permissions.filter(
+		(permission) => permission !== 'apply' || permissions.includes('suggest')
+	);
 }
 
 // A scope string as OAuth carries it: names separated by spaces.

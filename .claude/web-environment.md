@@ -11,7 +11,7 @@ Only `.claude/settings.json` reaches the cloud. Add `.claude/settings.local.json
 
 ## In the web UI (set once per environment)
 
-The sandbox comes with Node (20/21/22, plus npm/pnpm/yarn), Docker and docker compose, and PostgreSQL 16 and Redis preinstalled. The filesystem is fresh each session (the repo is cloned from your branch), and database contents are ephemeral.
+The sandbox comes with Node (20/21/22, plus npm/pnpm/yarn), Docker and docker compose, and PostgreSQL 16 and Redis preinstalled. The filesystem is fresh each session (the repo is cloned from your branch), and database contents are ephemeral. The built-in PostgreSQL 16 has no pgvector, which Codex needs from 4.0.0, so use the compose database (Docker) or install its pgvector package.
 
 1. **Network access:** `Trusted` is enough. It already covers npm and Docker Hub. Only switch to `Custom` and add domains if you point at an external managed database or API.
 2. **Environment variables:** set anything secret here rather than in the repo. At minimum `DATABASE_URL` if you are not using the committed default. Note that variables set in the UI are visible to anyone who can edit the environment, so use a throwaway dev database, not a production one.

@@ -22,7 +22,7 @@ your work stored as markdown that exports cleanly at any time.
 ## Run it
 
 Codex is three containers: the app, a background worker (mention indexing,
-email, exports, backups), and Postgres. Every tagged release publishes a
+email, exports, backups), and Postgres with the pgvector extension. Every tagged release publishes a
 production image to GitHub Container Registry as
 `ghcr.io/mtaanquist/codex`, tagged `vX.Y.Z`, `vX.Y` (the newest patch of that
 minor version), and `latest` (the newest release).
@@ -78,7 +78,7 @@ services:
         condition: service_healthy
 
   db:
-    image: postgres:18.6-alpine3.24
+    image: pgvector/pgvector:0.8.7-pg18-trixie
     restart: unless-stopped
     environment:
       POSTGRES_USER: codex
@@ -91,6 +91,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # The first start after switching images re-owns every data file.
+      start_period: 2m
 
 volumes:
   db-data:
@@ -157,6 +159,9 @@ If an admin already exists, the command refuses and points you to the admin
 panel instead.
 
 ### Update
+
+Updating from 3.x to 4.0.0? Follow "Updating to 4.0.0" in
+[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) first.
 
 Change the image tag (or pull `latest`), then `docker compose up -d`.
 Pending migrations apply when the app or worker container starts. Migrations

@@ -308,6 +308,12 @@
 	background: var(--bg-active);
 	color: var(--text);
 }
+/* A quiet destructive action in a row of ghost buttons (Delete, Take down). */
+.btn-ghost.danger,
+.btn-ghost.danger:hover:not(:disabled),
+.btn-ghost.danger:active:not(:disabled) {
+	color: var(--danger-ink);
+}
 .btn-danger {
 	background: var(--danger-fill);
 	color: var(--danger-contrast);
@@ -595,6 +601,24 @@
 	font-weight: 500;
 	margin-bottom: 8px;
 	cursor: pointer;
+}
+/* A group of fields under a small uppercase heading: a fieldset whose legend
+   names the group (the review window's options, the Assistant preferences).
+   The spacing between groups is the page's own. */
+.field-set {
+	border: 0;
+	margin: 0;
+	padding: 0;
+	min-width: 0;
+}
+.field-set > legend {
+	padding: 0;
+	margin-bottom: var(--space-3);
+	font-size: var(--text-micro);
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+	color: var(--text-faint);
 }
 .field-hint {
 	font-size: var(--text-meta);

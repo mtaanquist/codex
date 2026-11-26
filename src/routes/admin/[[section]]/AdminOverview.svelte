@@ -109,7 +109,7 @@
 			</div>
 			<div class="admin-stat-n">{data.stats.publishedEditions}</div>
 			<div class="admin-stat-foot">
-				<span class="delta flat">current</span> on public pages
+				<span class="delta flat">current</span> not taken down
 			</div>
 		</div>
 	</div>

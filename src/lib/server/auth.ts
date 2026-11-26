@@ -5,6 +5,7 @@ import { sessions, users } from './db/schema.ts';
 import type * as schema from './db/schema.ts';
 import { verifyPassword } from './password.ts';
 import { hashToken } from './tokens.ts';
+import type { Role } from '../roles.ts';
 
 // The database is passed in rather than imported so the same functions run
 // against the app database and the integration tests' throwaway one.
@@ -21,8 +22,6 @@ const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
 // that lookups take the same time whether or not the account exists.
 const DUMMY_HASH =
 	'$argon2id$v=19$m=19456,t=2,p=1$9kz8Iw6tXEkTYPTKrCUt0g$zuCnbUeMW0FRTmdH6eCAKsIQqZg72Sl6chFf/O2cFbw';
-import type { Role } from '../roles.ts';
-
 export type SessionUser = {
 	id: string;
 	email: string;

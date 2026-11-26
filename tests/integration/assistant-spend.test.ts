@@ -170,6 +170,31 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(withPreferences.estTokens).toBeGreaterThan(bare.estTokens);
 	});
 
+	it('counts the feedback and reasons choices on each scene', async () => {
+		const storyId = await seedStory(2);
+		const bare = await estimateStoryReview(db, { userId, storyId });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { editReasons: 'always' } })
+			.where(eq(stories.id, storyId));
+		const withReasons = await estimateStoryReview(db, { userId, storyId });
+		expect(withReasons.estTokens).toBeGreaterThan(bare.estTokens);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { editReasons: 'always', feedback: 'sparing' } })
+			.where(eq(stories.id, storyId));
+		const sparing = await estimateStoryReview(db, { userId, storyId });
+		expect(sparing.estTokens).toBeGreaterThan(withReasons.estTokens);
+		// A copyedit reports everything, so the feedback choice is not stated.
+		const copyedit = () => estimateStoryReview(db, { userId, storyId, categories: ['mechanics'] });
+		const withFeedback = await copyedit();
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { editReasons: 'always' } })
+			.where(eq(stories.id, storyId));
+		expect((await copyedit()).estTokens).toBe(withFeedback.estTokens);
+	});
+
 	it("counts the story's language lines on each scene", async () => {
 		const storyId = await seedStory(2);
 		const bare = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
@@ -204,7 +229,7 @@ describe('pre-flight review estimate (#548)', () => {
 		expect((await estimateStoryReview(db, { userId, storyId })).webSearch).toBe(true);
 	});
 
-	it('says a review with web search stops at its first scene when the cap cannot hold one', async () => {
+	it('says a review with web search stops at a scene when the cap cannot hold one', async () => {
 		const storyId = await seedStory(2);
 		await db
 			.update(universes)
@@ -306,6 +331,27 @@ describe('pre-flight review estimate (#548)', () => {
 		expect(withHabits.wholeBook).toBe('fits');
 		expect(withHabits.overCap).toBe(true);
 		expect(withHabits.overCapAt).toBe('habits');
+	});
+
+	it('warns when the consistency pass would be held, though every scene fits', async () => {
+		// Each scene's own request stays small, but the consistency survey sends
+		// every scene's summary in one request.
+		const storyId = await seedBodies(Array.from({ length: 30 }, () => 'A short scene.'));
+		await db
+			.update(scenes)
+			.set({ summaryMd: 'word '.repeat(4800) })
+			.where(eq(scenes.storyId, storyId));
+		await searchingWithPatterns(storyId, 16);
+		const scenesOnly = await estimateStoryReview(db, { userId, storyId, categories: ['prose'] });
+		expect(scenesOnly.overCap).toBeUndefined();
+
+		const full = await estimateStoryReview(db, {
+			userId,
+			storyId,
+			categories: ['mechanics', 'prose', 'lore']
+		});
+		expect(full.overCap).toBe(true);
+		expect(full.overCapAt).toBe('continuity');
 	});
 
 	it('counts text outside plain English the way the cap does, not at four characters a token', async () => {

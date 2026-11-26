@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -27,7 +27,9 @@ import type {
 	StreamEvent
 } from '../../src/lib/server/llm/providers/types';
 
-const { saveAccountLlmConfig, saveModelContext } = await import('../../src/lib/server/llm/config');
+const { saveAccountLlmConfig, saveModelContext, saveModelPricing } =
+	await import('../../src/lib/server/llm/config');
+const { WEB_SEARCH_FEE_USD } = await import('../../src/lib/assistant-cost');
 const { listSuggestions, decideSuggestion } = await import('../../src/lib/server/review');
 const { complete, completeDetailed, stream, AssistantDisabledError } =
 	await import('../../src/lib/server/llm/gateway');
@@ -474,6 +476,179 @@ describe('gateway gating', () => {
 		await saveAccountLlmConfig(db, userId, { ...config, webSearch: false });
 		await run().done;
 		expect(calls).toBe(1);
+	});
+
+	it('charges the web search fee to the spend meter and pins it on the usage row', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Faerun', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8,
+			webSearch: true
+		});
+		// A fee other than the default, so a meter or row that fell back to
+		// WEB_SEARCH_FEE_USD would not match.
+		const price = { prompt: 0.00001, completion: 0, webSearch: 0.025 };
+		await saveModelPricing(db, userId, { 'claude-opus-5': price });
+		let offered: boolean | undefined;
+		const searching: Provider = {
+			...stubProvider,
+			async respond(req) {
+				offered = req.webSearch;
+				return {
+					content: 'checked',
+					toolCalls: [],
+					usage: { promptTokens: 1000, completionTokens: 0, webSearchRequests: 3 }
+				};
+			}
+		};
+		// Built with the default fee: the gateway meters at the saved price it
+		// stores on the row, not at the meter's own snapshot.
+		const meter = new SpendMeter({
+			pricing: { 'claude-opus-5': { prompt: price.prompt, completion: 0 } },
+			provider: 'anthropic',
+			capUsd: 100
+		});
+		await completeDetailed(
+			db,
+			{
+				userId,
+				storyId: inCanon.id,
+				role: 'reviewer',
+				messages: [{ role: 'user', content: 'Check this scene.' }],
+				maxTokens: 100,
+				meter
+			},
+			{ provider: searching, http: noHttp }
+		);
+		expect(offered).toBe(true);
+		const expected = 1000 * price.prompt + 3 * price.webSearch;
+		expect(price.webSearch).not.toBe(WEB_SEARCH_FEE_USD);
+		expect(meter.spentUsd).toBeCloseTo(expected, 10);
+		const [row] = await db.select().from(assistantUsage).where(eq(assistantUsage.userId, userId));
+		expect(row.webSearchRequests).toBe(3);
+		expect(row.price).toEqual(price);
+	});
+
+	it('logs the search allowance at the reply limit each round was sent at', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Faerun', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8,
+			webSearch: true
+		});
+		const sent: number[] = [];
+		// The first round is cut off, so the second goes out with more room.
+		const searching: Provider = {
+			...stubProvider,
+			async respond(req) {
+				sent.push(req.maxTokens ?? 0);
+				return {
+					content: sent.length === 1 ? 'Half a' : 'checked',
+					toolCalls: [],
+					finishReason: sent.length === 1 ? 'length' : 'stop',
+					usage: { promptTokens: 1000, completionTokens: 0, webSearchRequests: 1 }
+				};
+			}
+		};
+		const logged: Record<string, unknown>[] = [];
+		const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+			if (typeof line === 'string' && line.startsWith('{')) logged.push(JSON.parse(line));
+		});
+		try {
+			await completeDetailed(
+				db,
+				{
+					userId,
+					storyId: inCanon.id,
+					role: 'reviewer',
+					enableTools: true,
+					messages: [{ role: 'user', content: 'Check this scene.' }]
+				},
+				{ provider: searching, http: noHttp }
+			);
+		} finally {
+			spy.mockRestore();
+		}
+		expect(sent).toHaveLength(2);
+		expect(sent[1]).toBeGreaterThan(sent[0]);
+		const allowances = logged
+			.filter((line) => line.event === 'assistant.usage.search')
+			.map((line) => line.allowance as number);
+		expect(allowances).toHaveLength(2);
+		// The allowance grows with the reply limit, by the nine later rounds' worth.
+		expect(allowances[1] - allowances[0]).toBe(9 * (sent[1] - sent[0]));
+	});
+
+	it('meters each request at the price stored on its usage row when prices change mid-run', async () => {
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'custom',
+			endpoint: 'https://llm.example',
+			apiKey: 'sk',
+			models: { reviewer: 'priced-model' },
+			toolCallBudget: 8
+		});
+		const before = { prompt: 0.001, completion: 0 };
+		const after = { prompt: 0.003, completion: 0 };
+		await saveModelPricing(db, userId, { 'priced-model': before });
+		const provider: Provider = {
+			...stubProvider,
+			async respond() {
+				return {
+					content: 'ok',
+					toolCalls: [],
+					usage: { promptTokens: 100, completionTokens: 0 }
+				};
+			}
+		};
+		// The run's meter is built once, from the prices at the start.
+		const meter = new SpendMeter({ pricing: { 'priced-model': before }, capUsd: 1 });
+		const send = () =>
+			completeDetailed(
+				db,
+				{
+					userId,
+					role: 'reviewer',
+					messages: [{ role: 'user', content: 'Check this scene.' }],
+					maxTokens: 10,
+					meter
+				},
+				{ provider, http: noHttp }
+			);
+		await send();
+		await saveModelPricing(db, userId, { 'priced-model': after });
+		await send();
+		const rows = await db.select().from(assistantUsage).where(eq(assistantUsage.userId, userId));
+		expect(rows.map((r) => r.price)).toEqual(expect.arrayContaining([before, after]));
+		expect(meter.spentUsd).toBeCloseTo(100 * before.prompt + 100 * after.prompt, 10);
 	});
 
 	it('counts every round of the search loop over the prompt before a capped send', async () => {

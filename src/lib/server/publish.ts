@@ -10,6 +10,7 @@ import {
 	isNotNull,
 	isNull,
 	ne,
+	not,
 	or,
 	sql,
 	type AnyColumn
@@ -32,9 +33,18 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import {
+	currentNotTakenDown,
+	moderatorMayRead,
+	newerEditionId,
+	readersCanOpen,
+	titleModeratorMayRead
+} from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
+import { microsText } from './db-clock.ts';
 import { tagsForStories } from './tags.ts';
+import { listedInBrowseCondition } from './browse.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
@@ -111,7 +121,7 @@ export async function publishStory(
 		return { ok: false, reason: 'There is nothing to publish yet.' };
 	}
 
-	// Inline images the frozen prose points at, so the reader can serve them
+	// Inline images the frozen prose and description point at, so the reader can serve them
 	// to anonymous visitors without exposing every asset by id. Only the
 	// author's own existing assets: prose can name any id, including another
 	// user's private image or one that does not exist on this instance.
@@ -120,7 +130,8 @@ export async function publishStory(
 			...content.chapters.flatMap((chapter) =>
 				chapter.scenes.flatMap((scene) => findAssetReferences(scene.bodyMd))
 			),
-			...content.unfiled.flatMap((scene) => findAssetReferences(scene.bodyMd))
+			...content.unfiled.flatMap((scene) => findAssetReferences(scene.bodyMd)),
+			...findAssetReferences(frontMatter.descriptionMd ?? '')
 		])
 	];
 	const shownLabels = (await tagsForStories(db, [story.id])).get(story.id) ?? [];
@@ -592,22 +603,64 @@ export async function takedownPublication(
 	removedBy: string | null,
 	// A takedown always has a reason. Account deletion hides editions by
 	// setting removed_at alone (see scheduleAccountDeletion).
-	reason: ReportReason
-): Promise<boolean> {
+	reason: ReportReason,
+	// The newer edition the moderator's page showed the takedown also puts
+	// down, or null for none. Refused when the story's newer edition is not
+	// that one now, since the moderator was not told; left out, nothing is
+	// checked.
+	{ newerShown }: { newerShown?: string | null } = {}
+	// 'newer-changed' when newerShown no longer names the story's newer edition.
+): Promise<boolean | 'newer-changed'> {
 	return await db.transaction(async (tx) => {
 		const [target] = await tx
 			.select({ storyId: publications.storyId })
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		if (!target) return false;
+		// The account rows of the story's editions first, then the story, the
+		// order publishStory and restorePublication take them in.
+		// scheduleAccountDeletion updates the account row before it hides the
+		// owner's editions, so it and this takedown run one after the other
+		// rather than each holding edition rows the other waits on.
+		await tx
+			.select({ id: users.id })
+			.from(users)
+			.where(
+				inArray(
+					users.id,
+					tx
+						.selectDistinct({ id: publications.ownerId })
+						.from(publications)
+						.where(eq(publications.storyId, target.storyId))
+				)
+			)
+			.orderBy(users.id)
+			.for('no key update');
 		// The same lock publishStory takes, so a publish running at the same
-		// moment either finishes first (and its edition is taken down here)
-		// or waits and then sees the takedown.
+		// moment either finishes first or waits and then sees the takedown.
 		await tx
 			.select({ id: stories.id })
 			.from(stories)
 			.where(eq(stories.id, target.storyId))
 			.for('update');
+		// Checked under the lock, so a publish that just finished is seen.
+		// Only an edition the moderator may read: a current edition of a story
+		// the author made private is not public, so there is nothing to act on,
+		// and an unreported edition a publish has just replaced is one the
+		// moderator has not seen the newer text of (editionReplaced says so).
+		const [readable] = await tx
+			.select({ id: publications.id })
+			.from(publications)
+			.innerJoin(stories, eq(stories.id, publications.storyId))
+			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
+		if (!readable) return false;
+		if (newerShown !== undefined) {
+			const [edition] = await tx
+				.select({ newer: newerEditionId() })
+				.from(publications)
+				.where(eq(publications.id, publicationId));
+			if ((edition?.newer ?? null) !== newerShown) return 'newer-changed' as const;
+		}
 		const updated = await tx
 			.update(publications)
 			// An edition already down with its author's account deletion gets
@@ -619,6 +672,7 @@ export async function takedownPublication(
 				removedAt: sql`coalesce(${publications.removedAt}, now())`,
 				removedBy,
 				removedReason: reason,
+				takenDownAt: sql`now()`,
 				hiddenByAccountDeletion: sql`${publications.hiddenByAccountDeletion} or ${publications.removedAt} is not null`
 			})
 			.where(
@@ -650,36 +704,81 @@ export async function takedownPublication(
 	});
 }
 
-// Lifts a moderator's takedown, so the author can publish new editions and the
-// edition is public again, unless the author's account deletion also hid it:
+// Lifts a moderator's takedown from every edition of the story it holds, so
+// the author can publish new editions and the current edition is public again, unless the author's account deletion also hid it:
 // then it stays down, as cancelling the deletion leaves the author's other
 // editions. Never while the author's account is waiting to be deleted.
-export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
+// restoredBy is the moderator, recorded with the time.
+export async function restorePublication(
+	db: Database,
+	publicationId: string,
+	restoredBy: string | null,
+	// When the moderator's page showed the edition taken down, as microsText
+	// (listTakenDown's takenDownMicros). Refused with 'changed' when the
+	// takedown holding the edition now is a later one; left out, nothing is
+	// checked.
+	{ takenDownShown }: { takenDownShown?: string } = {}
+): Promise<boolean | 'changed'> {
 	return await db.transaction(async (tx) => {
 		const [edition] = await tx
-			.select({ ownerId: publications.ownerId })
+			.select({ storyId: publications.storyId })
 			.from(publications)
-			.where(eq(publications.id, publicationId));
+			.where(and(eq(publications.id, publicationId), isNotNull(publications.removedReason)));
 		if (!edition) return false;
-		// scheduleAccountDeletion updates this row first, so a deletion
+		// scheduleAccountDeletion updates these rows first, so a deletion
 		// scheduled at the same moment either commits before this read (and the
-		// restore is refused) or waits until the restore has committed.
-		const [owner] = await tx
+		// restore is refused) or waits until the restore has committed. Every
+		// owner of the story's editions, in id order as the takedown takes them,
+		// since the restore lifts all the editions it held.
+		const owners = await tx
 			.select({ deletionScheduledAt: users.deletionScheduledAt })
 			.from(users)
-			.where(eq(users.id, edition.ownerId))
+			.where(
+				inArray(
+					users.id,
+					tx
+						.selectDistinct({ id: publications.ownerId })
+						.from(publications)
+						.where(eq(publications.storyId, edition.storyId))
+				)
+			)
+			.orderBy(users.id)
+			.for('no key update');
+		if (owners.length === 0 || owners.some((owner) => owner.deletionScheduledAt)) return false;
+		// The lock takedownPublication and publishStory take, in publish's
+		// order (account row, then story), so a takedown or publish running at
+		// the same moment finishes first and this restore then sees it.
+		await tx
+			.select({ id: stories.id })
+			.from(stories)
+			.where(eq(stories.id, edition.storyId))
 			.for('update');
-		if (!owner || owner.deletionScheduledAt) return false;
+		if (takenDownShown !== undefined) {
+			// Checked under the lock and in SQL, to the microsecond, so a restore
+			// and a new takedown since the page loaded are seen.
+			const [held] = await tx
+				.select({ shown: sql<boolean>`${microsText(takenDownAt())} = ${takenDownShown}` })
+				.from(publications)
+				.where(and(eq(publications.id, publicationId), isNotNull(publications.removedReason)));
+			if (!held) return false;
+			if (!held.shown) return 'changed' as const;
+		}
 		const restored = await tx
 			.update(publications)
 			.set({
 				removedAt: sql`case when ${publications.hiddenByAccountDeletion} then ${publications.removedAt} end`,
 				removedBy: null,
-				removedReason: null
+				removedReason: null,
+				takenDownAt: null,
+				restoredAt: sql`now()`,
+				restoredBy
 			})
+			// Every edition of the story the takedown holds, so restoring either
+			// the reported edition or the current one it also put down lifts the
+			// whole takedown and the author can publish again.
 			.where(
 				and(
-					eq(publications.id, publicationId),
+					eq(publications.storyId, edition.storyId),
 					isNotNull(publications.removedAt),
 					isNotNull(publications.removedReason)
 				)
@@ -691,8 +790,19 @@ export async function restorePublication(db: Database, publicationId: string): P
 
 export const LIVE_EDITIONS_PAGE_SIZE = 50;
 
-// The Published page: every story's current edition that is up, newest
-// first, one page at a time, optionally narrowed to a handle or title.
+// The display name of the moderator a column points at, for the moderation
+// pages' records. Null once that account is gone.
+function moderatorName(column: AnyColumn) {
+	return sql<
+		string | null
+	>`(select ${users.displayName} from ${users} where ${users.id} = ${column})`;
+}
+
+// The Published page: every story's current edition that is not taken down,
+// newest first, one page at a time, optionally narrowed to a handle or title.
+// That includes editions an account deletion hid (hiddenAt set), so a
+// moderator can still take them down. The title is null, and a search does not
+// match it, when the moderator may not open the edition (titleModeratorMayRead).
 export async function listLiveEditions(
 	db: Database,
 	{ query = '', page = 0 }: { query?: string; page?: number } = {}
@@ -702,27 +812,47 @@ export async function listLiveEditions(
 	// Handles are stored without the '@' the pages show before them.
 	const handlePattern = likePattern(text.replace(/^@/, ''));
 	const where = and(
-		eq(publications.isCurrent, true),
-		isNull(publications.removedAt),
+		currentNotTakenDown(),
 		text
-			? or(ilike(publications.handle, handlePattern), ilike(publications.title, likePattern(text)))
+			? or(
+					ilike(publications.handle, handlePattern),
+					sql`${titleModeratorMayRead()} ilike ${likePattern(text)}`
+				)
 			: undefined
 	);
-	const [{ total }] = await db.select({ total: count() }).from(publications).where(where);
+	const [{ total }] = await db
+		.select({ total: count() })
+		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.where(where);
 	// One row past the page says whether a next page exists.
 	const rows = await db
 		.select({
 			id: publications.id,
 			handle: publications.handle,
-			title: publications.title,
+			title: titleModeratorMayRead(),
 			isAdult: publications.isAdult,
 			publishedAt: publications.publishedAt,
 			storyId: publications.storyId,
 			listedInBrowse: stories.listedInBrowse,
-			browseBlockedAt: stories.browseBlockedAt
+			browseBlockedAt: stories.browseBlockedAt,
+			// Whether Browse lists it now, which also needs its author to be
+			// active and not hidden from Browse.
+			shownInBrowse: sql<boolean>`exists (select 1 from publications p join stories s on s.id = p.story_id join users u on u.id = p.owner_id where p.id = ${publications.id} and ${listedInBrowseCondition})`,
+			// Down with no takedown reason: the author's account deletion hid it.
+			hiddenAt: publications.removedAt,
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
+			restoredAt: publications.restoredAt,
+			restoredByName: moderatorName(publications.restoredBy),
+			browseAllowedAt: stories.browseAllowedAt,
+			browseAllowedByName: moderatorName(stories.browseAllowedBy),
+			// Whether the title links to the moderator's view of the text.
+			viewable: moderatorMayRead(),
+			readable: readersCanOpen()
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(where)
 		.orderBy(desc(publications.publishedAt), asc(publications.id))
 		.limit(LIVE_EDITIONS_PAGE_SIZE + 1)
@@ -741,13 +871,23 @@ export async function listBrowseBlocked(db: Database) {
 	return await db
 		.select({
 			storyId: stories.id,
-			title: stories.title,
+			// The current edition's title, which readers saw, not the working
+			// title: the writer may have renamed the story since and made it
+			// private. Null when there is none or the moderator may not open it.
+			title: titleModeratorMayRead(),
 			handle: users.handle,
 			browseBlockedAt: stories.browseBlockedAt,
-			browseBlockedReason: stories.browseBlockedReason
+			// Posted back by Allow in Browse, so a removal placed since is not lifted.
+			browseBlockedMicros: microsText(stories.browseBlockedAt),
+			browseBlockedReason: stories.browseBlockedReason,
+			browseBlockedByName: moderatorName(stories.browseBlockedBy)
 		})
 		.from(stories)
 		.innerJoin(users, eq(users.id, stories.ownerId))
+		.leftJoin(
+			publications,
+			and(eq(publications.storyId, stories.id), eq(publications.isCurrent, true))
+		)
 		.where(isNotNull(stories.browseBlockedAt))
 		.orderBy(stories.browseBlockedAt);
 }
@@ -759,13 +899,24 @@ export async function listTakenDown(db: Database) {
 		.select({
 			id: publications.id,
 			handle: publications.handle,
-			title: publications.title,
-			removedAt: publications.removedAt,
+			title: titleModeratorMayRead(),
+			takenDownAt: takenDownAt(),
+			// Posted back by Restore, so a takedown placed since is not lifted.
+			takenDownMicros: microsText(takenDownAt()),
 			removedReason: publications.removedReason,
+			removedByName: moderatorName(publications.removedBy),
 			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
-			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
+			viewable: moderatorMayRead(),
+			// Why the title does not link: the story is private or in the trash,
+			// and either no report opens it or the takedown is from before
+			// migration 0133, whose reports no longer open anything.
+			notViewableBecause: sql<
+				'withdrawn' | 'olderTakedown' | null
+			>`case when ${moderatorMayRead()} then null when ${publications.takenDownAt} is null then 'olderTakedown' else 'withdrawn' end`
 		})
 		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(
 			and(
@@ -774,5 +925,106 @@ export async function listTakenDown(db: Database) {
 				isNotNull(publications.removedReason)
 			)
 		)
-		.orderBy(publications.removedAt);
+		.orderBy(takenDownAt());
+}
+
+// When a taken-down edition was taken down. An edition taken down before
+// taken_down_at existed has only removed_at.
+function takenDownAt() {
+	return sql<Date | null>`coalesce(${publications.takenDownAt}, ${publications.removedAt})`.mapWith(
+		publications.takenDownAt
+	);
+}
+
+// Whether an edition is up but no longer the story's current one: the
+// takedown form names it when a publish replaced the edition the moderator
+// was looking at.
+export async function editionReplaced(db: Database, publicationId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publications.id })
+		.from(publications)
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				eq(publications.isCurrent, false),
+				isNull(publications.removedAt)
+			)
+		);
+	return Boolean(row);
+}
+
+// Whether an edition is the current one of a story its author has since made
+// private or moved to the trash, and not taken down: the takedown form says so
+// when it refuses one.
+export async function editionWithdrawn(db: Database, publicationId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publications.id })
+		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				currentNotTakenDown(),
+				or(eq(stories.visibility, 'private'), not(storyIsLive()))
+			)
+		);
+	return Boolean(row);
+}
+
+// Whether a moderator may load an uploaded image: one shown inline in an
+// edition whose text they may read on its own page, so the image of a
+// taken-down or hidden edition can be checked too. Only the edition owner's
+// own images, as for readers (isPublicAsset).
+export async function moderatorMayReadAsset(db: Database, assetId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publications.id })
+		.from(publicationAssets)
+		.innerJoin(publications, eq(publicationAssets.publicationId, publications.id))
+		.innerJoin(stories, eq(publications.storyId, stories.id))
+		.innerJoin(
+			assets,
+			and(eq(assets.id, publicationAssets.assetId), eq(assets.ownerId, publications.ownerId))
+		)
+		.where(and(eq(publicationAssets.assetId, assetId), moderatorMayRead()))
+		.limit(1);
+	return Boolean(row);
+}
+
+// One edition as a moderator sees it: taken down, hidden by an account
+// deletion, superseded or live. For checking the text of a report before
+// acting on it, or again before a restore. An older edition, or one of a
+// story the author has since made private or put in the trash, opens only
+// when it has an open report, or one closed by a takedown that still holds
+// (moderatorMayRead).
+export async function moderatorEdition(db: Database, publicationId: string) {
+	const [edition] = await db
+		.select({
+			id: publications.id,
+			storyId: publications.storyId,
+			handle: publications.handle,
+			title: publications.title,
+			descriptionMd: publications.descriptionMd,
+			isAdult: publications.isAdult,
+			contentWarnings: publications.contentWarnings,
+			content: publications.content,
+			versionLabel: publications.versionLabel,
+			publishedAt: publications.publishedAt,
+			isCurrent: publications.isCurrent,
+			removedAt: publications.removedAt,
+			takenDownAt: takenDownAt(),
+			// Posted back by Restore, so a takedown placed since is not lifted.
+			takenDownMicros: microsText(takenDownAt()),
+			removedReason: publications.removedReason,
+			removedByName: moderatorName(publications.removedBy),
+			restoredAt: publications.restoredAt,
+			restoredByName: moderatorName(publications.restoredBy),
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
+			// Whether readers can open it at its public address right now.
+			readable: readersCanOpen()
+		})
+		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.innerJoin(users, eq(users.id, publications.ownerId))
+		.where(and(eq(publications.id, publicationId), moderatorMayRead()));
+	return edition ? { ...edition, content: edition.content as EditionContent } : null;
 }

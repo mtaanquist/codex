@@ -27,6 +27,7 @@ import { IMAGE_EXTENSIONS } from './media-types';
 import { accountLimits, holdCountQuota, holdStoryQuota, quotaFailure } from './quotas';
 import { imageLimit } from '../quota';
 import { formatBytes } from '../format';
+import { droppedLimitsProblem, usableContentLimits } from './assistant-preferences';
 import { errorFields, logEvent } from './log';
 import {
 	checkTagNames,
@@ -153,6 +154,8 @@ export async function previewImport(
 		.where(eq(stories.universeId, universe.id));
 	const { resolutions, problems: noteProblems } = await resolveNotes(db, universe.id, plan.notes);
 	const problems = [...plan.problems, ...noteProblems];
+	const { dropped } = await usableContentLimits(db, plan.story.assistantPreferences ?? {});
+	if (dropped > 0) problems.push(droppedLimitsProblem(dropped));
 	try {
 		await holdCountQuota(db, universe.ownerId, { stories: 1 });
 	} catch (err) {
@@ -347,6 +350,8 @@ export async function runImport(
 				notesSkipped = 0;
 				freeformNotesCreated = 0;
 				waitingDraftsCreated = 0;
+				const limits = await usableContentLimits(tx, plan.story.assistantPreferences ?? {});
+				if (limits.dropped > 0) problems.push(droppedLimitsProblem(limits.dropped));
 				const [story] = await tx
 					.insert(stories)
 					.values({
@@ -360,7 +365,7 @@ export async function runImport(
 						isAdult: plan.story.isAdult ?? false,
 						styleNotes: plan.story.styleNotes ?? null,
 						language: plan.story.language ?? null,
-						assistantPreferences: plan.story.assistantPreferences ?? {},
+						assistantPreferences: limits.preferences,
 						assistantNotes: plan.story.assistantNotes ?? null
 					})
 					.returning({ id: stories.id });

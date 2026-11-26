@@ -2,14 +2,19 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import type pg from 'pg';
-import { scenes, stories, universes, users } from '../../src/lib/server/db/schema';
+import { scenes, stories, tags, universes, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import {
+	ASSISTANT_CHOICES,
+	CHANGED_LIMITS_FIELD,
 	HABIT_CHECKS,
 	HOUSE_STYLE,
 	MAX_ASSISTANT_NOTES,
-	NO_PREFERENCES
+	NO_PREFERENCES,
+	WARNING_LIST_FIELD,
+	warningListFingerprint
 } from '../../src/lib/assistant-preferences';
+import { NO_LANGUAGE } from '../../src/lib/writing-languages';
 import { ensureTestDatabase } from './test-db';
 
 // The Assistant preferences on a universe and a story, saved through the
@@ -30,8 +35,17 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 };
 const { createStoryInUniverse, standaloneUniverse } =
 	await import('../../src/lib/server/story-create');
-const { storyAssistantPreferences, universePreferences, workPreferences } =
-	await import('../../src/lib/server/assistant-preferences');
+const {
+	liveWarnings,
+	savePreferences,
+	storyAssistantPreferences,
+	storyPreferencesForCopy,
+	universePreferences,
+	workPreferences
+} = await import('../../src/lib/server/assistant-preferences');
+const { mergeTag, renameTag, setTagRemoved, unmergeTag } =
+	await import('../../src/lib/server/tags');
+const { reviewSettingsKey } = await import('../../src/lib/server/review-runs');
 const { saveMcpInstanceEnabled } = await import('../../src/lib/server/mcp/settings');
 const universePage = await import('../../src/routes/universes/[id]/[[section]]/+page.server');
 const storySettings =
@@ -45,10 +59,12 @@ let storyId: string;
 function post(
 	fields: Record<string, string>,
 	params: Record<string, string>,
-	as: { id: string; displayName: string } = user
+	as: { id: string; displayName: string } = user,
+	extra: [string, string][] = []
 ) {
 	const body = new FormData();
 	for (const [key, value] of Object.entries(fields)) body.set(key, value);
+	for (const [key, value] of extra) body.append(key, value);
 	return {
 		request: new Request('http://localhost/', { method: 'POST', body }),
 		params,
@@ -56,14 +72,44 @@ function post(
 	} as never;
 }
 
-const saveUniverse = (fields: Record<string, string>) =>
-	universePage.actions.saveAssistantPreferences(post(fields, { id: universeId }));
-const saveStory = (fields: Record<string, string>) =>
-	storySettings.actions.saveAssistantPreferences(post(fields, { id: storyId }));
+// The warning list as a page opened now builds its form from.
+const currentList = async () => warningListFingerprint(await liveWarnings(db));
+
+// What the form adds to a save: the warnings the writer changed (by default
+// every warning the post carries) and the list the page was built from (by
+// default the current one).
+type Limits = { changed?: string[]; list?: string };
+async function limitFields(fields: Record<string, string>, limits: Limits) {
+	const changed =
+		limits.changed ??
+		Object.keys(fields)
+			.filter((key) => key.startsWith('warning:'))
+			.map((key) => key.slice('warning:'.length));
+	const list = limits.list ?? (await currentList());
+	return [
+		...changed.map((slug): [string, string] => [CHANGED_LIMITS_FIELD, slug]),
+		[WARNING_LIST_FIELD, list] as [string, string]
+	];
+}
+
+const saveUniverse = async (fields: Record<string, string>, limits: Limits = {}) =>
+	universePage.actions.saveAssistantPreferences(
+		post(fields, { id: universeId }, user, await limitFields(fields, limits))
+	);
+const saveStory = async (fields: Record<string, string>, limits: Limits = {}) =>
+	storySettings.actions.saveAssistantPreferences(
+		post(fields, { id: storyId }, user, await limitFields(fields, limits))
+	);
 
 // Every field as the page posts it with nothing chosen.
 const blankForm = Object.fromEntries(
-	[...HOUSE_STYLE, ...HABIT_CHECKS, { key: 'assistantNotes' }].map(({ key }) => [key, ''])
+	[
+		...HOUSE_STYLE,
+		...HABIT_CHECKS,
+		...ASSISTANT_CHOICES,
+		{ key: 'draftWords' },
+		{ key: 'assistantNotes' }
+	].map(({ key }) => [key, ''])
 );
 
 async function stored() {
@@ -80,7 +126,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-	await pool.query('truncate table stories, universes, users cascade');
+	await pool.query('truncate table stories, universes, users, tags cascade');
 	[user] = await db
 		.insert(users)
 		.values({ email: 'prefs@example.com', displayName: 'P', passwordHash: 'x', role: 'user' })
@@ -102,6 +148,21 @@ afterAll(async () => {
 });
 
 describe('the assistant preferences', () => {
+	it("lets a story turn off its universe's notes, and not a universe", async () => {
+		await saveUniverse({ assistantNotes: 'Universe habits.', useUniverseNotes: 'no' });
+		expect((await storyAssistantPreferences(db, storyId)).notes).toBe('Universe habits.');
+		expect(await saveStory({ useUniverseNotes: 'no' })).toMatchObject({ saved: true });
+		expect((await storyAssistantPreferences(db, storyId)).notes).toBeNull();
+		expect(await saveStory({ useUniverseNotes: '' })).toMatchObject({ saved: true });
+		expect((await storyAssistantPreferences(db, storyId)).notes).toBe('Universe habits.');
+		const [universe] = await db
+			.select({ preferences: universes.assistantPreferences })
+			.from(universes)
+			.innerJoin(stories, eq(stories.universeId, universes.id))
+			.where(eq(stories.id, storyId));
+		expect(universe.preferences).toEqual({});
+	});
+
 	it('starts unset, so nothing is stated', async () => {
 		expect(await storyAssistantPreferences(db, storyId)).toEqual(NO_PREFERENCES);
 		expect(await universePreferences(db, universeId)).toEqual(NO_PREFERENCES);
@@ -138,6 +199,198 @@ describe('the assistant preferences', () => {
 		await saveStory(blankForm);
 		expect(await stored()).toEqual({ preferences: {}, notes: null });
 		expect((await storyAssistantPreferences(db, storyId)).houseStyle.tense).toBe('past');
+	});
+
+	it('saves feedback, length and content limits, naming each warning from the live list', async () => {
+		const [gore, language, gone] = await db
+			.insert(tags)
+			.values([
+				{ kind: 'warning', name: 'Gore', slug: 'gore' },
+				{ kind: 'warning', name: 'Strong language', slug: 'strong-language' },
+				{ kind: 'warning', name: 'Old', slug: 'old' }
+			])
+			.returning();
+		expect(
+			await saveUniverse({
+				feedback: 'thorough',
+				summaryLength: 'detailed',
+				draftWords: '1500',
+				'warning:gore': 'avoid',
+				'warning:strong-language': 'write',
+				'warning:old': 'avoid'
+			})
+		).toMatchObject({ saved: true });
+		// Not on the list, so not read.
+		expect(await saveUniverse({ 'warning:made-up': 'avoid' })).toMatchObject({ saved: true });
+		expect(
+			await saveStory({ feedback: 'sparing', editReasons: 'never', 'warning:gore': 'write' })
+		).toMatchObject({ saved: true });
+		await db.update(tags).set({ removedAt: new Date() }).where(eq(tags.id, gone.id));
+		const setting = await storyAssistantPreferences(db, storyId);
+		expect(setting).toMatchObject({
+			feedback: 'sparing',
+			editReasons: 'never',
+			summaryLength: 'detailed',
+			draftWords: 1500,
+			contentLimits: [
+				{ name: gore.name, limit: 'write' },
+				{ name: language.name, limit: 'write' }
+			]
+		});
+		const [row] = await db
+			.select({ preferences: universes.assistantPreferences })
+			.from(universes)
+			.where(eq(universes.id, universeId));
+		expect(row.preferences).not.toHaveProperty('warning:made-up');
+		expect((await universePreferences(db, universeId)).contentLimits).toEqual([
+			{ id: gore.id, name: 'Gore', limit: 'avoid' },
+			{ id: language.id, name: 'Strong language', limit: 'write' }
+		]);
+		expect(await saveStory({ draftWords: '20000' })).toMatchObject({ status: 400 });
+		// A blank warning clears the story's own limit; one left out of the post is kept.
+		await saveStory({ 'warning:gore': '' });
+		expect((await stored()).preferences).toEqual({ feedback: 'sparing', editReasons: 'never' });
+		await saveStory({ 'warning:strong-language': 'avoid' });
+		await saveStory({ feedback: 'normal' });
+		expect((await stored()).preferences).toEqual({
+			feedback: 'normal',
+			editReasons: 'never',
+			'warning:strong-language': 'avoid'
+		});
+	});
+
+	it('saves a form opened before a merge or a rename, leaving every limit as stored', async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Blood', slug: 'blood' },
+			{ kind: 'warning', name: 'Death', slug: 'death' },
+			{ kind: 'warning', name: 'Language', slug: 'language' }
+		]);
+		const tagId = async (slug: string) =>
+			(await db.select().from(tags).where(eq(tags.slug, slug)))[0].id;
+		// The form as the page showed it: every warning not set but Blood and Death.
+		const opened = {
+			'warning:gore': '',
+			'warning:blood': 'avoid',
+			'warning:death': 'avoid',
+			'warning:language': ''
+		};
+		await saveStory(opened);
+		await saveUniverse(opened);
+		const openedList = await currentList();
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		const mergedList = await currentList();
+		// Nothing is copied: Gore folds in Blood's limit when it is read.
+		expect((await stored()).preferences).toEqual({
+			'warning:blood': 'avoid',
+			'warning:death': 'avoid'
+		});
+		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toMatchObject([
+			{ name: 'Death', limit: 'avoid' },
+			{ name: 'Gore', limit: 'avoid' }
+		]);
+
+		const notice = {
+			action: 'assistant-preferences',
+			saved: true,
+			notice:
+				'Your other changes are saved. The list of content warnings has changed, so your content limits were not changed. Reload the page to set them.'
+		};
+		const limitsOf = (preferences: unknown) =>
+			Object.fromEntries(
+				Object.entries(preferences as Record<string, unknown>).filter(([key]) =>
+					key.startsWith('warning:')
+				)
+			);
+		const limitsBefore = limitsOf((await stored()).preferences);
+		// After the merge: the old form sets Language. It is not written; the
+		// notes and the other fields are.
+		expect(
+			await saveStory(
+				{
+					...opened,
+					'warning:language': 'write',
+					tense: 'past',
+					assistantNotes: 'Short chapters.'
+				},
+				{ changed: ['language'], list: openedList }
+			)
+		).toEqual(notice);
+		expect(await stored()).toEqual({
+			preferences: { ...limitsBefore, tense: 'past' },
+			notes: 'Short chapters.'
+		});
+
+		// After a rename too.
+		expect(await renameTag(db, 'warning', await tagId('death'), 'Character death')).toEqual({
+			ok: true
+		});
+		const afterRename = limitsOf((await stored()).preferences);
+		expect(afterRename).toEqual({
+			'warning:blood': 'avoid',
+			'warning:character-death': 'avoid'
+		});
+		const renamedForm = {
+			'warning:gore': '',
+			'warning:death': '',
+			'warning:language': 'avoid',
+			tense: 'present',
+			assistantNotes: 'Longer chapters.'
+		};
+		const stale = { changed: ['language'], list: mergedList };
+		expect(await saveStory(renamedForm, stale)).toEqual(notice);
+		expect(await stored()).toEqual({
+			preferences: { ...afterRename, tense: 'present' },
+			notes: 'Longer chapters.'
+		});
+		const universeBefore = limitsOf(
+			(
+				await db
+					.select({ preferences: universes.assistantPreferences })
+					.from(universes)
+					.where(eq(universes.id, universeId))
+			)[0].preferences
+		);
+		expect(await saveUniverse({ ...renamedForm, feedback: 'thorough' }, stale)).toEqual(notice);
+		const [universe] = await db
+			.select({ preferences: universes.assistantPreferences, notes: universes.assistantNotes })
+			.from(universes)
+			.where(eq(universes.id, universeId));
+		expect(universe).toEqual({
+			preferences: { ...universeBefore, tense: 'present', feedback: 'thorough' },
+			notes: 'Longer chapters.'
+		});
+		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toEqual([
+			{ id: await tagId('character-death'), name: 'Character death', limit: 'avoid' },
+			{ id: await tagId('gore'), name: 'Gore', limit: 'avoid' }
+		]);
+
+		// A form opened now can clear and set them. It shows Gore as kept off
+		// the page (Blood's limit, folded in) and posts that back unchanged,
+		// which changes nothing.
+		expect(
+			await saveStory(
+				{
+					'warning:character-death': '',
+					'warning:gore': 'avoid',
+					'warning:language': 'write'
+				},
+				{ changed: ['character-death', 'language'] }
+			)
+		).toEqual({ action: 'assistant-preferences', saved: true });
+		// Blood's own key stays, so undoing the merge gives it back, and while
+		// merged it still keeps Gore off the page. Character death now comes
+		// from the universe.
+		expect((await stored()).preferences).toEqual({
+			'warning:blood': 'avoid',
+			'warning:language': 'write',
+			tense: 'present'
+		});
+		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toMatchObject([
+			{ name: 'Character death', limit: 'avoid' },
+			{ name: 'Gore', limit: 'avoid' },
+			{ name: 'Language', limit: 'write' }
+		]);
 	});
 
 	it('gives a standalone story the standalone defaults, and shows them in Details', async () => {
@@ -323,5 +576,763 @@ describe('the assistant preferences', () => {
 		} finally {
 			await instanceDefault();
 		}
+	});
+});
+
+describe('content limits across merges, renames and removals', () => {
+	const tagId = async (slug: string) =>
+		(await db.select().from(tags).where(eq(tags.slug, slug)))[0].id;
+	const limits = async () =>
+		(await storyAssistantPreferences(db, storyId)).contentLimits.map(({ name, limit }) => [
+			name,
+			limit
+		]);
+	const allPreferences = async () => ({
+		story: (await stored()).preferences,
+		universe: (
+			await db
+				.select({ preferences: universes.assistantPreferences })
+				.from(universes)
+				.where(eq(universes.id, universeId))
+		)[0].preferences
+	});
+
+	beforeEach(async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Blood', slug: 'blood' }
+		]);
+	});
+
+	it("folds an avoid across rows: the universe's on the merged warning beats the story's write", async () => {
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'write']
+		]);
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+	});
+
+	it('takes a write on the merged warning when the survivor has none', async () => {
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it('gives each warning its own limits back on an undone merge, leaving nothing behind', async () => {
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		const before = await allPreferences();
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'write']
+		]);
+	});
+
+	it('changes no limit for a save that lands just after a merge', async () => {
+		// The form was read before the merge, so it posted Blood as live.
+		const list = await currentList();
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		const result = await savePreferences(
+			db,
+			user.id,
+			{ storyId },
+			{ changes: { 'warning:blood': 'avoid', tense: 'past' }, notes: undefined, warningList: list }
+		);
+		expect(result).toBe('outdated');
+		expect((await stored()).preferences).toEqual({ tense: 'past' });
+	});
+
+	it('leaves out a limit posted for a warning renamed or removed since the form was read', async () => {
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		await setTagRemoved(db, 'warning', await tagId('blood'), true, user.id);
+		const result = await savePreferences(
+			db,
+			user.id,
+			{ storyId },
+			{
+				changes: { 'warning:gore': 'avoid', 'warning:blood': 'avoid', feedback: 'thorough' },
+				notes: undefined
+			}
+		);
+		expect(result).toBe('outdated');
+		const [row] = await db
+			.select({ preferences: stories.assistantPreferences })
+			.from(stories)
+			.where(eq(stories.id, storyId));
+		expect(row.preferences).toEqual({ feedback: 'thorough' });
+	});
+
+	it('follows a chain of merges, and drops the chain with a removed survivor', async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
+		// A chain two steps deep, as older data could hold.
+		await db
+			.update(tags)
+			.set({ mergedIntoId: await tagId('gore') })
+			.where(eq(tags.id, await tagId('blood')));
+		await db
+			.update(tags)
+			.set({ mergedIntoId: await tagId('violence') })
+			.where(eq(tags.id, await tagId('gore')));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:blood': 'avoid', 'warning:violence': 'write' } })
+			.where(eq(stories.id, storyId));
+		expect(await limits()).toEqual([['Violence', 'avoid']]);
+		await setTagRemoved(db, 'warning', await tagId('violence'), true, user.id);
+		expect(await limits()).toEqual([]);
+	});
+
+	it('keeps the limit and the review run key through a rename', async () => {
+		await saveStory({ 'warning:gore': 'avoid' });
+		const runKey = async () =>
+			reviewSettingsKey(
+				NO_LANGUAGE,
+				null,
+				false,
+				null,
+				await storyAssistantPreferences(db, storyId)
+			);
+		const before = await runKey();
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		expect(await limits()).toEqual([['Graphic gore', 'avoid']]);
+		expect(await runKey()).toBe(before);
+	});
+
+	it('lets a writer change a limit that a merged warning decides, at that level', async () => {
+		// The review's case: Blood kept off the page, then merged into Gore.
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		// An autosave of another field posts the shown (folded) limit back, not
+		// as a change, and leaves it alone.
+		await saveUniverse({ 'warning:gore': 'avoid', tense: 'past' }, { changed: [] });
+		expect((await allPreferences()).universe).toEqual({ 'warning:blood': 'avoid', tense: 'past' });
+		// Choosing "Write freely" sticks.
+		expect(await saveUniverse({ 'warning:gore': 'write' })).toEqual({
+			action: 'assistant-preferences',
+			saved: true
+		});
+		expect((await allPreferences()).universe).toEqual({ 'warning:gore': 'write', tense: 'past' });
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it("lets a story's choice on a merged warning win over the universe's", async () => {
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:blood': 'avoid' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:gore': 'write', 'warning:blood': 'write' },
+			universe: { 'warning:blood': 'avoid' }
+		});
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it("lets a story write freely where only the universe's merged limit keeps it off", async () => {
+		// The review's case: the story's own "write" is on the survivor, so its
+		// select shows the "avoid" that applies, and picking "Write freely"
+		// again is a change that sticks.
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		await saveStory({ 'warning:gore': 'write' });
+		expect((await allPreferences()).story).toEqual({
+			'warning:gore': 'write',
+			'warning:blood': 'write'
+		});
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		// Blank follows the universe again.
+		await saveStory({ 'warning:gore': '' });
+		expect((await allPreferences()).story).toEqual({});
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+	});
+
+	it('keeps an avoid set on the survivor while merged when the merge is undone', async () => {
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await saveStory({ 'warning:gore': 'avoid' });
+		// The universe's own write on Blood gives way: its Gore avoid covered it.
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { 'warning:gore': 'avoid', 'warning:blood': 'write' } })
+			.where(eq(universes.id, universeId));
+		const stamp = async () =>
+			(await db.select({ at: stories.updatedAt }).from(stories).where(eq(stories.id, storyId)))[0]
+				.at;
+		const before = await stamp();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual({
+			// The story's choice on Gore was stored on Blood too.
+			story: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' },
+			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
+		});
+		expect(await stamp()).toEqual(before);
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'avoid']
+		]);
+	});
+
+	it("keeps the universe's avoid on the survivor over a story's own write on an undone merge", async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:blood': 'avoid' },
+			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
+		});
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'avoid']
+		]);
+	});
+
+	it("counts the other warnings merged into the survivor, and leaves a story that inherits the universe's avoid alone", async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Bruising', slug: 'bruising' });
+		await saveUniverse({ 'warning:bruising': 'avoid' });
+		const other = (await createStoryInUniverse(db, user.id, universeId, 'Second')).id;
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'write' } })
+			.where(eq(stories.id, other));
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('bruising'), 'Gore')).toEqual({ ok: true });
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		const prefs = async (id: string) =>
+			(
+				await db
+					.select({ preferences: stories.assistantPreferences })
+					.from(stories)
+					.where(eq(stories.id, id))
+			)[0].preferences;
+		expect(await prefs(storyId)).toEqual({});
+		expect(await prefs(other)).toEqual({ 'warning:gore': 'write' });
+		expect((await allPreferences()).universe).toEqual({
+			'warning:bruising': 'avoid',
+			'warning:blood': 'avoid'
+		});
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'avoid']
+		]);
+	});
+
+	it('gives an unmerged warning no avoid the survivor did not have while merged', async () => {
+		await saveUniverse({ 'warning:gore': 'write' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		const before = await allPreferences();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+	});
+
+	it("keeps a story's own write over the universe's avoid on the survivor when the merge is undone", async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:gore': 'write', 'warning:blood': 'write' },
+			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
+		});
+		expect(await limits()).toEqual([
+			['Blood', 'write'],
+			['Gore', 'write']
+		]);
+	});
+
+	it('changes no limits when a merge into a removed warning is undone', async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		// Neither applies while Gore is removed.
+		expect(await limits()).toEqual([]);
+		const before = await allPreferences();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+		expect(await limits()).toEqual([['Blood', 'write']]);
+	});
+
+	it('drops the limits of a merged warning removed afterwards, also from an undone merge', async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Bruising', slug: 'bruising' });
+		await saveUniverse({ 'warning:bruising': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('bruising'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		await setTagRemoved(db, 'warning', await tagId('bruising'), true, user.id);
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		const before = await allPreferences();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it('locks the other warnings merged into the survivor while undoing a merge', async () => {
+		// A rename of Bruising takes its row first, so holding that row the way
+		// a rename does must hold off the undo, which reads Bruising's limits
+		// under its slug.
+		await db.insert(tags).values({ kind: 'warning', name: 'Bruising', slug: 'bruising' });
+		await saveUniverse({ 'warning:bruising': 'avoid' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('bruising'), 'Gore')).toEqual({ ok: true });
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = $1 for update', [await tagId('bruising')]);
+			let done = false;
+			const undo = unmergeTag(db, 'warning', await tagId('blood')).then((result) => {
+				done = true;
+				return result;
+			});
+			let blocked = false;
+			for (let tries = 0; tries < 200 && !blocked && !done; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where $1 = any(pg_blocking_pids(pid))`,
+					[me[0].pid]
+				);
+				blocked = rows[0].n >= 1;
+				if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(blocked).toBe(true);
+			expect(done).toBe(false);
+			await holder.query(
+				"update tags set slug = 'bruises', name = 'Bruises' where slug = 'bruising'"
+			);
+			await holder.query(
+				`update universes set assistant_preferences = '{"warning:bruises": "avoid"}'::jsonb where id = $1`,
+				[universeId]
+			);
+			await holder.query('commit');
+			expect(await undo).toBe(true);
+			expect((await allPreferences()).universe).toEqual({
+				'warning:bruises': 'avoid',
+				'warning:blood': 'avoid'
+			});
+		} finally {
+			holder.release();
+		}
+	});
+
+	it('leaves out a limit posted for a warning merged into one since removed', async () => {
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		const result = await savePreferences(
+			db,
+			user.id,
+			{ storyId },
+			{ changes: { 'warning:blood': 'avoid' }, notes: undefined }
+		);
+		expect(result).toBe('outdated');
+		expect((await stored()).preferences).toEqual({});
+	});
+
+	it('never leaves a limit under the old slug when a rename commits while a save waits', async () => {
+		// Hold the warning's row the way a rename's first step does, start a
+		// rename and a save behind it, then let both through in either order.
+		const goreId = await tagId('gore');
+		const list = await currentList();
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			await holder.query('select id from tags where id = $1 for update', [goreId]);
+			const rename = renameTag(db, 'warning', goreId, 'Graphic gore');
+			const save = savePreferences(
+				db,
+				user.id,
+				{ storyId },
+				{ changes: { 'warning:gore': 'avoid' }, notes: undefined, warningList: list }
+			);
+			for (let tries = 0; tries < 200; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where datname = current_database() and cardinality(pg_blocking_pids(pid)) > 0`
+				);
+				// Both are waiting: the rename on the row, the save on its share lock.
+				if (rows[0].n >= 2) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await holder.query('commit');
+			expect(await rename).toEqual({ ok: true });
+			const result = await save;
+			const preferences = (await stored()).preferences;
+			expect(preferences).not.toHaveProperty('warning:gore');
+			if (result === 'saved') {
+				expect(preferences).toEqual({ 'warning:graphic-gore': 'avoid' });
+			} else {
+				expect(result).toBe('outdated');
+				expect(preferences).toEqual({});
+			}
+		} finally {
+			holder.release();
+		}
+	});
+
+	it("keeps the writer's choice on a survivor while a warning merged into it is renamed", async () => {
+		// A rename of Gore takes Gore's row and moves the universe's avoid to the
+		// new slug. A save of Violence, which folds Gore in, must wait for it
+		// rather than write a limit under the slug the rename leaves.
+		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({ ok: true });
+		const list = await currentList();
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = $1 for update', [await tagId('gore')]);
+			await holder.query(
+				"update tags set slug = 'graphic-gore', name = 'Graphic gore' where slug = 'gore'"
+			);
+			await holder.query(
+				`update universes set assistant_preferences = '{"warning:graphic-gore": "avoid"}'::jsonb where id = $1`,
+				[universeId]
+			);
+			let done = false;
+			const save = savePreferences(
+				db,
+				user.id,
+				{ storyId },
+				{ changes: { 'warning:violence': 'write' }, notes: undefined, warningList: list }
+			).then((result) => {
+				done = true;
+				return result;
+			});
+			let blocked = false;
+			for (let tries = 0; tries < 200 && !blocked && !done; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where $1 = any(pg_blocking_pids(pid))`,
+					[me[0].pid]
+				);
+				blocked = rows[0].n >= 1;
+				if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(blocked).toBe(true);
+			await holder.query('commit');
+			// The list the page showed is gone, so the writer is told to reload.
+			expect(await save).toBe('outdated');
+			expect((await stored()).preferences).toEqual({});
+		} finally {
+			holder.release();
+		}
+		// Set again on the reloaded page, the choice applies.
+		await saveStory({ 'warning:violence': 'write' });
+		expect((await stored()).preferences).toEqual({
+			'warning:violence': 'write',
+			'warning:graphic-gore': 'write'
+		});
+		expect(await limits()).toEqual([['Violence', 'write']]);
+	});
+
+	it("stores a story's limit equal to what its universe makes apply, so it stays when the universe changes", async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
+		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({ ok: true });
+		// As a limit set before the merge is stored: on Violence's key alone.
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:violence': 'write' } })
+			.where(eq(stories.id, storyId));
+		// The writer picks "Keep it off the page" on a page opened before the
+		// universe kept Gore off the page, a change the save does not lock.
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { 'warning:gore': 'avoid' } })
+			.where(eq(universes.id, universeId));
+		await saveStory({ 'warning:violence': 'avoid' });
+		expect((await stored()).preferences).toEqual({
+			'warning:violence': 'avoid',
+			'warning:gore': 'avoid'
+		});
+		await saveUniverse({ 'warning:violence': '' });
+		expect(await limits()).toEqual([['Violence', 'avoid']]);
+	});
+
+	it('will not merge a removed warning, and a stale page leaves the limits a merge decides', async () => {
+		// The review's first case: Gore kept off the page, then removed. The
+		// writer's page shows Violence as not set.
+		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
+		await saveStory({ 'warning:gore': 'avoid' });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		const opened = await currentList();
+		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({
+			ok: false,
+			message: '"Gore" is removed. Restore it first, then merge it.'
+		});
+		// Data from before the rule can still hold the merge.
+		await db
+			.update(tags)
+			.set({ mergedIntoId: await tagId('violence') })
+			.where(eq(tags.id, await tagId('gore')));
+		// A removed warning's limit does not count toward its survivor.
+		expect(await limits()).toEqual([]);
+		// An autosave of the house style posts Violence as the page showed it.
+		expect(
+			await saveStory(
+				{ 'warning:violence': '', 'warning:blood': '', tense: 'past' },
+				{
+					changed: [],
+					list: opened
+				}
+			)
+		).toEqual({ action: 'assistant-preferences', saved: true });
+		expect((await stored()).preferences).toEqual({ 'warning:gore': 'avoid', tense: 'past' });
+		// Gore's limit counts nowhere, so the list that page shows still holds
+		// and changing Violence on it saves, over Gore's key too.
+		expect(
+			await saveStory({ 'warning:violence': 'write' }, { changed: ['violence'], list: opened })
+		).toEqual({ action: 'assistant-preferences', saved: true });
+		expect((await stored()).preferences).toEqual({
+			'warning:gore': 'write',
+			'warning:violence': 'write',
+			tense: 'past'
+		});
+		expect(await limits()).toEqual([['Violence', 'write']]);
+	});
+
+	it('never brings back a limit the writer replaced when a merged warning is restored', async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
+		await saveStory({ 'warning:gore': 'avoid' });
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({ ok: true });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		expect(await limits()).toEqual([]);
+		// The story writes Violence freely, the universe clears it.
+		await saveStory({ 'warning:violence': 'write' });
+		await saveUniverse({ 'warning:violence': '' });
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:gore': 'write', 'warning:violence': 'write' },
+			universe: {}
+		});
+		await setTagRemoved(db, 'warning', await tagId('gore'), false, user.id);
+		expect(await limits()).toEqual([['Violence', 'write']]);
+		expect((await universePreferences(db, universeId)).contentLimits).toEqual([]);
+		// A blank on the story clears the restored warning's key too.
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		await saveStory({ 'warning:violence': '' });
+		expect((await stored()).preferences).toEqual({});
+	});
+
+	it('stores no limit the writer did not pick when a merge is undone under an open page', async () => {
+		// The review's second case: Gore shows "Write freely" from Blood's limit.
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		const opened = await currentList();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		await saveStory(
+			{ 'warning:gore': 'write', feedback: 'thorough' },
+			{ changed: [], list: opened }
+		);
+		expect((await stored()).preferences).toEqual({
+			'warning:blood': 'write',
+			feedback: 'thorough'
+		});
+		expect(
+			await saveStory({ 'warning:gore': 'avoid' }, { changed: ['gore'], list: opened })
+		).toMatchObject({ notice: expect.stringContaining('Reload the page') });
+		expect(await limits()).toEqual([['Blood', 'write']]);
+	});
+
+	it('lets a story write freely where the universe keeps the survivor itself off the page', async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		// The story's own fold is already "write", so this is the same value,
+		// stored on Gore's own key with Blood's left as it is.
+		expect(await saveStory({ 'warning:gore': 'write' })).toEqual({
+			action: 'assistant-preferences',
+			saved: true
+		});
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:blood': 'write', 'warning:gore': 'write' },
+			universe: { 'warning:gore': 'avoid' }
+		});
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it("waits for a save holding the survivor's row before undoing a merge", async () => {
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = $1 for share', [await tagId('gore')]);
+			let done = false;
+			const undo = unmergeTag(db, 'warning', await tagId('blood')).then((result) => {
+				done = true;
+				return result;
+			});
+			let blocked = false;
+			for (let tries = 0; tries < 200 && !blocked; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where $1 = any(pg_blocking_pids(pid))`,
+					[me[0].pid]
+				);
+				blocked = rows[0].n >= 1;
+				if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(blocked).toBe(true);
+			expect(done).toBe(false);
+			await holder.query('commit');
+			expect(await undo).toBe(true);
+		} finally {
+			holder.release();
+		}
+	});
+
+	it('does not deadlock a save with an undone merge right after a merge it waited on', async () => {
+		// A merge holds both rows while a save of the survivor's limit and an
+		// undo of that merge (which locks the merged row, then the survivor)
+		// queue behind it. Once it commits, the save must not hold the survivor
+		// while it waits for the merged row the undo already holds.
+		const gore = await tagId('gore');
+		const [mergedId, survivorId] = [gore, await tagId('blood')].sort();
+		const survivorSlug = survivorId === gore ? 'gore' : 'blood';
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = any($1) order by id for update', [
+				[mergedId, survivorId]
+			]);
+			await holder.query('update tags set merged_into_id = $1 where id = $2', [
+				survivorId,
+				mergedId
+			]);
+			const save = savePreferences(
+				db,
+				user.id,
+				{ storyId },
+				{ changes: { [`warning:${survivorSlug}`]: 'avoid' }, notes: undefined, warningList: '' }
+			);
+			const undo = pool.connect().then(async (client) => {
+				try {
+					await client.query('begin');
+					await client.query('select id from tags where id = any($1) order by id for update', [
+						[mergedId, survivorId]
+					]);
+					await client.query('commit');
+				} catch (error) {
+					await client.query('rollback');
+					throw error;
+				} finally {
+					client.release();
+				}
+			});
+			let blocked = false;
+			for (let tries = 0; tries < 200 && !blocked; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where $1 = any(pg_blocking_pids(pid))`,
+					[me[0].pid]
+				);
+				blocked = rows[0].n >= 2;
+				if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(blocked).toBe(true);
+			await holder.query('commit');
+			await expect(Promise.all([save, undo])).resolves.toEqual(['outdated', undefined]);
+		} finally {
+			holder.release();
+		}
+	});
+
+	it('does not deadlock a draft copy that finds a new limit while a merge waits', async () => {
+		// The story names the higher id. A transaction holding it adds a limit on
+		// the lower id (as an undone merge would) while the copy's lock on the
+		// higher one waits, and a merge takes the lower one and then waits on the
+		// higher one. When the copy finds the new limit it must not wait on the
+		// lower id while still holding the higher one.
+		const [lowerId, higherId] = [await tagId('gore'), await tagId('blood')].sort();
+		const slugOf = async (id: string) =>
+			(await db.select({ slug: tags.slug }).from(tags).where(eq(tags.id, id)))[0].slug;
+		const [lower, higher] = [await slugOf(lowerId), await slugOf(higherId)];
+		await saveStory({ [`warning:${higher}`]: 'write' });
+		const holder = await pool.connect();
+		const merge = await pool.connect();
+		// Until a session is waiting on a lock: one held by the given session, or
+		// any, for waiting set.
+		const blocked = async (pid: number, waiting = false) => {
+			const check = waiting
+				? 'select cardinality(pg_blocking_pids($1))::int as n'
+				: `select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))`;
+			for (let tries = 0; tries < 200; tries++) {
+				if ((await pool.query(check, [pid])).rows[0].n > 0) return true;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			return false;
+		};
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = $1 for update', [higherId]);
+			await holder.query(
+				`update stories set assistant_preferences = assistant_preferences || $1::jsonb
+				where id = $2`,
+				[JSON.stringify({ [`warning:${lower}`]: 'avoid' }), storyId]
+			);
+			const copy = db.transaction((tx) => storyPreferencesForCopy(tx, storyId));
+			expect(await blocked(me[0].pid)).toBe(true);
+			await merge.query('begin');
+			const { rows: merging } = await merge.query('select pg_backend_pid() as pid');
+			await merge.query('select id from tags where id = $1 for update', [lowerId]);
+			const merged = merge
+				.query('select id from tags where id = $1 for update', [higherId])
+				.then(() => merge.query('commit'))
+				.catch(async (error) => {
+					await merge.query('rollback');
+					throw error;
+				});
+			expect(await blocked(merging[0].pid, true)).toBe(true);
+			await holder.query('commit');
+			const [preferences] = await Promise.all([copy, merged]);
+			expect(preferences).toEqual({
+				[`warning:${higher}`]: 'write',
+				[`warning:${lower}`]: 'avoid'
+			});
+		} finally {
+			await holder.query('rollback').catch(() => {});
+			holder.release();
+			merge.release();
+		}
+	});
+
+	it("drops a removed warning's limit, and a restore brings it back", async () => {
+		await saveStory({ 'warning:gore': 'avoid' });
+		await saveUniverse({ 'warning:blood': 'write' });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		expect(await limits()).toEqual([['Blood', 'write']]);
+		await setTagRemoved(db, 'warning', await tagId('gore'), false, user.id);
+		expect(await limits()).toEqual([
+			['Blood', 'write'],
+			['Gore', 'avoid']
+		]);
+		// One merged away and then removed stops counting toward its survivor,
+		// and a restore brings it back.
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await saveStory({ 'warning:gore': '' });
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		await setTagRemoved(db, 'warning', await tagId('blood'), true, user.id);
+		expect(await limits()).toEqual([]);
+		await setTagRemoved(db, 'warning', await tagId('blood'), false, user.id);
+		expect(await limits()).toEqual([['Gore', 'write']]);
 	});
 });

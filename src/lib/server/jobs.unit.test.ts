@@ -19,8 +19,8 @@ vi.mock('pg-boss', () => ({
 const { queueAssistantReview, queueAssistantSummaries, reviewJobState, ASSISTANT_REVIEW_QUEUE } =
 	await import('./jobs');
 const { ASSISTANT_JOB_EXPIRY_SECONDS } = await import('./queues');
-const { reviewScopeKey, reviewSettingsKey } = await import('./review-runs');
-const { NO_PREFERENCES } = await import('../assistant-preferences');
+const { reviewScopeKey, reviewSettingsKey, storyReviewSettingsKey } = await import('./review-runs');
+const { NO_PREFERENCES, effectivePreferences } = await import('../assistant-preferences');
 const { NO_LANGUAGE } = await import('../writing-languages');
 
 beforeEach(() => {
@@ -130,6 +130,92 @@ describe('reviewSettingsKey', () => {
 				true
 			)
 		).not.toBe(plain);
+	});
+
+	it("changes when a story turns its universe's notes off", () => {
+		const universe = { preferences: {}, notes: 'Fragments are on purpose.' };
+		const using = effectivePreferences({ preferences: {}, notes: null }, universe);
+		const off = effectivePreferences(
+			{ preferences: { useUniverseNotes: 'no' }, notes: null },
+			universe
+		);
+		expect(reviewSettingsKey(NO_LANGUAGE, using, true)).not.toBe(
+			reviewSettingsKey(NO_LANGUAGE, off, true)
+		);
+	});
+
+	it('changes with the feedback, reasons and content limits, even for a pass that skips wording', () => {
+		const plain = reviewSettingsKey(NO_LANGUAGE, null, false, null, NO_PREFERENCES);
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false)).toBe(plain);
+		const limits = (limit: 'avoid' | 'write') => ({
+			...NO_PREFERENCES,
+			contentLimits: [{ id: 'gore-id', name: 'Gore', limit }]
+		});
+		const keys = [
+			plain,
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, {
+				...NO_PREFERENCES,
+				feedback: 'thorough'
+			}),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, {
+				...NO_PREFERENCES,
+				editReasons: 'never'
+			}),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, limits('avoid')),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, limits('write'))
+		];
+		expect(new Set(keys).size).toBe(keys.length);
+		// The order the limits were listed in does not count.
+		const two = (a: string, b: string) => ({
+			...NO_PREFERENCES,
+			contentLimits: [
+				{ id: a.toLowerCase(), name: a, limit: 'avoid' as const },
+				{ id: b.toLowerCase(), name: b, limit: 'avoid' as const }
+			]
+		});
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, two('Gore', 'War'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, two('War', 'Gore'))
+		);
+		// Keyed by the warning's id: a rename (new name and slug, same id) keeps
+		// the key, another warning does not.
+		const named = (id: string, name: string) => ({
+			...NO_PREFERENCES,
+			contentLimits: [{ id, name, limit: 'avoid' as const }]
+		});
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t1', 'Gore'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t1', 'Graphic violence'))
+		);
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t1', 'Gore'))).not.toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('t2', 'Gore'))
+		);
+		// Read through effectivePreferences, a rename moves the slug and keeps the id.
+		const read = (slug: string, name: string) =>
+			effectivePreferences({ preferences: { [`warning:${slug}`]: 'avoid' }, notes: null }, null, [
+				{ id: 't1', name, slug, merged: [] }
+			]);
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, read('gore', 'Gore'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, read('graphic-gore', 'Graphic gore'))
+		);
+	});
+
+	it('treats reasons "when not obvious" like not set', () => {
+		expect(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, {
+				...NO_PREFERENCES,
+				editReasons: 'unobvious'
+			})
+		).toBe(reviewSettingsKey(NO_LANGUAGE, null, false, null, NO_PREFERENCES));
+	});
+
+	it('keys the feedback amount only for the sparing review, which states it', () => {
+		const settings = { language: NO_LANGUAGE, preferences: NO_PREFERENCES, styleNotes: null };
+		const more = { ...settings, preferences: { ...NO_PREFERENCES, feedback: 'thorough' as const } };
+		expect(storyReviewSettingsKey(more, [], undefined)).not.toBe(
+			storyReviewSettingsKey(settings, [], undefined)
+		);
+		expect(storyReviewSettingsKey(more, ['lore'], undefined)).toBe(
+			storyReviewSettingsKey(settings, ['lore'], undefined)
+		);
 	});
 
 	it('changes with the style notes, which the prose is judged against', () => {

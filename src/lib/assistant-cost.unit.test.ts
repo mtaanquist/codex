@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { cacheReadRate, cacheWriteRate, usageCostUsd, usageRowCostUsd } from './assistant-cost';
+import {
+	WEB_SEARCH_FEE_USD,
+	cacheReadRate,
+	cacheWriteRate,
+	usageCostUsd,
+	usageRowCostUsd,
+	usageTotalPhrase
+} from './assistant-cost';
 
 const price = { prompt: 0.001, completion: 0.002 };
 
@@ -69,6 +76,13 @@ describe('usageCostUsd', () => {
 		expect(usageCostUsd(reported, usage, 'openai')).toBeCloseTo(cost, 10);
 		expect(usageCostUsd({ ...price, cacheRead: 0 }, usage)).toBeCloseTo(600 * 0.001, 10);
 	});
+
+	it('adds the fee for each web search on top of the tokens', () => {
+		const usage = { promptTokens: 100, completionTokens: 0, webSearchRequests: 3 };
+		expect(usageCostUsd(price, usage)).toBeCloseTo(0.1 + 3 * WEB_SEARCH_FEE_USD, 10);
+		expect(usageCostUsd({ ...price, webSearch: 0.02 }, usage)).toBeCloseTo(0.1 + 0.06, 10);
+		expect(usageCostUsd(price, { ...usage, webSearchRequests: null })).toBeCloseTo(0.1, 10);
+	});
 });
 
 describe('usageRowCostUsd', () => {
@@ -80,7 +94,9 @@ describe('usageRowCostUsd', () => {
 		completionTokens: 0,
 		cachedPromptTokens: 1000,
 		cacheWriteTokens: null,
-		cacheWrite1hTokens: null
+		cacheWrite1hTokens: null,
+		webSearchRequests: null,
+		price: null
 	};
 
 	it("prices a row at its own provider's cache rate, not the current one", () => {
@@ -95,10 +111,56 @@ describe('usageRowCostUsd', () => {
 		expect(usageRowCostUsd(pricing, row)).toBeCloseTo(cacheReadRate(), 10);
 	});
 
+	it('prices a row at the price stored on it, not the current list', () => {
+		const stored = { prompt: 0.002, completion: 0 };
+		expect(usageRowCostUsd(pricing, { ...row, price: stored }, 'custom')).toBeCloseTo(2, 10);
+		expect(usageRowCostUsd({}, { ...row, price: stored }, 'custom')).toBeCloseTo(2, 10);
+	});
+
 	it('is null for an unpriced model or a row with no counts', () => {
 		expect(usageRowCostUsd(pricing, { ...row, model: 'other' }, 'openai')).toBeNull();
 		expect(
 			usageRowCostUsd(pricing, { ...row, promptTokens: null, completionTokens: null }, 'openai')
 		).toBeNull();
+	});
+});
+
+describe('usageTotalPhrase', () => {
+	const stored = { prompt: 0.00001, completion: 0 };
+	const row = (model: string, promptTokens: number | null, unreported = 0) => ({
+		model,
+		provider: null,
+		price: model === 'priced' ? stored : null,
+		promptTokens,
+		completionTokens: promptTokens === null ? null : 0,
+		cachedPromptTokens: null,
+		cacheWriteTokens: null,
+		cacheWrite1hTokens: null,
+		webSearchRequests: null,
+		unreported
+	});
+	const pricing = { priced: { prompt: 0.00001, completion: 0 } };
+	const partial = 'about $0.40, and some requests could not be priced';
+
+	it('gives a total when every request was priced', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000)])).toBe('about $0.40');
+	});
+
+	it('says so when a model has no price, without claiming a floor', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000), row('other', 10)])).toBe(partial);
+	});
+
+	it('says so when some requests reported no counts', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000, 1)])).toBe(partial);
+	});
+
+	it('names no amount under a cent when some requests could not be priced', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 100), row('other', 10)])).toBe(
+			'some requests could not be priced'
+		);
+	});
+
+	it('is null when nothing could be priced', () => {
+		expect(usageTotalPhrase(pricing, [row('other', 10), row('priced', null)])).toBeNull();
 	});
 });

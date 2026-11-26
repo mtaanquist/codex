@@ -59,6 +59,12 @@ describe('defaultDraftWords', () => {
 		expect(defaultDraftWords([1000, 2000])).toBe(1500);
 	});
 
+	it("offers the writer's default length over the median", () => {
+		expect(defaultDraftWords([1000, 2000], 2500)).toBe(2500);
+		expect(defaultDraftWords([], 5000)).toBe(5000);
+		expect(defaultDraftWords([1000, 2000], null)).toBe(1500);
+	});
+
 	it('keeps the offer within sensible bounds', () => {
 		expect(defaultDraftWords([40])).toBe(300);
 		expect(defaultDraftWords([20_000])).toBe(3000);

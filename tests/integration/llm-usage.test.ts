@@ -15,8 +15,10 @@ import {
 	type Provider
 } from '../../src/lib/server/llm/providers/types';
 
-const { accountLlmView, saveAccountLlmConfig } = await import('../../src/lib/server/llm/config');
-const { cacheReadRate, usageRowCostUsd } = await import('../../src/lib/assistant-cost');
+const { accountLlmView, saveAccountLlmConfig, saveModelPricing } =
+	await import('../../src/lib/server/llm/config');
+const { WEB_SEARCH_FEE_USD, cacheReadRate, usageRowCostUsd } =
+	await import('../../src/lib/assistant-cost');
 const { complete, completeDetailed, stream } = await import('../../src/lib/server/llm/gateway');
 const { recentAssistantUsage, recordAssistantUsage } =
 	await import('../../src/lib/server/llm/usage');
@@ -429,7 +431,10 @@ describe('recentAssistantUsage', () => {
 				completionTokens: 10,
 				cachedPromptTokens: 4,
 				cacheWriteTokens: 20,
-				cacheWrite1hTokens: 12
+				cacheWrite1hTokens: 12,
+				webSearchRequests: 0,
+				price: null,
+				unreported: 0
 			},
 			{
 				provider: null,
@@ -438,7 +443,10 @@ describe('recentAssistantUsage', () => {
 				completionTokens: 1,
 				cachedPromptTokens: 0,
 				cacheWriteTokens: 0,
-				cacheWrite1hTokens: 0
+				cacheWrite1hTokens: 0,
+				webSearchRequests: 0,
+				price: null,
+				unreported: 0
 			}
 		]);
 	});
@@ -474,6 +482,29 @@ describe('recentAssistantUsage', () => {
 			cacheWriteTokens: null,
 			cacheWrite1hTokens: null
 		});
+	});
+
+	it('prices a model whose rows reported no counts as unknown, not free', async () => {
+		const price = { prompt: 0.001, completion: 0.002 };
+		await recordAssistantUsage(db, { userId, role: 'chat', model: 'silent', price });
+		await recordAssistantUsage(db, { userId, role: 'chat', model: 'silent', price });
+		await recordAssistantUsage(db, {
+			userId,
+			role: 'chat',
+			model: 'counted',
+			price,
+			usage: { promptTokens: 1000, completionTokens: 0 }
+		});
+		await recordAssistantUsage(db, { userId, role: 'chat', model: 'counted', price });
+		const { byModel } = await recentAssistantUsage(db, userId);
+		const silent = byModel.find((row) => row.model === 'silent')!;
+		expect(silent).toMatchObject({ promptTokens: null, completionTokens: null });
+		expect(usageRowCostUsd({}, silent)).toBeNull();
+		// A group with some counts sums the ones it has.
+		const counted = byModel.find((row) => row.model === 'counted')!;
+		expect(counted).toMatchObject({ promptTokens: 1000, completionTokens: 0, unreported: 1 });
+		expect(usageRowCostUsd({}, counted)).toBeCloseTo(1, 10);
+		expect(silent.unreported).toBe(2);
 	});
 
 	it('pages fifty at a time, newest first', async () => {
@@ -579,6 +610,78 @@ describe('usage provider (#1373)', () => {
 		const deepseekCost = 1000 * 0.001 * cacheReadRate('deepseek');
 		expect(usageRowCostUsd(pricing, recent[0], view.provider)).toBeCloseTo(deepseekCost, 10);
 		expect(usageRowCostUsd(pricing, byModel[0], view.provider)).toBeCloseTo(deepseekCost, 10);
+	});
+
+	it('stores the price in force on each row, so a later switch does not reprice it (#1520)', async () => {
+		await configureProvider('deepseek');
+		await saveModelPricing(db, userId, pricing);
+		await complete(
+			db,
+			{ userId, role: 'chat', messages: [] },
+			{ provider: cachedProvider, http: noHttp }
+		);
+		// A switch replaces the discovered prices, here with a dearer one. The
+		// first save resets the model picks; the second puts the model back.
+		await configureProvider('custom');
+		await configureProvider('custom');
+		const dearer = { 'chat-model': { prompt: 0.1, completion: 0.2 } };
+		await saveModelPricing(db, userId, dearer);
+		await complete(
+			db,
+			{ userId, role: 'chat', messages: [] },
+			{ provider: cachedProvider, http: noHttp }
+		);
+		const view = await accountLlmView(db, userId);
+		const { recent, byModel } = await recentAssistantUsage(db, userId);
+		const old = recent.find((row) => row.provider === 'deepseek')!;
+		expect(old.price).toEqual(pricing['chat-model']);
+		const oldCost = 1000 * 0.001 * cacheReadRate('deepseek');
+		expect(usageRowCostUsd(dearer, old, view.provider)).toBeCloseTo(oldCost, 10);
+		// The sums keep rows sent at different prices apart.
+		expect(byModel).toHaveLength(2);
+		const oldSum = byModel.find((row) => row.provider === 'deepseek')!;
+		expect(usageRowCostUsd(dearer, oldSum, view.provider)).toBeCloseTo(oldCost, 10);
+		const newSum = byModel.find((row) => row.provider === 'custom')!;
+		expect(usageRowCostUsd({}, newSum, view.provider)).toBeCloseTo(1000 * 0.1, 10);
+	});
+
+	it('keeps rows at the same model and provider apart when their prices differ', async () => {
+		for (const prompt of [0.001, 0.002]) {
+			await recordAssistantUsage(db, {
+				userId,
+				role: 'chat',
+				provider: 'custom',
+				model: 'chat-model',
+				price: { prompt, completion: 0 },
+				usage: { promptTokens: 1000, completionTokens: 0 }
+			});
+		}
+		const { byModel } = await recentAssistantUsage(db, userId);
+		expect(byModel).toHaveLength(2);
+		const total = byModel.reduce((sum, row) => sum + (usageRowCostUsd({}, row) ?? 0), 0);
+		expect(total).toBeCloseTo(3, 10);
+	});
+
+	it('pins the search fee on a row that searched, and leaves the price null without one', async () => {
+		await recordAssistantUsage(db, {
+			userId,
+			role: 'reviewer',
+			provider: 'anthropic',
+			model: 'chat-model',
+			price: pricing['chat-model'],
+			usage: { promptTokens: 1000, completionTokens: 0, webSearchRequests: 2 }
+		});
+		await recordAssistantUsage(db, {
+			userId,
+			role: 'chat',
+			model: 'unpriced',
+			usage: { promptTokens: 1, completionTokens: 0 }
+		});
+		const { recent } = await recentAssistantUsage(db, userId);
+		const searched = recent.find((row) => row.model === 'chat-model')!;
+		expect(searched.price).toEqual({ ...pricing['chat-model'], webSearch: WEB_SEARCH_FEE_USD });
+		expect(usageRowCostUsd({}, searched)).toBeCloseTo(1 + 2 * WEB_SEARCH_FEE_USD, 10);
+		expect(recent.find((row) => row.model === 'unpriced')!.price).toBeNull();
 	});
 
 	it('prices a row with no recorded provider by the saved one', async () => {

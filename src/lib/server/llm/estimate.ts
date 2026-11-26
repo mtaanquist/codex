@@ -1,5 +1,3 @@
-import { storyLanguage } from '../language.ts';
-import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantUsage, scenes, stories } from '../db/schema.ts';
@@ -27,13 +25,7 @@ import {
 	resolveLlmConfig,
 	type ResolvedConfig
 } from './config.ts';
-import {
-	buildSurveyMessage,
-	readsWording,
-	reviewLanguageText,
-	splitSurveyChunks
-} from './prompts/review.ts';
-import { reviewPreferenceText } from './prompts/preferences.ts';
+import { buildSurveyMessage, reviewSettingsText, splitSurveyChunks } from './prompts/review.ts';
 import { PERSONA_TOKENS } from './context/budgets.ts';
 import {
 	checkBookFit,
@@ -53,7 +45,12 @@ import {
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
-import { chapterPatternUnits, reviewTiers, surveyBudgetTokens } from './scene-review.ts';
+import {
+	chapterPatternUnits,
+	readReviewSettings,
+	reviewTiers,
+	surveyBudgetTokens
+} from './scene-review.ts';
 import { storyIsLive } from '../universe-scope.ts';
 import { MINIMAL_TOOL_NAMES, toolSpecs } from './tools/registry.ts';
 
@@ -219,11 +216,12 @@ export async function estimateStoryReview(
 	}
 	const includeTiers = reviewTiers(categories);
 	// The preference lines ride on each scene's task message when the review
-	// reads the wording, and the language lines always.
-	const preferenceText =
-		(readsWording(categories)
-			? reviewPreferenceText(await storyAssistantPreferences(db, opts.storyId, opts.userId))
-			: '') + reviewLanguageText(await storyLanguage(db, opts.storyId, opts.userId), categories);
+	// reads the wording, and the language lines always. The confirm stage
+	// states some of them again, but that stage is shown as not known before
+	// the run, so it is not counted here.
+	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
+	const { language, preferences } = settings;
+	const preferenceText = reviewSettingsText(categories, preferences, language);
 	const preferenceTokens = estimateTokens(preferenceText);
 	const persona = personaMessage(resolved.config);
 
@@ -366,7 +364,8 @@ export async function estimateStoryReview(
 				scenes: targets,
 				contextWindow,
 				budgetTokens,
-				replyTokens: reviewerReplyTokens(resolved.config, contextWindow)
+				replyTokens: reviewerReplyTokens(resolved.config, contextWindow),
+				settings
 			});
 			wholeBook = plan.fit;
 			patternTokens = plan.tokens;
@@ -379,20 +378,15 @@ export async function estimateStoryReview(
 				? patternSurveyTokens(
 						units,
 						budgetTokens,
-						await patternSurveyOverhead(db, opts.userId, opts.storyId),
-						await storyLanguage(db, opts.storyId, opts.userId),
-						await storyAssistantPreferences(db, opts.storyId, opts.userId)
+						await patternSurveyOverhead(db, opts.userId, opts.storyId, settings.styleNotes),
+						language,
+						preferences
 					)
 				: 0;
 		}
 		if (units.length) {
-			const system = await patternSurveySystem(db, opts.userId, opts.storyId);
-			for (const message of patternSurveyMessages(
-				units,
-				budgetTokens,
-				await storyLanguage(db, opts.storyId, opts.userId),
-				await storyAssistantPreferences(db, opts.storyId, opts.userId)
-			)) {
+			const system = await patternSurveySystem(db, opts.userId, opts.storyId, settings.styleNotes);
+			for (const message of patternSurveyMessages(units, budgetTokens, language, preferences)) {
 				largestPatternCeiling = Math.max(
 					largestPatternCeiling,
 					capPromptTokens(persona, system, message)
@@ -463,6 +457,11 @@ export async function estimateStoryReview(
 	// The first part, in run order (the habits survey runs before the scenes,
 	// the consistency survey after), whose largest request would be held: a
 	// held request stops the run there.
+	// Only each part's first request round is checked. The gateway checks every
+	// round of the agent loop, and later rounds resend tool results, so a run
+	// can be held sooner than this says (the note says so). The habits
+	// figure also leaves out the open and known pattern lists a chapter survey
+	// carries (see pattern-pass.ts).
 	const largestCeiling: [OverCapPart, number][] = [
 		['habits', largestPatternCeiling],
 		['scene', largestSceneCeiling],

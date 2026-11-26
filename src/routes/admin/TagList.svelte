@@ -17,12 +17,15 @@
 		list,
 		query,
 		kind,
-		message
+		message,
+		notice = null
 	}: {
 		list: { rows: Row[]; page: number; more: boolean };
 		query: string;
 		kind: 'tag' | 'fandom' | 'genre' | 'warning';
 		message: string | null;
+		// What the last action did, when it worked.
+		notice?: string | null;
 	} = $props();
 
 	const noun = $derived(kind === 'warning' ? 'content warning' : kind);
@@ -46,11 +49,12 @@
 </script>
 
 {#if message}
-	<div
-		class="status-banner"
-		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-	>
+	<div class="status-banner error" role="alert">
 		<span class="x">{message}</span>
+	</div>
+{:else if notice}
+	<div class="status-banner ok" role="status">
+		<span class="dot"></span><span class="v">{notice}</span>
 	</div>
 {/if}
 
@@ -100,7 +104,8 @@
 									<input id="rename-{row.id}" class="input" name="name" value={row.name} required />
 									<button class="btn btn-secondary btn-sm" type="submit">Rename</button>
 								</form>
-								{#if !row.mergedIntoName}
+								<!-- A removed entry is restored before it can be merged (mergeTag). -->
+								{#if !row.mergedIntoName && !row.removedAt}
 									<form method="POST" action={actionKeepingQuery('merge', page.url.searchParams)}>
 										<input type="hidden" name="id" value={row.id} />
 										<label class="visually-hidden" for="merge-{row.id}">
@@ -145,15 +150,23 @@
 								action={actionKeepingQuery('remove', page.url.searchParams)}
 								onsubmit={confirmSubmit({
 									title: `Remove the ${noun} "${row.name}"?`,
-									body: `It disappears from every story that has it, and authors cannot add it again. You can restore it later.`,
+									body: row.mergedIntoName
+										? `Stories with it keep showing "${row.mergedIntoName}", and authors cannot add it again.${
+												kind === 'warning'
+													? ` Writers' Assistant content limits set on it stop counting toward "${row.mergedIntoName}".`
+													: ''
+											} If you undo the merge, it stays hidden until you restore it.`
+										: `It disappears from every story that has it, and authors cannot add it again.${
+												kind === 'warning'
+													? " Writers' Assistant content limits on it stop applying too. Merging it into another warning instead keeps them."
+													: ''
+											} You can restore it later.`,
 									confirmLabel: 'Remove',
 									danger: true
 								})}
 							>
 								<input type="hidden" name="id" value={row.id} />
-								<button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger-ink);">
-									Remove
-								</button>
+								<button class="btn btn-ghost btn-sm danger" type="submit"> Remove </button>
 							</form>
 						{/if}
 					</div>

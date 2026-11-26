@@ -8,6 +8,7 @@ import {
 	BASE_PERMISSION,
 	GRANTABLE_PERMISSIONS,
 	parsePermissions,
+	withUsableApply,
 	type McpPermission
 } from '../../mcp-access.ts';
 import {
@@ -489,6 +490,22 @@ export async function credentialLive(
 	return Boolean(row) && (await accountUsable(db, identity.userId));
 }
 
+// Whether the grant still holds every permission in needed. The identity's
+// permissions were read when the request arrived; connecting the app again
+// updates the grant in place, so every call that waited its turn reads them
+// again (see callMcpTool).
+export async function grantPermits(
+	db: Database,
+	grantId: string,
+	needed: readonly string[]
+): Promise<boolean> {
+	const [row] = await db
+		.select({ permissions: oauthGrants.permissions })
+		.from(oauthGrants)
+		.where(eq(oauthGrants.id, grantId));
+	return Boolean(row) && needed.every((permission) => row.permissions.includes(permission));
+}
+
 // ============ Grants (the Account page) ============
 
 export type GrantView = {
@@ -596,12 +613,14 @@ export async function createPersonalToken(
 		return { ok: false, reason: 'Choose how long the token lasts.' };
 	}
 	// Only what a writer can hand out today, and always reading.
-	const permissions = parsePermissions([
-		BASE_PERMISSION,
-		...input.permissions.filter((permission) =>
-			(GRANTABLE_PERMISSIONS as readonly string[]).includes(permission)
-		)
-	]);
+	const permissions = withUsableApply(
+		parsePermissions([
+			BASE_PERMISSION,
+			...input.permissions.filter((permission) =>
+				(GRANTABLE_PERMISSIONS as readonly string[]).includes(permission)
+			)
+		])
+	);
 	return db.transaction(async (tx) => {
 		// The exclusive lock, not the issuers' shared one: the name and the
 		// count are checked before the insert, and two calls side by side would

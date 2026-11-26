@@ -9,6 +9,7 @@ import {
 	chapters,
 	exportArtifacts,
 	publicationAssets,
+	publicationReports,
 	publications,
 	scenes,
 	slugHistory,
@@ -22,8 +23,10 @@ import { instanceStats } from '../../src/lib/server/admin';
 import {
 	isPublicAsset,
 	isPublicAvatar,
+	moderatorMayReadAsset,
 	listBrowseBlocked,
 	listLiveEditions,
+	listTakenDown,
 	LIVE_EDITIONS_PAGE_SIZE,
 	publicAuthorIdentity,
 	publicEdition,
@@ -196,7 +199,7 @@ describe('takedown and covers', () => {
 		await takedownPublication(db, first.publicationId, null, 'other');
 		// The only current edition is taken down.
 		expect(await isPublicAsset(db, coverId)).toBe(false);
-		await restorePublication(db, first.publicationId);
+		await restorePublication(db, first.publicationId, null);
 		expect(await isPublicAsset(db, coverId)).toBe(true);
 
 		// Making the story private must stop the cover serving, matching
@@ -240,6 +243,77 @@ describe('takedown and covers', () => {
 		);
 		await takedownPublication(db, current.id, null, 'other');
 		expect(await isPublicAsset(db, asset.id)).toBe(false);
+		// A moderator can still see it on the edition's moderation page.
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+	});
+
+	it("serves the images in an edition's description too", async () => {
+		const [asset] = await db
+			.insert(assets)
+			.values({
+				ownerId: authorId,
+				universeId,
+				kind: 'inline',
+				filename: 'banner.png',
+				contentType: 'image/png',
+				byteSize: 8,
+				storageKey: 'codex-assets/banner'
+			})
+			.returning();
+		const [described] = await db
+			.insert(stories)
+			.values({
+				universeId,
+				ownerId: authorId,
+				title: 'Described',
+				visibility: 'public',
+				descriptionMd: `A banner: ![banner](/assets/${asset.id})`
+			})
+			.returning();
+		await db.insert(scenes).values({ storyId: described.id, globalPosition: 1, bodyMd: 'Prose.' });
+		expect(await publishStory(db, authorId, described.id)).toMatchObject({ ok: true });
+		expect(await isPublicAsset(db, asset.id)).toBe(true);
+		const [current] = (await allEditions()).filter(
+			(row) => row.title === 'Described' && row.isCurrent
+		);
+		await takedownPublication(db, current.id, null, 'other');
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+	});
+
+	it('lets a moderator see the images of a withdrawn story only once it was reported', async () => {
+		const [asset] = await db
+			.insert(assets)
+			.values({
+				ownerId: authorId,
+				universeId,
+				kind: 'inline',
+				filename: 'map.png',
+				contentType: 'image/png',
+				byteSize: 8,
+				storageKey: 'codex-assets/map'
+			})
+			.returning();
+		await db.insert(scenes).values({
+			storyId,
+			globalPosition: 2,
+			bodyMd: `![map](/assets/${asset.id})`
+		});
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(false);
+		// A private edition is not public, so a takedown alone has nothing to act on.
+		expect(await takedownPublication(db, published.publicationId, null, 'other')).toBe(false);
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(false);
+		await db
+			.insert(publicationReports)
+			.values({ publicationId: published.publicationId, reason: 'spam' });
+		expect(await takedownPublication(db, published.publicationId, null, 'other')).toBe(true);
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+		expect(await isPublicAsset(db, asset.id)).toBe(false);
+		expect(await moderatorMayReadAsset(db, '00000000-0000-4000-8000-000000000000')).toBe(false);
 	});
 });
 
@@ -311,6 +385,57 @@ describe('moderation lists', () => {
 		expect((await listLiveEditions(db, { query: '%' })).total).toBe(0);
 	});
 
+	it('counts, searches and pages with editions an account deletion hid mixed in', async () => {
+		const ids = await publishMany(LIVE_EDITIONS_PAGE_SIZE + 2);
+		// Every third one hidden, as a cancelled account deletion leaves it.
+		const hidden = ids.filter((_, i) => i % 3 === 0);
+		for (const id of hidden) {
+			await db
+				.update(publications)
+				.set({ removedAt: new Date(), hiddenByAccountDeletion: true })
+				.where(eq(publications.id, id));
+		}
+		// One taken down drops out of the count.
+		await takedownPublication(db, ids[1], null, 'spam');
+		const total = LIVE_EDITIONS_PAGE_SIZE + 1;
+
+		const first = await listLiveEditions(db);
+		const second = await listLiveEditions(db, { page: 1 });
+		expect(first).toMatchObject({ total, hasMore: true });
+		expect(first.editions).toHaveLength(LIVE_EDITIONS_PAGE_SIZE);
+		expect(second.editions).toHaveLength(1);
+		const listed = [...first.editions, ...second.editions];
+		expect(new Set(listed.map((row) => row.id)).size).toBe(total);
+		expect(
+			listed
+				.filter((row) => row.hiddenAt)
+				.map((row) => row.id)
+				.sort()
+		).toEqual([...hidden].sort());
+		expect((await instanceStats(db)).publishedEditions).toBe(total);
+
+		const found = await listLiveEditions(db, { query: 'Story 51' });
+		expect(found.editions).toMatchObject([{ id: ids[51] }]);
+		expect(found.editions[0].hiddenAt).toBeInstanceOf(Date);
+	});
+
+	it('brings a hidden edition that was taken down and restored back with its pill', async () => {
+		const [id] = await publishMany(1);
+		await db
+			.update(publications)
+			.set({ removedAt: new Date(), hiddenByAccountDeletion: true })
+			.where(eq(publications.id, id));
+		await takedownPublication(db, id, null, 'spam');
+		expect((await listLiveEditions(db)).editions.some((row) => row.id === id)).toBe(false);
+
+		expect(await restorePublication(db, id, null)).toBe(true);
+		const live = await listLiveEditions(db);
+		const row = live.editions.find((edition) => edition.id === id);
+		expect(row?.hiddenAt).toBeInstanceOf(Date);
+		expect(row?.restoredAt).toBeInstanceOf(Date);
+		expect(live.total).toBe(1);
+	});
+
 	it('lists a story removed from Browse on its own until it is allowed again', async () => {
 		await publishStory(db, authorId, storyId);
 		await publishMany(LIVE_EDITIONS_PAGE_SIZE + 1);
@@ -319,6 +444,84 @@ describe('moderation lists', () => {
 		expect(live.editions.some((row) => row.storyId === storyId)).toBe(false);
 		expect(await listBrowseBlocked(db)).toMatchObject([
 			{ storyId, title: 'Book of Ash', handle: 'inkwright', browseBlockedReason: 'spam' }
+		]);
+	});
+
+	it('names a story removed from Browse by its published title, not a later private one', async () => {
+		await publishStory(db, authorId, storyId);
+		expect(await removeFromBrowse(db, storyId, authorId, 'spam')).toBe(true);
+		await db.update(stories).set({ title: 'Letters to my sister' }).where(eq(stories.id, storyId));
+		expect(await listBrowseBlocked(db)).toMatchObject([{ storyId, title: 'Book of Ash' }]);
+
+		// Made private and published again as a preview: neither title shows.
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await listBrowseBlocked(db)).toMatchObject([
+			{ storyId, title: null, handle: 'inkwright' }
+		]);
+		const republished = await publishStory(db, authorId, storyId);
+		if (!republished.ok) throw new Error(republished.reason);
+		const [current] = await db
+			.select({ title: publications.title })
+			.from(publications)
+			.where(eq(publications.id, republished.publicationId));
+		expect(current.title).toBe('Letters to my sister');
+		expect(await listBrowseBlocked(db)).toMatchObject([
+			{ storyId, title: null, handle: 'inkwright' }
+		]);
+	});
+
+	it('hides the title of a private preview edition and does not find it by title', async () => {
+		await db
+			.update(stories)
+			.set({ title: 'Letters to my sister', visibility: 'private' })
+			.where(eq(stories.id, storyId));
+		const preview = await publishStory(db, authorId, storyId);
+		if (!preview.ok) throw new Error(preview.reason);
+
+		const live = await listLiveEditions(db);
+		expect(live.total).toBe(1);
+		expect(live.editions).toMatchObject([
+			{ id: preview.publicationId, handle: 'inkwright', title: null, viewable: false }
+		]);
+		expect(await listLiveEditions(db, { query: 'sister' })).toMatchObject({
+			editions: [],
+			total: 0
+		});
+		// The handle still finds it, so it can still be removed from Browse.
+		expect((await listLiveEditions(db, { query: '@inkwright' })).total).toBe(1);
+	});
+
+	it('hides the title of a trashed story and does not find it by title', async () => {
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		expect((await listLiveEditions(db, { query: 'ash' })).editions).toMatchObject([
+			{ id: published.publicationId, title: 'Book of Ash', viewable: true }
+		]);
+
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		const live = await listLiveEditions(db);
+		expect(live).toMatchObject({ total: 1 });
+		expect(live.editions).toMatchObject([
+			{ id: published.publicationId, title: null, viewable: false }
+		]);
+		expect(await listLiveEditions(db, { query: 'ash' })).toMatchObject({
+			editions: [],
+			total: 0
+		});
+	});
+
+	it('lists a taken-down edition without its title once nothing lets the moderator open it', async () => {
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		expect(await takedownPublication(db, published.publicationId, null, 'spam')).toBe(true);
+		// A shared story's current edition opens, so its title shows.
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: published.publicationId, title: 'Book of Ash', viewable: true }
+		]);
+
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: published.publicationId, handle: 'inkwright', title: null, viewable: false }
 		]);
 	});
 });
@@ -393,6 +596,8 @@ describe('inline images owned by someone else', () => {
 			.insert(publicationAssets)
 			.values({ publicationId: published.publicationId, assetId: foreign.id });
 		expect(await isPublicAsset(db, foreign.id)).toBe(false);
+		await takedownPublication(db, published.publicationId, null, 'other');
+		expect(await moderatorMayReadAsset(db, foreign.id)).toBe(false);
 	});
 });
 

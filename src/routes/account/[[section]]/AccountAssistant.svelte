@@ -6,7 +6,12 @@
 	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
-	import { usageRowCostUsd, type TokenPrice, type UsageCostRow } from '#lib/assistant-cost';
+	import {
+		usageRowCostUsd,
+		usageTotalPhrase,
+		type TokenPrice,
+		type UsageCostRow
+	} from '#lib/assistant-cost';
 	import { askConfirm } from '#lib/confirm.svelte';
 	import { formatDateTime, formatNumber, pluralSuffix, spentPhrase } from '#lib/format';
 	import { resolveRoleModel, type AssistantRole } from '#lib/assistant-tuning';
@@ -163,26 +168,17 @@
 		].filter(Boolean);
 		return parts.length > 0 ? `${id} (${parts.join(', ')})` : id;
 	}
-	// A row's cost at the same cache rates the spend cap uses, at the rates of
-	// the provider the row went to (the saved one for an older row that did not
-	// record it). The price itself comes from the current price list, so a row
-	// from before a provider switch seldom has a price left to show a cost with.
+	// A row's cost at the same cache rates the spend cap uses, at the price
+	// stored on the row and the rates of the provider it went to. A row from
+	// before those were stored falls back to the current price list and the
+	// saved provider.
 	const savedProvider = $derived(data.assistant.provider);
 	function usageCost(row: UsageCostRow) {
 		return usageRowCostUsd(modelPricing, row, savedProvider);
 	}
-	const usageTotalCost = $derived.by(() => {
-		let total = 0;
-		let known = false;
-		for (const row of data.assistantUsage.byModel) {
-			const cost = usageCost(row);
-			if (cost !== null) {
-				total += cost;
-				known = true;
-			}
-		}
-		return known ? total : null;
-	});
+	const usageTotal = $derived(
+		usageTotalPhrase(modelPricing, data.assistantUsage.byModel, savedProvider)
+	);
 
 	// The usage log pages through ?usage=N on the assistant section.
 	function usagePageHref(n: number): ResolvedPathname {
@@ -900,8 +896,8 @@
 							{data.assistantUsage.totals.webSearchRequests} web search{data.assistantUsage.totals
 								.webSearchRequests === 1
 								? ''
-								: 'es'}{/if}{#if usageTotalCost !== null},
-							{spentPhrase(usageTotalCost)}{/if}.
+								: 'es'}{/if}{#if usageTotal !== null},
+							{usageTotal}{/if}.
 						{#if data.assistantUsage.totals.estimatedRequests > 0}
 							Includes {data.assistantUsage.totals.estimatedRequests} estimated request{pluralSuffix(
 								data.assistantUsage.totals.estimatedRequests

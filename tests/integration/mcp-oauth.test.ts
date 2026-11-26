@@ -125,7 +125,7 @@ async function newClient(redirectUris = [REDIRECT], name = 'Writing Desk'): Prom
 
 async function codeFor(
 	userId: string,
-	permissions: ('read' | 'suggest')[] = ['read', 'suggest'],
+	permissions: ('read' | 'suggest' | 'apply')[] = ['read', 'suggest'],
 	from: { client: Client; redirectUri: string } = { client, redirectUri: REDIRECT }
 ): Promise<string> {
 	const code = await createAuthorizationCode(db, {
@@ -1065,7 +1065,7 @@ describe('the authorization request', () => {
 			kind: 'ok',
 			redirectUri: REDIRECT,
 			state: 'xyz',
-			offered: ['read', 'suggest'],
+			offered: ['read', 'suggest', 'apply'],
 			requested: ['read', 'suggest']
 		});
 		expect(await request({ scope: 'read' })).toMatchObject({ requested: ['read'] });
@@ -1074,10 +1074,14 @@ describe('the authorization request', () => {
 			requested: ['read', 'suggest']
 		});
 		expect(await request({ scope: null })).toMatchObject({ requested: ['read', 'suggest'] });
-		// The apply permission cannot be asked for yet.
+		// The apply permission is offered but never ticked for the writer, even
+		// when the app asks for it or names nothing.
 		expect(await request({ scope: 'read apply' })).toMatchObject({
-			offered: ['read', 'suggest'],
+			offered: ['read', 'suggest', 'apply'],
 			requested: ['read']
+		});
+		expect(await request({ scope: 'offline_access' })).toMatchObject({
+			requested: ['read', 'suggest']
 		});
 	});
 
@@ -1504,7 +1508,8 @@ describe('the consent page', () => {
 		});
 		expect(data.permissions.map((p) => [p.id, p.required, p.checked])).toEqual([
 			['read', true, true],
-			['suggest', false, true]
+			['suggest', false, true],
+			['apply', false, false]
 		]);
 	});
 
@@ -1627,7 +1632,7 @@ describe('the consent page', () => {
 		const fields = authorizeQuery();
 		fields.append('permission', 'suggest');
 		// A permission that is not offered cannot be ticked in by hand.
-		fields.append('permission', 'apply');
+		fields.append('permission', 'delete');
 		const result = await answer('allow', alice, fields);
 		const location = new URL(result.continueTo!);
 		expect(location.origin + location.pathname).toBe(REDIRECT);
@@ -1640,6 +1645,23 @@ describe('the consent page', () => {
 			alice
 		);
 		expect(await listGrants(db, bob)).toHaveLength(0);
+	});
+
+	it('grants the apply permission when the writer ticks it with suggest', async () => {
+		const fields = authorizeQuery();
+		fields.append('permission', 'suggest');
+		fields.append('permission', 'apply');
+		const result = await answer('allow', alice, fields);
+		const exchanged = await exchange(new URL(result.continueTo!).searchParams.get('code')!);
+		expect(exchanged.ok && exchanged.tokens.permissions).toEqual(['read', 'suggest', 'apply']);
+	});
+
+	it('drops apply ticked without suggest, since it would do nothing', async () => {
+		const fields = authorizeQuery();
+		fields.append('permission', 'apply');
+		const result = await answer('allow', alice, fields);
+		const exchanged = await exchange(new URL(result.continueTo!).searchParams.get('code')!);
+		expect(exchanged.ok && exchanged.tokens.permissions).toEqual(['read']);
 	});
 
 	it('grants reading alone when nothing else is ticked', async () => {
@@ -1687,7 +1709,19 @@ describe('the consent page', () => {
 		await exchange(await codeFor(alice, ['read']));
 		const data = await load(alice);
 		expect(data.connected).toBe(true);
-		expect(data.permissions.map((p) => p.checked)).toEqual([true, false]);
+		expect(data.permissions.map((p) => p.checked)).toEqual([true, false, false]);
+	});
+
+	it('keeps the apply permission ticked for an app that already has it', async () => {
+		await exchange(await codeFor(alice, ['read', 'suggest', 'apply']));
+		const data = await load(alice);
+		expect(data.permissions.map((p) => p.checked)).toEqual([true, true, true]);
+	});
+
+	it('leaves apply unticked for an app that has it without suggest', async () => {
+		await exchange(await codeFor(alice, ['read', 'apply']));
+		const data = await load(alice);
+		expect(data.permissions.map((p) => p.checked)).toEqual([true, false, false]);
 	});
 });
 
@@ -1725,11 +1759,17 @@ describe('personal access tokens', () => {
 		expect(Math.round(days)).toBe(90);
 	});
 
-	it('always reads, suggests only when asked, and never takes more', async () => {
+	it('always reads, suggests or applies only when asked, and never takes more', async () => {
 		const reader = await made(alice, { name: 'Reader', permissions: [] });
 		expect((await resolveBearer(db, reader.token))?.permissions).toEqual(['read']);
 		const greedy = await made(alice, { name: 'Greedy', permissions: ['suggest', 'apply', 'x'] });
-		expect((await resolveBearer(db, greedy.token))?.permissions).toEqual(['read', 'suggest']);
+		expect((await resolveBearer(db, greedy.token))?.permissions).toEqual([
+			'read',
+			'suggest',
+			'apply'
+		]);
+		const idle = await made(alice, { name: 'Idle', permissions: ['apply'] });
+		expect((await resolveBearer(db, idle.token))?.permissions).toEqual(['read']);
 	});
 
 	it('refuses a bad name, a repeat of a name, a bad lifetime and an account with access off', async () => {

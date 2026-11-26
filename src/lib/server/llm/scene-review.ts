@@ -1,5 +1,6 @@
 import { storyLanguage } from '../language.ts';
-import { storyAssistantPreferences } from '../assistant-preferences.ts';
+import { storyAssistantPreferences, universePreferences } from '../assistant-preferences.ts';
+import type { PreferenceSetting } from '../../assistant-preferences.ts';
 import { IN_CONTEXT } from './prompts/format.ts';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
@@ -20,8 +21,8 @@ import {
 	loadReviewRun,
 	ReviewRunLoadError,
 	reviewScopeKey,
-	reviewSettingsKey,
 	saveReviewRun,
+	storyReviewSettingsKey,
 	type ReviewSettings
 } from '../review-runs.ts';
 import { needsSummary, summariseStory } from './summaries.ts';
@@ -44,8 +45,6 @@ import {
 	buildReviewMessage,
 	buildSurveyMessage,
 	parseCandidates,
-	readsNative,
-	readsWording,
 	splitSurveyChunks,
 	SURVEY_RETRY_MESSAGE,
 	type ContinuityCandidate,
@@ -55,7 +54,6 @@ import {
 import {
 	runPatternScope,
 	isFullReview,
-	parseCategories,
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
@@ -442,12 +440,20 @@ async function runConsistencyPass(
 		scenes: SurveyScene[];
 		// A story run's style notes as read when it opened; read now when unset.
 		styleNotes?: string | null;
+		// The Assistant preferences as read when the run opened; read now when
+		// unset (the story's, or the universe's for a universe pass).
+		preferences?: PreferenceSetting;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
 	deps: GatewayDeps = {}
 ): Promise<ConsistencyPassResult> {
 	const story = 'storyId' in opts.scope ? opts.scope.storyId : undefined;
+	const preferences =
+		opts.preferences ??
+		('storyId' in opts.scope
+			? await storyAssistantPreferences(db, opts.scope.storyId, opts.userId)
+			: await universePreferences(db, opts.scope.universeId, opts.userId));
 	const resolved = await resolveLlmConfig(db, opts.userId, opts.scope);
 	const budgetTokens = surveyBudgetTokens(modelContextWindow(resolved.config, 'reviewer'));
 
@@ -538,7 +544,7 @@ async function runConsistencyPass(
 		if (!involved.length) continue;
 		const task: ChatMessage = {
 			role: 'user',
-			content: buildConfirmMessage(candidate.claim, involved, bodyChars)
+			content: buildConfirmMessage(candidate.claim, involved, bodyChars, preferences)
 		};
 		let result: Awaited<ReturnType<typeof completeDetailed>>;
 		try {
@@ -627,6 +633,7 @@ export async function reviewStoryConsistency(
 		userId: string;
 		storyId: string;
 		styleNotes?: string | null;
+		preferences?: PreferenceSetting;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -641,6 +648,7 @@ export async function reviewStoryConsistency(
 			scope: { storyId: opts.storyId },
 			scenes: surveyScenes,
 			styleNotes: opts.styleNotes,
+			preferences: opts.preferences,
 			meter: opts.meter,
 			signal: opts.signal
 		},
@@ -757,7 +765,7 @@ export type ContinuityReviewResult = {
 
 // The settings a review run states, read once when it opens. The style notes
 // are what the review frame asks the reviewer to judge the prose against.
-async function readReviewSettings(
+export async function readReviewSettings(
 	db: Database,
 	storyId: string,
 	userId: string
@@ -1099,18 +1107,12 @@ export async function reviewStoryScenes(
 		categories: opts.categories,
 		patterns
 	};
-	const wording = readsWording(parseCategories(opts.categories));
 	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
 		scope: reviewScopeKey(scope),
-		settings: reviewSettingsKey(
-			settings.language,
-			wording ? settings.preferences : null,
-			readsNative(parseCategories(opts.categories), patterns),
-			wording ? settings.styleNotes : null
-		)
+		settings: storyReviewSettingsKey(settings, opts.categories, patterns)
 	});
 	const done = new Set(run.state.completed);
 	// Only the scene failures carry over from an earlier attempt, alongside the
@@ -1345,6 +1347,7 @@ export async function reviewStoryScenes(
 					userId: opts.userId,
 					storyId: opts.storyId,
 					styleNotes: settings.styleNotes,
+					preferences: settings.preferences,
 					meter,
 					signal: opts.signal
 				},

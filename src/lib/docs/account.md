@@ -194,7 +194,8 @@ contacts a model on its own.
   With it on, Claude may look things up when it reviews your work or answers you
   in the side panel, and only in a universe you have marked as an established
   setting, where checking your draft against a published world's canon is the
-  point. Inline suggestions, drafting, and background work never search. The search runs on Anthropic's servers,
+  point. Inline suggestions, drafting, and the summaries the Background work
+  role keeps never search; a chapter or whole-story review can. The search runs on Anthropic's servers,
   not yours, and the results come back as part of Claude's answer; Codex itself
   still only ever talks to the endpoint you configured. Anthropic bills you for
   the searches. See [writing in an established setting](/docs/established-settings)
@@ -263,9 +264,11 @@ Your words are sent only to the endpoint you set here.
   Codex kept those counts are priced with every token sent at the plain price.
   Reused text in each request is counted at the rate of the provider it was
   sent to (requests made before Codex kept the provider use your current
-  provider's rate). The price per model comes from your current price list, so
-  after you switch provider, earlier requests may show no cost or a different
-  one.
+  provider's rate). Each request keeps the price its model had when it was
+  sent, so a later price change or provider switch does not change its cost.
+  Requests made before Codex kept the price, or sent while their model had
+  no price, use your current price list, so after you switch provider they
+  may show no cost or a different one.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
@@ -275,8 +278,12 @@ Your words are sent only to the endpoint you set here.
   request itself, so with a low cap a review can stop before it reads its
   first scene; raise the cap or turn web search off if that happens. The
   estimate shown before a review leaves searches out, and says so when web
-  search is on. Claude also charges a fee for each search on top of tokens;
-  that fee is not in the cost shown here or counted by the spend cap.
+  search is on. Claude also charges a fee for each search on top of tokens
+  (10 dollars per 1,000 searches). The cost shown includes it, and the spend
+  cap sets aside the fee for the most searches a request can make. Part of
+  the room it keeps is a set amount for each search's results, and a search
+  can bring back more than that, so a run that searches can end over the
+  cap.
 
 ### Which model to pick for each role
 
@@ -384,8 +391,9 @@ for each kind of event. Emails arrive batched, so a busy hour sends one message.
 ## Connected apps
 
 An AI app you already use can read your writing in Codex and leave suggestions
-for you. It can never change, delete or publish your text. Nothing can connect
-until you turn this on. For a walk through connecting an app for the first
+for you. It can never delete or publish your text. It only changes your text
+when you accept one of its suggestions, or, if you allow it, when you accept
+one on the app's own card. Nothing can connect until you turn this on. For a walk through connecting an app for the first
 time, and what to do when it does not work, see
 [Connecting an app](/docs/connecting-apps).
 
@@ -411,6 +419,12 @@ What you can allow:
   a character, place or lore entry your universe does not have yet, propose
   splitting a scene in two, and hand you a draft it wrote for a scene. None of
   these changes your writing until you say so.
+- **Let you accept its suggestions in the app**: off unless you tick it, and
+  only with suggestions ticked. The app shows a card where you accept, reword or
+  skip its edits without opening Codex. Codex cannot check that you pressed
+  Accept, so an app that misuses this could change any of your text: tick it
+  only for an app you trust. See
+  [Work through a note in the app](/docs/connecting-apps#work-through-a-note-in-the-app).
 
 Where to find what an app left:
 
@@ -459,7 +473,11 @@ To make a token:
 2. Under "Personal access tokens", type a name for the tool that will use it.
    Suggestions and comments left with the token are shown under this name.
 3. Leave "Leave suggestions and comments" ticked if the tool should be able to
-   leave them, or untick it to let the tool read only.
+   leave them, or untick it to let the tool read only. Tick "Let you accept its
+   suggestions in the app" only if the tool can show you its notes to accept
+   and you trust it: a tool with this ticked can accept its own edits itself, with any wording. It can
+   be ticked only while "Leave suggestions and comments" is ticked. See
+   [Connecting an app](/docs/connecting-apps).
 4. Choose how long the token lasts. It stops working after that, and you make
    a new one.
 5. Type your password, and the code from your authenticator app if you use

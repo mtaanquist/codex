@@ -19,9 +19,18 @@ import {
 	scenes,
 	stories,
 	storyDrafts,
+	tags,
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
+import {
+	addListEntries,
+	checkTagNames,
+	renameTag,
+	setStoryList,
+	setStoryTags,
+	storyTagView
+} from '../../src/lib/server/tags';
 import {
 	deleteDraft,
 	draftsByStory,
@@ -611,6 +620,63 @@ describe('newStoryFromDraft', () => {
 			assistantPreferences: { quoteMarks: 'single', filterVerbs: 'leave' },
 			assistantNotes: 'Keep the dialect.'
 		});
+	});
+
+	it('copies the content limits as they stand, not as the page read them', async () => {
+		const slug = `draft-copy-gore-${Date.now()}`;
+		const [warning] = await db
+			.insert(tags)
+			.values({ kind: 'warning', name: slug, slug })
+			.returning();
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { [`warning:${slug}`]: 'avoid' } })
+			.where(eq(stories.id, storyId));
+		const id = await save();
+		// The page loaded the story, then an admin renamed the warning.
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		expect(await renameTag(db, 'warning', warning.id, `${slug} renamed`)).toEqual({ ok: true });
+		const result = await newStoryFromDraft(db, ownerId, story, id, 'Copy');
+		if (!result.ok) throw new Error('expected a new story');
+		const [copy] = await db.select().from(stories).where(eq(stories.slug, result.slug));
+		expect(copy.assistantPreferences).toEqual({ [`warning:${slug}-renamed`]: 'avoid' });
+	});
+
+	it("carries the story's tags, fandoms, genres and warnings over", async () => {
+		await addListEntries(db, 'fandom', 'Discworld');
+		await addListEntries(db, 'genre', 'Fantasy');
+		await addListEntries(db, 'warning', 'Death');
+		const checked = await checkTagNames(db, ['found family']);
+		if (!checked.ok) throw new Error(checked.message);
+		await setStoryTags(db, storyId, checked.tags);
+		const listed = async (kind: 'fandom' | 'genre' | 'warning', name: string) => {
+			const [row] = await db
+				.select({ id: tags.id })
+				.from(tags)
+				.where(and(eq(tags.kind, kind), eq(tags.name, name)));
+			await setStoryList(db, storyId, kind, [row.id]);
+		};
+		await listed('fandom', 'Discworld');
+		await listed('genre', 'Fantasy');
+		await listed('warning', 'Death');
+		const id = await save();
+		const [story] = await db.select().from(stories).where(eq(stories.id, storyId));
+		const result = await newStoryFromDraft(db, ownerId, story, id, 'Copy');
+		if (!result.ok) throw new Error('expected a new story');
+		const [copy] = await db.select().from(stories).where(eq(stories.slug, result.slug));
+		const names = (view: Awaited<ReturnType<typeof storyTagView>>) => ({
+			tags: view.tags.map((tag) => tag.name),
+			fandoms: view.fandoms.map((tag) => tag.name),
+			genres: view.genres.map((tag) => tag.name),
+			warnings: view.warnings.map((tag) => tag.name)
+		});
+		expect(names(await storyTagView(db, copy.id))).toEqual({
+			tags: ['found family'],
+			fandoms: ['Discworld'],
+			genres: ['Fantasy'],
+			warnings: ['Death']
+		});
+		expect(names(await storyTagView(db, storyId))).toEqual(names(await storyTagView(db, copy.id)));
 	});
 
 	it('copies relationships that held only in this story', async () => {

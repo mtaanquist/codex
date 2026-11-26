@@ -95,7 +95,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		stats: await instanceStats(db),
 		signup: await signupMode(db),
 		instanceType: await instanceType(db),
-		browse: await browseEnabled(db),
+		browse: await browseEnabled(db, { fresh: true }),
 		users: await listAllUsers(db),
 		inviteCodes: await listInviteCodes(db),
 		backupsConfigured: (await effectiveBackupConfig(db)) !== null,

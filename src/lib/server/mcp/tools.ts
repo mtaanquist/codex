@@ -14,8 +14,16 @@ import {
 	STAGING_CALLS_PER_MINUTE_PER_USER,
 	TOOL_RESULT_MAX_CHARS
 } from './constants.ts';
-import { GateBusyError, readGate } from './call-gate.ts';
-import { credentialLive, type BearerIdentity } from './oauth.ts';
+import { GateBusyError, readGate, stagingGate } from './call-gate.ts';
+import {
+	CARD_TOOLS,
+	CARD_TURNED_OFF,
+	callCardTool,
+	cardTool,
+	PASS_CARD_URI,
+	type CardTool
+} from './pass-card.ts';
+import { credentialLive, grantPermits, type BearerIdentity } from './oauth.ts';
 import { mcpInstanceEnabled } from './settings.ts';
 
 // The shared toolbox as an outside app sees it. The catalogue and the handlers
@@ -29,6 +37,9 @@ export type McpTool = {
 	description: string;
 	inputSchema: Record<string, unknown>;
 	readOnly: boolean;
+	// For the guided pass card's tools: the card they show, and who may call
+	// them (see pass-card.ts).
+	ui?: { resourceUri: string; visibility: CardTool['visibility'] };
 };
 
 // What a tool needs the connection to have been allowed.
@@ -113,16 +124,39 @@ function inputSchema(tool: ToolDef): Record<string, unknown> {
 	};
 }
 
+// The card only opens the app's own notes, so it needs the suggest permission
+// as well as apply.
+function cardAllowed(permissions: readonly McpPermission[]): boolean {
+	return permissions.includes('apply') && permissions.includes('suggest');
+}
+
 export function mcpTools(permissions: readonly McpPermission[]): McpTool[] {
-	return TOOLS.filter((tool) => offered(tool, permissions)).map((tool) => ({
+	const shared = TOOLS.filter((tool) => offered(tool, permissions)).map((tool) => ({
 		name: tool.name,
 		description: tool.description,
 		inputSchema: inputSchema(tool),
 		readOnly: tool.kind === 'read'
 	}));
+	if (!cardAllowed(permissions)) return shared;
+	return [
+		...shared,
+		...CARD_TOOLS.map((tool) => ({
+			name: tool.name,
+			description: tool.description,
+			inputSchema: tool.inputSchema,
+			readOnly: tool.kind === 'read',
+			ui: { resourceUri: PASS_CARD_URI, visibility: tool.visibility }
+		}))
+	];
 }
 
-export type McpToolResult = { text: string; isError: boolean };
+export type McpToolResult = {
+	text: string;
+	isError: boolean;
+	// What the guided pass card reads (see pass-card.ts).
+	structured?: Record<string, unknown>;
+	meta?: Record<string, unknown>;
+};
 
 // A result that would not fit is cut with a note, so the client does not cut
 // it silently somewhere else.
@@ -155,21 +189,33 @@ export async function callMcpTool(
 		return { text, isError: true };
 	};
 
-	const tool = TOOLS.find((entry) => entry.name === name);
-	if (!tool || !offered(tool, identity.permissions)) {
+	const shared = TOOLS.find((entry) => entry.name === name);
+	const card = shared ? undefined : cardTool(name);
+	const tool = shared ?? card;
+	if (
+		!tool ||
+		(shared && !offered(shared, identity.permissions)) ||
+		(card && !cardAllowed(identity.permissions))
+	) {
 		return refuse('unknown_tool', `Unknown tool: ${name}.`);
 	}
+	// What the grant must still hold when a call that waited its turn runs:
+	// connecting the app again changes the grant's permissions in place.
+	const needed: McpPermission[] = shared ? [PERMISSION_FOR[shared.kind]] : ['apply', 'suggest'];
 
 	// Staging has its own, tighter budget, so a burst of reads cannot be spent
-	// on notes and a burst of notes does not stop the app reading.
+	// on notes and a burst of notes does not stop the app reading. The card's
+	// accepts have the staging limits on a budget of their own, so a writer
+	// working through a note is not held up by the app staging notes.
 	const windowMs = 60 * 1000;
 	const staging = tool.kind === 'write';
+	const budget = card && staging ? 'card' : tool.kind;
 	const perGrant = staging ? STAGING_CALLS_PER_MINUTE : READ_CALLS_PER_MINUTE;
 	const perUser = staging ? STAGING_CALLS_PER_MINUTE_PER_USER : READ_CALLS_PER_MINUTE_PER_USER;
 	const now = performance.now();
 	const budgets = [
-		[`mcp:${tool.kind}:grant:${identity.grantId}`, perGrant],
-		[`mcp:${tool.kind}:user:${identity.userId}`, perUser]
+		[`mcp:${budget}:grant:${identity.grantId}`, perGrant],
+		[`mcp:${budget}:user:${identity.userId}`, perUser]
 	] as const;
 	const limits = budgets.map(([key, limit]) => slidingRateLimit(key, limit, windowMs, now));
 	// A call turned away before it did anything (by the other budget, or a
@@ -200,9 +246,23 @@ export async function callMcpTool(
 	// been disconnected or access for outside apps turned off. The endpoint
 	// checked both before the call queued; they are checked again here, as
 	// stillAllowed does for a staging call.
+	// The universe run() checked, for building the pass again after an accept.
+	let checkedUniverse = '';
+	// A card call the grant no longer allows (the writer connected the app
+	// again without accepting in the app) is told so, so the card can say so.
+	// It is the writer's own grant, so this says nothing about any universe.
+	const connectionLive = async () =>
+		(await mcpInstanceEnabled(db)) && (await credentialLive(db, identity));
+	const notAllowed = async (): Promise<McpToolResult> =>
+		card && (await connectionLive()) && !(await grantPermits(db, identity.grantId, needed))
+			? refuse('turned_off', CARD_TURNED_OFF)
+			: refuse('no_universe', NO_UNIVERSE_RESULT);
 	const run = async (waited = false): Promise<McpToolResult> => {
-		if (waited && !((await mcpInstanceEnabled(db)) && (await credentialLive(db, identity)))) {
-			return refuse('no_universe', NO_UNIVERSE_RESULT);
+		if (
+			waited &&
+			!((await connectionLive()) && (await grantPermits(db, identity.grantId, needed)))
+		) {
+			return notAllowed();
 		}
 		const { universeId: universeArgument, ...rest } = args;
 		let universeId = '';
@@ -215,6 +275,29 @@ export async function callMcpTool(
 				return refuse('no_universe', NO_UNIVERSE_RESULT);
 			}
 			universeId = universeArgument;
+			checkedUniverse = universeId;
+		}
+
+		if (card) {
+			const result = await callCardTool(card.name, {
+				db,
+				identity,
+				universeId,
+				args: rest,
+				origin,
+				stillAllowed: async (tx) =>
+					(await mcpInstanceEnabled(tx)) &&
+					(await credentialLive(tx, identity)) &&
+					(await grantPermits(tx, identity.grantId, needed)) &&
+					(await ownsUniverse(tx, identity.userId, universeId))
+			});
+			if (result.refused) return notAllowed();
+			if (result.busy) {
+				refund();
+				return refuse('busy', result.text);
+			}
+			log(result.isError ? 'refused' : staging ? 'accepted' : 'ok');
+			return { ...result, text: capped(result.text) };
 		}
 
 		const outcome = await dispatchToolCall(
@@ -238,6 +321,7 @@ export async function callMcpTool(
 					stillAllowed: async (tx) =>
 						(await mcpInstanceEnabled(tx)) &&
 						(await credentialLive(tx, identity)) &&
+						(await grantPermits(tx, identity.grantId, needed)) &&
 						(universeId === '' || (await ownsUniverse(tx, identity.userId, universeId)))
 				}
 			},
@@ -256,7 +340,41 @@ export async function callMcpTool(
 
 	try {
 		// Reading calls take a place before they touch the database; staging
-		// calls take theirs in the dispatcher, around the transaction.
+		// calls take theirs in the dispatcher, around the transaction. The card's
+		// accept is not dispatched, so it takes its place here.
+		if (card && staging) {
+			const accepted = await stagingGate.run(identity.userId, run);
+			if (accepted.isError) return accepted;
+			// The pass as it now stands, built after the accept has given its
+			// place back, as a read.
+			// The accept is stored by now, so nothing here may report it as
+			// failed: without the pass, the card asks for it again.
+			try {
+				const pass = await readGate.run(identity.userId, async (waited) => {
+					// The universe may have gone to the trash meanwhile, too.
+					if (
+						waited &&
+						!(
+							(await connectionLive()) &&
+							(await grantPermits(db, identity.grantId, needed)) &&
+							(await ownsUniverse(db, identity.userId, checkedUniverse))
+						)
+					)
+						return null;
+					return callCardTool('open_guided_pass', {
+						db,
+						identity,
+						universeId: checkedUniverse,
+						args: { noteId: args.noteId },
+						origin,
+						stillAllowed: async () => true
+					});
+				});
+				return pass && !pass.isError ? { ...pass, text: accepted.text } : accepted;
+			} catch {
+				return accepted;
+			}
+		}
 		return staging ? await run() : await readGate.run(identity.userId, run);
 	} catch (err) {
 		if (err instanceof GateBusyError) {

@@ -30,9 +30,11 @@ export function clampDraftWords(words: number): number {
 	return Math.min(Math.max(Math.round(words), MIN_DRAFT_WORDS), MAX_DRAFT_WORDS);
 }
 
-// The target length offered in the brief form: the median length of the
-// story's written scenes, to the nearest fifty words.
-export function defaultDraftWords(sceneWordCounts: number[]): number {
+// The target length offered in the brief form: the default length the writer
+// set in the Assistant preferences, else the median length of the story's
+// written scenes, to the nearest fifty words.
+export function defaultDraftWords(sceneWordCounts: number[], preferred?: number | null): number {
+	if (preferred) return clampDraftWords(preferred);
 	const written = sceneWordCounts.filter((count) => count > 0).sort((a, b) => a - b);
 	if (written.length === 0) return FALLBACK_DRAFT_WORDS;
 	const mid = Math.floor(written.length / 2);

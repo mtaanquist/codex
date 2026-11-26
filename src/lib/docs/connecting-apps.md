@@ -1,6 +1,6 @@
 # Connecting an app
 
-If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never change, delete or publish your writing. Everything it leaves waits for you to accept or turn down.
+If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions, or, if you allow it, when you accept one on the app's own card. Unless you let it accept its suggestions in the app, everything it leaves waits for you to accept or turn down.
 
 Connecting an app is separate from the Assistant inside Codex. You do not need to set up the Assistant to connect an app, and connecting an app does not change how the Assistant works.
 
@@ -29,8 +29,9 @@ You choose this on the page where you allow the app:
 
 - **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. The app also sees each story's language, its Assistant preferences, and your notes for the Assistant. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash.
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
+- **Let you accept its suggestions in the app.** This is off unless you tick it, and you can tick it only while "Leave suggestions and comments" is ticked. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
 
-No app can change your text, delete anything, publish a story, or see another person's writing.
+No app can delete anything, publish a story, or see another person's writing. An edit only changes your text when it is accepted, in Codex or with Accept on the app's card. If you tick "Let you accept its suggestions in the app", the app itself must keep that button for you alone, so tick it only for an app you trust (see below). The same goes for a token with it ticked.
 
 ## Ask the app to do something
 
@@ -40,11 +41,11 @@ Talk to the app the way you normally do, and mention Codex. For example:
 - "Copyedit the scene called The Quay in Codex and leave your edits there."
 - "Who is Old Marit? Check my Codex."
 
-Codex also gives the app a set of ready-made requests for the work the Assistant does: review, copyedit, continuity review, pattern pass, write, rewrite, draft, draft a chapter, catch me up, a character or place sheet, and search. Where they show up depends on the app; look for a list of prompts or commands from Codex. Pick one and fill in what it asks for.
+Codex also gives the app a set of ready-made requests for the work the Assistant does: review, copyedit, continuity review, pattern pass, write, rewrite, draft, draft a chapter, catch me up, a character or place sheet, and search. Where they show up depends on the app; look for a list of prompts or commands from Codex. Pick one and fill in what it asks for. These requests follow the story's language and Assistant preferences, as the Assistant does in Codex. A draft request with no length uses the default draft length in the Assistant preferences, or 800 words when none is set. When the story is written in a language other than your native one (set on your account page), copyedit, pattern pass, and a review that checks spelling and grammar or prose also name your native language, so the app can look for slips a speaker of that language tends to make.
 
 ## Find what the app left
 
-Nothing the app leaves changes your writing until you decide.
+Unless you let the app accept its suggestions in the app, nothing it leaves changes your writing until you decide.
 
 - **Suggested edits and comments** are in the story's Review. Accept or reject each one, and reply to a comment if you want to talk it over; the app can read your reply the next time you ask it to look. See [Inviting a reviewer](/docs/reviewing) for how Review works.
 - **A note about a habit that repeats**, such as a pet phrase, comes with a link. Open the link to go through its edits one at a time.
@@ -52,6 +53,18 @@ Nothing the app leaves changes your writing until you decide.
 - **A draft the app wrote for a scene** waits on that scene. Open the scene and select the Assistant tab on the right to read it, change it, and keep or discard it. A universe holds up to 20 drafts from apps at a time; keep or discard some to make room for more. See [Writing in the editor](/docs/editor).
 
 Each of these shows the name of the app that left it. When an app has left a suggested entry, a proposed split or a draft, your library shows how many are waiting beside the universe's name. Select it to see them under Suggestions.
+
+## Work through a note in the app
+
+If you ticked "Let you accept its suggestions in the app", you can go through a note's edits without leaving the app. Ask the app to open the note, for example "Let me go through your note on my pet phrases here". The app shows a card with one edit at a time, inside its paragraph:
+
+- **Accept** changes your text to the suggested wording.
+- **Edit** lets you write your own wording, then accept that instead.
+- **Skip** moves on and leaves the edit waiting in Codex.
+- **Discuss** hands the edit back to the conversation, so you can talk it over with the app before you decide.
+- **Open in Codex** opens the same note in Codex.
+
+Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them. An app that does not keep them away could accept its own edits, with any wording, so tick this only for an app you trust. An edit accepted on the card shows in the scene's History as "Suggestion accepted", with the app's name under it. A very long edit is shown cut short on the card and cannot be accepted there; open it in Codex to decide on it. To turn this off, select Disconnect next to the app under Account, Connected apps, then connect it again with the box unticked. Unticking it when you connect again without disconnecting first takes effect only once the app finishes connecting. For a personal token, delete the token and make a new one without it ticked. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
 
 ## Disconnect an app
 

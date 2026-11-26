@@ -33,6 +33,7 @@ import { backupConfig, effectiveBackupConfig } from '../lib/server/backups.ts';
 import { createHandlers } from './handlers.ts';
 import { registerSchedules } from './schedules.ts';
 import { stopWorker } from './shutdown.ts';
+import { deleteLegacyQueues } from './legacy-queues.ts';
 import { resolveOrigin } from '../lib/server/origin-rule.ts';
 import { errorFields, logEvent } from '../lib/server/log.ts';
 
@@ -83,16 +84,7 @@ await boss.createQueue(ASSISTANT_SUMMARIES_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 await boss.createQueue(ASSISTANT_ENRICH_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 await boss.createQueue(ASSISTANT_DRAFT_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 // The review and summaries queues used before #986, and drained until #1041.
-// Nothing reads them now; deleting a queue that is already gone does nothing.
-// A failure here is only logged: the cleanup is retried on the next start, and
-// must not keep the worker from starting or the other queue from going.
-for (const queue of ['assistant-review', 'assistant-summaries']) {
-	try {
-		await boss.deleteQueue(queue);
-	} catch (err) {
-		logEvent('warn', 'worker.legacy_queue_cleanup_failed', { queue, ...errorFields(err) });
-	}
-}
+await deleteLegacyQueues(boss);
 
 // Each Assistant queue runs several jobs at once, but one per writer (the job's
 // group), so one writer's slow or hung endpoint does not hold up anyone else.

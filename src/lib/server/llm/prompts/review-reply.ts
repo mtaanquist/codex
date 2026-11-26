@@ -7,7 +7,7 @@
 import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
 import { NO_PREFERENCES, type PreferenceSetting } from '../../../assistant-preferences.ts';
 import { languageRule } from './language.ts';
-import { houseStyleLine } from './preferences.ts';
+import { contentLimitsLine, houseStyleLine } from './preferences.ts';
 
 const EXCERPT_MARGIN = 600;
 
@@ -85,8 +85,11 @@ export function buildReviewReplyMessage(input: ReviewReplyInput): string {
 		);
 		const rule = languageRule(input.language ?? NO_LANGUAGE);
 		if (rule) parts.push(rule);
-		const style = houseStyleLine(input.preferences ?? NO_PREFERENCES, 'write');
+		const preferences = input.preferences ?? NO_PREFERENCES;
+		const style = houseStyleLine(preferences, 'write');
 		if (style) parts.push(style);
+		const limits = contentLimitsLine(preferences, 'write');
+		if (limits) parts.push(limits);
 		parts.push('');
 	}
 	parts.push(

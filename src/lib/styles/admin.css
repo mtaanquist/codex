@@ -796,6 +796,14 @@ a.nav-item {
 	background: color-mix(in oklab, var(--status-final) 12%, transparent);
 	border: 1px solid color-mix(in oklab, var(--status-final) 32%, transparent);
 }
+.status-banner.error {
+	background: var(--danger-soft);
+	border: 1px solid color-mix(in oklab, var(--danger) 32%, transparent);
+}
+.status-banner.warn {
+	background: color-mix(in oklab, var(--status-draft) 12%, transparent);
+	border: 1px solid color-mix(in oklab, var(--status-draft) 32%, transparent);
+}
 .status-banner .dot {
 	width: 8px;
 	height: 8px;

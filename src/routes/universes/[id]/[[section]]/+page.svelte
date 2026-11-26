@@ -426,9 +426,13 @@
 					<AssistantPreferences
 						level="universe"
 						standalone={data.universe.standalone}
+						warnings={data.contentWarnings}
 						stored={data.universe.assistantPreferences}
 						notes={data.universe.assistantNotes}
 						saved={form?.action === 'assistant-preferences' && form.saved === true}
+						notice={form?.action === 'assistant-preferences' && 'notice' in form
+							? form.notice
+							: null}
 						error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
 						submitted={form?.action === 'assistant-preferences' && 'submitted' in form
 							? form.submitted

@@ -3,6 +3,7 @@ import type { Database } from '../auth.ts';
 import { entityMentions, scenes, stories } from '../db/schema.ts';
 import { storyAssistantOn } from '../universe-scope.ts';
 import { buildArcMessage, type ArcScene } from './prompts/arc.ts';
+import type { SummaryLength } from './prompts/summary.ts';
 import { requestHash } from './request-hash.ts';
 import type { ChatMessage } from './providers/types.ts';
 import { usableSceneSummary } from '../summary-currency.ts';
@@ -39,11 +40,14 @@ export type ArcRequest = {
 // ones in the universe that mention the character, in reading order, each as
 // its summary (while that is current) or else the passage around its first
 // mention. A character no
-// live scene the Assistant reads mentions has no entry.
+// live scene the Assistant reads mentions has no entry. The length the writer
+// chose shapes the request sent, not the fingerprint, so changing it leaves
+// stored arcs current.
 export async function arcRequests(
 	db: Database,
 	universeId: string,
-	characters: { id: string; name: string }[]
+	characters: { id: string; name: string }[],
+	length: SummaryLength = 'short'
 ): Promise<Map<string, ArcRequest>> {
 	const out = new Map<string, ArcRequest>();
 	if (characters.length === 0) return out;
@@ -116,18 +120,21 @@ export async function arcRequests(
 	for (const character of characters) {
 		const sampled = sampleEvenly(found.get(character.id) ?? [], MAX_ARC_SCENES);
 		if (sampled.length === 0) continue;
+		const arcScenes = sampled.map(({ storyTitle, sceneTitle, text }) => ({
+			storyTitle,
+			sceneTitle,
+			text
+		}));
 		const messages: ChatMessage[] = [
-			{
-				role: 'user',
-				content: buildArcMessage(
-					character.name,
-					sampled.map(({ storyTitle, sceneTitle, text }) => ({ storyTitle, sceneTitle, text }))
-				)
-			}
+			{ role: 'user', content: buildArcMessage(character.name, arcScenes, length) }
 		];
+		const fingerprinted: ChatMessage[] =
+			length === 'short'
+				? messages
+				: [{ role: 'user', content: buildArcMessage(character.name, arcScenes) }];
 		out.set(character.id, {
 			messages,
-			input: requestHash(messages),
+			input: requestHash(fingerprinted),
 			storyIds: [...new Set(sampled.map((scene) => scene.storyId))],
 			staleSummaryStories: [
 				...new Set(sampled.filter((scene) => scene.staleSummary).map((scene) => scene.storyTitle))
@@ -141,9 +148,12 @@ export async function arcRequests(
 // mentions them.
 export async function arcRequest(
 	db: Database,
-	character: { id: string; name: string; universeId: string }
+	character: { id: string; name: string; universeId: string },
+	length: SummaryLength = 'short'
 ): Promise<ArcRequest | null> {
-	return (await arcRequests(db, character.universeId, [character])).get(character.id) ?? null;
+	return (
+		(await arcRequests(db, character.universeId, [character], length)).get(character.id) ?? null
+	);
 }
 
 // Whether a stored arc was written from the request that would be sent now.

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { buildChapterSummaryMessage } from './prompts/summary.ts';
+import { buildChapterSummaryMessage, type SummaryLength } from './prompts/summary.ts';
 import { requestHash } from './request-hash.ts';
 import type { ChatMessage } from './providers/types.ts';
 import { usableSceneSummary, type SceneSummarySource } from '../summary-currency.ts';
@@ -22,20 +22,26 @@ export type ChapterSummaryRequest = {
 // changed is left out, so a chapter summary written from it reads as out of
 // date as soon as the scene is edited; the summaries pass rewrites the scene
 // summary first and the chapter from the result. Null when none of its scenes
-// has a summary to go on.
+// has a summary to go on. The length the writer chose shapes the request
+// sent, not the fingerprint, so changing it leaves stored summaries current.
 export function chapterSummaryRequest(
 	title: string | null,
-	chapterScenes: SceneSummarySource[]
+	chapterScenes: SceneSummarySource[],
+	length: SummaryLength = 'short'
 ): ChapterSummaryRequest | null {
 	const usable = chapterScenes.filter((scene) => usableSceneSummary(scene));
 	const summaries = usable.map((scene) => usableSceneSummary(scene)!);
 	if (summaries.length === 0) return null;
 	const messages: ChatMessage[] = [
-		{ role: 'user', content: buildChapterSummaryMessage(title, summaries) }
+		{ role: 'user', content: buildChapterSummaryMessage(title, summaries, length) }
 	];
+	const fingerprinted: ChatMessage[] =
+		length === 'short'
+			? messages
+			: [{ role: 'user', content: buildChapterSummaryMessage(title, summaries) }];
 	return {
 		messages,
-		input: requestHash(messages),
+		input: requestHash(fingerprinted),
 		inputAtUpgrade: chapterInputAtUpgrade(
 			title,
 			usable.map((scene) => scene.summaryMd!)

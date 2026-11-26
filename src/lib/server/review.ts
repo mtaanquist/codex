@@ -1807,7 +1807,10 @@ export async function decideSuggestion(
 	override?: string,
 	seen?: string,
 	// Shared by the decisions of one request, so its budget is for all of them.
-	mapper: AnchorMapper = createAnchorMapper(WRITER_DIFF_BUDGET)
+	mapper: AnchorMapper = createAnchorMapper(WRITER_DIFF_BUDGET),
+	// Names where an accept was made when it was not in Codex, on its history
+	// entry.
+	revisionLabel?: string
 ): Promise<
 	| { ok: true; sceneId: string | null; bodyMd: string | null; baseHash: string | null }
 	| { ok: false; reason: string }
@@ -1929,7 +1932,9 @@ export async function decideSuggestion(
 			// Record the revision in the same transaction so the body change and
 			// its snapshot commit together; a failure here rolls the accept back
 			// rather than leaving an unsnapshotted edit.
-			await recordRevision(tx, 'scene', row.scene.id, newBody, 'suggestion');
+			await recordRevision(tx, 'scene', row.scene.id, newBody, 'suggestion', {
+				label: revisionLabel
+			});
 			return { ok: true, newBody, baseHash: textHash(scene.bodyMd) };
 		}
 	);

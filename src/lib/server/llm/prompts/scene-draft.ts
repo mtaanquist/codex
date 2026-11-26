@@ -7,7 +7,7 @@ import { type LanguageSetting } from '../../../writing-languages.ts';
 import { IN_CONTEXT, PROSE_FORMAT, type WorldSource } from './format.ts';
 import { languageRule } from './language.ts';
 import type { PreferenceSetting } from '../../../assistant-preferences.ts';
-import { houseStyleLine } from './preferences.ts';
+import { contentLimitsLine, houseStyleLine } from './preferences.ts';
 
 export type SceneDraftBrief = {
 	brief: string;
@@ -136,5 +136,7 @@ export function buildSceneDraftMessage(input: SceneDraftBrief): string {
 	if (rule) parts.push(rule);
 	const style = input.preferences ? houseStyleLine(input.preferences, 'write') : '';
 	if (style) parts.push(style);
+	const limits = input.preferences ? contentLimitsLine(input.preferences, 'write') : '';
+	if (limits) parts.push(limits);
 	return parts.join('\n');
 }

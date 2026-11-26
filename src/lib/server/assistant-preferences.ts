@@ -1,14 +1,22 @@
-import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { Database } from './auth.ts';
 import { isUuid } from '../slug.ts';
-import { scenes, stories, universes } from './db/schema.ts';
+import { scenes, stories, tags, universes } from './db/schema.ts';
 import { storyAssistantOn, storyIsLive } from './universe-scope.ts';
 import { mcpAccountEnabled, mcpInstanceEnabled } from './mcp/settings.ts';
+import { MAX_MERGE_DEPTH } from './tags.ts';
 import {
 	effectivePreferences,
+	limitChanges,
 	NO_PREFERENCES,
+	normalisePreferences,
+	type LiveWarning,
 	type PreferenceChanges,
-	type PreferenceSetting
+	type PreferenceSetting,
+	type StoredPreferences,
+	WARNING_PREFIX,
+	warningListFingerprint
 } from '../assistant-preferences.ts';
 
 // The Assistant preferences the prompts state for a piece of work, read the
@@ -17,6 +25,48 @@ import {
 // A story or universe that is gone (or in a trashed universe), or not that
 // owner's, reads as nothing set, and so, with assistantOn, does a story the
 // Assistant is muted on.
+
+// The content warnings on the admin's list as they stand, in list order: the
+// switches a writer sets content limits with. Each carries the slugs of the
+// warnings merged into it, directly or along a chain, whose limits it folds in
+// (effectivePreferences). A warning removed drops out with its limits, and so
+// do the ones merged into it; one removed after it was merged drops out of its
+// survivor's fold, and is carried apart (removed) so a limit the writer sets
+// on the survivor replaces its keys too (limitChanges).
+export async function liveWarnings(db: Database): Promise<LiveWarning[]> {
+	const rows = await db
+		.select({
+			id: tags.id,
+			name: tags.name,
+			slug: tags.slug,
+			mergedIntoId: tags.mergedIntoId,
+			removed: sql<boolean>`${tags.removedAt} is not null`
+		})
+		.from(tags)
+		.where(eq(tags.kind, 'warning'))
+		.orderBy(asc(tags.name));
+	const byId = new Map(rows.map((row) => [row.id, row]));
+	const live = new Map<string, LiveWarning>();
+	for (const row of rows) {
+		if (!row.removed && !row.mergedIntoId) {
+			live.set(row.id, { id: row.id, name: row.name, slug: row.slug, merged: [], removed: [] });
+		}
+	}
+	for (const row of rows) {
+		let at = row;
+		for (let depth = 0; at.mergedIntoId && depth < MAX_MERGE_DEPTH; depth++) {
+			const next = byId.get(at.mergedIntoId);
+			if (!next) break;
+			at = next;
+		}
+		if (at === row || at.mergedIntoId) continue;
+		// A removed warning's limits do not apply, merged or not.
+		const survivor = live.get(at.id);
+		if (row.removed) survivor?.removed?.push(row.slug);
+		else survivor?.merged.push(row.slug);
+	}
+	return [...live.values()];
+}
 
 export async function storyAssistantPreferences(
 	db: Database,
@@ -44,7 +94,8 @@ export async function storyAssistantPreferences(
 	if (!row) return NO_PREFERENCES;
 	return effectivePreferences(
 		{ preferences: row.story, notes: row.storyNotes },
-		{ preferences: row.universe, notes: row.universeNotes }
+		{ preferences: row.universe, notes: row.universeNotes },
+		await liveWarnings(db)
 	);
 }
 
@@ -63,7 +114,7 @@ export async function universePreferences(
 				isNull(universes.deletedAt)
 			)
 		);
-	return row ? effectivePreferences(null, row) : NO_PREFERENCES;
+	return row ? effectivePreferences(null, row, await liveWarnings(db)) : NO_PREFERENCES;
 }
 
 // The preferences of whatever an MCP prompt names, most specific first: a
@@ -87,6 +138,78 @@ export async function workPreferences(
 	}
 	if (valid(ids.universeId)) return universePreferences(db, ids.universeId.trim(), ownerId);
 	return NO_PREFERENCES;
+}
+
+// A story's stored preferences, read inside a transaction that copies them
+// to a new row: the warnings its limits name are share-locked first, so a
+// rename (which updates the warning, then moves the limits on every row it
+// can see) either finishes before the read or waits until the copy commits
+// and then moves the copy's limits too. A rename or an undone merge can add a
+// slug while the lock waits, so the row is read again; when it names one not
+// locked, every lock is let go and all of them are taken again in id order,
+// as in lockWarnings.
+export async function storyPreferencesForCopy(tx: Database, storyId: string): Promise<unknown> {
+	const read = async (db: Database) => {
+		const [row] = await db
+			.select({ preferences: stories.assistantPreferences })
+			.from(stories)
+			.where(eq(stories.id, storyId));
+		const preferences = row?.preferences ?? {};
+		const slugs = Object.keys(preferences as Record<string, unknown>)
+			.filter((key) => key.startsWith(WARNING_PREFIX))
+			.map((key) => key.slice(WARNING_PREFIX.length));
+		return { preferences, slugs };
+	};
+	return lockUntilSettled(tx, async (savepoint) => {
+		const { slugs } = await read(savepoint);
+		if (slugs.length > 0) {
+			await savepoint
+				.select({ id: tags.id })
+				.from(tags)
+				.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, slugs)))
+				.orderBy(asc(tags.id))
+				.for('share');
+		}
+		const now = await read(savepoint);
+		return now.slugs.some((slug) => !slugs.includes(slug)) ? RELOCK : now.preferences;
+	});
+}
+
+// Preferences from an import with the content limits this site cannot use
+// taken out: a limit on a slug that is neither a live warning nor merged into
+// one would never apply, and would come back to life if a warning by that
+// name were added later. Inside a transaction the warnings the limits name
+// are share-locked first, as in savePreferences.
+export async function usableContentLimits(
+	db: Database,
+	preferences: StoredPreferences
+): Promise<{ preferences: StoredPreferences; dropped: number }> {
+	const slugs = Object.keys(preferences)
+		.filter((key) => key.startsWith(WARNING_PREFIX))
+		.map((key) => key.slice(WARNING_PREFIX.length));
+	if (slugs.length === 0) return { preferences, dropped: 0 };
+	await db
+		.select({ id: tags.id })
+		.from(tags)
+		.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, slugs)))
+		.orderBy(asc(tags.id))
+		.for('share');
+	const usable = new Set(
+		(await liveWarnings(db)).flatMap((warning) => [warning.slug, ...warning.merged])
+	);
+	const kept = Object.fromEntries(
+		Object.entries(preferences).filter(
+			([key]) => !key.startsWith(WARNING_PREFIX) || usable.has(key.slice(WARNING_PREFIX.length))
+		)
+	) as StoredPreferences;
+	return { preferences: kept, dropped: slugs.filter((slug) => !usable.has(slug)).length };
+}
+
+// The import notice for limits usableContentLimits took out.
+export function droppedLimitsProblem(dropped: number): string {
+	return dropped === 1
+		? "story.md: one Assistant content limit is for a content warning this site's list does not have, so it was left off."
+		: `story.md: ${dropped} Assistant content limits are for content warnings this site's list does not have, so they were left off.`;
 }
 
 // Whether the settings pages show the preferences form: wherever the
@@ -119,45 +242,142 @@ function mergedPreferences(
 	return sql`(${merged} - array[${keys}]::text[])`;
 }
 
-// Saves the preferences form of a story or a universe the caller owns.
-// Returns false when there is no such live row of theirs. Notes left
-// undefined (the post did not carry the field) are kept.
+// The notice an outdated form's save answers with (see readPreferencesForm).
+export const OUTDATED_WARNINGS =
+	'Your other changes are saved. The list of content warnings has changed, so your content limits were not changed. Reload the page to set them.';
+
+// Share-locks the warnings with these slugs and the warnings merged into
+// them, in one statement in id order. A merge into one that committed while
+// the lock waited is missed by that statement, so a plain read checks for new
+// rows afterwards; when there are any, every lock taken is let go (the
+// savepoint is rolled back) and the whole set is locked again, so a lock on a
+// lower id is never awaited while a higher one is held (an undone merge takes
+// its rows in id order too).
+const RELOCK = Symbol('relock');
+// Runs an attempt under a savepoint. One that answers RELOCK is rolled back,
+// which lets go of every lock it took, and runs again.
+async function lockUntilSettled<T>(
+	tx: Database,
+	attempt: (savepoint: Database) => Promise<T | typeof RELOCK>
+): Promise<T> {
+	for (;;) {
+		try {
+			return await tx.transaction(async (savepoint) => {
+				const result = await attempt(savepoint);
+				if (result === RELOCK) throw RELOCK;
+				return result;
+			});
+		} catch (error) {
+			if (error !== RELOCK) throw error;
+		}
+	}
+}
+async function lockWarnings(tx: Database, slugs: string[]): Promise<void> {
+	const posted = alias(tags, 'posted');
+	const matching = (db: Database) =>
+		db
+			.select({ id: tags.id })
+			.from(tags)
+			.where(
+				and(
+					eq(tags.kind, 'warning'),
+					or(
+						inArray(tags.slug, slugs),
+						inArray(
+							tags.mergedIntoId,
+							db
+								.select({ id: posted.id })
+								.from(posted)
+								.where(and(eq(posted.kind, 'warning'), inArray(posted.slug, slugs)))
+						)
+					)
+				)
+			)
+			.orderBy(asc(tags.id));
+	await lockUntilSettled(tx, async (savepoint) => {
+		const locked = new Set((await matching(savepoint).for('share')).map(({ id }) => id));
+		const now = await matching(savepoint);
+		return now.some(({ id }) => !locked.has(id)) ? RELOCK : undefined;
+	});
+}
+
+// Saves the preferences form of a story or a universe the caller owns:
+// 'missing' when there is no such live row of theirs. Notes left undefined
+// (the post did not carry the field) are kept. The form posts only the limits
+// the writer changed, with the warning list it was built from (warningList,
+// see warningListFingerprint). Those limits are checked against the live
+// warnings read after a share lock on the posted warnings' rows and the rows
+// of the warnings merged into them (removed or not), then the lock on the
+// row being saved: when the list differs from the form's, or a posted slug is
+// no longer live, no limit is changed ('outdated'), so a limit is never
+// stored against a list the writer did not see. The share locks hold off a
+// rename, removal, restore or merge of a posted warning or of one merged into
+// it, and a merge into or out of one (mergeTag and unmergeTag lock the
+// survivor too). The tag locks come first, in id order, then the row's, the
+// order a rename (its tag row, then the limits it moves) and an undone merge
+// take them in, so none of them deadlock: a rename of a posted or merged
+// warning has landed before this save reads the row and the list, or waits
+// for it.
+//
+// The form shows each warning's limit folded with the ones merged into it (on
+// a story, read over its universe's), and a limit the writer changed replaces
+// this row's limits on the merged warnings too (limitChanges).
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
 	target: { storyId: string } | { universeId: string },
-	input: { changes: PreferenceChanges; notes: string | null | undefined }
-): Promise<boolean> {
+	input: {
+		changes: PreferenceChanges;
+		notes: string | null | undefined;
+		warningList?: string;
+	}
+): Promise<'saved' | 'missing' | 'outdated'> {
 	const notes = input.notes === undefined ? {} : { assistantNotes: input.notes };
-	const saved =
-		'storyId' in target
-			? await db
-					.update(stories)
-					.set({
-						assistantPreferences: mergedPreferences(stories.assistantPreferences, input.changes),
-						...notes
-					})
-					.where(
-						and(
-							eq(stories.id, target.storyId),
-							eq(stories.ownerId, ownerId),
-							isNull(stories.deletedAt)
-						)
-					)
-					.returning({ id: stories.id })
-			: await db
-					.update(universes)
-					.set({
-						assistantPreferences: mergedPreferences(universes.assistantPreferences, input.changes),
-						...notes
-					})
-					.where(
-						and(
-							eq(universes.id, target.universeId),
-							eq(universes.ownerId, ownerId),
-							isNull(universes.deletedAt)
-						)
-					)
-					.returning({ id: universes.id });
-	return saved.length > 0;
+	const table = 'storyId' in target ? stories : universes;
+	const owned = and(
+		'storyId' in target ? eq(stories.id, target.storyId) : eq(universes.id, target.universeId),
+		eq(table.ownerId, ownerId),
+		isNull(table.deletedAt)
+	);
+	return db.transaction(async (tx) => {
+		let changes = input.changes;
+		let outdated = false;
+		const limitSlugs = Object.keys(changes)
+			.filter((key) => key.startsWith(WARNING_PREFIX))
+			.map((key) => key.slice(WARNING_PREFIX.length));
+		if (limitSlugs.length > 0) {
+			await lockWarnings(tx, limitSlugs);
+			const [row] = await tx
+				.select({ preferences: table.assistantPreferences })
+				.from(table)
+				.where(owned)
+				.for('update');
+			if (!row) return 'missing';
+			const warnings = await liveWarnings(tx);
+			const live = new Set(warnings.map(({ slug }) => slug));
+			outdated =
+				input.warningList !== warningListFingerprint(warnings) ||
+				limitSlugs.some((slug) => !live.has(slug));
+			changes = outdated
+				? (Object.fromEntries(
+						Object.entries(changes).filter(([key]) => !key.startsWith(WARNING_PREFIX))
+					) as PreferenceChanges)
+				: limitChanges(
+						changes,
+						normalisePreferences(row.preferences),
+						warnings,
+						'storyId' in target
+					);
+		}
+		const saved = await tx
+			.update(table)
+			.set({
+				assistantPreferences: mergedPreferences(table.assistantPreferences, changes),
+				...notes
+			})
+			.where(owned)
+			.returning({ id: table.id });
+		if (saved.length === 0) return 'missing';
+		return outdated ? 'outdated' : 'saved';
+	});
 }

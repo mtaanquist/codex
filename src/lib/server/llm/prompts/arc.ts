@@ -7,7 +7,11 @@
 // The arc states no language: its request is the fingerprint that says
 // whether a stored arc is current, so naming the language would mark every
 // arc out of date when the setting changed. It is written from scene
-// summaries, which already follow the story's language.
+// summaries, which already follow the story's language. Its fingerprint is
+// taken from the short request whatever the length, for the same reason (see
+// arcRequests).
+
+import type { SummaryLength } from './summary.ts';
 
 export type ArcScene = {
 	storyTitle: string;
@@ -16,7 +20,11 @@ export type ArcScene = {
 	text: string;
 };
 
-export function buildArcMessage(name: string, scenes: ArcScene[]): string {
+export function buildArcMessage(
+	name: string,
+	scenes: ArcScene[],
+	length: SummaryLength = 'short'
+): string {
 	const lines = scenes.map((scene, i) => {
 		const where = [scene.storyTitle, scene.sceneTitle ?? ''].filter(Boolean).join(' / ');
 		return `${i + 1}. [${where}] ${scene.text}`;
@@ -24,7 +32,7 @@ export function buildArcMessage(name: string, scenes: ArcScene[]): string {
 	return [
 		`Write a short account of what happens to the character "${name}" across these stories, in the order given.`,
 		'Cover where they start, what changes for them, and where they are at the end of the latest scene. Use only what the scenes below support; never invent events.',
-		'Reply with only the account, in plain prose of at most five sentences - no preamble, no heading, no list. When the scenes span more than one story, name the story at each turn.',
+		`Reply with only the account, in plain prose of ${length === 'detailed' ? 'one or two short paragraphs' : 'at most five sentences'} - no preamble, no heading, no list. When the scenes span more than one story, name the story at each turn.`,
 		'Write in the same language as the scenes.',
 		'',
 		'---',

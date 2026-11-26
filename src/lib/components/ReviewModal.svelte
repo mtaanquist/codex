@@ -1,5 +1,13 @@
 <script lang="ts">
-	import { NO_PRICE_NOTE, capNotAppliedNote, money, overWarnNote } from '#lib/cost-notes';
+	import {
+		NO_PRICE_NOTE,
+		capNotAppliedNote,
+		estimateCostNote,
+		money,
+		overCapNote,
+		overLimit,
+		overWarnNote
+	} from '#lib/cost-notes';
 	import { resolve } from '$app/paths';
 	import { modal } from '#lib/modal';
 	import { capContinueAdvice, capStopPhrase, formatNumber } from '#lib/format';
@@ -109,17 +117,18 @@
 		webSearch?: true;
 		// Web search is on and the room the cap keeps for one request is already
 		// more than the cap: the review stops at that request. overCapAt names
-		// the part of the review it is in.
+		// the part of the review it is in. Only each request's first round is
+		// checked, so the run can stop sooner, which the note says.
 		overCap?: true;
 		overCapAt?: 'scene' | 'continuity' | 'habits';
 	};
 
 	// Where a review held at the cap stops, in the names the options carry.
 	const OVER_CAP_STOP: Record<'scene' | 'continuity' | 'habits', string> = {
-		scene: 'at its first scene',
+		scene: 'at its longest scene, or sooner',
 		continuity:
-			'when it starts comparing the scenes to each other (the cross-scene consistency pass)',
-		habits: 'when it starts to look for habits that repeat in the prose'
+			'when it starts comparing the scenes to each other (the cross-scene consistency pass), or sooner',
+		habits: 'while it looks for habits that repeat in the prose'
 	};
 
 	// The estimate is advisory: anything that does not carry the two figures the
@@ -174,7 +183,7 @@
 	let estimate = $state<Estimate | null>(null);
 	let estimating = $state(false);
 	const warned = $derived(
-		estimate?.estCostUsd !== undefined && estimate.estCostUsd > estimate.warnUsd
+		estimate?.estCostUsd !== undefined && overLimit(estimate.estCostUsd, estimate.warnUsd)
 	);
 
 	function close() {
@@ -479,10 +488,7 @@
 						{/if}
 						{#if estimate.estCostUsd !== undefined}
 							<p class="rm-note">
-								That is about ${money(estimate.estCostUsd)} to send{estimate.estCompletionCostUsd !==
-								undefined
-									? `, plus about $${money(estimate.estCompletionCostUsd)} for the replies.`
-									: "; the model's replies cost extra."}
+								{estimateCostNote(estimate.estCostUsd, estimate.estCompletionCostUsd)}
 							</p>
 						{:else}
 							<p class="rm-note">{NO_PRICE_NOTE}</p>
@@ -505,6 +511,9 @@
 									: ''}
 							</p>
 						{/if}
+						{#if !(estimate.webSearch && estimate.overCap) && estimate.capUsd !== undefined && estimate.capEnforceable && estimate.estCostUsd !== undefined && overLimit(estimate.estCostUsd, estimate.capUsd)}
+							<p class="rm-note">{overCapNote(estimate.capUsd)}</p>
+						{/if}
 						{#if warned}
 							<p class="rm-note">
 								{overWarnNote(estimate.warnUsd)} Review a chapter at a time to spend less.
@@ -512,7 +521,7 @@
 						{/if}
 					</div>
 				{:else}
-					<fieldset class="rm-group">
+					<fieldset class="field-set rm-group">
 						<legend>What to review</legend>
 						{#each levels as option (option.id)}
 							<label class="choice">
@@ -522,7 +531,7 @@
 						{/each}
 					</fieldset>
 
-					<fieldset class="rm-group">
+					<fieldset class="field-set rm-group">
 						<legend>What to check</legend>
 						<label class="choice">
 							<input type="checkbox" bind:checked={general} disabled={categories.length > 0} />
@@ -624,19 +633,12 @@
 		margin-left: 24px;
 	}
 	/* The overlay, panel, head and footer come from the modal primitive; what is
-	   left here is the shape of the two option groups. */
+	   left here is the spacing of the two option groups. */
 	.rm-group {
-		border: 0;
-		margin: 0 0 14px;
-		padding: 0;
+		margin-bottom: 14px;
 	}
-	.rm-group legend {
-		padding: 0;
+	.rm-group > legend {
 		margin-bottom: 7px;
-		font-size: var(--text-micro);
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-faint);
 	}
 	.rm-note {
 		margin: 8px 0 0;

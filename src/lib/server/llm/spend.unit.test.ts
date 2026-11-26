@@ -114,6 +114,13 @@ describe('SpendMeter', () => {
 		expect(custom.spentUsd).toBeCloseTo(1, 10);
 	});
 
+	it('meters a request at the provider it went to, over the one the run started on', () => {
+		const usage = { promptTokens: 1000, completionTokens: 0, cachedPromptTokens: 900 };
+		const meter = new SpendMeter({ pricing, capUsd: 1, provider: 'anthropic' });
+		meter.record('priced', usage, undefined, 'openai');
+		expect(meter.spentUsd).toBeCloseTo(0.55, 10);
+	});
+
 	it('accrues cost and reaches the cap', () => {
 		const meter = new SpendMeter({ pricing, capUsd: 0.5 });
 		meter.record('priced', { promptTokens: 100, completionTokens: 10 });
@@ -216,6 +223,26 @@ describe('SpendMeter', () => {
 	it('says the cap was not fully applied when one request reported no counts (#1125)', () => {
 		expect(CAP_NOT_APPLIED_NO_USAGE_MESSAGE).toMatch(/for every request/);
 		expect(CAP_NOT_APPLIED_NO_USAGE_MESSAGE).toMatch(/not be fully applied/);
+	});
+});
+
+describe('SpendMeter at the price a request was sent at', () => {
+	const usage = { promptTokens: 100, completionTokens: 0 };
+
+	it('meters and checks at the passed price over the one it was built with', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 1 });
+		const raised = { prompt: 0.004, completion: 0.002 };
+		meter.record('priced', usage, raised);
+		expect(meter.spentUsd).toBeCloseTo(0.4, 10);
+		expect(meter.wouldPassCap('priced', usage, raised)).toBe(false);
+		expect(meter.wouldPassCap('priced', { ...usage, promptTokens: 200 }, raised)).toBe(true);
+		expect(meter.exceedsCap('priced', { ...usage, promptTokens: 300 }, raised)).toBe(true);
+	});
+
+	it('falls back to the price it was built with when none is passed', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 1 });
+		meter.record('priced', usage, undefined);
+		expect(meter.spentUsd).toBeCloseTo(0.1, 10);
 	});
 });
 
