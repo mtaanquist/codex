@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { actionKeepingQuery } from '#lib/href';
+	import FormStatus from '#lib/components/FormStatus.svelte';
 	import TagList from './TagList.svelte';
 
 	// A moderation page for one curated list (fandoms, genres, content
@@ -37,6 +38,16 @@
 		lede: string;
 		placeholder: string;
 	} = $props();
+
+	const addResult = $derived.by(() => {
+		if (form?.scope !== 'add' || !form.added) return null;
+		let text = `Added ${form.added.length}.`;
+		if (form.skipped?.length) text += ` Already on the list: ${form.skipped.join(', ')}.`;
+		if (form.removed?.length) {
+			text += ` Removed earlier, restore them below to use them again: ${form.removed.join(', ')}.`;
+		}
+		return text;
+	});
 </script>
 
 <div class="admin-head">
@@ -56,12 +67,8 @@
 		<form method="POST" action={actionKeepingQuery('add', page.url.searchParams)}>
 			{#if form?.scope === 'add' && form.message}
 				<p class="form-error" role="alert">{form.message}</p>
-			{:else if form?.scope === 'add' && form.added}
-				<p class="field-hint" role="status" style="color:var(--status-final-ink);margin-top:0;">
-					Added {form.added.length}.{#if form.skipped?.length}
-						Already on the list: {form.skipped.join(', ')}.{/if}{#if form.removed?.length}
-						Removed earlier, restore them below to use them again: {form.removed.join(', ')}.{/if}
-				</p>
+			{:else}
+				<FormStatus success={addResult} block />
 			{/if}
 			<div class="field">
 				<label for="list-names">Names</label>
