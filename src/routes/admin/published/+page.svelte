@@ -91,7 +91,9 @@
 											: 'hidden after a cancelled account deletion'}
 									</span>{/if}
 								{#if edition.isAdult}<span class="pill">adult</span>{/if}
-								{#if edition.listedInBrowse}<span class="pill">listed in Browse</span>{/if}
+								{#if edition.listedInBrowse && !edition.hiddenAt}<span class="pill">
+										listed in Browse
+									</span>{/if}
 								{#if edition.browseBlockedAt}<span class="pill">removed from Browse</span>{/if}
 							</div>
 							<div class="list-sub">
