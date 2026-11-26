@@ -26,9 +26,10 @@
 	<p class="admin-eyebrow">Moderation</p>
 	<h1 class="admin-title">Published editions</h1>
 	<p class="admin-lede">
-		Everything writers have made public. Take an edition down to remove it from the public pages.
-		Open a title to read the edition, also after it is taken down. Reports from readers are under
-		Reports.
+		The latest edition of every story writers have published, unless it is taken down. That includes
+		stories since made private or moved to the trash, and editions hidden by an account deletion.
+		Take an edition down to remove it from the public pages. Open a title to read the edition, also
+		after it is taken down. Reports from readers are under Reports.
 	</p>
 </div>
 
@@ -108,7 +109,7 @@
 						</div>
 						<div class="list-actions">
 							{#if edition.viewable}
-								<TakedownForm id={edition.id} title={edition.title} />
+								<TakedownForm id={edition.id} title={edition.title} readable={edition.readable} />
 							{/if}
 							{#if edition.listedInBrowse}
 								<TakedownForm mode="browse" id={edition.storyId} title={edition.title} />
@@ -199,7 +200,7 @@
 								{/if}
 							</div>
 							<div class="list-sub">
-								taken down {formatDate(edition.removedAt!, page.data.timeZone)}{byName(
+								taken down {formatDate(edition.takenDownAt!, page.data.timeZone)}{byName(
 									edition.removedByName
 								)}, reason: {reportReasonLabel(edition.removedReason)}
 							</div>

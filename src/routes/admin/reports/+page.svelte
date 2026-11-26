@@ -72,7 +72,10 @@
 									id={report.publicationId}
 									title={report.title}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
+									reportId={report.id}
 									newer={report.newerEdition}
+									current={report.editionCurrent}
+									readable={report.editionReadable}
 								/>
 							{/if}
 							{#if report.listedInBrowse && !report.browseBlockedAt}

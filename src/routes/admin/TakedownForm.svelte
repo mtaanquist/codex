@@ -14,30 +14,45 @@
 		reason = 'other',
 		mode = 'takedown',
 		reportId = null,
-		newer = null
+		newer = null,
+		current = true,
+		readable = true
 	}: {
 		id: string;
 		title: string;
 		reason?: ReportReason;
 		mode?: 'takedown' | 'browse';
-		// From the report queue: the report a Browse removal answers, which closes.
+		// From the report queue: the report the moderator is acting on. A Browse
+		// removal closes it; a takedown closes every report on the story anyway
+		// and sends it only so a refusal can say the report was closed meanwhile.
 		reportId?: string | null;
 		// A takedown of a replaced edition takes the story's current one down
 		// too: 'up' when readers can open it, 'hidden' when the writer's account
 		// deletion hides it, 'closed' when readers cannot open it anyway.
 		newer?: 'up' | 'hidden' | 'closed' | null;
+		// Whether the edition is the story's current one, and whether readers
+		// can open it right now, so the dialog says what the takedown changes.
+		current?: boolean;
+		readable?: boolean;
 	} = $props();
 
 	const takedown = $derived(mode === 'takedown');
 	const label = $derived(takedown ? 'Take down' : 'Remove from Browse');
-	const takedownEffect = $derived(
+	const newerEffect = $derived(
 		newer === 'up'
-			? 'Readers can no longer open this edition or the newer one that replaced it.'
+			? ' The newer edition that replaced it is taken down too, so readers can no longer open the story.'
 			: newer === 'hidden'
-				? "Readers can no longer open this edition. The newer edition that replaced it, which the writer's account deletion hid, is taken down too."
+				? " The newer edition that replaced it, which the writer's account deletion hid, is taken down too."
 				: newer === 'closed'
-					? 'Readers can no longer open this edition. The newer edition that replaced it is taken down too.'
-					: 'Readers can no longer open this edition.'
+					? ' The newer edition that replaced it is taken down too.'
+					: ''
+	);
+	const takedownEffect = $derived(
+		readable
+			? 'Readers can no longer open this edition.'
+			: !current
+				? `This older edition is already off the public pages.${newerEffect}`
+				: 'Readers cannot open this edition right now. The takedown keeps it off the public pages.'
 	);
 </script>
 

@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import { publicationReports, publications, stories, users } from './db/schema';
 import { notifyUsers } from './notify';
 import { storyIsLive } from './universe-scope';
+import { readersCanOpen } from './publication-scope';
 import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/report-reasons';
 
 // Readers report a published edition; admins and moderators work the queue.
@@ -89,6 +90,9 @@ export async function listOpenReports(db: Database, limit = 100) {
 				'up' | 'hidden' | 'closed' | null
 			>`(select case when c.removed_at is not null then 'hidden' when ${stories.visibility} <> 'private' and ${storyIsLive()} and ${stories.ownerId} = c.owner_id and exists (select 1 from ${users} o where o.id = c.owner_id and o.suspended_at is null) then 'up' else 'closed' end from ${publications} c where c.story_id = ${publications.storyId} and c.is_current and c.removed_reason is null and c.id <> ${publications.id} limit 1)`,
 			editionRemovedAt: publications.removedAt,
+			editionCurrent: publications.isCurrent,
+			// Whether readers can open the reported edition right now.
+			editionReadable: readersCanOpen(),
 			// Set only by a moderator's takedown, not by account deletion.
 			editionRemovedReason: publications.removedReason,
 			// An edition down with no reason was hidden by the owner's account
@@ -120,12 +124,38 @@ export async function dismissReport(
 	reportId: string,
 	resolvedBy: string
 ): Promise<boolean> {
-	const updated = await db
-		.update(publicationReports)
-		.set({ resolvedAt: sql`now()`, resolvedBy, resolution: 'dismissed' })
-		.where(and(eq(publicationReports.id, reportId), isNull(publicationReports.resolvedAt)))
-		.returning({ id: publicationReports.id });
-	return updated.length > 0;
+	return await db.transaction(async (tx) => {
+		const [report] = await tx
+			.select({ storyId: publications.storyId })
+			.from(publicationReports)
+			.innerJoin(publications, eq(publications.id, publicationReports.publicationId))
+			.where(eq(publicationReports.id, reportId));
+		if (!report) return false;
+		// The lock takedownPublication takes before it checks the report is
+		// open, so a takedown and a dismissal of the same report run one after
+		// the other and the second sees what the first did.
+		await tx
+			.select({ id: stories.id })
+			.from(stories)
+			.where(eq(stories.id, report.storyId))
+			.for('update');
+		const updated = await tx
+			.update(publicationReports)
+			.set({ resolvedAt: sql`now()`, resolvedBy, resolution: 'dismissed' })
+			.where(and(eq(publicationReports.id, reportId), isNull(publicationReports.resolvedAt)))
+			.returning({ id: publicationReports.id });
+		return updated.length > 0;
+	});
+}
+
+// Whether a report exists and is closed, so a refused takedown from the
+// queue can say another moderator closed it.
+export async function reportClosed(db: Database, reportId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publicationReports.id })
+		.from(publicationReports)
+		.where(and(eq(publicationReports.id, reportId), isNotNull(publicationReports.resolvedAt)));
+	return Boolean(row);
 }
 
 // The most recent closed reports, for the queue's history.

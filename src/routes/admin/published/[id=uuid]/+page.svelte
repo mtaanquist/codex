@@ -41,7 +41,7 @@
 		</p>
 		{#if edition.removedReason}
 			<p class="admin-block-sub">
-				Taken down {formatDate(edition.removedAt!, timeZone)}{edition.removedByName
+				Taken down {formatDate(edition.takenDownAt!, timeZone)}{edition.removedByName
 					? ` by ${edition.removedByName}`
 					: ''}, reason: {reportReasonLabel(edition.removedReason)}. Readers cannot open it.
 			</p>
