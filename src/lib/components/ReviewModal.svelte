@@ -513,7 +513,7 @@
 						{/if}
 					</div>
 				{:else}
-					<fieldset class="rm-group">
+					<fieldset class="field-set rm-group">
 						<legend>What to review</legend>
 						{#each levels as option (option.id)}
 							<label class="choice">
@@ -523,7 +523,7 @@
 						{/each}
 					</fieldset>
 
-					<fieldset class="rm-group">
+					<fieldset class="field-set rm-group">
 						<legend>What to check</legend>
 						<label class="choice">
 							<input type="checkbox" bind:checked={general} disabled={categories.length > 0} />
@@ -625,19 +625,12 @@
 		margin-left: 24px;
 	}
 	/* The overlay, panel, head and footer come from the modal primitive; what is
-	   left here is the shape of the two option groups. */
+	   left here is the spacing of the two option groups. */
 	.rm-group {
-		border: 0;
-		margin: 0 0 14px;
-		padding: 0;
+		margin-bottom: 14px;
 	}
-	.rm-group legend {
-		padding: 0;
+	.rm-group > legend {
 		margin-bottom: 7px;
-		font-size: var(--text-micro);
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-faint);
 	}
 	.rm-note {
 		margin: 8px 0 0;

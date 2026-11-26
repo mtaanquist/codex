@@ -18,6 +18,7 @@ import {
 	type SurveyScene
 } from './review';
 import type { ReviewCategory } from '../../../review-shape';
+import { NO_PREFERENCES } from '../../../assistant-preferences';
 
 // The capped-run settings key keys on the native language only where this
 // says the prompts read it, so it must match what a scene's review says.
@@ -338,6 +339,18 @@ describe('buildConfirmMessage', () => {
 		expect(message).toContain('The harbour lay east.');
 		expect(message).toContain('[story: Second Dawn]');
 		expect(message).toContain('discarded');
+	});
+
+	it("states the writer's reasons choice for a staged edit, and nothing when it is not set", () => {
+		const never = { ...NO_PREFERENCES, editReasons: 'never' as const };
+		expect(buildConfirmMessage('claim', [], 100, never)).toContain(
+			'When you suggest an edit: Leave out the reason'
+		);
+		expect(buildContinuityBrief({ scope: 'universe', preferences: never })).toContain(
+			'When you suggest an edit: Leave out the reason'
+		);
+		expect(buildConfirmMessage('claim', [], 100)).not.toContain('When you suggest an edit');
+		expect(buildContinuityBrief({ scope: 'universe' })).not.toContain('When you suggest an edit');
 	});
 
 	it('caps a long body and marks the cut', () => {

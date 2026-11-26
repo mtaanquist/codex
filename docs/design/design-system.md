@@ -453,6 +453,10 @@ primitive's own class too, but do not copy the pattern.
 
 - Wrapper: `.field` with a `<label>`, optional `.field-hint`, laid out with
   `.field-grid` when two-up. Action row: `.settings-actions`.
+- A group of fields under a heading: a `<fieldset class="field-set">` whose
+  `<legend>` is the small uppercase heading (the review window's options, the
+  Assistant preferences). Do not restyle the legend locally; set only the
+  spacing between groups.
 - Controls: `.input`, `.textarea`, `.select`, `.toggle` inside `.toggle-row`
   (its checkbox has no visible label of its own, so give it an `aria-label`
   matching the row title),

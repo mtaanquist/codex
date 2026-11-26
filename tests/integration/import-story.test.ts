@@ -465,7 +465,19 @@ describe('runImport', () => {
 		const settings = {
 			styleNotes: 'Epic fantasy serial,\nomniscient narrator.',
 			language: 'en-GB',
-			assistantPreferences: { quoteMarks: 'single', tense: 'past', epithets: 'leave' },
+			assistantPreferences: {
+				quoteMarks: 'single',
+				tense: 'past',
+				epithets: 'leave',
+				feedback: 'thorough',
+				editReasons: 'never',
+				summaryLength: 'detailed',
+				draftWords: 1800,
+				useUniverseNotes: 'no',
+				// A slug may hold a colon; the line splits at the last one.
+				'warning:graphic:violence': 'avoid',
+				'warning:death': 'write'
+			},
 			assistantNotes: 'Keep "ye" and "thee".\n\nLeave the dialect alone.'
 		};
 		await db.update(stories).set(settings).where(eq(stories.id, original.id));

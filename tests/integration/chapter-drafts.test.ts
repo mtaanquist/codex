@@ -386,6 +386,14 @@ describe('the chapter brief form', () => {
 		]);
 	});
 
+	it("starts from the story's default draft length", async () => {
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { draftWords: 1200 } })
+			.where(eq(stories.id, storyId));
+		expect((await chapterDraftDefaults(db, scope()))?.targetWords).toBe(1200);
+	});
+
 	it('does not offer a summary the Assistant wrote before the scene last changed', async () => {
 		await pool.query(
 			`update scenes set summary_generated_at = updated_at - interval '1 hour' where id = $1`,

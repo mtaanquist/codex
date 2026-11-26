@@ -329,6 +329,23 @@ describe('the brief form', () => {
 		expect(defaults?.targetWords).toBe(800);
 	});
 
+	it("starts from the story's default draft length, else the universe's", async () => {
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { draftWords: 1500 } })
+			.where(eq(universes.id, universeId));
+		expect(
+			(await sceneDraftDefaults(db, { userId: ownerId, storyId, sceneId: target }))?.targetWords
+		).toBe(1500);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { draftWords: 2200 } })
+			.where(eq(stories.id, storyId));
+		expect(
+			(await sceneDraftDefaults(db, { userId: ownerId, storyId, sceneId: target }))?.targetWords
+		).toBe(2200);
+	});
+
 	it('does not offer a summary the Assistant wrote before the scene last changed', async () => {
 		await pool.query(
 			`update scenes set summary_generated_at = updated_at - interval '1 hour' where id = $1`,

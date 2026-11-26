@@ -167,7 +167,7 @@ describe('renderFrame', () => {
 		});
 		const world = text.indexOf('## World: Vael');
 		const language = text.indexOf('The story is written in');
-		const style = text.indexOf('House style for this story:');
+		const style = text.indexOf('House style:');
 		expect(language).toBeGreaterThan(text.indexOf('Literary.'));
 		expect(style).toBeGreaterThan(language);
 		expect(world).toBeGreaterThan(style);
@@ -197,7 +197,7 @@ describe('renderFrame', () => {
 				}
 			}
 		});
-		const style = text.indexOf('House style for this story:');
+		const style = text.indexOf('House style:');
 		const leave = text.indexOf('unless the writer asks about them');
 		const begin = text.indexOf(NOTES_BEGIN);
 		const note = text.indexOf('I like long sentences.');

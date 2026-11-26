@@ -1,11 +1,12 @@
 import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { storyTags, tags, universes } from './db/schema.ts';
+import { stories, storyTags, tags, universes } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
 import { pageIndex } from './paging.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
 import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
+import { warningKey } from '../assistant-preferences.ts';
 
 // Free-form tags and the curated lists (fandoms, genres, content warnings).
 // Reads always follow a merge to the surviving entry and hide removed ones, so
@@ -517,8 +518,46 @@ export async function mergeTag(
 			.update(tags)
 			.set({ mergedIntoId: target.id })
 			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
+		if (source.kind === 'warning') {
+			const moved = locked.filter((row) => row.id === source.id || row.mergedIntoId === source.id);
+			await carryContentLimits(
+				tx,
+				moved.map((row) => row.slug),
+				target.slug
+			);
+		}
 		return { ok: true };
 	});
+}
+
+// A writer's content limits (Assistant preferences) on warnings merged away
+// carry over to the surviving warning wherever none is set on it yet, the more
+// careful limit winning when the merged ones differ. The old keys stay, so an
+// undone merge keeps them.
+async function carryContentLimits(tx: Database, fromSlugs: string[], toSlug: string) {
+	if (fromSlugs.length === 0) return;
+	const from = sql`array[${sql.join(
+		fromSlugs.map((slug) => sql`${warningKey(slug)}`),
+		sql`, `
+	)}]::text[]`;
+	const to = warningKey(toSlug);
+	const carry = (
+		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
+	) => ({
+		set: sql`${column} || jsonb_build_object(${to}::text, case when exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid') then 'avoid' else 'write' end)`,
+		where: sql`not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k in ('avoid', 'write'))`
+	});
+	// updated_at is kept as it was: this is the site's change, not the writer's.
+	const story = carry(stories.assistantPreferences);
+	await tx
+		.update(stories)
+		.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
+		.where(story.where);
+	const universe = carry(universes.assistantPreferences);
+	await tx
+		.update(universes)
+		.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
+		.where(universe.where);
 }
 
 // The entry a tag's merges end at (the tag itself when it is not merged).
