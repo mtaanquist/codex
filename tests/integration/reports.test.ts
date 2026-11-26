@@ -239,8 +239,8 @@ describe('the queue', () => {
 		expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/taken down/) });
 		expect(await db.select().from(publications)).toHaveLength(1);
 
-		expect(await restorePublication(db, publicationId)).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(false);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
 
@@ -250,7 +250,7 @@ describe('the queue', () => {
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
-		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await restorePublication(db, publicationId, null)).toBe(false);
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
@@ -263,11 +263,11 @@ describe('the queue', () => {
 			.where(eq(publications.id, publicationId));
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
 		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(false);
+		expect(await restorePublication(db, publicationId, null)).toBe(false);
 
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(false);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		// The restore lifts the hold but does not make the edition public; the
 		// writer publishes again if they want it back.
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
@@ -279,7 +279,7 @@ describe('the queue', () => {
 		expect(await takedownPublication(db, publicationId, mod.id, 'spam')).toBe(true);
 		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
 	});
 
@@ -298,7 +298,7 @@ describe('the queue', () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await legacyDeletionHide();
 		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
 	});
 
@@ -323,9 +323,9 @@ describe('the queue', () => {
 
 		await pool.query(repairSql);
 		await takedownPublication(db, publicationId, mod.id, 'copyright');
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
-		expect(await restorePublication(db, second.publicationId)).toBe(true);
+		expect(await restorePublication(db, second.publicationId, null)).toBe(true);
 		const [up] = await db
 			.select()
 			.from(publications)
@@ -351,7 +351,7 @@ describe('the queue', () => {
 
 		await pool.query(repairSql);
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
-		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await restorePublication(db, publicationId, null)).toBe(true);
 		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
 	});
 
@@ -380,7 +380,7 @@ describe('the queue', () => {
 				[author.id]
 			);
 			let settled = false;
-			const restoring = restorePublication(db, publicationId).then((value) => {
+			const restoring = restorePublication(db, publicationId, null).then((value) => {
 				settled = true;
 				return value;
 			});
