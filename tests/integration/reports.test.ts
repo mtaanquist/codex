@@ -594,6 +594,41 @@ describe('the report form', () => {
 		expect(await report({ reason: 'spam' }, '198.51.100.1')).toEqual({ sent: true });
 	});
 
+	it('refuses a report on an edition other than the one the page showed', async () => {
+		expect(
+			await report({ reason: 'spam', editionId: '00000000-0000-4000-8000-000000000000' })
+		).toMatchObject({ status: 409 });
+		expect(await report({ reason: 'spam', editionId: publicationId })).toEqual({ sent: true });
+		expect(await countOpenReports(db)).toBe(1);
+	});
+
+	it('does not thank the reader when the story went private while the report was filed', async () => {
+		const [edition] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		const client = await pool.connect();
+		try {
+			// The writer's save holds the story row; the report waits on it.
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [edition.storyId]);
+			const filing = report({ reason: 'spam' });
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			await client.query(`update stories set visibility = 'private' where id = $1`, [
+				edition.storyId
+			]);
+			await client.query('commit');
+			expect(await filing).toMatchObject({
+				status: 409,
+				data: { message: 'This story is no longer available, so your report was not sent.' }
+			});
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		expect(await countOpenReports(db)).toBe(0);
+	});
+
 	it('is a 404 for a story readers cannot open', async () => {
 		await takedownPublication(db, publicationId, null, 'other');
 		try {

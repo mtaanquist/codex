@@ -117,7 +117,7 @@
 									readable={edition.readable}
 								/>
 							{/if}
-							{#if edition.listedInBrowse}
+							{#if edition.viewable && edition.listedInBrowse}
 								<TakedownForm
 									mode="browse"
 									id={edition.storyId}

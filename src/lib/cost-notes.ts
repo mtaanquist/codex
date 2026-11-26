@@ -13,3 +13,12 @@ export function capNotAppliedNote(capUsd: number): string {
 export function overWarnNote(warnUsd: number): string {
 	return `That is more than your warning limit of $${money(warnUsd)}.`;
 }
+
+// A review estimate: the total includes the replies, and repliesUsd is that
+// share of it.
+export function estimateCostNote(totalUsd: number, repliesUsd?: number): string {
+	const total = `That is about $${money(totalUsd)} in all`;
+	return repliesUsd === undefined
+		? total + '.'
+		: `${total}, of which about $${money(repliesUsd)} is for the replies.`;
+}

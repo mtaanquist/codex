@@ -84,6 +84,16 @@
 	// defaultValue, and reading it once keeps a refresh from writing over newer
 	// typing.
 	const initialNotes = untrack(() => values.assistantNotes ?? '');
+	// The draft length box likewise starts from the stored length, and takes a
+	// new stored length only while the writer is not in it, so a save's refresh
+	// cannot write over a length being typed.
+	const storedWords = $derived(values.draftWords ?? '');
+	const initialWords = untrack(() => storedWords);
+	let wordsNode = $state<HTMLInputElement>();
+	$effect(() => {
+		const words = storedWords;
+		if (wordsNode && document.activeElement !== wordsNode) wordsNode.value = words;
+	});
 	const fromUniverse = $derived(universeOwn ? foldedPreferences(universeOwn, warnings) : null);
 	const universeNotes = $derived(inherited ? normaliseNotes(inherited.notes) : null);
 	const id = (key: string) => `${level}-pref-${key}`;
@@ -403,7 +413,8 @@
 					name="draftWords"
 					inputmode="numeric"
 					placeholder={inheritedWords ? `${useInherited}: ${inheritedWords}` : ''}
-					value={values.draftWords ?? ''}
+					value={initialWords}
+					bind:this={wordsNode}
 				/>
 				<p class="field-hint">
 					The length a new draft starts with, from {MIN_DRAFT_WORDS} to {MAX_DRAFT_WORDS}. You can

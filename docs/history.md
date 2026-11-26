@@ -10,6 +10,18 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 13 (2026-11-26, `staging/v4.0.0`, #1868,
+#1869). The first round in which content limits turned up only lows. The one
+medium was older than the branch: the review window called its estimate the
+cost "to send" and then added the replies again, though the figure already
+held them. Lows covered stale moderation actions (a Browse removal on a
+report already closed, a reader thanked for a report that was not filed),
+the guided pass card's refresh message, and help on the apply permission.
+Two corrections to older entries here: the CI collation check (#1806) starts
+from the previous release's last migration (0096 for 3.22), not from 0130;
+and 0131 runs again after any pre-4.0 dump is restored, rebuilding indexes
+again only on a database the old image created.
+
 v4.0.0 staging review, round 12 (2026-11-26, `staging/v4.0.0`, #1865,
 #1866). The content limits form skipped its warning-list check while a save's
 own refresh ran, so a change made in that window could outlive a failed save

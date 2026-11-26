@@ -236,7 +236,7 @@ export function cardKeyValid(key: unknown, target: KeyTarget): boolean {
 
 // The card shows this as it is, after it has fetched fresh keys.
 export const CARD_KEY_EXPIRED =
-	'This card was open for a long time, so it has been refreshed. Press Accept again.';
+	'This card was open for a long time. Load it again, then press Accept.';
 
 // The note's story, when the note is one this app opened in a live, unmuted
 // story of the connected writer in this universe, on a scene not in the trash.

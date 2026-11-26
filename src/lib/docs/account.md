@@ -392,8 +392,8 @@ for each kind of event. Emails arrive batched, so a busy hour sends one message.
 
 An AI app you already use can read your writing in Codex and leave suggestions
 for you. It can never delete or publish your text. It only changes your text
-when you accept one of its suggestions, or, if you allow it, when it accepts one
-for you. Nothing can connect until you turn this on. For a walk through connecting an app for the first
+when you accept one of its suggestions, or, if you allow it, when you accept
+one on the app's own card. Nothing can connect until you turn this on. For a walk through connecting an app for the first
 time, and what to do when it does not work, see
 [Connecting an app](/docs/connecting-apps).
 
@@ -419,6 +419,12 @@ What you can allow:
   a character, place or lore entry your universe does not have yet, propose
   splitting a scene in two, and hand you a draft it wrote for a scene. None of
   these changes your writing until you say so.
+- **Let you accept its suggestions in the app**: off unless you tick it, and
+  only with suggestions ticked. The app shows a card where you accept, reword or
+  skip its edits without opening Codex. Codex cannot check that you pressed
+  Accept, so an app that misuses this could change any of your text: tick it
+  only for an app you trust. See
+  [Work through a note in the app](/docs/connecting-apps#work-through-a-note-in-the-app).
 
 Where to find what an app left:
 

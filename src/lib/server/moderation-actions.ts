@@ -68,10 +68,16 @@ export function moderationActions(scope: string) {
 				return fail(400, { scope, message: 'Pick a reason.' });
 			}
 			if (reportId && !isUuid(reportId)) return fail(400, { scope, message: 'Pick a report.' });
-			if (
-				!isUuid(storyId) ||
-				!(await removeFromBrowse(db, storyId, locals.user!.id, reason, reportId))
-			) {
+			const outcome = isUuid(storyId)
+				? await removeFromBrowse(db, storyId, locals.user!.id, reason, reportId)
+				: false;
+			if (outcome === 'report-closed') {
+				return fail(409, {
+					scope,
+					message: 'This report is already closed. Reload the page to see what changed.'
+				});
+			}
+			if (!outcome) {
 				return fail(400, { scope, message: 'That story does not exist or is already off Browse.' });
 			}
 			return { scope, done: true };

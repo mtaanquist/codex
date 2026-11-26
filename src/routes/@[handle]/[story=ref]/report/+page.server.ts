@@ -23,7 +23,8 @@ export const load: PageServerLoad = async ({ params, setHeaders }) => {
 	return {
 		handle: params.handle.toLowerCase(),
 		story: found.address,
-		title: found.title
+		title: found.title,
+		editionId: found.id
 	};
 };
 
@@ -33,6 +34,16 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const reason = formText(data, 'reason');
 		const comment = formText(data, 'comment');
+		// The edition the reader's page showed. A newer one since means they
+		// would be reporting text they have not seen.
+		const shown = formText(data, 'editionId');
+		if (shown && shown !== found.id) {
+			return fail(409, {
+				reason,
+				comment,
+				message: 'This story has changed since you opened this page. Reload the page and try again.'
+			});
+		}
 		if (!isReportReason(reason)) {
 			return fail(400, { comment, message: 'Pick a reason for the report.' });
 		}
@@ -50,7 +61,13 @@ export const actions: Actions = {
 				message: 'Too many reports from here just now. Try again in an hour.'
 			});
 		}
-		await createReport(db, found.id, reason, comment);
+		if (!(await createReport(db, found.id, reason, comment))) {
+			return fail(409, {
+				reason,
+				comment,
+				message: 'This story is no longer available, so your report was not sent.'
+			});
+		}
 		return { sent: true };
 	}
 };

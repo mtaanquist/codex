@@ -557,7 +557,11 @@ describe("the moderator's view of an edition", () => {
 	it('opens a story in the trash only once it was reported', async () => {
 		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
 		await expect404(loadEdition(publicationId));
-		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: false }]);
+		// The trash keeps the Browse tick; the page hides "Remove from Browse"
+		// on a row that is not viewable.
+		expect((await loadPublished()).live.editions).toMatchObject([
+			{ viewable: false, listedInBrowse: true, shownInBrowse: false }
+		]);
 		await db.update(stories).set({ deletedAt: null }).where(eq(stories.id, storyId));
 		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
 		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
@@ -770,6 +774,53 @@ describe('a dismissal racing a takedown of the same report', () => {
 			.from(publicationReports)
 			.where(eq(publicationReports.id, reportId));
 		expect(report.resolution).toBe('dismissed');
+	});
+
+	it('a Browse removal that starts while a takedown runs waits, then finds the report closed', async () => {
+		const reportId = await fileReport();
+		const client = await pool.connect();
+		try {
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [storyId]);
+			await client.query(
+				`update publications set removed_at = now(), removed_by = $2, removed_reason = 'spam'
+				 where id = $1`,
+				[publicationId, moderator.id]
+			);
+			await client.query(
+				`update publication_reports set resolved_at = now(), resolved_by = $2,
+				 resolution = 'taken_down' where id = $1`,
+				[reportId, moderator.id]
+			);
+			let settled = false;
+			const removing = act(reportsPage, 'removeFromBrowse', {
+				storyId,
+				reportId,
+				reason: 'spam'
+			}).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await removing).toMatchObject({
+				status: 409,
+				data: { message: 'This report is already closed. Reload the page to see what changed.' }
+			});
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		// The takedown stands and the story was not blocked from Browse.
+		const story = await storyRow();
+		expect(story.browseBlockedAt).toBeNull();
+		expect(story.listedInBrowse).toBe(true);
+		const [report] = await db
+			.select()
+			.from(publicationReports)
+			.where(eq(publicationReports.id, reportId));
+		expect(report.resolution).toBe('taken_down');
 	});
 
 	it('a dismissal waits while a takedown holds the story row', async () => {

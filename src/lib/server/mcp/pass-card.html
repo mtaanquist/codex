@@ -265,8 +265,9 @@
 					return request('tools/call', { name: name, arguments: args });
 				}
 
+				// Resolves to true when a fresh pass with keys arrived.
 				function refresh() {
-					if (!pass) return Promise.resolve();
+					if (!pass) return Promise.resolve(false);
 					return callTool('open_guided_pass', { universeId: pass.universeId, noteId: pass.noteId })
 						.then(function (result) {
 							takeResult(result);
@@ -277,10 +278,13 @@
 								};
 								render();
 							}
+							var cardKeys = result && result._meta && result._meta['codex/cardKeys'];
+							return Boolean(cardKeys && !result.isError && result.structuredContent);
 						})
 						.catch(function () {
 							message = { failure: true, text: 'Could not load the pass again. Try again.' };
 							render();
+							return false;
 						});
 				}
 				function current() {
@@ -578,11 +582,10 @@
 								// A revision, a change to the text or an old key: show the pass as
 								// it is now. The writer's own wording stays in the box.
 								var stale = message.text.indexOf('Only the guided pass card') === 0;
-								// An expired key keeps its own message: the edit itself is unchanged.
 								var expired = message.text.indexOf('This card was open for a long time') === 0;
-								var said = message.text;
-								refresh().then(function () {
-									if ((stale || expired) && keys) {
+								// A failed refresh keeps its own message.
+								refresh().then(function (fresh) {
+									if ((stale || expired) && fresh) {
 										// "Press Accept again" holds only while the same edit is shown;
 										// one decided in Codex meanwhile moves the card on.
 										var next = current();
@@ -591,7 +594,7 @@
 											failure: true,
 											text:
 												expired && same
-													? said
+													? 'This card was open for a long time, so it has been refreshed. Press Accept again.'
 													: 'This edit was out of date. Read it again, then decide.'
 										};
 										render();

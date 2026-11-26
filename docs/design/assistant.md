@@ -816,7 +816,7 @@ These cut across the surfaces and the architecture.
   at read time (`liveWarnings`), so a warning removed drops out with its
   limits (the confirmation on Admin > Content warnings says so, and that
   merging it instead keeps them; one merged away and removed afterwards drops
-  out of its survivor's fold too, and an undone merge leaves it out; a removed
+  out of its survivor's fold too, which its confirmation also says, and an undone merge leaves it out; a removed
   warning cannot be merged until it is restored, so its limits never come
   back unseen, and a limit the writer sets on a survivor also replaces the
   keys of the removed warnings merged into it, which `liveWarnings` carries
@@ -924,7 +924,11 @@ These cut across the surfaces and the architecture.
   (`key: value`, split at the last colon, since a warning slug may hold one) and write `assistant-notes` (and story.md `style-notes`) as
   one JSON-quoted line, every key left out when not set. The story import
   reads them back, leaving off and reporting keys it does not know and notes
-  over the cap; there is no universe import, so a universe's stay in the
+  over the cap, and a content limit only for a warning on the live list or
+  merged into one (`usableContentLimits`). A limit on a warning renamed since
+  the export is dropped with the same notice, as is one whose import waits
+  on a rename and reads the new list: the slug alone cannot follow a rename.
+  There is no universe import, so a universe's stay in the
   archive. The settings pages show the form
   with the Assistant tab on or with connected apps on for the account
   (`assistantPreferencesShown`), since both read the preferences, and a save

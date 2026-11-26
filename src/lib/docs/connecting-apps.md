@@ -1,6 +1,6 @@
 # Connecting an app
 
-If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions, or, if you allow it, when it accepts one for you. Unless you let it accept its suggestions in the app, everything it leaves waits for you to accept or turn down.
+If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions, or, if you allow it, when you accept one on the app's own card. Unless you let it accept its suggestions in the app, everything it leaves waits for you to accept or turn down.
 
 Connecting an app is separate from the Assistant inside Codex. You do not need to set up the Assistant to connect an app, and connecting an app does not change how the Assistant works.
 

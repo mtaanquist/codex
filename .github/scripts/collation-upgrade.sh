@@ -25,10 +25,12 @@ PORT=55432
 URL="postgres://codex:codex@localhost:$PORT/codex"
 VOLUME=codex-collation-upgrade
 NAME=codex-collation-upgrade
+LOG=$(mktemp)
 
 cleanup() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+  rm -f "$LOG"
 }
 trap cleanup EXIT
 cleanup
@@ -151,12 +153,11 @@ update pg_index set indisready = false, indisvalid = false where indexrelid = 'c
 insert into ci_collation (t, c) select t, c || '-copy' from ci_collation order by id limit 1;
 update pg_index set indisready = true, indisvalid = true where indexrelid = 'ci_collation_t_key'::regclass;
 SQL
-if DATABASE_URL="$URL" node scripts/migrate.ts > migrate.log 2>&1; then
+if DATABASE_URL="$URL" node scripts/migrate.ts > "$LOG" 2>&1; then
   echo "the migration did not stop on duplicate rows"
-  cat migrate.log
+  cat "$LOG"
   exit 1
 fi
-grep -q 'found duplicate rows' migrate.log || { cat migrate.log; exit 1; }
+grep -q 'found duplicate rows' "$LOG" || { cat "$LOG"; exit 1; }
 applied_after=$(sql -c 'select count(*) from drizzle.__drizzle_migrations')
 [ "$applied_before" -eq "$applied_after" ]
-rm -f migrate.log
