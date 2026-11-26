@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { formatNumber } from '#lib/format';
-	import { NO_PRICE_NOTE, capNotAppliedNote, money, overWarnNote } from '#lib/cost-notes';
+	import {
+		NO_PRICE_NOTE,
+		capNotAppliedNote,
+		money,
+		overLimit,
+		overWarnNote
+	} from '#lib/cost-notes';
 	import type { SceneDraftEstimate } from '#lib/scene-draft';
 	import FormStatus from './FormStatus.svelte';
 
@@ -48,7 +54,7 @@
 		<p class="assist-card-note">{capNotAppliedNote(estimate.capUsd)}</p>
 	{/if}
 	{#if !estimate.overCap}
-		{#if estimate.estCostUsd !== undefined && estimate.estCostUsd > estimate.warnUsd}
+		{#if estimate.estCostUsd !== undefined && overLimit(estimate.estCostUsd, estimate.warnUsd)}
 			<p class="assist-card-note">{overWarnNote(estimate.warnUsd)}</p>
 		{/if}
 		{#if estimate.limitedToWords !== undefined && estimate.limitedBy === 'setting'}

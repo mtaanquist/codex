@@ -4,6 +4,8 @@
 		capNotAppliedNote,
 		estimateCostNote,
 		money,
+		overCapNote,
+		overLimit,
 		overWarnNote
 	} from '#lib/cost-notes';
 	import { resolve } from '$app/paths';
@@ -181,7 +183,7 @@
 	let estimate = $state<Estimate | null>(null);
 	let estimating = $state(false);
 	const warned = $derived(
-		estimate?.estCostUsd !== undefined && estimate.estCostUsd > estimate.warnUsd
+		estimate?.estCostUsd !== undefined && overLimit(estimate.estCostUsd, estimate.warnUsd)
 	);
 
 	function close() {
@@ -508,6 +510,9 @@
 									? ' Your spend cap keeps extra room for searches, so the review can stop at the cap before it has spent it all. If it does, raise the cap.'
 									: ''}
 							</p>
+						{/if}
+						{#if !(estimate.webSearch && estimate.overCap) && estimate.capUsd !== undefined && estimate.capEnforceable && estimate.estCostUsd !== undefined && overLimit(estimate.estCostUsd, estimate.capUsd)}
+							<p class="rm-note">{overCapNote(estimate.capUsd)}</p>
 						{/if}
 						{#if warned}
 							<p class="rm-note">
