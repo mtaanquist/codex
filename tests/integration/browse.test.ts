@@ -37,7 +37,7 @@ const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
 const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
 const { createReport } = await import('../../src/lib/server/reports');
-const { saveBrowseEnabled } = await import('../../src/lib/server/settings');
+const { clearBrowseCache, saveBrowseEnabled } = await import('../../src/lib/server/settings');
 const { addListEntries, checkTagNames, mergeTag, renameTag, setStoryList, setStoryTags } =
 	await import('../../src/lib/server/tags');
 const {
@@ -107,6 +107,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	await pool.query('truncate table stories, universes, users, tags, app_settings cascade');
+	clearBrowseCache();
 	resetRateLimits();
 	author = await user('author@example.com', { handle: 'teller', penName: 'Ada Teller' });
 	const [universe] = await db
@@ -347,6 +348,16 @@ describe('paging within one millisecond', () => {
 		}
 		expect(seen).toHaveLength(BROWSE_PAGE_SIZE + 2);
 		expect(new Set(seen).size).toBe(BROWSE_PAGE_SIZE + 2);
+	});
+
+	it('takes the largest cursor the parser allows without an error', async () => {
+		await story('Any');
+		const query = parseBrowseQuery(
+			new URLSearchParams('after=999999999999999999_00000000-0000-4000-8000-000000000000')
+		);
+		expect(query.after).not.toBeNull();
+		const page = await browseStories(db, query, await resolveFilters(db, query));
+		expect(page.books.map((book) => book.title)).toEqual(['Any']);
 	});
 });
 
