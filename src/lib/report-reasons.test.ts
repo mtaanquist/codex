@@ -22,8 +22,8 @@ describe('report reasons', () => {
 
 	it('names an edition by handle alone when its title is hidden', () => {
 		expect(moderationRowName('ann', 'Tide')).toBe('@ann/Tide');
-		expect(moderationRowName('ann', null)).toBe('@ann, a story that is not shared');
+		expect(moderationRowName('ann', null)).toBe('@ann, an edition you cannot open here');
 		expect(moderationEditionName('ann', 'Tide')).toBe('"Tide"');
-		expect(moderationEditionName('ann', null)).toBe('a story by @ann that is not shared');
+		expect(moderationEditionName('ann', null)).toBe('an edition by @ann you cannot open here');
 	});
 });

@@ -39,6 +39,7 @@ const {
 	liveWarnings,
 	savePreferences,
 	storyAssistantPreferences,
+	storyPreferencesForCopy,
 	universePreferences,
 	workPreferences
 } = await import('../../src/lib/server/assistant-preferences');
@@ -1251,6 +1252,66 @@ describe('content limits across merges, renames and removals', () => {
 			await expect(Promise.all([save, undo])).resolves.toEqual(['outdated', undefined]);
 		} finally {
 			holder.release();
+		}
+	});
+
+	it('does not deadlock a draft copy that finds a new limit while a merge waits', async () => {
+		// The story names the higher id. A transaction holding it adds a limit on
+		// the lower id (as an undone merge would) while the copy's lock on the
+		// higher one waits, and a merge takes the lower one and then waits on the
+		// higher one. When the copy finds the new limit it must not wait on the
+		// lower id while still holding the higher one.
+		const [lowerId, higherId] = [await tagId('gore'), await tagId('blood')].sort();
+		const slugOf = async (id: string) =>
+			(await db.select({ slug: tags.slug }).from(tags).where(eq(tags.id, id)))[0].slug;
+		const [lower, higher] = [await slugOf(lowerId), await slugOf(higherId)];
+		await saveStory({ [`warning:${higher}`]: 'write' });
+		const holder = await pool.connect();
+		const merge = await pool.connect();
+		// Until a session is waiting on a lock: one held by the given session, or
+		// any, for waiting set.
+		const blocked = async (pid: number, waiting = false) => {
+			const check = waiting
+				? 'select cardinality(pg_blocking_pids($1))::int as n'
+				: `select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))`;
+			for (let tries = 0; tries < 200; tries++) {
+				if ((await pool.query(check, [pid])).rows[0].n > 0) return true;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			return false;
+		};
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = $1 for update', [higherId]);
+			await holder.query(
+				`update stories set assistant_preferences = assistant_preferences || $1::jsonb
+				where id = $2`,
+				[JSON.stringify({ [`warning:${lower}`]: 'avoid' }), storyId]
+			);
+			const copy = db.transaction((tx) => storyPreferencesForCopy(tx, storyId));
+			expect(await blocked(me[0].pid)).toBe(true);
+			await merge.query('begin');
+			const { rows: merging } = await merge.query('select pg_backend_pid() as pid');
+			await merge.query('select id from tags where id = $1 for update', [lowerId]);
+			const merged = merge
+				.query('select id from tags where id = $1 for update', [higherId])
+				.then(() => merge.query('commit'))
+				.catch(async (error) => {
+					await merge.query('rollback');
+					throw error;
+				});
+			expect(await blocked(merging[0].pid, true)).toBe(true);
+			await holder.query('commit');
+			const [preferences] = await Promise.all([copy, merged]);
+			expect(preferences).toEqual({
+				[`warning:${higher}`]: 'write',
+				[`warning:${lower}`]: 'avoid'
+			});
+		} finally {
+			await holder.query('rollback').catch(() => {});
+			holder.release();
+			merge.release();
 		}
 	});
 

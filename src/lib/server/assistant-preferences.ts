@@ -144,29 +144,35 @@ export async function workPreferences(
 // to a new row: the warnings its limits name are share-locked first, so a
 // rename (which updates the warning, then moves the limits on every row it
 // can see) either finishes before the read or waits until the copy commits
-// and then moves the copy's limits too. Read again until every slug read is
-// locked, in case a rename moved one in between.
+// and then moves the copy's limits too. A rename or an undone merge can add a
+// slug while the lock waits, so the row is read again; when it names one not
+// locked, every lock is let go and all of them are taken again in id order,
+// as in lockWarnings.
 export async function storyPreferencesForCopy(tx: Database, storyId: string): Promise<unknown> {
-	const locked = new Set<string>();
-	for (;;) {
-		const [row] = await tx
+	const read = async (db: Database) => {
+		const [row] = await db
 			.select({ preferences: stories.assistantPreferences })
 			.from(stories)
 			.where(eq(stories.id, storyId));
 		const preferences = row?.preferences ?? {};
 		const slugs = Object.keys(preferences as Record<string, unknown>)
 			.filter((key) => key.startsWith(WARNING_PREFIX))
-			.map((key) => key.slice(WARNING_PREFIX.length))
-			.filter((slug) => !locked.has(slug));
-		if (slugs.length === 0) return preferences;
-		await tx
-			.select({ id: tags.id })
-			.from(tags)
-			.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, slugs)))
-			.orderBy(asc(tags.id))
-			.for('share');
-		for (const slug of slugs) locked.add(slug);
-	}
+			.map((key) => key.slice(WARNING_PREFIX.length));
+		return { preferences, slugs };
+	};
+	return lockUntilSettled(tx, async (savepoint) => {
+		const { slugs } = await read(savepoint);
+		if (slugs.length > 0) {
+			await savepoint
+				.select({ id: tags.id })
+				.from(tags)
+				.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, slugs)))
+				.orderBy(asc(tags.id))
+				.for('share');
+		}
+		const now = await read(savepoint);
+		return now.slugs.some((slug) => !slugs.includes(slug)) ? RELOCK : now.preferences;
+	});
 }
 
 // Preferences from an import with the content limits this site cannot use
@@ -248,6 +254,24 @@ export const OUTDATED_WARNINGS =
 // lower id is never awaited while a higher one is held (an undone merge takes
 // its rows in id order too).
 const RELOCK = Symbol('relock');
+// Runs an attempt under a savepoint. One that answers RELOCK is rolled back,
+// which lets go of every lock it took, and runs again.
+async function lockUntilSettled<T>(
+	tx: Database,
+	attempt: (savepoint: Database) => Promise<T | typeof RELOCK>
+): Promise<T> {
+	for (;;) {
+		try {
+			return await tx.transaction(async (savepoint) => {
+				const result = await attempt(savepoint);
+				if (result === RELOCK) throw RELOCK;
+				return result;
+			});
+		} catch (error) {
+			if (error !== RELOCK) throw error;
+		}
+	}
+}
 async function lockWarnings(tx: Database, slugs: string[]): Promise<void> {
 	const posted = alias(tags, 'posted');
 	const matching = (db: Database) =>
@@ -270,18 +294,11 @@ async function lockWarnings(tx: Database, slugs: string[]): Promise<void> {
 				)
 			)
 			.orderBy(asc(tags.id));
-	for (;;) {
-		try {
-			await tx.transaction(async (savepoint) => {
-				const locked = new Set((await matching(savepoint).for('share')).map(({ id }) => id));
-				const now = await matching(savepoint);
-				if (now.some(({ id }) => !locked.has(id))) throw RELOCK;
-			});
-			return;
-		} catch (error) {
-			if (error !== RELOCK) throw error;
-		}
-	}
+	await lockUntilSettled(tx, async (savepoint) => {
+		const locked = new Set((await matching(savepoint).for('share')).map(({ id }) => id));
+		const now = await matching(savepoint);
+		return now.some(({ id }) => !locked.has(id)) ? RELOCK : undefined;
+	});
 }
 
 // Saves the preferences form of a story or a universe the caller owns:

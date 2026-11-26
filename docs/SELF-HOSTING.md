@@ -318,8 +318,9 @@ take a fresh dump first if there is anything live worth keeping.
    error and changes nothing. A dump from 4.0.0 or later also needs the pgvector extension: when
    you restore into a new, empty database as a user that is not a superuser,
    connect to it as a superuser and run `CREATE EXTENSION vector;` first.
-   A dump from before 4.0.0 is brought up to date on the next start, which
-   also rebuilds its indexes, so that start can take a while.
+   A dump from before 4.0.0 is brought up to date on the next start. If the
+   database was first created by the old database image, that start also
+   rebuilds its indexes and can take a while.
 
 3. Bring the stack back:
 

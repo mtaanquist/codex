@@ -138,7 +138,9 @@
 						<div class="list-main">
 							<div class="list-title">
 								{#if report.title === null}
-									<span title="The story is not shared, and this report no longer opens it.">
+									<span
+										title="This edition is no longer shared, or was replaced, and this report no longer opens it."
+									>
 										{moderationRowName(report.handle, report.title)}
 									</span>
 								{:else}

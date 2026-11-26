@@ -1,6 +1,6 @@
 # Connecting an app
 
-If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions, or, if you allow it, when it accepts one for you. Everything it leaves waits for you to accept or turn down.
+If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions, or, if you allow it, when it accepts one for you. Unless you let it accept its suggestions in the app, everything it leaves waits for you to accept or turn down.
 
 Connecting an app is separate from the Assistant inside Codex. You do not need to set up the Assistant to connect an app, and connecting an app does not change how the Assistant works.
 
@@ -45,7 +45,7 @@ Codex also gives the app a set of ready-made requests for the work the Assistant
 
 ## Find what the app left
 
-Nothing the app leaves changes your writing until you decide.
+Unless you let the app accept its suggestions in the app, nothing it leaves changes your writing until you decide.
 
 - **Suggested edits and comments** are in the story's Review. Accept or reject each one, and reply to a comment if you want to talk it over; the app can read your reply the next time you ask it to look. See [Inviting a reviewer](/docs/reviewing) for how Review works.
 - **A note about a habit that repeats**, such as a pet phrase, comes with a link. Open the link to go through its edits one at a time.

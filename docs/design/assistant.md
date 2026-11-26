@@ -894,10 +894,21 @@ These cut across the surfaces and the architecture.
   the limits were not changed and the page needs a reload to set them. A refresh that brings a changed list to the open page some other way (another
   section's save, or moving between sections after a refused save) drops the
   limit changes not yet saved, puts their selects back to what is stored and
-  says so, so a later save cannot post the rebuilt select as the change. A
-  change the form's save in flight carries is left to that save: kept if it
-  lands, and dropped with the note if the save fails or is outdated, so a
-  save queued behind it never sends it with the new list. Review runs key the limits by the warning's tag id, which a rename
+  says so, so a later save cannot post the rebuilt select as the change.
+  That holds during the refresh of the form's own save too, and for a change
+  whose save already failed before the new list landed. A change the form's
+  save in flight carries is left to that save: kept if it lands, and dropped
+  with the note if the save fails or is outdated, so a save queued behind it
+  never sends it with the new list. This includes a save started while an
+  earlier save's refresh is landing, which posted the list the page showed
+  before. The one exception is an outdated save's own changes while its
+  refresh lands: its handler puts their selects back to what is stored once
+  the refresh is done. Saving a draft copies the story's preferences
+  (`storyPreferencesForCopy`) after share-locking the warnings its limits
+  name, in one statement in id order. It reads the row again after the lock,
+  and when a rename or an undone merge added a slug meanwhile, the savepoint
+  is rolled back and every lock taken again from scratch, as for a save, so
+  the copy never waits on a lower id while holding a higher one. Review runs key the limits by the warning's tag id, which a rename
   keeps, so a rename does not restart a capped run. The limits go to drafts, `/write`, the chat frame and every
   review (the continuity confirm stage and the MCP continuity brief
   included), and say they never change the model's own usage policies. The summary
