@@ -490,6 +490,21 @@ export async function credentialLive(
 	return Boolean(row) && (await accountUsable(db, identity.userId));
 }
 
+// Whether the grant still holds every permission in needed. The identity's
+// permissions were read when the request arrived; connecting the app again
+// updates the grant in place, so a call that waited reads them again.
+export async function grantPermits(
+	db: Database,
+	grantId: string,
+	needed: readonly string[]
+): Promise<boolean> {
+	const [row] = await db
+		.select({ permissions: oauthGrants.permissions })
+		.from(oauthGrants)
+		.where(eq(oauthGrants.id, grantId));
+	return Boolean(row) && needed.every((permission) => row.permissions.includes(permission));
+}
+
 // ============ Grants (the Account page) ============
 
 export type GrantView = {

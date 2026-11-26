@@ -468,7 +468,7 @@ To make a token:
 3. Leave "Leave suggestions and comments" ticked if the tool should be able to
    leave them, or untick it to let the tool read only. Tick "Let you accept its
    suggestions in the app" only if the tool can show you its notes to accept
-   and you trust it: a tool with this ticked can accept edits itself. It can
+   and you trust it: a tool with this ticked can accept its own edits itself, with any wording. It can
    be ticked only while "Leave suggestions and comments" is ticked. See
    [Connecting an app](/docs/connecting-apps).
 4. Choose how long the token lasts. It stops working after that, and you make

@@ -65,9 +65,9 @@
 
 	// A refused save shows what it sent over the stored values: it carries no
 	// value for a warning the form did not show. Each warning shows its limit
-	// folded with the ones merged into it, which is what applies at this level
-	// (the save compares against the same, see limitChanges), except where the
-	// universe's own limit on it applies instead (shownPreferences).
+	// folded with the ones merged into it, on a story read over the
+	// universe's, which is what applies (shownLimit; the save compares against
+	// the same, see limitChanges).
 	const own = $derived(normalisePreferences(stored));
 	const universeOwn = $derived(inherited ? normalisePreferences(inherited.preferences) : null);
 	const values: Record<string, string> = $derived({
@@ -104,13 +104,8 @@
 		const note = limitNote(own, universeOwn, warning);
 		if (note === 'universe') {
 			return standalone
-				? 'Kept off the page anyway, because the settings for all your standalone stories keep a warning merged into this one off the page. To write freely, change it there.'
-				: "Kept off the page anyway, because the universe's settings keep a warning merged into this one off the page. To write freely, change it in the universe's settings.";
-		}
-		if (note === 'survivor') {
-			return standalone
-				? 'Kept off the page, because the settings for all your standalone stories keep it off the page. To write freely in this story, choose "Write freely".'
-				: 'Kept off the page, because the universe\'s settings keep it off the page. To write freely in this story, choose "Write freely".';
+				? 'Kept off the page, because the settings for all your standalone stories keep this warning, or one merged into it, off the page. To write freely in this story, choose "Write freely".'
+				: 'Kept off the page, because the universe\'s settings keep this warning, or one merged into it, off the page. To write freely in this story, choose "Write freely".';
 		}
 		if (note === 'merged') {
 			return foldedLimit(own, warning) === 'avoid'
@@ -151,6 +146,35 @@
 		}
 		autosubmitForm(event);
 	}
+	// A refresh that changes the warning list, other than one this form's own
+	// save made (whose handler deals with its limits), drops the limit changes
+	// not yet saved: they were picked against the old list, and a later save
+	// would otherwise post whatever the rebuilt select shows as the change.
+	// The selects go back to what is stored, and a note says so.
+	let refreshing = 0;
+	let limitsDropped = $state(false);
+	let formNode = $state<HTMLFormElement>();
+	let builtFrom = untrack(() => warningListFingerprint(warnings));
+	$effect(() => {
+		const list = warningListFingerprint(warnings);
+		if (list === builtFrom) return;
+		builtFrom = list;
+		if (refreshing > 0 || changedLimits.size === 0) return;
+		const dropped = [...changedLimits.keys()];
+		changedLimits.clear();
+		limitsDropped = true;
+		untrack(() => {
+			const shown = shownPreferences(own, universeOwn, warnings) as Record<string, unknown>;
+			tick().then(() => {
+				for (const slug of dropped) {
+					const key = warningKey(slug);
+					picks.delete(key);
+					const select = formNode?.elements.namedItem(key);
+					if (select instanceof HTMLSelectElement) select.value = String(shown[key] ?? '');
+				}
+			});
+		});
+	});
 	const submitPreferences: SubmitFunction = async (input) => {
 		if (saving) {
 			queued = true;
@@ -158,6 +182,7 @@
 			return;
 		}
 		saving = true;
+		limitsDropped = false;
 		const sent = new Map(changedLimits);
 		for (const slug of sent.keys()) input.formData.append(CHANGED_LIMITS_FIELD, slug);
 		input.formData.set(WARNING_LIST_FIELD, warningListFingerprint(warnings));
@@ -183,9 +208,14 @@
 				return;
 			}
 			const refreshedAt = pickCount;
-			if (after) await after(opts);
-			else await opts.update();
-			await tick();
+			refreshing += 1;
+			try {
+				if (after) await after(opts);
+				else await opts.update();
+				await tick();
+			} finally {
+				refreshing -= 1;
+			}
 			for (const [name, pick] of picks) {
 				const select = formElement.elements.namedItem(name);
 				if (pick.at > refreshedAt && select instanceof HTMLSelectElement) {
@@ -200,6 +230,8 @@
 					if (changedLimits.get(slug) !== count) continue;
 					changedLimits.delete(slug);
 					const key = warningKey(slug);
+					// So the put-back of a slower refresh does not bring it back.
+					picks.delete(key);
 					const select = formElement.elements.namedItem(key);
 					if (select instanceof HTMLSelectElement) select.value = values[key] ?? '';
 				}
@@ -251,6 +283,7 @@
 	<form
 		method="POST"
 		action={ownAction('saveAssistantPreferences')}
+		bind:this={formNode}
 		use:enhance={submitPreferences}
 		onchange={onFormChange}
 		novalidate
@@ -397,6 +430,12 @@
 						</div>
 					{/each}
 				{/key}
+				{#if limitsDropped}
+					<p class="field-hint" role="status">
+						The list of content warnings has changed, so the content limits you changed were not
+						saved. Set them again.
+					</p>
+				{/if}
 			</fieldset>
 		{/if}
 		<div class="field">

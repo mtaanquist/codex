@@ -10,6 +10,17 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 9 (2026-11-26, `staging/v4.0.0`, #1854,
+#1855). The medium was in renaming a warning: the slug was read outside the
+transaction, so a double submit moved limits a second time and erased
+"Write freely" keys. The rename now locks the tag row and the move only
+touches rows that still have the old key. A story's choice now applies to
+the entries merged into the warning it sees, so it can beat its universe
+there, and removed merged entries stop counting. After a refused save, a
+changed warning list drops the unsaved limit picks with a note rather than
+saving them later against merges the writer never saw. A card accept that
+waited rereads the grant's permissions.
+
 v4.0.0 staging review, round 8 (2026-11-26, `staging/v4.0.0`, #1851,
 #1852). The medium was the round 7 queue: a save refused as outdated cleared
 its limits from the changed set, so the save queued behind it said "Saved."
@@ -193,8 +204,8 @@ sort text differently under `en_US.utf8`, and an existing volume opened by the
 new image had out-of-order text indexes (checked with amcheck on a database
 migrated to 0127 under the old image). Migration 0131 detects that case (the
 database records no collation version while the server reports one, which is
-what a musl-created database looks like under glibc) and reindexes every table
-the role owns before creating the extension; databases created under glibc
+what a musl-created database looks like under glibc) and, after creating the
+extension, reindexes every table the role owns; databases created under glibc
 skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
 version, so the version stays unrecorded; the migration runs once anyway. The
 migrator checks `pg_available_extensions` first so a server without pgvector

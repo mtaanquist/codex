@@ -422,8 +422,11 @@ describe('story tags', () => {
 		expect((await prefs(otherStoryId)).assistantPreferences).toEqual({
 			'warning:graphic-gore': 'avoid'
 		});
-		// Gore had no limit here, so the stray "write" is not taken over.
-		expect(await universePrefs()).toEqual({ 'warning:death': 'avoid' });
+		// Gore had no limit here, so the row is left as it was.
+		expect(await universePrefs()).toEqual({
+			'warning:death': 'avoid',
+			'warning:graphic-gore': 'write'
+		});
 
 		// Renaming back moves the limits back.
 		expect(await renameTag(db, 'warning', await tagId('graphic-gore'), 'Gore')).toEqual({
@@ -480,6 +483,71 @@ describe('story tags', () => {
 			ok: false,
 			message: 'Another entry already has that name. Merge them instead.'
 		});
+	});
+
+	// Two renames of one warning that run at once (a double submit, or two
+	// moderators) both start from its old slug; the second must move the
+	// limits from wherever the first left them.
+	async function renameTwiceAtOnce(first: string, second: string) {
+		await db.insert(tags).values({ kind: 'warning', name: 'Gore', slug: 'gore' });
+		const id = await tagId('gore');
+		const [universe] = await db.select().from(universes);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'write' } })
+			.where(eq(stories.id, storyId));
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'avoid' } })
+			.where(eq(stories.id, otherStoryId));
+		await db
+			.update(universes)
+			.set({ assistantPreferences: { 'warning:gore': 'write' } })
+			.where(eq(universes.id, universe.id));
+		const holder = await pool.connect();
+		let results: unknown[];
+		try {
+			await holder.query('begin');
+			await holder.query('select id from tags where id = $1 for update', [id]);
+			const pending = Promise.all([
+				renameTag(db, 'warning', id, first),
+				renameTag(db, 'warning', id, second)
+			]);
+			for (let i = 0; i < 300; i++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					 where datname = current_database() and wait_event_type = 'Lock'`
+				);
+				if (rows[0].n >= 2) break;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			await holder.query('commit');
+			results = await pending;
+		} finally {
+			holder.release();
+		}
+		const [tag] = await db.select().from(tags).where(eq(tags.id, id));
+		const key = `warning:${tag.slug}`;
+		const own = async (sid: string) =>
+			(await db.select().from(stories).where(eq(stories.id, sid)))[0].assistantPreferences;
+		expect(await own(storyId)).toEqual({ [key]: 'write' });
+		expect(await own(otherStoryId)).toEqual({ [key]: 'avoid' });
+		expect((await db.select().from(universes))[0].assistantPreferences).toEqual({
+			[key]: 'write'
+		});
+		return { results, slug: tag.slug };
+	}
+
+	it('keeps every limit when the same rename runs twice at once', async () => {
+		const { results, slug } = await renameTwiceAtOnce('Graphic violence', 'Graphic violence');
+		expect(results).toEqual([{ ok: true }, { ok: true }]);
+		expect(slug).toBe('graphic-violence');
+	});
+
+	it('keeps every limit when two renames to different names run at once', async () => {
+		const { results, slug } = await renameTwiceAtOnce('Blood', 'Carnage');
+		expect(results).toEqual([{ ok: true }, { ok: true }]);
+		expect(['blood', 'carnage']).toContain(slug);
 	});
 });
 

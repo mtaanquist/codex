@@ -725,16 +725,35 @@ describe('content limits across merges, renames and removals', () => {
 		expect(await limits()).toEqual([['Gore', 'write']]);
 	});
 
-	it("clears only the story's own merged limits, so the universe's still applies", async () => {
+	it("lets a story's choice on a merged warning win over the universe's", async () => {
 		await saveUniverse({ 'warning:blood': 'avoid' });
 		await saveStory({ 'warning:blood': 'avoid' });
 		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
 		await saveStory({ 'warning:gore': 'write' });
 		expect(await allPreferences()).toEqual({
-			story: { 'warning:gore': 'write' },
+			story: { 'warning:gore': 'write', 'warning:blood': 'write' },
 			universe: { 'warning:blood': 'avoid' }
 		});
-		// The form notes this under Gore (limitNote 'universe').
+		expect(await limits()).toEqual([['Gore', 'write']]);
+	});
+
+	it("lets a story write freely where only the universe's merged limit keeps it off", async () => {
+		// The review's case: the story's own "write" is on the survivor, so its
+		// select shows the "avoid" that applies, and picking "Write freely"
+		// again is a change that sticks.
+		await saveUniverse({ 'warning:blood': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		await saveStory({ 'warning:gore': 'write' });
+		expect((await allPreferences()).story).toEqual({
+			'warning:gore': 'write',
+			'warning:blood': 'write'
+		});
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		// Blank follows the universe again.
+		await saveStory({ 'warning:gore': '' });
+		expect((await allPreferences()).story).toEqual({});
 		expect(await limits()).toEqual([['Gore', 'avoid']]);
 	});
 
@@ -752,8 +771,8 @@ describe('content limits across merges, renames and removals', () => {
 		const before = await stamp();
 		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
 		expect(await allPreferences()).toEqual({
-			// The story inherits the universe's new avoid, so it gets no key.
-			story: { 'warning:gore': 'avoid' },
+			// The story's choice on Gore was stored on Blood too.
+			story: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' },
 			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
 		});
 		expect(await stamp()).toEqual(before);
@@ -845,6 +864,21 @@ describe('content limits across merges, renames and removals', () => {
 		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
 		expect(await allPreferences()).toEqual(before);
 		expect(await limits()).toEqual([['Blood', 'write']]);
+	});
+
+	it('drops the limits of a merged warning removed afterwards, also from an undone merge', async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Bruising', slug: 'bruising' });
+		await saveUniverse({ 'warning:bruising': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('bruising'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		await setTagRemoved(db, 'warning', await tagId('bruising'), true, user.id);
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		const before = await allPreferences();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+		expect(await limits()).toEqual([['Gore', 'write']]);
 	});
 
 	it('locks the other warnings merged into the survivor while undoing a merge', async () => {
@@ -965,7 +999,8 @@ describe('content limits across merges, renames and removals', () => {
 			.update(tags)
 			.set({ mergedIntoId: await tagId('violence') })
 			.where(eq(tags.id, await tagId('gore')));
-		expect(await limits()).toEqual([['Violence', 'avoid']]);
+		// A removed warning's limit does not count toward its survivor.
+		expect(await limits()).toEqual([]);
 		// An autosave of the house style posts Violence as the page showed it.
 		expect(
 			await saveStory(
@@ -977,12 +1012,17 @@ describe('content limits across merges, renames and removals', () => {
 			)
 		).toEqual({ action: 'assistant-preferences', saved: true });
 		expect((await stored()).preferences).toEqual({ 'warning:gore': 'avoid', tense: 'past' });
-		// Changing Violence on that page is refused, since the list has changed.
+		// Gore's limit counts nowhere, so the list that page shows still holds
+		// and changing Violence on it saves.
 		expect(
 			await saveStory({ 'warning:violence': 'write' }, { changed: ['violence'], list: opened })
-		).toMatchObject({ saved: true, notice: expect.stringContaining('Reload the page') });
-		expect((await stored()).preferences).toEqual({ 'warning:gore': 'avoid', tense: 'past' });
-		expect(await limits()).toEqual([['Violence', 'avoid']]);
+		).toEqual({ action: 'assistant-preferences', saved: true });
+		expect((await stored()).preferences).toEqual({
+			'warning:gore': 'avoid',
+			'warning:violence': 'write',
+			tense: 'past'
+		});
+		expect(await limits()).toEqual([['Violence', 'write']]);
 	});
 
 	it('stores no limit the writer did not pick when a merge is undone under an open page', async () => {
@@ -1064,11 +1104,14 @@ describe('content limits across merges, renames and removals', () => {
 			['Blood', 'write'],
 			['Gore', 'avoid']
 		]);
-		// One merged away and then removed still counts toward its survivor,
-		// which its stories keep showing.
+		// One merged away and then removed stops counting toward its survivor,
+		// and a restore brings it back.
 		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
 		await saveStory({ 'warning:gore': '' });
+		expect(await limits()).toEqual([['Gore', 'write']]);
 		await setTagRemoved(db, 'warning', await tagId('blood'), true, user.id);
+		expect(await limits()).toEqual([]);
+		await setTagRemoved(db, 'warning', await tagId('blood'), false, user.id);
 		expect(await limits()).toEqual([['Gore', 'write']]);
 	});
 });

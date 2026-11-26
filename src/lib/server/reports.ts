@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
-import { publicationReports, publications, stories, users } from './db/schema';
+import { publicationReports, publications, stories, universes, users } from './db/schema';
 import { notifyUsers } from './notify';
 import { newerEditionId, newerEditionState, readersCanOpen } from './publication-scope';
 import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/report-reasons';
@@ -21,12 +21,28 @@ export async function createReport(
 		const [found] = await tx
 			.select({
 				storyId: publications.storyId,
+				ownerId: publications.ownerId,
 				handle: publications.handle,
 				title: publications.title
 			})
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		if (!found) return null;
+		// The recheck below also reads the writer's suspension and whether the
+		// universe is in the trash, which change those rows only, so they are
+		// held too: writer, then universe, then story, the order publish and a
+		// story restore use.
+		await tx.select({ id: users.id }).from(users).where(eq(users.id, found.ownerId)).for('share');
+		await tx
+			.select({ id: universes.id })
+			.from(universes)
+			.where(
+				eq(
+					universes.id,
+					tx.select({ id: stories.universeId }).from(stories).where(eq(stories.id, found.storyId))
+				)
+			)
+			.for('share');
 		// A takedown holds the story row for update until it has closed the
 		// story's reports, so a report filed meanwhile waits for it and then
 		// sees the edition is down.
