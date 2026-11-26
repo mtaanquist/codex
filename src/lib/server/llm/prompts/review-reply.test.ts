@@ -110,7 +110,7 @@ describe('buildReviewReplyMessage', () => {
 			suggestion: { original: 'a', replacement: 'b' }
 		});
 		expect(revising).toContain('The story is written in British English.');
-		expect(revising).toContain('House style for this story: single quotation marks');
+		expect(revising).toContain('House style: single quotation marks');
 		expect(revising).toContain('Keep to it.');
 		expect(revising.indexOf('House style')).toBeLessThan(revising.indexOf('The thread so far'));
 

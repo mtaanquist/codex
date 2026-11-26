@@ -1,11 +1,12 @@
 import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
-import { storyTags, tags, universes } from './db/schema.ts';
+import { stories, storyTags, tags, universes } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
 import { pageIndex } from './paging.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
 import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
+import { warningKey } from '../assistant-preferences.ts';
 
 // Free-form tags and the curated lists (fandoms, genres, content warnings).
 // Reads always follow a merge to the surviving entry and hide removed ones, so
@@ -520,8 +521,56 @@ export async function mergeTag(
 			.update(tags)
 			.set({ mergedIntoId: target.id })
 			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
+		if (source.kind === 'warning') {
+			const children = locked.filter((row) => row.mergedIntoId === source.id);
+			await carryContentLimits(
+				tx,
+				source.slug,
+				children.map((row) => row.slug),
+				target.slug
+			);
+		}
 		return { ok: true };
 	});
+}
+
+// A writer's content limits (Assistant preferences) on a warning merged away
+// carry over to the surviving warning wherever none is set on it yet: the
+// merged warning's own limit, else, from the warnings merged into it earlier
+// (which the writer can no longer see), the more careful one. The old keys
+// stay, so an undone merge keeps them.
+async function carryContentLimits(
+	tx: Database,
+	sourceSlug: string,
+	childSlugs: string[],
+	toSlug: string
+) {
+	const own = warningKey(sourceSlug);
+	const from = sql`array[${sql.join(
+		[sourceSlug, ...childSlugs].map((slug) => sql`${warningKey(slug)}`),
+		sql`, `
+	)}]::text[]`;
+	const to = warningKey(toSlug);
+	const carry = (
+		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
+	) => ({
+		set: sql`${column} || jsonb_build_object(${to}::text, case
+			when ${column} ->> ${own}::text in ('avoid', 'write') then ${column} ->> ${own}::text
+			when exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid') then 'avoid'
+			else 'write' end)`,
+		where: sql`jsonb_exists_any(${column}, ${from}) and not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k in ('avoid', 'write'))`
+	});
+	// updated_at is kept as it was: this is the site's change, not the writer's.
+	const story = carry(stories.assistantPreferences);
+	await tx
+		.update(stories)
+		.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
+		.where(story.where);
+	const universe = carry(universes.assistantPreferences);
+	await tx
+		.update(universes)
+		.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
+		.where(universe.where);
 }
 
 // The entry a tag's merges end at (the tag itself when it is not merged).

@@ -3,6 +3,7 @@ import {
 	effectivePreferences,
 	HABIT_CHECKS,
 	HOUSE_STYLE,
+	inheritedLabel,
 	MAX_ASSISTANT_NOTES,
 	NO_PREFERENCES,
 	normaliseNotes,
@@ -291,5 +292,84 @@ describe('feedback, length and content limits', () => {
 		const { preferences, unread } = preferencesFromLines(lines);
 		expect(Object.keys(preferences)).toHaveLength(100);
 		expect(unread).toBe(5);
+	});
+});
+
+describe("a story's choice about its universe's notes", () => {
+	const universe = { preferences: {}, notes: 'Fragments are on purpose.' };
+
+	it("uses the universe's notes while the story's are blank, unless the story turned them off", () => {
+		expect(effectivePreferences({ preferences: {}, notes: null }, universe).notes).toBe(
+			'Fragments are on purpose.'
+		);
+		expect(
+			effectivePreferences({ preferences: { useUniverseNotes: 'no' }, notes: '  ' }, universe).notes
+		).toBeNull();
+		// The story's own notes come first either way.
+		expect(
+			effectivePreferences({ preferences: { useUniverseNotes: 'no' }, notes: 'Mine.' }, universe)
+				.notes
+		).toBe('Mine.');
+		// Only the story's own choice counts.
+		expect(
+			effectivePreferences(
+				{ preferences: {}, notes: null },
+				{ ...universe, preferences: { useUniverseNotes: 'no' } }
+			).notes
+		).toBe('Fragments are on purpose.');
+	});
+
+	it('stores only "no", and reads it from the form', () => {
+		expect(normalisePreferences({ useUniverseNotes: 'no' })).toEqual({ useUniverseNotes: 'no' });
+		expect(normalisePreferences({ useUniverseNotes: 'yes' })).toEqual({});
+		expect(readPreferencesForm(form({ useUniverseNotes: 'no' }))).toMatchObject({
+			ok: true,
+			changes: { useUniverseNotes: 'no' }
+		});
+		expect(readPreferencesForm(form({ useUniverseNotes: '' }))).toMatchObject({
+			ok: true,
+			changes: { useUniverseNotes: null }
+		});
+		expect(readPreferencesForm(form({ useUniverseNotes: 'maybe' }))).toMatchObject({ ok: false });
+		expect(preferencesFromLines(['useUniverseNotes: no']).preferences).toEqual({
+			useUniverseNotes: 'no'
+		});
+	});
+});
+
+describe('inheritedLabel', () => {
+	it('is the fallback on a universe', () => {
+		expect(inheritedLabel('tense', null, 'Not set', false)).toBe('Not set');
+	});
+
+	it("names the universe's choice, or the fallback where it has none", () => {
+		const universe = normalisePreferences({
+			tense: 'past',
+			editReasons: 'always',
+			epithets: 'leave',
+			'warning:gore': 'avoid'
+		});
+		expect(inheritedLabel('tense', universe, 'Not set', false)).toBe("Use the universe's: Past");
+		expect(inheritedLabel('narration', universe, 'Not set', false)).toBe(
+			"Use the universe's: Not set"
+		);
+		expect(inheritedLabel('editReasons', universe, 'When the fix is not obvious', false)).toBe(
+			"Use the universe's: Always"
+		);
+		expect(inheritedLabel('summaryLength', universe, 'Short', false)).toBe(
+			"Use the universe's: Short"
+		);
+		expect(inheritedLabel('epithets', universe, 'Check', false)).toBe(
+			"Use the universe's: Leave alone"
+		);
+		expect(inheritedLabel('filterVerbs', universe, 'Check', false)).toBe(
+			"Use the universe's: Check"
+		);
+		expect(inheritedLabel('warning:gore', universe, 'Not set', false)).toBe(
+			"Use the universe's: Keep it off the page"
+		);
+		expect(inheritedLabel('warning:death', universe, 'Not set', true)).toBe(
+			'Use the standalone default: Not set'
+		);
 	});
 });

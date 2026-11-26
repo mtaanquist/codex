@@ -1,5 +1,6 @@
 import { storyLanguage } from '../language.ts';
-import { storyAssistantPreferences } from '../assistant-preferences.ts';
+import { storyAssistantPreferences, universePreferences } from '../assistant-preferences.ts';
+import type { PreferenceSetting } from '../../assistant-preferences.ts';
 import { IN_CONTEXT } from './prompts/format.ts';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
@@ -442,12 +443,20 @@ async function runConsistencyPass(
 		scenes: SurveyScene[];
 		// A story run's style notes as read when it opened; read now when unset.
 		styleNotes?: string | null;
+		// The Assistant preferences as read when the run opened; read now when
+		// unset (the story's, or the universe's for a universe pass).
+		preferences?: PreferenceSetting;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
 	deps: GatewayDeps = {}
 ): Promise<ConsistencyPassResult> {
 	const story = 'storyId' in opts.scope ? opts.scope.storyId : undefined;
+	const preferences =
+		opts.preferences ??
+		('storyId' in opts.scope
+			? await storyAssistantPreferences(db, opts.scope.storyId, opts.userId)
+			: await universePreferences(db, opts.scope.universeId, opts.userId));
 	const resolved = await resolveLlmConfig(db, opts.userId, opts.scope);
 	const budgetTokens = surveyBudgetTokens(modelContextWindow(resolved.config, 'reviewer'));
 
@@ -538,7 +547,7 @@ async function runConsistencyPass(
 		if (!involved.length) continue;
 		const task: ChatMessage = {
 			role: 'user',
-			content: buildConfirmMessage(candidate.claim, involved, bodyChars)
+			content: buildConfirmMessage(candidate.claim, involved, bodyChars, preferences)
 		};
 		let result: Awaited<ReturnType<typeof completeDetailed>>;
 		try {
@@ -627,6 +636,7 @@ export async function reviewStoryConsistency(
 		userId: string;
 		storyId: string;
 		styleNotes?: string | null;
+		preferences?: PreferenceSetting;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -641,6 +651,7 @@ export async function reviewStoryConsistency(
 			scope: { storyId: opts.storyId },
 			scenes: surveyScenes,
 			styleNotes: opts.styleNotes,
+			preferences: opts.preferences,
 			meter: opts.meter,
 			signal: opts.signal
 		},
@@ -757,7 +768,7 @@ export type ContinuityReviewResult = {
 
 // The settings a review run states, read once when it opens. The style notes
 // are what the review frame asks the reviewer to judge the prose against.
-async function readReviewSettings(
+export async function readReviewSettings(
 	db: Database,
 	storyId: string,
 	userId: string
@@ -1345,6 +1356,7 @@ export async function reviewStoryScenes(
 					userId: opts.userId,
 					storyId: opts.storyId,
 					styleNotes: settings.styleNotes,
+					preferences: settings.preferences,
 					meter,
 					signal: opts.signal
 				},

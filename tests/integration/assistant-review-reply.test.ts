@@ -630,7 +630,7 @@ describe('prepareReviewReply', () => {
 			.where(eq(stories.id, storyId));
 		const set = await task();
 		expect(set).toContain('The story is written in British English.');
-		expect(set).toContain('House style for this story: single quotation marks');
+		expect(set).toContain('House style: single quotation marks');
 		expect(set).toContain('Keep to it.');
 
 		// A thread with no suggestion to revise writes no prose, so it states neither.

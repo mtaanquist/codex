@@ -45,6 +45,27 @@ Published share `currentNotTakenDown()` (its own module, so the admin script
 does not pull in publish.ts). #1800: `readable` checks the story owner as
 `publicEdition` does. Tests for #1796 and the trash case.
 
+Assistant preferences polish (v4.0.0 lane 6, 2026-11-26, `staging/v4.0.0`).
+#1553: a story's settings show the universe's (or standalone default's) notes
+read only below its own, and a `useUniverseNotes: "no"` key in the same JSON
+stops them standing in for blank story notes; only the story's own key counts.
+#1802: a content limit on a warning merged away now carries to the survivor
+at merge time (in `mergeTag`, for stories and universes, without touching
+`updated_at`) where the survivor has none: the merged warning's own limit, else the more
+careful of the hidden ones merged into it earlier; old keys are not pruned, so an undone merge or a restored warning
+keeps its limit, as tag rows do. The house style and content limit lines no
+longer say "for this story" (an MCP prompt can name only a universe); the
+continuity confirm stage and its MCP brief state the reasons choice; a
+universe select keeps a stored value that equals the default instead of
+showing blank and clearing it on the next autosave. #1566: the notes fence
+drops invisible characters and treats dash lookalikes as hyphens before
+spacing out runs (prompt only, stored notes unchanged). #1554: scene review
+already read the settings once per run; the estimate now does too.
+`checkBookFit` still reads its own (one call per page). #1568: the small
+uppercase legend is the shared `.field-set`. #1803: the blank-choice label
+moved to `inheritedLabel` with unit tests, plus tests for draft defaults, the
+import round trip of the new keys and the empty-reply mark per length.
+
 Assistant preference choices (2026-11-26, v4.0.0 lane 5, `staging/v4.0.0`).
 #1778 to #1782, the rest of #1344, built as more keys in the existing
 `assistant_preferences` JSON, so no migration: how much a default review

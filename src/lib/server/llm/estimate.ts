@@ -1,5 +1,3 @@
-import { storyLanguage } from '../language.ts';
-import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantUsage, scenes, stories } from '../db/schema.ts';
@@ -53,7 +51,12 @@ import {
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
-import { chapterPatternUnits, reviewTiers, surveyBudgetTokens } from './scene-review.ts';
+import {
+	chapterPatternUnits,
+	readReviewSettings,
+	reviewTiers,
+	surveyBudgetTokens
+} from './scene-review.ts';
 import { storyIsLive } from '../universe-scope.ts';
 import { MINIMAL_TOOL_NAMES, toolSpecs } from './tools/registry.ts';
 
@@ -220,11 +223,12 @@ export async function estimateStoryReview(
 	const includeTiers = reviewTiers(categories);
 	// The preference lines ride on each scene's task message when the review
 	// reads the wording, and the language lines always.
-	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
+	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
+	const { language, preferences } = settings;
 	const preferenceText =
 		(readsWording(categories) ? reviewPreferenceText(preferences) : '') +
 		contentLimitsLine(preferences, 'check') +
-		reviewLanguageText(await storyLanguage(db, opts.storyId, opts.userId), categories);
+		reviewLanguageText(language, categories);
 	const preferenceTokens = estimateTokens(preferenceText);
 	const persona = personaMessage(resolved.config);
 
@@ -367,7 +371,8 @@ export async function estimateStoryReview(
 				scenes: targets,
 				contextWindow,
 				budgetTokens,
-				replyTokens: reviewerReplyTokens(resolved.config, contextWindow)
+				replyTokens: reviewerReplyTokens(resolved.config, contextWindow),
+				settings
 			});
 			wholeBook = plan.fit;
 			patternTokens = plan.tokens;
@@ -380,20 +385,15 @@ export async function estimateStoryReview(
 				? patternSurveyTokens(
 						units,
 						budgetTokens,
-						await patternSurveyOverhead(db, opts.userId, opts.storyId),
-						await storyLanguage(db, opts.storyId, opts.userId),
-						await storyAssistantPreferences(db, opts.storyId, opts.userId)
+						await patternSurveyOverhead(db, opts.userId, opts.storyId, settings.styleNotes),
+						language,
+						preferences
 					)
 				: 0;
 		}
 		if (units.length) {
-			const system = await patternSurveySystem(db, opts.userId, opts.storyId);
-			for (const message of patternSurveyMessages(
-				units,
-				budgetTokens,
-				await storyLanguage(db, opts.storyId, opts.userId),
-				await storyAssistantPreferences(db, opts.storyId, opts.userId)
-			)) {
+			const system = await patternSurveySystem(db, opts.userId, opts.storyId, settings.styleNotes);
+			for (const message of patternSurveyMessages(units, budgetTokens, language, preferences)) {
 				largestPatternCeiling = Math.max(
 					largestPatternCeiling,
 					capPromptTokens(persona, system, message)

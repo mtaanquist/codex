@@ -694,7 +694,7 @@ describe('the protocol', () => {
 			.where(eq(universes.id, bob.universeId));
 
 		const own = await get({ universeId: alice.universeId, sceneId: alice.sceneId });
-		expect(own).toContain('House style for this story: single quotation marks');
+		expect(own).toContain('House style: single quotation marks');
 		expect(own).toContain('present tense');
 		expect(own).toContain('Leave them alone');
 		expect(own).toContain('I overuse "just".');

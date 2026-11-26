@@ -16,10 +16,11 @@
 		HABIT_CHECKS,
 		HOUSE_STYLE,
 		inheritedChoiceLabel,
+		inheritedLabel,
 		MAX_ASSISTANT_NOTES,
 		normaliseNotes,
 		normalisePreferences,
-		WARNING_PREFIX,
+		USE_UNIVERSE_NOTES,
 		warningKey
 	} from '#lib/assistant-preferences';
 	import { MAX_DRAFT_WORDS, MIN_DRAFT_WORDS } from '#lib/scene-draft';
@@ -68,25 +69,15 @@
 	const id = (key: string) => `${level}-pref-${key}`;
 
 	const useInherited = $derived(inheritedChoiceLabel(standalone));
+	const inheritedNotesShort = $derived(
+		standalone ? 'notes for all your standalone stories' : "universe's notes"
+	);
+	const inheritedNotesName = $derived(
+		standalone ? 'Notes for all your standalone stories' : "The universe's notes"
+	);
 
-	// The blank choice names what it falls back to: the universe's choice, or
-	// "Not set" for a house style it leaves unset. An unset habit check is
-	// checked, so it says so.
-	function blankLabel(key: string, fallback: string): string {
-		if (!fromUniverse) return fallback;
-		const value = (fromUniverse as Record<string, string | number | undefined>)[key];
-		const list =
-			HOUSE_STYLE.find((item) => item.key === key) ??
-			ASSISTANT_CHOICES.find((item) => item.key === key);
-		const label = list
-			? list.options.find((option) => option.value === value)?.label
-			: key.startsWith(WARNING_PREFIX)
-				? CONTENT_LIMITS.find((option) => option.value === value)?.label
-				: value === 'leave'
-					? 'Leave alone'
-					: 'Check';
-		return `${useInherited}: ${label ?? fallback}`;
-	}
+	const blankLabel = (key: string, fallback: string) =>
+		inheritedLabel(key, fromUniverse, fallback, standalone);
 
 	// The draft length box is blank when not set; on a story it shows the
 	// universe's length, when it has one, as the placeholder.
@@ -138,7 +129,7 @@
 	>
 		<!-- novalidate: the browser's own check on the draft length would block
 		     every autosave until it was fixed, and never show the server's message. -->
-		<fieldset class="prefs-set">
+		<fieldset class="field-set prefs-set">
 			<legend>House style</legend>
 			<p class="field-hint prefs-lead">
 				How your text is set out: quote marks, the serial comma, how thoughts are shown, tense and
@@ -156,7 +147,7 @@
 				</div>
 			{/each}
 		</fieldset>
-		<fieldset class="prefs-set">
+		<fieldset class="field-set prefs-set">
 			<legend>Habits to check</legend>
 			<p class="field-hint prefs-lead">
 				Reviews and copyedits look for each of these habits, and so does "Look for habits that
@@ -179,7 +170,7 @@
 				</div>
 			{/each}
 		</fieldset>
-		<fieldset class="prefs-set">
+		<fieldset class="field-set prefs-set">
 			<legend>Feedback and length</legend>
 			<p class="field-hint prefs-lead">
 				How much a review points out, whether suggested edits say why, how long summaries are, and
@@ -191,7 +182,9 @@
 					<select id={id(item.key)} class="select" name={item.key} value={values[item.key] ?? ''}>
 						<option value="">{blankLabel(item.key, item.unset)}</option>
 						{#each item.options as option (option.value)}
-							{#if fromUniverse || option.label !== item.unset}
+							<!-- On a universe the blank choice already means the default, so the
+							     same option is left out, unless it is what is stored. -->
+							{#if fromUniverse || option.label !== item.unset || values[item.key] === option.value}
 								<option value={option.value}>{option.label}</option>
 							{/if}
 						{/each}
@@ -241,7 +234,7 @@
 			</div>
 		</fieldset>
 		{#if warnings.length > 0}
-			<fieldset class="prefs-set">
+			<fieldset class="field-set prefs-set">
 				<legend>Content limits</legend>
 				<p class="field-hint prefs-lead">
 					What you are comfortable having the Assistant draft or comment on, for each content
@@ -278,13 +271,35 @@
 				are on purpose, leave them". Reviews, including "Look for habits that repeat in the prose",
 				check these first, and the chat in a story keeps to them. Up to {MAX_ASSISTANT_NOTES}
 				characters.
-				{#if universeNotes}
-					Left blank, the {standalone
-						? 'notes for all your standalone stories'
-						: "universe's notes"} are used.
-				{/if}
 			</p>
 		</div>
+		{#if universeNotes}
+			<div class="field">
+				<label for={id('universe-notes')}>{inheritedNotesName}</label>
+				<textarea id={id('universe-notes')} class="input" rows="3" readonly value={universeNotes}
+				></textarea>
+				<p class="field-hint">
+					{standalone
+						? 'Set in the settings for all your standalone stories.'
+						: "Set in the universe's settings."} You can change them there.
+				</p>
+			</div>
+			<div class="field">
+				<label for={id(USE_UNIVERSE_NOTES)}>When your own habits are blank</label>
+				<select
+					id={id(USE_UNIVERSE_NOTES)}
+					class="select"
+					name={USE_UNIVERSE_NOTES}
+					value={values[USE_UNIVERSE_NOTES] ?? ''}
+				>
+					<option value="">Use the {inheritedNotesShort}</option>
+					<option value="no">Use no notes for this story</option>
+				</select>
+				<p class="field-hint">
+					Your own habits above always come first. This only matters while that box is blank.
+				</p>
+			</div>
+		{/if}
 		<div class="settings-actions">
 			<FormStatus {error} success={saved ? 'Saved.' : null} />
 		</div>
@@ -292,22 +307,8 @@
 {/snippet}
 
 <style>
-	/* The two groups of selects, headed like the option groups of the review
-	   modal: a small uppercase legend over the rows. */
 	.prefs-set {
-		border: 0;
-		margin: 0 0 var(--space-5);
-		padding: 0;
-		min-width: 0;
-	}
-	.prefs-set legend {
-		padding: 0;
-		margin-bottom: var(--space-3);
-		font-size: var(--text-micro);
-		font-weight: 600;
-		letter-spacing: 0.07em;
-		text-transform: uppercase;
-		color: var(--text-faint);
+		margin-bottom: var(--space-5);
 	}
 	.prefs-lead {
 		margin: 0 0 var(--space-4);

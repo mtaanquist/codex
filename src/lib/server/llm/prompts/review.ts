@@ -26,6 +26,7 @@ import {
 	type PreferenceSetting
 } from '../../../assistant-preferences.ts';
 import {
+	chatEditReasonLine,
 	checks,
 	contentLimitsLine,
 	editReasonLine,
@@ -418,16 +419,20 @@ function confirmSceneBlock(scene: ConfirmScene, bodyChars: number): string {
 export function buildConfirmMessage(
 	claim: string,
 	scenes: ConfirmScene[],
-	bodyChars: number
+	bodyChars: number,
+	preferences: PreferenceSetting = NO_PREFERENCES
 ): string {
 	return [
 		'This is the confirm stage of the continuity pass. A survey of the scene summaries flagged a possible contradiction; check it against the full text below, which is all you need (do not call get_scene).',
 		`Suspected contradiction: ${claim.trim()}`,
 		CONFIRMED_NOTE,
+		chatEditReasonLine(preferences),
 		`If the text does not bear it out, or the two passages can both be true, reply with the single word "discarded" and leave no notes. ${CONTINUITY_ONLY}`,
 		'The scenes involved:',
 		...scenes.map((scene) => confirmSceneBlock(scene, bodyChars))
-	].join('\n');
+	]
+		.filter(Boolean)
+		.join('\n');
 }
 
 // The whole continuity pass as one brief, for an agent that runs both stages
@@ -437,6 +442,7 @@ export function buildConfirmMessage(
 export function buildContinuityBrief(options: {
 	scope: 'story' | 'universe';
 	storyId?: string;
+	preferences?: PreferenceSetting;
 }): string {
 	const universe = options.scope === 'universe';
 	return [
@@ -450,8 +456,11 @@ export function buildContinuityBrief(options: {
 		SPANS_SCENES_ONLY,
 		'Stage 2, confirm. Take one suspected contradiction at a time and read the full text of the scenes involved with get_scene.',
 		CONFIRMED_NOTE,
+		chatEditReasonLine(options.preferences ?? NO_PREFERENCES),
 		`If the text does not bear it out, or the two passages can both be true, drop it and leave no note. ${CONTINUITY_ONLY}`
-	].join('\n');
+	]
+		.filter(Boolean)
+		.join('\n');
 }
 
 // A candidate contradiction from the survey stage.

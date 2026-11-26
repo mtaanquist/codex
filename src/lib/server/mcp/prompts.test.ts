@@ -282,7 +282,7 @@ describe('assistant preferences', () => {
 		for (const name of ['review', 'copyedit', 'write', 'rewrite', 'draft', 'draft-chapter']) {
 			expect(
 				build(name, { brief: 'b', chapter: 'One', instruction: 'i', passage: 'p' }, withPreferences)
-			).toContain('House style for this story: single quotation marks');
+			).toContain('House style: single quotation marks');
 		}
 	});
 

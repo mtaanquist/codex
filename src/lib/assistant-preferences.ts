@@ -116,6 +116,10 @@ export type ContentLimit = (typeof CONTENT_LIMITS)[number]['value'];
 const MAX_WARNING_KEYS = 100;
 const MAX_WARNING_SLUG = 100;
 
+// A story's choice to stop its universe's notes standing in for its own blank
+// notes. Only "no" is stored; absent, the universe's notes are used.
+export const USE_UNIVERSE_NOTES = 'useUniverseNotes';
+
 export type HouseStyleKey = (typeof HOUSE_STYLE)[number]['key'];
 export type HouseStyleValue<K extends HouseStyleKey> = Extract<
 	(typeof HOUSE_STYLE)[number],
@@ -134,6 +138,7 @@ export type StoredPreferences = { [K in HouseStyleKey]?: HouseStyleValue<K> } & 
 	[K in HabitCheck]?: CheckChoice;
 } & { [K in ChoiceKey]?: ChoiceValue<K> } & {
 	draftWords?: number;
+	useUniverseNotes?: 'no';
 	[warning: `${typeof WARNING_PREFIX}${string}`]: ContentLimit | undefined;
 };
 
@@ -168,6 +173,34 @@ export const NO_PREFERENCES: PreferenceSetting = {
 // universe the writer knows as the settings for standalone stories.
 export function inheritedChoiceLabel(standalone: boolean): string {
 	return standalone ? 'Use the standalone default' : "Use the universe's";
+}
+
+// The blank choice of a select on the preferences form, naming what it falls
+// back to. On a universe (no inherited preferences) that is the fallback
+// itself. On a story it is the universe's choice, or the fallback where the
+// universe has none: "Not set" for a house style or a content limit, "Check"
+// for a habit, and the Assistant's default for a feedback or length choice.
+export function inheritedLabel(
+	key: string,
+	inherited: StoredPreferences | null,
+	fallback: string,
+	standalone: boolean
+): string {
+	if (!inherited) return fallback;
+	const value = (inherited as Record<string, string | number | undefined>)[key];
+	const list =
+		HOUSE_STYLE.find((item) => item.key === key) ??
+		ASSISTANT_CHOICES.find((item) => item.key === key);
+	const label = list
+		? list.options.find((option) => option.value === value)?.label
+		: key.startsWith(WARNING_PREFIX)
+			? CONTENT_LIMITS.find((option) => option.value === value)?.label
+			: HABIT_CHECKS.some((item) => item.key === key)
+				? value === 'leave'
+					? 'Leave alone'
+					: 'Check'
+				: undefined;
+	return `${inheritedChoiceLabel(standalone)}: ${label ?? fallback}`;
 }
 
 // The cap on the free-text field, in characters.
@@ -235,6 +268,7 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 	}
 	const words = draftWordsValue(source.draftWords);
 	if (words !== null) out.draftWords = words;
+	if (source[USE_UNIVERSE_NOTES] === 'no') out[USE_UNIVERSE_NOTES] = 'no';
 	for (const key of Object.keys(source)) {
 		if (isWarningKey(key) && LIMIT_CHOICES.includes(source[key] as string)) {
 			out[key] = source[key] as string;
@@ -285,7 +319,8 @@ export function normaliseNotes(raw: unknown): string | null {
 }
 
 // The preferences a story works under: each key the story's own, else the
-// universe's, else not set; the story's notes, else the universe's. warnings
+// universe's, else not set; the story's notes, else the universe's unless the
+// story turned those off (only the story's own choice counts). warnings
 // maps the slug of each live content warning to its name; a limit on any other
 // slug is left out, and with no map given there are no content limits.
 export function effectivePreferences(
@@ -306,7 +341,9 @@ export function effectivePreferences(
 	return {
 		houseStyle,
 		leaveAlone: HABIT_CHECKS.filter(({ key }) => merged[key] === 'leave').map(({ key }) => key),
-		notes: normaliseNotes(story?.notes) ?? normaliseNotes(universe?.notes),
+		notes:
+			normaliseNotes(story?.notes) ??
+			(own[USE_UNIVERSE_NOTES] === 'no' ? null : normaliseNotes(universe?.notes)),
 		feedback: merged.feedback ?? null,
 		editReasons: merged.editReasons ?? null,
 		summaryLength: merged.summaryLength ?? null,
@@ -332,6 +369,7 @@ const FIELD_KEYS = [
 	...HABIT_CHECKS.map((item) => item.key),
 	...ASSISTANT_CHOICES.map((item) => item.key),
 	'draftWords',
+	USE_UNIVERSE_NOTES,
 	'assistantNotes'
 ];
 
@@ -376,6 +414,11 @@ export function readPreferencesForm(
 		const raw = submitted[key].trim();
 		if (raw && !LIMIT_CHOICES.includes(raw)) return refuse('Pick each setting from its list.');
 		changes[key] = raw || null;
+	}
+	if (data.has(USE_UNIVERSE_NOTES)) {
+		const raw = submitted[USE_UNIVERSE_NOTES].trim();
+		if (raw && raw !== 'no') return refuse('Pick each setting from its list.');
+		changes[USE_UNIVERSE_NOTES] = raw || null;
 	}
 	if (data.has('draftWords')) {
 		const raw = submitted.draftWords.trim();

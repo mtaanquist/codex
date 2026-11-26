@@ -252,6 +252,35 @@ describe('summariseStory', () => {
 		expect(chapterCalls()).toBe(3);
 	});
 
+	it('asks again for an empty chapter summary once the summary length changes, and not after', async () => {
+		emptyChapters = true;
+		const chapterCalls = () => prompts.filter((p) => p.includes('Summarise the chapter')).length;
+		const run = () => summariseStory(db, { userId: ownerId, storyId }, deps);
+		const setLength = (summaryLength: string | undefined) =>
+			db
+				.update(stories)
+				.set({ assistantPreferences: summaryLength ? { summaryLength } : {} })
+				.where(eq(stories.id, storyId));
+		await run();
+		expect(chapterCalls()).toBe(1);
+
+		// Detailed is a different request, so it is tried once and then held.
+		await setLength('detailed');
+		await run();
+		expect(chapterCalls()).toBe(2);
+		await run();
+		expect(chapterCalls()).toBe(2);
+
+		// Back to short, which is the same as not set: tried once more, then held,
+		// and "short" set outright marks the same as not set.
+		await setLength(undefined);
+		await run();
+		expect(chapterCalls()).toBe(3);
+		await setLength('short');
+		await run();
+		expect(chapterCalls()).toBe(3);
+	});
+
 	it('refreshes an Assistant-generated summary after the scene body changes', async () => {
 		await summariseStory(db, { userId: ownerId, storyId }, deps);
 		const first = await readScene(sceneAId);

@@ -759,7 +759,7 @@ describe('chats over the endpoints', () => {
 		await ask();
 		const unset = systems.at(-1)!;
 		expect(unset).not.toContain('The story is written in');
-		expect(unset).not.toContain('House style for this story');
+		expect(unset).not.toContain('House style:');
 		expect(unset).not.toContain('The writer uses these on purpose');
 		expect(unset).not.toContain("The writer's own notes");
 
@@ -774,7 +774,7 @@ describe('chats over the endpoints', () => {
 		await ask();
 		expect(systems.at(-1)).toContain('The story is written in British English.');
 		expect(systems.at(-1)).toContain('Answer the writer in the language they write to you in.');
-		expect(systems.at(-1)).toContain('House style for this story: single quotation marks');
+		expect(systems.at(-1)).toContain('House style: single quotation marks');
 		expect(systems.at(-1)).toContain('Keep to it.');
 		expect(systems.at(-1)).toContain('unless the writer asks about them');
 		expect(systems.at(-1)).toContain('filter verbs');

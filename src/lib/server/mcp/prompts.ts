@@ -226,11 +226,16 @@ const PROMPTS: PromptDef[] = [
 				required: false
 			}
 		],
-		build: (args) => {
+		build: (args, connection) => {
 			const storyId = story(args, false);
+			const preferences = connection.preferences;
 			return framed(
 				universe(args),
-				[buildContinuityBrief(storyId ? { scope: 'story', storyId } : { scope: 'universe' })],
+				[
+					buildContinuityBrief(
+						storyId ? { scope: 'story', storyId, preferences } : { scope: 'universe', preferences }
+					)
+				],
 				STAGES_ONLY
 			);
 		}
