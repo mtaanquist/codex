@@ -48,7 +48,7 @@ export const actions: Actions = {
 	restore: async ({ request, locals }) => {
 		requireModerator(locals);
 		const publicationId = formText(await request.formData(), 'publicationId');
-		if (!isUuid(publicationId) || !(await restorePublication(db, publicationId))) {
+		if (!isUuid(publicationId) || !(await restorePublication(db, publicationId, locals.user!.id))) {
 			return fail(400, {
 				scope: 'published',
 				message: 'That edition is not taken down, or its author has asked to delete their account.'

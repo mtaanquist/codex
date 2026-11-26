@@ -451,7 +451,7 @@ describe('listing and moderation', () => {
 
 		await saveStoryVisibility(db, s.id, 'public', false, true);
 		expect(await listed()).toBe(false);
-		expect(await allowInBrowse(db, s.id)).toBe(true);
+		expect(await allowInBrowse(db, s.id, null)).toBe(true);
 		// Allowing it again does not list it for the author.
 		expect(await listed()).toBe(false);
 		await saveStoryVisibility(db, s.id, 'public', false, true);
