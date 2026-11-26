@@ -50,6 +50,8 @@ const {
 } = await import('../../src/lib/server/browse');
 const { parseBrowseQuery, BROWSE_PAGE_SIZE } = await import('../../src/lib/browse');
 const browsePage = await import('../../src/routes/browse/+page.server');
+const storySettings =
+	await import('../../src/routes/stories/[id]/settings/[[section]]/+page.server');
 
 let author: { id: string };
 let universeId: string;
@@ -144,6 +146,57 @@ describe('who appears', () => {
 		await db.update(users).set({ suspendedAt: new Date() }).where(eq(users.id, suspended.id));
 
 		expect(await titles()).toEqual(['Listed']);
+	});
+
+	it('leaves out private stories, trashed universes, owners leaving, and editions of a story given away', async () => {
+		await story('Listed');
+		const hidden = await story('Private');
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, hidden.id));
+
+		const [binned] = await db
+			.insert(universes)
+			.values({ ownerId: author.id, name: 'Binned' })
+			.returning();
+		await story('In a trashed universe', { universe: binned.id });
+		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, binned.id));
+
+		const leaving = await user('leaving@example.com', { handle: 'leaving' });
+		const [leavingUniverse] = await db
+			.insert(universes)
+			.values({ ownerId: leaving.id, name: 'L' })
+			.returning();
+		await story('Owner leaving', { owner: leaving.id, universe: leavingUniverse.id });
+		await db.update(users).set({ deletionScheduledAt: new Date() }).where(eq(users.id, leaving.id));
+
+		// The edition was published by its old owner; the story now belongs to
+		// someone else, so the old edition is not theirs to list.
+		const other = await user('other@example.com', { handle: 'other' });
+		const moved = await story('Given away');
+		await db.update(stories).set({ ownerId: other.id }).where(eq(stories.id, moved.id));
+
+		expect(await titles()).toEqual(['Listed']);
+	});
+
+	it('leaves authors who opted out of Browse, or are leaving, out of Writers', async () => {
+		await story('Shown');
+		const hidden = await user('quiet@example.com', {
+			handle: 'quiet',
+			penName: 'Ada Quiet',
+			hiddenFromBrowse: true
+		});
+		const [quietUniverse] = await db
+			.insert(universes)
+			.values({ ownerId: hidden.id, name: 'Q' })
+			.returning();
+		await story('Quiet one', { owner: hidden.id, universe: quietUniverse.id });
+		const leaving = await user('gone@example.com', { handle: 'gone', penName: 'Ada Gone' });
+		const [goneUniverse] = await db
+			.insert(universes)
+			.values({ ownerId: leaving.id, name: 'G' })
+			.returning();
+		await story('Going', { owner: leaving.id, universe: goneUniverse.id });
+		await db.update(users).set({ deletionScheduledAt: new Date() }).where(eq(users.id, leaving.id));
+		expect((await writers('q=ada')).map((row) => row.handle)).toEqual(['teller']);
 	});
 
 	it('hides adult work unless asked, and names the author and universe', async () => {
@@ -395,6 +448,41 @@ describe('listing and moderation', () => {
 		// Leaving public clears the listing.
 		await saveStoryVisibility(db, s.id, 'private', false, null);
 		expect(await listed()).toBe(false);
+	});
+});
+
+describe('the visibility form', () => {
+	function save(storyId: string, fields: Record<string, string>) {
+		const body = new FormData();
+		for (const [key, value] of Object.entries(fields)) body.set(key, value);
+		return storySettings.actions.setVisibility({
+			request: new Request('http://localhost/', { method: 'POST', body }),
+			params: { id: storyId },
+			locals: { user: author, session: null }
+		} as never);
+	}
+	const row = async (id: string) => (await db.select().from(stories).where(eq(stories.id, id)))[0];
+
+	it('keeps the stored Browse choice while Browse is off, since the box is not shown', async () => {
+		const s = await story('Kept');
+		expect(await save(s.id, { visibility: 'public' })).toMatchObject({ saved: true });
+		expect(await row(s.id)).toMatchObject({ visibility: 'public', listedInBrowse: true });
+		// Leaving public clears the choice, so coming back does not list it again.
+		expect(await save(s.id, { visibility: 'unlisted' })).toMatchObject({ saved: true });
+		expect(await row(s.id)).toMatchObject({ visibility: 'unlisted', listedInBrowse: false });
+		await save(s.id, { visibility: 'public' });
+		expect((await row(s.id)).listedInBrowse).toBe(false);
+	});
+
+	it('saves the Browse box while Browse is on, and refuses an unknown visibility', async () => {
+		await saveBrowseEnabled(db, true);
+		const s = await story('Toggled', { listed: false });
+		await save(s.id, { visibility: 'public', listedInBrowse: 'on' });
+		expect((await row(s.id)).listedInBrowse).toBe(true);
+		await save(s.id, { visibility: 'public' });
+		expect((await row(s.id)).listedInBrowse).toBe(false);
+		expect(await save(s.id, { visibility: 'everyone' })).toMatchObject({ status: 400 });
+		expect((await row(s.id)).visibility).toBe('public');
 	});
 });
 
