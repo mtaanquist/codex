@@ -6,7 +6,12 @@
 	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
-	import { usageRowCostUsd, type TokenPrice, type UsageCostRow } from '#lib/assistant-cost';
+	import {
+		usageRowCostUsd,
+		usageTotalPhrase,
+		type TokenPrice,
+		type UsageCostRow
+	} from '#lib/assistant-cost';
 	import { askConfirm } from '#lib/confirm.svelte';
 	import { formatDateTime, formatNumber, pluralSuffix, spentPhrase } from '#lib/format';
 	import { resolveRoleModel, type AssistantRole } from '#lib/assistant-tuning';
@@ -171,28 +176,14 @@
 	function usageCost(row: UsageCostRow) {
 		return usageRowCostUsd(modelPricing, row, savedProvider);
 	}
-	const usageTotalCost = $derived.by(() => {
-		let total = 0;
-		let known = false;
-		// A model with no price, or requests with no counts, are left out of
-		// the total.
-		let partial = false;
-		for (const row of data.assistantUsage.byModel) {
-			const cost = usageCost(row);
-			if (cost !== null) {
-				total += cost;
-				known = true;
-			}
-			if (cost === null || row.unreported > 0) partial = true;
-		}
-		return known ? { total, partial } : null;
-	});
-
-	function partialPhrase(total: number): string {
-		return total >= 0.01
-			? 'at least $' + total.toFixed(2) + ', as some requests could not be priced'
-			: 'some requests could not be priced';
-	}
+	const usageTotal = $derived(
+		usageTotalPhrase(
+			modelPricing,
+			data.assistantUsage.byModel,
+			data.assistantUsage.totals.estimatedRequests > 0,
+			savedProvider
+		)
+	);
 
 	// The usage log pages through ?usage=N on the assistant section.
 	function usagePageHref(n: number): ResolvedPathname {
@@ -910,10 +901,8 @@
 							{data.assistantUsage.totals.webSearchRequests} web search{data.assistantUsage.totals
 								.webSearchRequests === 1
 								? ''
-								: 'es'}{/if}{#if usageTotalCost !== null},
-							{#if usageTotalCost.partial}{partialPhrase(usageTotalCost.total)}{:else}{spentPhrase(
-									usageTotalCost.total
-								)}{/if}{/if}.
+								: 'es'}{/if}{#if usageTotal !== null},
+							{usageTotal}{/if}.
 						{#if data.assistantUsage.totals.estimatedRequests > 0}
 							Includes {data.assistantUsage.totals.estimatedRequests} estimated request{pluralSuffix(
 								data.assistantUsage.totals.estimatedRequests

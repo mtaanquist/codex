@@ -13,7 +13,7 @@ import { PASS_CARD_HTML, PASS_CARD_MIME, PASS_CARD_URI } from './pass-card.ts';
 // and holds nothing afterwards, so there is no session to keep or to steal.
 
 const INSTRUCTIONS =
-	"Codex holds a writer's fiction: universes, the stories in them, their chapters and scenes, and entries for characters, places and lore. Start with list_universes, then pass a universe id to the other tools. You cannot change, delete or publish anything. If you were allowed to suggest, your edits and comments wait in the writer's review, and the writer accepts or rejects each one there. list_review_notes and get_review_note show what the writer decided and what they answered; reply_in_thread answers them. The prompts carry the instructions for the writer's usual work, such as a review, a copyedit, a continuity review, a pattern pass, a draft or a recap.";
+	"Codex holds a writer's fiction: universes, the stories in them, their chapters and scenes, and entries for characters, places and lore. Start with list_universes, then pass a universe id to the other tools. You cannot change, delete or publish anything. If you were allowed to suggest, your edits and comments wait in the writer's review, and the writer accepts or rejects each one there, or on the card that open_guided_pass shows when it is offered. list_review_notes and get_review_note show what the writer decided and what they answered; reply_in_thread answers them. The prompts carry the instructions for the writer's usual work, such as a review, a copyedit, a continuity review, a pattern pass, a draft or a recap.";
 
 type Connection = { db: Database; identity: BearerIdentity; origin: string };
 

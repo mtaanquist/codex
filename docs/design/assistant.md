@@ -1346,6 +1346,11 @@ Exceptions to "one toolbox for both", each with its reason:
   characters; the rest wait in Codex. A client that cannot show cards gets
   the link to the pass in
   Codex.
+- A draft prompt over MCP with no length asked for and none in the
+  preferences asks for 800 words. The in-app `/draft` falls back to the
+  median length of the story's scenes instead, which it works out from the
+  story it is drafting in; a prompt is text handed to the app, and the help
+  names its fixed fallback.
 
 ### Background jobs
 

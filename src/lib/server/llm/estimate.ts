@@ -216,7 +216,9 @@ export async function estimateStoryReview(
 	}
 	const includeTiers = reviewTiers(categories);
 	// The preference lines ride on each scene's task message when the review
-	// reads the wording, and the language lines always.
+	// reads the wording, and the language lines always. The confirm stage
+	// states some of them again, but that stage is shown as not known before
+	// the run, so it is not counted here.
 	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
 	const { language, preferences } = settings;
 	const preferenceText = reviewSettingsText(categories, preferences, language);

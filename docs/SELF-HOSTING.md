@@ -472,8 +472,10 @@ is missing (nothing is changed when that happens).
 The first start of the new database image takes over the data files, and the
 first start of the new version rebuilds the database's indexes if the data
 was created by the old image, because the new image sorts text slightly
-differently. Both run once and take a while on a large database. Wait for the
-app's log to show that the migrations finished; if `docker compose up -d`
+differently. Both run once and take a while on a large database. Watch
+`docker compose logs -f app` and wait for "Migrations applied." after
+"Applying migrations."; do not restart the app meanwhile, as that starts the
+rebuild over. If `docker compose up -d`
 reports `db` or `app` as unhealthy meanwhile, run it again once they are done.
 
 To go back to the earlier version, put the copy from step 2 back. Everything
