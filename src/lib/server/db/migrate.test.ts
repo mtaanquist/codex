@@ -29,6 +29,16 @@ describe('explainPgvectorError', () => {
 		expect((wrapped as Error).message).toMatch(/as a superuser, run CREATE EXTENSION vector/);
 	});
 
+	it('gives directions when the server refuses pgvector for another reason', () => {
+		const pgError = Object.assign(new Error('extension "vector" is not allow-listed'), {
+			code: '0A000'
+		});
+		const wrapped = explainPgvectorError(
+			Object.assign(new Error('Failed query'), { cause: pgError })
+		);
+		expect((wrapped as Error).message).toMatch(/is not allow-listed.*Install or allow pgvector/);
+	});
+
 	it('passes other errors through', () => {
 		const other = Object.assign(new Error('permission denied for table users'), { code: '42501' });
 		expect(explainPgvectorError(other)).toBe(other);

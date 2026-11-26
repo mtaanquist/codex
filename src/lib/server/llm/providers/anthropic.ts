@@ -336,7 +336,10 @@ function reportsSearches(usage: Block | undefined): boolean {
 
 // How a streamed content block changes the count of billable searches: a
 // web_search call adds one, and a result that came back as an error (not
-// billed) takes it off again. A call with no result yet counts.
+// billed) takes it off again. A call with no result yet counts. Only
+// top-level calls are seen: searches a tool runs from inside code execution
+// are missed, so this fallback can undercount when no message_delta arrives
+// (the usage is marked estimated then).
 function searchCallDelta(block: unknown): number {
 	const b = block as { type?: unknown; name?: unknown; content?: unknown } | undefined;
 	if (b?.type === 'server_tool_use' && b.name === 'web_search') return 1;

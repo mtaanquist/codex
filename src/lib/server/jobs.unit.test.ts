@@ -207,30 +207,6 @@ describe('reviewSettingsKey', () => {
 		).toBe(reviewSettingsKey(NO_LANGUAGE, null, false, null, NO_PREFERENCES));
 	});
 
-	it('keys the house style, habits and notes for a lore review with a pattern pass', () => {
-		const settings = { language: NO_LANGUAGE, preferences: NO_PREFERENCES, styleNotes: null };
-		const changed = [
-			{ ...settings, preferences: notes },
-			{ ...settings, preferences: { ...NO_PREFERENCES, leaveAlone: ['epithets' as const] } },
-			{
-				...settings,
-				preferences: {
-					...NO_PREFERENCES,
-					houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' as const }
-				}
-			},
-			{ ...settings, styleNotes: 'Hardboiled noir.' }
-		];
-		const plain = storyReviewSettingsKey(settings, ['lore'], 'book');
-		for (const other of changed) {
-			expect(storyReviewSettingsKey(other, ['lore'], 'book')).not.toBe(plain);
-			// Without the pattern pass a lore review does not read them.
-			expect(storyReviewSettingsKey(other, ['lore'], undefined)).toBe(
-				storyReviewSettingsKey(settings, ['lore'], undefined)
-			);
-		}
-	});
-
 	it('keys the feedback amount only for the sparing review, which states it', () => {
 		const settings = { language: NO_LANGUAGE, preferences: NO_PREFERENCES, styleNotes: null };
 		const more = { ...settings, preferences: { ...NO_PREFERENCES, feedback: 'thorough' as const } };

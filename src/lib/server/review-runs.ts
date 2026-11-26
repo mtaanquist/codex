@@ -92,15 +92,15 @@ export function reviewSettingsKey(
 }
 
 // The settings key for a story review run. The preferences and style notes
-// count where the scene passes read the wording, and wherever a pattern pass
-// runs, since it always states the house style, habits and notes.
+// count where the scene passes read the wording, which covers every review a
+// pattern pass runs in (see runPatternScope).
 export function storyReviewSettingsKey(
 	settings: ReviewSettings,
 	categories: ReviewCategory[] | undefined,
 	patterns: PatternScope | undefined
 ): string {
 	const parsed = parseCategories(categories);
-	const reads = readsWording(parsed) || Boolean(patterns);
+	const reads = readsWording(parsed);
 	return reviewSettingsKey(
 		settings.language,
 		reads ? settings.preferences : null,

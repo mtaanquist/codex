@@ -149,6 +149,15 @@ export function explainPgvectorError(error: unknown): unknown {
 			{ cause: error }
 		);
 	}
+	// Any other refusal to create it, such as a managed service's allow-list.
+	if (message && /extension "vector"|vector\.control/.test(message)) {
+		return new Error(
+			`The database could not create the pgvector extension (${message}). Install or allow ` +
+				'pgvector on the database server, or ask your provider to, and start Codex again. See ' +
+				'"Updating" in docs/SELF-HOSTING.md.',
+			{ cause: error }
+		);
+	}
 	return error;
 }
 
