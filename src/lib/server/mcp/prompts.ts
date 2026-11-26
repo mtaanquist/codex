@@ -155,9 +155,11 @@ function categories(args: Args): ReviewCategory[] {
 	return REVIEW_CATEGORIES.filter((category) => asked.includes(category));
 }
 
-function words(args: Args): number {
+// The length asked for, else the default draft length in the work's
+// Assistant preferences, else the fixed fallback.
+function words(args: Args, connection: PromptConnection): number {
 	const asked = text(args, 'words', MAX_SHORT_TEXT, false);
-	if (!asked) return FALLBACK_DRAFT_WORDS;
+	if (!asked) return connection.preferences?.draftWords ?? FALLBACK_DRAFT_WORDS;
 	if (!/^\d+$/.test(asked)) throw new PromptArgumentError('"words" must be a whole number.');
 	return clampDraftWords(Number(asked));
 }
@@ -338,7 +340,7 @@ const PROMPTS: PromptDef[] = [
 			{ name: 'brief', description: 'What happens in the scene.', required: true },
 			{
 				name: 'words',
-				description: `Optional. About how many words to write; ${FALLBACK_DRAFT_WORDS} when left out.`,
+				description: `Optional. About how many words to write. Left out, the default length in the story's Assistant preferences, or ${FALLBACK_DRAFT_WORDS}.`,
 				required: false
 			},
 			{
@@ -356,7 +358,7 @@ const PROMPTS: PromptDef[] = [
 					buildSceneDraftMessage({
 						source: READ_WITH_TOOLS,
 						brief: text(args, 'brief', MAX_DRAFT_BRIEF_CHARS),
-						targetWords: words(args),
+						targetWords: words(args, connection),
 						pov: text(args, 'pov', MAX_DRAFT_POV_CHARS, false),
 						language: connection.language,
 						preferences: connection.preferences
@@ -381,7 +383,7 @@ const PROMPTS: PromptDef[] = [
 			{ name: 'brief', description: 'What happens in the chapter.', required: true },
 			{
 				name: 'words',
-				description: `Optional. About how many words to write for each scene; ${FALLBACK_DRAFT_WORDS} when left out.`,
+				description: `Optional. About how many words to write for each scene. Left out, the default length in the story's Assistant preferences, or ${FALLBACK_DRAFT_WORDS}.`,
 				required: false
 			}
 		],
@@ -395,7 +397,7 @@ const PROMPTS: PromptDef[] = [
 						source: READ_WITH_TOOLS,
 						brief: '',
 						chapterBrief: text(args, 'brief', MAX_DRAFT_BRIEF_CHARS),
-						targetWords: words(args),
+						targetWords: words(args, connection),
 						language: connection.language,
 						preferences: connection.preferences
 					})
@@ -426,7 +428,8 @@ const PROMPTS: PromptDef[] = [
 					`The story is the one with id ${story(args)}. "The material provided" below is what list_scenes gives for it: each scene's summary, in order. Read a scene with get_scene where its summary is missing.`,
 					buildRecapMessage(
 						text(args, 'throughScene', MAX_SHORT_TEXT, false) || null,
-						connection.language
+						connection.language,
+						connection.preferences?.summaryLength ?? 'short'
 					)
 				],
 				REPLY_ONLY

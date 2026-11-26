@@ -25,7 +25,16 @@ import {
 	type HabitCheck,
 	type PreferenceSetting
 } from '../../../assistant-preferences.ts';
-import { checks, habitNotesLine, houseStyleLine, leaveAloneLine } from './preferences.ts';
+import {
+	checks,
+	contentLimitsLine,
+	editReasonLine,
+	feedbackLine,
+	habitNotesLine,
+	houseStyleLine,
+	leaveAloneLine,
+	withReason
+} from './preferences.ts';
 
 // An open note the Assistant left on an earlier pass, carried into the next
 // run so it does not repeat itself.
@@ -173,10 +182,10 @@ const patternWithTool = (preferences: PreferenceSetting) => {
 	const examples = PATTERN_EXAMPLES.filter(([habit]) => checks(preferences, habit)).map(
 		([, phrase]) => phrase
 	);
-	return `For a recurring pattern${examples.length ? ` (${examples.join(', ')})` : ''}, use leave_pattern_note: one call with a note opening "Pattern note (<the pattern>):" and an edit for every instance you would change, each with a one-sentence reason specific to that spot. Keep some variety on purpose: leave an instance alone where it helps the rhythm or clarity, and list it under kept with the reason. A pacing or structure observation is not a pattern; use leave_comment for it.`;
+	return `For a recurring pattern${examples.length ? ` (${examples.join(', ')})` : ''}, use leave_pattern_note: one call with a note opening "Pattern note (<the pattern>):" and an edit for every instance you would change, each ${withReason(preferences, ' specific to that spot')}. Keep some variety on purpose: leave an instance alone where it helps the rhythm or clarity, and list it under kept with the reason. A pacing or structure observation is not a pattern; use leave_comment for it.`;
 };
-const PATTERN_WITHOUT_TOOL =
-	'When a comment describes a recurring pattern, open it with "Pattern note (<the pattern>):" and give the line edits for it as separate suggest_edit calls, each with a one-sentence reason.';
+const patternWithoutTool = (preferences: PreferenceSetting) =>
+	`When a comment describes a recurring pattern, open it with "Pattern note (<the pattern>):" and give the line edits for it as separate suggest_edit calls, each ${withReason(preferences)}.`;
 
 // sceneTextIncluded says whether the caller put the scene's prose in the
 // request already (the scene-local tier survived the budget). A weak model
@@ -205,12 +214,17 @@ export function buildReviewMessage(
 			? "The scene's full text is already in this message. Do not call get_scene for it. Leave your feedback through your tools, anchored to the scene:"
 			: 'Read it in full with get_scene, then leave your feedback through your tools, anchored to the scene:',
 		'- leave_comment for an observation about continuity, characterisation, pacing, or clarity; quote the passage you mean.',
-		"- suggest_edit for a concrete line edit: replace an exact passage with an improved version, keeping the change minimal and faithful to the author's voice. Give it a one-sentence reason the author can learn from, unless the fix is obvious (a typo, a spelling slip, missing punctuation).",
+		`- suggest_edit for a concrete line edit: replace an exact passage with an improved version, keeping the change minimal and faithful to the author's voice. ${editReasonLine(preferences)}`,
 		ONE_THEME_PER_NOTE,
-		patternTool ? patternWithTool(wording ? preferences : NO_PREFERENCES) : PATTERN_WITHOUT_TOOL,
+		patternTool
+			? patternWithTool(
+					wording ? preferences : { ...NO_PREFERENCES, editReasons: preferences.editReasons }
+				)
+			: patternWithoutTool(preferences),
 		sparing
-			? `Be specific and sparing; a few high-value notes beat many shallow ones. Splitting your observations into one comment per theme does not count against being sparing. Check the scene against the established world and entity details ${source.where}. Do not rewrite the scene wholesale or change the meaning of the prose.`
+			? feedbackLine(preferences, source.where)
 			: focusInstruction(categories, source, language, preferences),
+		contentLimitsLine(preferences, 'check'),
 		wording ? leaveAloneLine(preferences, 'check') : '',
 		wording ? habitNotesLine(preferences, 'review') : ''
 	].filter(Boolean);
@@ -547,7 +561,7 @@ export function buildRereadMessage(input: {
 			.map((line) => `> ${line}`)
 			.join('\n'),
 		'Read the passage below as it stands now and check how it reads after the change: a pronoun that has become ambiguous (two people it could mean), the same name repeated too close together, or a rhythm that now trips. Keeping some variety is fine; do not undo the pattern fix or chase every remaining instance.',
-		'If something now reads badly, stage exactly one suggest_edit inside this passage that fixes it, with a one-sentence reason. If it reads well, reply with the single word "fine" and stage nothing. The passage is all you need; do not call any other tool.',
+		`If something now reads badly, stage exactly one suggest_edit inside this passage that fixes it, ${withReason(input.preferences ?? NO_PREFERENCES)}. If it reads well, reply with the single word "fine" and stage nothing. The passage is all you need; do not call any other tool.`,
 		'The passage:',
 		input.passage
 	].join('\n');
@@ -849,7 +863,7 @@ export function buildPatternApplyMessage(
 		lines.push(`Instances it noted: ${pattern.examples.map((e) => `"${e}"`).join(', ')}.`);
 	}
 	lines.push(
-		"Below is the full text of one scene where it shows; it is all you need, so do not call get_scene. Stage a suggest_edit for each instance in this scene that you would change, keeping each change minimal and in the author's voice, with a one-sentence reason. Keep some variety on purpose: leave an instance alone where it helps the rhythm or clarity. Change nothing else.",
+		`Below is the full text of one scene where it shows; it is all you need, so do not call get_scene. Stage a suggest_edit for each instance in this scene that you would change, keeping each change minimal and in the author's voice, ${withReason(preferences)}. Keep some variety on purpose: leave an instance alone where it helps the rhythm or clarity. Change nothing else.`,
 		'If no instance in this scene needs changing, reply with the single word "none" and stage nothing.',
 		patternSceneBlock({ ...scene, bodyMd: text })
 	);

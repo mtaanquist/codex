@@ -763,7 +763,7 @@ These cut across the surfaces and the architecture.
   `language` in story.md and in universe.md, left out when not set, and the
   story import reads a story's back (a tag this site does not list is left
   off and reported). Models and editor preferences stay out of the export.
-- **Assistant preferences (#1344, items 1 to 3).** A universe and a story each
+- **Assistant preferences (#1344).** A universe and a story each
   carry `assistant_preferences`, a jsonb object of known keys from
   `#lib/assistant-preferences` (absent is not set), and `assistant_notes`, one
   markdown field capped at 1,000 characters (migration 0123). The keys are a
@@ -793,14 +793,30 @@ These cut across the surfaces and the architecture.
   language, the house style, the habits to leave alone (which the chat does
   not flag or change unprompted, but discusses when the writer asks) and the
   fenced notes.
+  Items 4 to 8 (#1778 to #1782) add keys to the same object, so no migration:
+  `feedback` (sparing, normal, thorough) swaps the default review's "specific
+  and sparing" line (the exhaustive passes ignore it); `editReasons` (always,
+  unobvious, never) words the reason clause of `suggest_edit` and the "with a
+  one-sentence reason" of the pattern lines; `summaryLength` (short,
+  detailed) words scene and chapter summaries, arcs (the universe's choice,
+  since an arc spans stories) and the recap, and raises their reply limits;
+  `draftWords` (a whole number from 100 to 6,000) is the length the draft
+  forms open with and the MCP draft prompts fall back to, over the median;
+  `warning:<slug>` (write, avoid) is one content limit per entry of the
+  admin's content warning list (decided on #1782), named from the live list
+  at read time (`liveWarnings`), so a warning removed or merged away drops
+  out. The limits go to drafts, `/write`, the chat frame and every review,
+  and say they never change the model's own usage policies. The summary
+  length changes the request sent, not its fingerprint (the short request is
+  hashed whatever the length), so changing it marks nothing out of date and
+  causes no spend; a summary takes the new length when it is next written.
   Not set, every prompt reads byte for byte as before. The continuation is
   left out on purpose (short follow-on text that copies the prose around
   it). There is no free-form
-  system prompt, and the rest of #1344 (feedback amount, reasons on edits,
-  summary and draft lengths, content limits) is not built. Exports carry the
+  system prompt. Exports carry the
   preferences and the notes, with the story's style notes (#1547): story.md
   and universe.md list each set key as an `assistant-preferences` line
-  (`key: value`) and write `assistant-notes` (and story.md `style-notes`) as
+  (`key: value`, split at the last colon, since a warning slug may hold one) and write `assistant-notes` (and story.md `style-notes`) as
   one JSON-quoted line, every key left out when not set. The story import
   reads them back, leaving off and reporting keys it does not know and notes
   over the cap; there is no universe import, so a universe's stay in the
@@ -1213,8 +1229,10 @@ nothing set. `list_universes` and `list_stories` return the setting as
 `language` (the tag) and `languageName`, null when not set; a story's is its
 effective one. The Assistant preferences are looked up the same way
 (`workPreferences`), and both list tools return them as `preferences`: the
-five house-style keys (null when not set), `leaveAlone` (the habit keys) and
-`notes`; a story's is its effective one, a universe's is the default for its
+five house-style keys (null when not set), `leaveAlone` (the habit keys),
+`notes`, `feedback`, `editReasons`, `summaryLength` and `draftWords` (each
+null when not set) and `contentLimits` (the warning's name and the limit); a
+story's is its effective one, a universe's is the default for its
 stories. The prompts that stage
 notes are offered only to a connection that may suggest. `rewrite` stages its
 result as a suggested edit when the connection may suggest. `write`, `draft`

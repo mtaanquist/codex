@@ -7,7 +7,7 @@ import { type LanguageSetting } from '../../../writing-languages.ts';
 import { IN_CONTEXT, PROSE_FORMAT, type WorldSource } from './format.ts';
 import { languageRule } from './language.ts';
 import type { PreferenceSetting } from '../../../assistant-preferences.ts';
-import { houseStyleLine } from './preferences.ts';
+import { contentLimitsLine, houseStyleLine } from './preferences.ts';
 
 // Where the writer is in the prose when they ask: a selected passage, or the
 // text leading up to the cursor. Lets a brief like "continue from here" land.
@@ -69,6 +69,8 @@ export function buildCoauthorMessage(
 	if (options.preferences) {
 		const style = houseStyleLine(options.preferences, 'write');
 		if (style) parts.push(style);
+		const limits = contentLimitsLine(options.preferences, 'write');
+		if (limits) parts.push(limits);
 	}
 	return parts.join('\n');
 }

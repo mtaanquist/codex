@@ -8,7 +8,8 @@ import {
 	NoModelError,
 	type GatewayDeps
 } from './gateway.ts';
-import { buildSceneSummaryMessage } from './prompts/summary.ts';
+import { buildSceneSummaryMessage, type SummaryLength } from './prompts/summary.ts';
+import { storyAssistantPreferences } from '../assistant-preferences.ts';
 import { storyLanguage } from '../language.ts';
 import { SpendCapError, spentFields, type SpendMeter } from './spend.ts';
 import { jobSpendMeter } from './job-spend.ts';
@@ -41,7 +42,8 @@ import {
 // chapter-summary-request.ts). No save marks it. One that came back empty is
 // stored as an unusableReplyMark instead, so it is not asked for again as is.
 
-const MAX_SUMMARY_TOKENS = 200;
+// A detailed summary (the writer's summary length) runs to a paragraph.
+const MAX_SUMMARY_TOKENS = { short: 200, detailed: 500 };
 
 export type SummaryResult = {
 	scenes: number;
@@ -92,6 +94,7 @@ async function generate(
 		userId: string;
 		storyId: string;
 		messages: ChatMessage[];
+		length: SummaryLength;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -105,7 +108,7 @@ async function generate(
 			role: 'utility',
 			enableTools: false,
 			messages: opts.messages,
-			maxTokens: MAX_SUMMARY_TOKENS,
+			maxTokens: MAX_SUMMARY_TOKENS[opts.length],
 			meter: opts.meter,
 			signal: opts.signal
 		},
@@ -152,6 +155,7 @@ export async function summariseStory(
 		return true;
 	};
 	const language = await storyLanguage(db, storyId, userId);
+	const length = (await storyAssistantPreferences(db, storyId, userId)).summaryLength ?? 'short';
 	const sceneRows = await db
 		.select({
 			id: scenes.id,
@@ -221,9 +225,10 @@ export async function summariseStory(
 					messages: [
 						{
 							role: 'user',
-							content: buildSceneSummaryMessage(scene.title, scene.bodyMd, language)
+							content: buildSceneSummaryMessage(scene.title, scene.bodyMd, language, length)
 						}
 					],
+					length,
 					meter,
 					signal
 				},
@@ -316,7 +321,11 @@ export async function summariseStory(
 			capped = true;
 			break;
 		}
-		const request = chapterSummaryRequest(chapter.title, summariesByChapter.get(chapter.id) ?? []);
+		const request = chapterSummaryRequest(
+			chapter.title,
+			summariesByChapter.get(chapter.id) ?? [],
+			length
+		);
 		if (!request) continue;
 		// A summary kept through the upgrade (migration 0094) gets its real
 		// fingerprint, with no call.
@@ -342,7 +351,7 @@ export async function summariseStory(
 		try {
 			const text = await generate(
 				db,
-				{ userId, storyId, messages: request.messages, meter, signal },
+				{ userId, storyId, messages: request.messages, length, meter, signal },
 				deps
 			);
 			if (!text) {

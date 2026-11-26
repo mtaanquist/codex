@@ -22,7 +22,11 @@ import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid, slugAddress, withRef } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
-import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
+import {
+	assistantPreferencesShown,
+	liveWarnings,
+	savePreferences
+} from '#lib/server/assistant-preferences';
 import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/tags';
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
@@ -91,6 +95,10 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 			? await scopeModelSettings(db, locals.user!.id, { universeId: universe.id })
 			: null,
 		assistantPreferencesShown: preferencesShown,
+		// The content warnings the preferences set a limit on, in list order.
+		contentWarnings: preferencesShown
+			? [...(await liveWarnings(db))].map(([slug, name]) => ({ slug, name }))
+			: [],
 		universe,
 		contents,
 		categories,
@@ -132,7 +140,9 @@ export const actions: Actions = {
 	},
 	saveAssistantPreferences: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
-		const read = readPreferencesForm(await request.formData());
+		const read = readPreferencesForm(await request.formData(), [
+			...(await liveWarnings(db)).keys()
+		]);
 		if (!read.ok) {
 			return fail(400, {
 				action: 'assistant-preferences',

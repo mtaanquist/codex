@@ -55,7 +55,11 @@ import { formText } from '#lib/server/validation';
 import { isCoverColor } from '#lib/entity-color';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
-import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
+import {
+	assistantPreferencesShown,
+	liveWarnings,
+	savePreferences
+} from '#lib/server/assistant-preferences';
 import {
 	checkTagNames,
 	findFandoms,
@@ -168,6 +172,10 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 			? await scopeModelSettings(db, locals.user!.id, { storyId: story.id })
 			: null,
 		assistantPreferencesShown: preferencesShown,
+		// The content warnings the preferences set a limit on, in list order.
+		contentWarnings: preferencesShown
+			? [...(await liveWarnings(db))].map(([slug, name]) => ({ slug, name }))
+			: [],
 		story,
 		universe,
 		timeline,
@@ -278,7 +286,9 @@ export const actions: Actions = {
 	},
 	saveAssistantPreferences: async ({ request, params, locals }) => {
 		const { story } = await ownedStory(params.id, locals.user!.id);
-		const read = readPreferencesForm(await request.formData());
+		const read = readPreferencesForm(await request.formData(), [
+			...(await liveWarnings(db)).keys()
+		]);
 		if (!read.ok) {
 			return fail(400, {
 				action: 'assistant-preferences',

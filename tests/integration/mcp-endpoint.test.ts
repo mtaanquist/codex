@@ -19,6 +19,7 @@ import {
 	reviewSuggestions,
 	scenes,
 	stories,
+	tags,
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
@@ -832,12 +833,23 @@ describe('the Assistant preferences on the list tools', () => {
 			tense: null,
 			narration: null,
 			leaveAlone: [],
-			notes: null
+			notes: null,
+			feedback: null,
+			editReasons: null,
+			summaryLength: null,
+			draftWords: null,
+			contentLimits: []
 		});
+		await db.insert(tags).values({ kind: 'warning', name: 'Gore', slug: 'gore' });
 		await db
 			.update(universes)
 			.set({
-				assistantPreferences: { quoteMarks: 'single', epithets: 'leave' },
+				assistantPreferences: {
+					quoteMarks: 'single',
+					epithets: 'leave',
+					draftWords: 1200,
+					'warning:gore': 'avoid'
+				},
 				assistantNotes: 'U'
 			})
 			.where(eq(universes.id, alice.universeId));
@@ -849,7 +861,9 @@ describe('the Assistant preferences on the list tools', () => {
 			quoteMarks: 'single',
 			narration: 'first',
 			leaveAlone: [],
-			notes: 'U'
+			notes: 'U',
+			draftWords: 1200,
+			contentLimits: [{ name: 'Gore', limit: 'avoid' }]
 		});
 		const universesListed = JSON.parse((await call(alice, 'list_universes')).text).universes as {
 			id: string;

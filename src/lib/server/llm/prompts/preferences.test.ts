@@ -6,7 +6,12 @@ import {
 } from '../../../assistant-preferences.ts';
 import { REVIEW_CATEGORIES } from '../../../review-shape.ts';
 import { NO_LANGUAGE } from '../../../writing-languages.ts';
-import { habitNotesLine, houseStyleLine, leaveAloneLine } from './preferences.ts';
+import {
+	contentLimitsLine,
+	habitNotesLine,
+	houseStyleLine,
+	leaveAloneLine
+} from './preferences.ts';
 import { IN_CONTEXT } from './format.ts';
 import {
 	buildPatternApplyMessage,
@@ -297,5 +302,98 @@ describe('the prompts that carry the preferences', () => {
 		expect(buildSceneDraftMessage({ brief: 'b', targetWords: 500, preferences: notes })).toBe(
 			buildSceneDraftMessage({ brief: 'b', targetWords: 500 })
 		);
+	});
+});
+
+describe('feedback, reasons and content limits', () => {
+	const scene = { id: 'scene-1', title: 'The Gate' };
+	const review = (
+		categories: Parameters<typeof buildReviewMessage>[2],
+		p: PreferenceSetting,
+		patternTool = false
+	) => buildReviewMessage(scene, [], categories, false, patternTool, IN_CONTEXT, NO_LANGUAGE, p);
+
+	it('keeps the default review line when feedback is not set, and changes it for each choice', () => {
+		const base = review([], NO_PREFERENCES);
+		expect(base).toContain('Be specific and sparing');
+		const lines = (['sparing', 'normal', 'thorough'] as const).map((feedback) =>
+			review([], prefs({ feedback }))
+		);
+		expect(lines[0]).toContain('Be sparing: leave only the few notes that matter most');
+		expect(lines[1]).toContain('Leave a balanced set of notes');
+		expect(lines[2]).toContain('Be thorough: note every issue');
+		for (const text of lines) {
+			expect(text).not.toContain('Be specific and sparing');
+			expect(text).toContain('Do not rewrite the scene wholesale');
+		}
+		// An exhaustive pass reports everything whatever the choice.
+		expect(review(['mechanics'], prefs({ feedback: 'sparing' }))).toBe(
+			review(['mechanics'], NO_PREFERENCES)
+		);
+	});
+
+	it('words the reason on a suggested edit as the writer chose', () => {
+		expect(review([], prefs({ editReasons: 'unobvious' }))).toBe(review([], NO_PREFERENCES));
+		expect(review([], prefs({ editReasons: 'always' }))).toContain(
+			'Give every edit a one-sentence reason'
+		);
+		const never = review([], prefs({ editReasons: 'never' }));
+		expect(never).toContain('Leave out the reason');
+		expect(never).not.toContain('one-sentence reason');
+		expect(review([], prefs({ editReasons: 'never' }), true)).not.toContain('one-sentence reason');
+		// On a lore pass the pattern tool line still follows the reasons choice.
+		expect(review(['lore'], prefs({ editReasons: 'never' }), true)).toContain(
+			'each with no reason'
+		);
+		const pattern = { name: 'Epithets', description: 'd', sceneIds: ['s1'], examples: [] };
+		const patternScene = { id: 's1', title: 'One', bodyMd: 'Text.' };
+		expect(
+			buildPatternApplyMessage(
+				pattern,
+				patternScene,
+				4000,
+				NO_LANGUAGE,
+				prefs({ editReasons: 'never' })
+			)
+		).toContain('with no reason');
+		const reread = {
+			sceneId: 's1',
+			sceneTitle: 'One',
+			note: 'Pattern note (epithets): x',
+			changed: 'She ran.',
+			passage: 'She ran.'
+		};
+		expect(buildRereadMessage(reread)).toContain('with a one-sentence reason');
+		expect(
+			buildRereadMessage({ ...reread, preferences: prefs({ editReasons: 'never' }) })
+		).toContain('with no reason');
+	});
+
+	it('states the content limits where the Assistant drafts or comments', () => {
+		const p = prefs({
+			contentLimits: [
+				{ name: 'Graphic violence', limit: 'avoid' },
+				{ name: 'Strong language', limit: 'write' }
+			]
+		});
+		expect(contentLimitsLine(NO_PREFERENCES, 'write')).toBe('');
+		const write = contentLimitsLine(p, 'write');
+		expect(write).toContain('Keep these off the page');
+		expect(write).toContain('Graphic violence');
+		expect(write).toContain('comfortable with these on the page');
+		expect(write).toContain('Strong language');
+		expect(write).toContain('do not change your own usage policies');
+		const check = contentLimitsLine(p, 'check');
+		expect(check).toContain('Do not suggest adding them');
+		expect(check).toContain('Do not flag their presence');
+		expect(review([], p)).toContain(check);
+		expect(review(['lore'], p)).toContain(check);
+		expect(buildSceneDraftMessage({ brief: 'b', targetWords: 500, preferences: p })).toContain(
+			write
+		);
+		expect(buildCoauthorMessage('b', null, { preferences: p })).toContain(write);
+		expect(
+			contentLimitsLine(prefs({ contentLimits: [{ name: 'Gore', limit: 'avoid' }] }), 'chat')
+		).not.toContain('comfortable');
 	});
 });

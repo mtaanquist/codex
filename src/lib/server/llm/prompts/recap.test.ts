@@ -17,4 +17,9 @@ describe('buildRecapMessage', () => {
 		const message = buildRecapMessage('A scene');
 		expect(message).toMatch(/do not continue|do not.*invent/i);
 	});
+
+	it('asks for a detailed recap when the writer chose detailed summaries', () => {
+		expect(buildRecapMessage(null, undefined, 'detailed')).toContain('Write a detailed recap');
+		expect(buildRecapMessage(null)).toContain('Write a concise recap');
+	});
 });

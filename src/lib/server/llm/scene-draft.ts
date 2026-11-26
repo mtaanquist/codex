@@ -147,9 +147,13 @@ export async function sceneDraftDefaults(
 		.select({ wordCount: scenes.wordCount })
 		.from(scenes)
 		.where(and(eq(scenes.storyId, scene.storyId), isNull(scenes.deletedAt)));
+	const preferences = await storyAssistantPreferences(db, scene.storyId, opts.userId);
 	return {
 		brief: usableSceneSummary(scene) ?? '',
-		targetWords: defaultDraftWords(counts.map((row) => row.wordCount)),
+		targetWords: defaultDraftWords(
+			counts.map((row) => row.wordCount),
+			preferences.draftWords
+		),
 		sceneTitle: scene.title
 	};
 }
