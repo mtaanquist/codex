@@ -2,7 +2,7 @@
 	import { page } from '$app/state';
 	import { confirmSubmit } from '#lib/confirm.svelte';
 	import { actionKeepingQuery } from '#lib/href';
-	import { REPORT_REASONS, type ReportReason } from '#lib/report-reasons';
+	import { moderationEditionName, REPORT_REASONS, type ReportReason } from '#lib/report-reasons';
 
 	// Take an edition down, or take a story off Browse, with the reason the
 	// author will see. Shared by the Published and Reports pages, which both
@@ -11,6 +11,7 @@
 	let {
 		id,
 		title,
+		handle,
 		reason = 'other',
 		mode = 'takedown',
 		reportId = null,
@@ -20,7 +21,10 @@
 		readable = true
 	}: {
 		id: string;
-		title: string;
+		// Null when the moderator may not open the edition, so it is named by
+		// its handle instead.
+		title: string | null;
+		handle: string;
 		reason?: ReportReason;
 		mode?: 'takedown' | 'browse';
 		// From the report queue: the report the moderator is acting on. A Browse
@@ -41,6 +45,7 @@
 	} = $props();
 
 	const takedown = $derived(mode === 'takedown');
+	const name = $derived(moderationEditionName(handle, title));
 	const label = $derived(takedown ? 'Take down' : 'Remove from Browse');
 	const newerEffect = $derived(
 		newer === 'up'
@@ -65,7 +70,7 @@
 	method="POST"
 	action={actionKeepingQuery(takedown ? 'takedown' : 'removeFromBrowse', page.url.searchParams)}
 	onsubmit={confirmSubmit({
-		title: takedown ? `Take down "${title}"?` : `Remove "${title}" from Browse?`,
+		title: takedown ? `Take down ${name}?` : `Remove ${name} from Browse?`,
 		body: takedown
 			? `${takedownEffect} The author sees the reason in the story settings.`
 			: 'The story leaves Browse and the author cannot list it again until you allow it. Its pages stay up. The author sees the reason in the story settings.',
@@ -79,14 +84,14 @@
 	<select
 		class="select"
 		name="reason"
-		aria-label="{takedown ? 'Reason for taking down' : 'Reason for removing from Browse'} {title}"
+		aria-label="{takedown ? 'Reason for taking down' : 'Reason for removing from Browse'} {name}"
 		value={reason}
 	>
 		{#each REPORT_REASONS as option (option.key)}
 			<option value={option.key}>{option.label}</option>
 		{/each}
 	</select>
-	<button type="submit" class="btn btn-ghost btn-sm danger" aria-label="{label} {title}">
+	<button type="submit" class="btn btn-ghost btn-sm danger" aria-label="{label} {name}">
 		{label}
 	</button>
 </form>

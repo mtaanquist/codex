@@ -358,3 +358,65 @@ test('a limit whose save fails while the list changes is not sent again', async 
 		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
 	}
 });
+
+// A limit whose save is left alone because the list changed while it was in
+// flight, with the new list already on the page and another change queued
+// behind it, is not sent again with the new list: the writer is told it was
+// not saved and the select shows what is stored.
+test('a limit left alone while the list changed is not sent again by a queued save', async ({
+	page
+}) => {
+	const stamp = Date.now();
+	const slug = `e2e-requeue-${stamp}`;
+	const name = `E2E requeue ${stamp}`;
+	const added = `e2e-requeue-added-${stamp}`;
+	await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+	try {
+		await openUniversePreferences(page);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		let held!: () => void;
+		const holding = new Promise<void>((resolve) => (held = resolve));
+		await page.route(
+			(url) => url.search.includes('saveAssistantPreferences'),
+			async (route) => {
+				held();
+				await gate;
+				await route.continue();
+			},
+			{ times: 1 }
+		);
+		await page.getByRole('combobox', { name }).selectOption('write');
+		await holding;
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+			`E2E requeue added ${stamp}`,
+			added
+		]);
+		// Another section's save refreshes the page with the new list.
+		const refreshed = page.waitForResponse((response) => response.url().includes('__data.json'));
+		await page.evaluate(() =>
+			document.querySelector<HTMLFormElement>('form[action$="?/update"]')!.requestSubmit()
+		);
+		await refreshed;
+		await expect(page.getByRole('combobox', { name: `E2E requeue added ${stamp}` })).toBeVisible();
+		const queued = page.waitForRequest(
+			(request) =>
+				request.url().includes('saveAssistantPreferences') &&
+				(request.postData() ?? '').includes('present')
+		);
+		await page.getByRole('combobox', { name: 'Tense' }).selectOption('present');
+		release();
+		const sent = await queued;
+		expect(sent.postData() ?? '').not.toContain('changedLimits');
+		await expect(
+			page.getByRole('status').filter({ hasText: 'the content limits you changed were not saved' })
+		).toBeVisible();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('present');
+		await page.reload();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('present');
+	} finally {
+		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+	}
+});

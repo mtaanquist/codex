@@ -39,7 +39,7 @@ const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
 const { listTakenDown, publishStory, restorePublication, takedownPublication } =
 	await import('../../src/lib/server/publish');
-const { createReport, dismissReport, listOpenReports, countOpenReports } =
+const { createReport, dismissReport, listOpenReports, listRecentlyResolved, countOpenReports } =
 	await import('../../src/lib/server/reports');
 const { scheduleAccountDeletion, cancelAccountDeletion } =
 	await import('../../src/lib/server/account-deletion');
@@ -537,6 +537,38 @@ describe('the queue', () => {
 		expect(await dismissReport(db, open.id, mod.id)).toBe(true);
 		expect(await dismissReport(db, open.id, mod.id)).toBe(false);
 		expect(await countOpenReports(db)).toBe(0);
+	});
+
+	it('lists closed reports without the title once the moderator may not open the edition', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		await createReport(db, publicationId, 'spam', '');
+		const [open] = await listOpenReports(db);
+		expect(await dismissReport(db, open.id, mod.id)).toBe(true);
+		expect(await listRecentlyResolved(db)).toMatchObject([{ id: open.id, title: 'The Toll' }]);
+
+		// Private: a dismissed report does not open the edition.
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await listRecentlyResolved(db)).toMatchObject([
+			{ id: open.id, handle: 'teller', title: null, resolution: 'dismissed' }
+		]);
+
+		// A report closed by a takedown that still holds opens it, so the title
+		// shows there and in the Taken down list, until the takedown is lifted.
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		await createReport(db, publicationId, 'copyright', '');
+		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		const closed = await listRecentlyResolved(db);
+		expect(closed.find((row) => row.resolution === 'taken_down')?.title).toBe('The Toll');
+		expect(closed.find((row) => row.resolution === 'dismissed')?.title).toBe('The Toll');
+		expect(await listTakenDown(db)).toMatchObject([{ id: publicationId, title: 'The Toll' }]);
+
+		expect(await restorePublication(db, publicationId, mod.id)).toBe(true);
+		expect((await listRecentlyResolved(db)).map((row) => row.title)).toEqual([null, null]);
 	});
 });
 

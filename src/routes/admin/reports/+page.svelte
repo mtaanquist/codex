@@ -3,7 +3,12 @@
 	import { resolve } from '$app/paths';
 	import type { PageData, ActionData } from './$types';
 	import { formatDate, formatDateTime } from '#lib/format';
-	import { isReportReason, reportReasonLabel } from '#lib/report-reasons';
+	import {
+		isReportReason,
+		moderationEditionName,
+		moderationRowName,
+		reportReasonLabel
+	} from '#lib/report-reasons';
 	import { confirmSubmit } from '#lib/confirm.svelte';
 	import TakedownForm from '../TakedownForm.svelte';
 
@@ -46,7 +51,7 @@
 							<div class="list-title">
 								<!-- The reported edition itself, which may be down or replaced. -->
 								<a href={resolve('/admin/published/[id=uuid]', { id: report.publicationId })}>
-									@{report.handle}/{report.title}
+									{moderationRowName(report.handle, report.title)}
 								</a>
 								{#if report.editionRemovedReason}<span class="pill">
 										taken down
@@ -71,6 +76,7 @@
 								<TakedownForm
 									id={report.publicationId}
 									title={report.title}
+									handle={report.handle}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 									reportId={report.id}
 									newer={report.newerEdition}
@@ -85,6 +91,7 @@
 									id={report.storyId}
 									reportId={report.id}
 									title={report.title}
+									handle={report.handle}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 								/>
 							{/if}
@@ -92,7 +99,7 @@
 								method="POST"
 								action="?/dismiss"
 								onsubmit={confirmSubmit({
-									title: `Dismiss the report about "${report.title}"?`,
+									title: `Dismiss the report about ${moderationEditionName(report.handle, report.title)}?`,
 									body: 'The report closes and nothing else changes.',
 									confirmLabel: 'Dismiss report'
 								})}
@@ -101,7 +108,10 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Dismiss report about {report.title}"
+									aria-label="Dismiss report about {moderationEditionName(
+										report.handle,
+										report.title
+									)}"
 								>
 									Dismiss
 								</button>
@@ -126,7 +136,15 @@
 				{#each data.resolved as report (report.id)}
 					<div class="list-row">
 						<div class="list-main">
-							<div class="list-title">@{report.handle}/{report.title}</div>
+							<div class="list-title">
+								{#if report.title === null}
+									<span title="The story is not shared, and this report no longer opens it.">
+										{moderationRowName(report.handle, report.title)}
+									</span>
+								{:else}
+									{moderationRowName(report.handle, report.title)}
+								{/if}
+							</div>
 							<div class="list-sub">
 								{reportReasonLabel(report.reason)} - {RESOLUTION_LABELS[report.resolution ?? ''] ??
 									'Closed'}{report.resolvedByName ? ` by ${report.resolvedByName}` : ''}

@@ -82,6 +82,8 @@ select current_setting('ci.broken');
 SQL
 }
 
+# A volume made and migrated under the old image, seeded, and stopped.
+prepare_old() {
 echo "Old image: migrate to $LAST_BEFORE_REINDEX and seed"
 start "$OLD_IMAGE"
 folder=$(mktemp -d)
@@ -118,6 +120,9 @@ SQL
 docker stop "$NAME" >/dev/null
 docker rm "$NAME" >/dev/null
 
+}
+
+prepare_old
 echo "New image: the indexes must be out of order before the migration"
 start "$NEW_IMAGE"
 before=$(broken_indexes | tail -1)
@@ -130,3 +135,28 @@ DATABASE_URL="$URL" node scripts/migrate.ts
 after=$(broken_indexes | tail -1)
 echo "broken after: $after"
 [ "$after" -eq 0 ]
+
+# Rows that differ only in what glibc and musl order differently can be
+# written twice while an older Codex runs on the new image, through an index
+# that no longer finds the first. The rebuild must then stop with directions
+# and apply nothing. The index is switched off for the insert, which writes
+# such a duplicate without depending on where the broken index looks.
+echo "Duplicates: the migration must stop and apply nothing"
+cleanup
+prepare_old
+start "$NEW_IMAGE"
+applied_before=$(sql -c 'select count(*) from drizzle.__drizzle_migrations')
+sql <<'SQL'
+update pg_index set indisready = false, indisvalid = false where indexrelid = 'ci_collation_t_key'::regclass;
+insert into ci_collation (t, c) select t, c || '-copy' from ci_collation order by id limit 1;
+update pg_index set indisready = true, indisvalid = true where indexrelid = 'ci_collation_t_key'::regclass;
+SQL
+if DATABASE_URL="$URL" node scripts/migrate.ts > migrate.log 2>&1; then
+  echo "the migration did not stop on duplicate rows"
+  cat migrate.log
+  exit 1
+fi
+grep -q 'found duplicate rows' migrate.log || { cat migrate.log; exit 1; }
+applied_after=$(sql -c 'select count(*) from drizzle.__drizzle_migrations')
+[ "$applied_before" -eq "$applied_after" ]
+rm -f migrate.log

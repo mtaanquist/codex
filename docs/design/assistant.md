@@ -859,7 +859,9 @@ These cut across the surfaces and the architecture.
   of the warning list it was built from (`warningListFingerprint`: each live
   slug with its sorted merged slugs). `savePreferences` share-locks the
   posted warnings' rows and those of the warnings merged into them (removed
-  or not), in id order, then locks the row being saved and reads the live
+  or not), in one statement in id order (taken again from scratch, under a
+  savepoint, when a merge committed while it waited adds a row), then locks
+  the row being saved and reads the live
   list; when it differs from the form's, no limit is changed and the save
   answers with the outdated notice below. So a rename, removal or restore of
   a merged warning waits for the save, or lands before it reads the list.
@@ -894,8 +896,8 @@ These cut across the surfaces and the architecture.
   limit changes not yet saved, puts their selects back to what is stored and
   says so, so a later save cannot post the rebuilt select as the change. A
   change the form's save in flight carries is left to that save: kept if it
-  lands, put back by the outdated notice if the list moved first, and dropped
-  with the note if the save fails. Review runs key the limits by the warning's tag id, which a rename
+  lands, and dropped with the note if the save fails or is outdated, so a
+  save queued behind it never sends it with the new list. Review runs key the limits by the warning's tag id, which a rename
   keeps, so a rename does not restart a capped run. The limits go to drafts, `/write`, the chat frame and every
   review (the continuity confirm stage and the MCP continuity brief
   included), and say they never change the model's own usage policies. The summary

@@ -177,12 +177,7 @@
 		return usageRowCostUsd(modelPricing, row, savedProvider);
 	}
 	const usageTotal = $derived(
-		usageTotalPhrase(
-			modelPricing,
-			data.assistantUsage.byModel,
-			data.assistantUsage.totals.estimatedRequests > 0,
-			savedProvider
-		)
+		usageTotalPhrase(modelPricing, data.assistantUsage.byModel, savedProvider)
 	);
 
 	// The usage log pages through ?usage=N on the assistant section.

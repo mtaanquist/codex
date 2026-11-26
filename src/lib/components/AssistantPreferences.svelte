@@ -200,8 +200,9 @@
 			const { result, formElement } = opts;
 			const outdated = result.type === 'success' && Boolean(result.data?.notice);
 			// A limit the save left alone (the warning list changed) is still
-			// the writer's unsaved change, so a save queued behind this one
-			// sends it again and gets the same notice.
+			// the writer's unsaved change. While the page still shows the list
+			// it was picked against, a save queued behind this one sends it
+			// again and gets the same notice.
 			if (result.type === 'success' && !outdated) {
 				for (const [slug, count] of sent) {
 					if (changedLimits.get(slug) === count) changedLimits.delete(slug);
@@ -209,10 +210,12 @@
 			}
 			saving = false;
 			inFlight = null;
-			// A save that did not land while the list changed under it leaves
-			// changes picked against the old list: dropped, as a refresh would.
+			// A save that did not land, or left the limits alone, while the page
+			// took on a new list leaves changes picked against the old list:
+			// dropped, as a refresh would, so a queued save cannot send them
+			// with the new list.
 			const stale =
-				listMoved && result.type !== 'success'
+				listMoved && (result.type !== 'success' || outdated)
 					? [...sent]
 							.filter(([slug, count]) => changedLimits.get(slug) === count)
 							.map(([slug]) => slug)
