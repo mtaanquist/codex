@@ -27,9 +27,10 @@
 	<h1 class="admin-title">Published editions</h1>
 	<p class="admin-lede">
 		The latest edition of every story writers have published, unless it is taken down. That includes
-		editions hidden by an account deletion. A story the writer made private or moved to the trash
-		shows only the writer's handle. Take an edition down to remove it from the public pages. Open a
-		linked title to read the edition. Reports from readers are under Reports.
+		editions hidden by an account deletion. An edition you cannot open, such as one of a story the
+		writer made private or moved to the trash, shows only the writer's handle. Take an edition down
+		to remove it from the public pages. Open a linked title to read the edition. Reports from
+		readers are under Reports.
 	</p>
 </div>
 
@@ -147,7 +148,8 @@
 		<div class="admin-block-head">
 			<h2 class="admin-block-title">Removed from Browse</h2>
 			<p class="admin-block-sub">
-				The writer cannot list these stories in Browse until you allow it. Their pages stay up.
+				The writer cannot list these stories in Browse until you allow it. Removing a story from
+				Browse does not take its pages down.
 			</p>
 		</div>
 		<div class="admin-card tight">

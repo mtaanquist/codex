@@ -194,7 +194,8 @@ contacts a model on its own.
   With it on, Claude may look things up when it reviews your work or answers you
   in the side panel, and only in a universe you have marked as an established
   setting, where checking your draft against a published world's canon is the
-  point. Inline suggestions, drafting, and background work never search. The search runs on Anthropic's servers,
+  point. Inline suggestions, drafting, and the summaries the Background work
+  role keeps never search; a chapter or whole-story review can. The search runs on Anthropic's servers,
   not yours, and the results come back as part of Claude's answer; Codex itself
   still only ever talks to the endpoint you configured. Anthropic bills you for
   the searches. See [writing in an established setting](/docs/established-settings)

@@ -583,11 +583,16 @@
 								var said = message.text;
 								refresh().then(function () {
 									if ((stale || expired) && keys) {
+										// "Press Accept again" holds only while the same edit is shown;
+										// one decided in Codex meanwhile moves the card on.
+										var next = current();
+										var same = next && next.id === edit.id && next.stamp === edit.stamp;
 										message = {
 											failure: true,
-											text: expired
-												? said
-												: 'This edit was out of date. Read it again, then decide.'
+											text:
+												expired && same
+													? said
+													: 'This edit was out of date. Read it again, then decide.'
 										};
 										render();
 									}

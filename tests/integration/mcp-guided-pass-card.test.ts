@@ -799,4 +799,32 @@ describe('an accept that waited its turn', () => {
 		}
 		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
 	});
+
+	it('opens no pass once accepting in the app was taken away while the call waited', async () => {
+		const noteId = await patternNote(alice.token, alice);
+		const grantId = (await resolveBearer(db, alice.token))!.grantId;
+		const [{ permissions }] = await db
+			.select({ permissions: oauthGrants.permissions })
+			.from(oauthGrants)
+			.where(eq(oauthGrants.id, grantId));
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const held = [readGate.run(alice.userId, () => gate), readGate.run(alice.userId, () => gate)];
+		try {
+			const opening = open(alice.token, alice, noteId);
+			await untilWaiting(readGate, alice.userId);
+			await db
+				.update(oauthGrants)
+				.set({ permissions: permissions.filter((permission) => permission !== 'apply') })
+				.where(eq(oauthGrants.id, grantId));
+			release();
+			const result = await opening;
+			expect(result).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+			expect(result.keys).toBeUndefined();
+		} finally {
+			release();
+			await Promise.all(held);
+			await db.update(oauthGrants).set({ permissions }).where(eq(oauthGrants.id, grantId));
+		}
+	});
 });
