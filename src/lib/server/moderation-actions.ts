@@ -3,7 +3,7 @@ import { db } from './db';
 import { requireModerator } from './roles';
 import { formText } from './validation';
 import { allowInBrowse, removeFromBrowse } from './browse';
-import { takedownPublication } from './publish';
+import { editionReplaced, takedownPublication } from './publish';
 import { isUuid } from '#lib/slug';
 import { isReportReason } from '#lib/report-reasons';
 
@@ -23,6 +23,12 @@ export function moderationActions(scope: string) {
 				!isUuid(publicationId) ||
 				!(await takedownPublication(db, publicationId, locals.user!.id, reason))
 			) {
+				if (isUuid(publicationId) && (await editionReplaced(db, publicationId))) {
+					return fail(409, {
+						scope,
+						message: 'This story has a newer edition. Reload the page and try again.'
+					});
+				}
 				return fail(400, { scope, message: 'That edition does not exist or is already down.' });
 			}
 			return { scope, done: true };
