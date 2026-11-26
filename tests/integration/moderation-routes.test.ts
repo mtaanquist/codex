@@ -313,10 +313,12 @@ describe("the moderator's view of an edition", () => {
 	it('opens a story made private only once it was reported or taken down', async () => {
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
 		await expect404(loadEdition(publicationId));
+		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: false }]);
 		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
 		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
 		expect((await loadEdition(publicationId)).edition).toMatchObject({ readable: false });
+		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: true }]);
 	});
 
 	it('is a 404 for writers and signed-out visitors, and for an unknown edition', async () => {
@@ -348,6 +350,9 @@ describe('a publish racing a takedown of the same story', () => {
 			await client.query('commit');
 			expect(await publishing).toMatchObject({ ok: false });
 		} finally {
+			// After a failed expect the transaction is still open; never return
+			// a client holding the story lock to the pool.
+			await client.query('rollback').catch(() => {});
 			client.release();
 		}
 		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
@@ -385,6 +390,9 @@ describe('a publish racing a takedown of the same story', () => {
 			await client.query('commit');
 			expect(await takingDown).toBe(true);
 		} finally {
+			// After a failed expect the transaction is still open; never return
+			// a client holding the story lock to the pool.
+			await client.query('rollback').catch(() => {});
 			client.release();
 		}
 		const [current] = await db.select().from(publications).where(eq(publications.id, newId!));

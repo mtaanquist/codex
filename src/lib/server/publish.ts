@@ -743,7 +743,9 @@ export async function listLiveEditions(
 			restoredAt: publications.restoredAt,
 			restoredByName: moderatorName(publications.restoredBy),
 			browseAllowedAt: stories.browseAllowedAt,
-			browseAllowedByName: moderatorName(stories.browseAllowedBy)
+			browseAllowedByName: moderatorName(stories.browseAllowedBy),
+			// Whether the title links to the moderator's view of the text.
+			viewable: moderatorMayRead()
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
@@ -804,6 +806,13 @@ export async function listTakenDown(db: Database) {
 		.orderBy(publications.removedAt);
 }
 
+// Whether a moderator may read an edition's text on its own page: the story is
+// still shared (not private, not in the trash), or the edition was taken down
+// or reported, so work an author withdrew is not read without cause.
+function moderatorMayRead() {
+	return sql<boolean>`((${stories.visibility} <> 'private' and ${storyIsLive()}) or ${publications.removedReason} is not null or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id}))`;
+}
+
 // One edition as a moderator sees it: taken down, hidden by an account
 // deletion, superseded or live. For checking the text of a report before
 // acting on it, or again before a restore. An edition of a story the author
@@ -836,20 +845,6 @@ export async function moderatorEdition(db: Database, publicationId: string) {
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.innerJoin(users, eq(users.id, publications.ownerId))
-		.where(
-			and(
-				eq(publications.id, publicationId),
-				or(
-					shared,
-					isNotNull(publications.removedReason),
-					exists(
-						db
-							.select({ id: publicationReports.id })
-							.from(publicationReports)
-							.where(eq(publicationReports.publicationId, publications.id))
-					)
-				)
-			)
-		);
+		.where(and(eq(publications.id, publicationId), moderatorMayRead()));
 	return edition ? { ...edition, content: edition.content as EditionContent } : null;
 }

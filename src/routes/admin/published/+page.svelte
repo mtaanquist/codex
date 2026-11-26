@@ -78,7 +78,13 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
-								<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+								{#if edition.viewable}
+									<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+								{:else}
+									<span title="The writer made this story private or moved it to the trash.">
+										@{edition.handle}/{edition.title}
+									</span>
+								{/if}
 								{#if edition.hiddenAt}<span class="pill">
 										{edition.ownerDeletionPending
 											? 'hidden: account deletion pending'
