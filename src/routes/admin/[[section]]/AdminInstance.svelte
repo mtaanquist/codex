@@ -33,7 +33,7 @@
 			<h2 class="admin-block-title">Type</h2>
 			<p class="admin-block-sub">
 				Changes only the front page that visitors see before they sign in. Who can get an account is
-				set under Users, in Sign-up.
+				set under Users &amp; access, in Sign-up.
 			</p>
 		</div>
 	</div>

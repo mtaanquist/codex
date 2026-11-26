@@ -42,7 +42,7 @@
 
 {#if data.backupsConfigured}
 	<div class="admin-block">
-		<div class="status-banner ok" role="status">
+		<div class="status-banner ok">
 			<span class="dot"></span>
 			<span>
 				<span class="v">Backups are on</span>

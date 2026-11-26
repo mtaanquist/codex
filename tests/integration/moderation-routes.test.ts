@@ -287,12 +287,19 @@ describe('Admin > Reports actions', () => {
 	it('marks a report about an edition the writer has since replaced', async () => {
 		await fileReport();
 		const load = reportsPage.load as (event: unknown) => Promise<{
-			reports: { isCurrent: boolean }[];
+			reports: { newerEditionUp: boolean }[];
 		}>;
 		const locals = { user: moderator };
-		expect((await load({ locals })).reports).toMatchObject([{ isCurrent: true }]);
-		expect(await publishStory(db, author.id, storyId)).toMatchObject({ ok: true });
-		expect((await load({ locals })).reports).toMatchObject([{ isCurrent: false }]);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: true }]);
+		// Once the newer one is down on its own, a takedown touches only this one.
+		await db
+			.update(publications)
+			.set({ removedAt: new Date(), removedReason: 'spam' })
+			.where(eq(publications.id, newer.publicationId));
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
 	});
 
 	it('is a 404 for writers', async () => {

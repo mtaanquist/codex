@@ -811,7 +811,7 @@ inline ad-hoc SVG in components.
   pattern for a centre-column banner. `SceneConflictBanner.svelte` is
   built on it. In the admin area a form result is a `.status-banner`:
   `.error` with `role="alert"` for a refusal, `.ok` (with a `.dot` and a
-  `.v` line) with `role="status"` for a success. Do not inline the banner
+  `.v` line) with `role="status"` for a success. Do not inline those two
   colours.
 
 ### Assistant text

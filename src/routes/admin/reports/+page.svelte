@@ -72,7 +72,7 @@
 									id={report.publicationId}
 									title={report.title}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
-									superseded={!report.isCurrent}
+									superseded={report.newerEditionUp}
 								/>
 							{/if}
 							{#if report.listedInBrowse && !report.browseBlockedAt}
@@ -89,7 +89,7 @@
 								action="?/dismiss"
 								onsubmit={confirmSubmit({
 									title: `Dismiss the report about "${report.title}"?`,
-									body: 'The report closes and the edition stays up.',
+									body: 'The report closes and nothing else changes.',
 									confirmLabel: 'Dismiss report'
 								})}
 							>
