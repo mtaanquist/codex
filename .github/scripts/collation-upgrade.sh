@@ -108,10 +108,10 @@ insert into ci_collation (t, c)
 select p || md5(n::text) || upper(substr(md5((n + 7)::text), 1, 6)),
        upper(substr(md5(n::text), 1, 3)) || q || md5(n::text)
 from generate_series(1, 5000) n,
-  lateral (select (array['a', 'B', '-', '_', ' ', 'e', 'F', 'é', 'Z', '.'])[1 + n % 10] p,
+  lateral (select (array['a', 'B', '-', '_', ' ', 'e', 'F', chr(233), 'Z', '.'])[1 + n % 10] p,
                   (array['-', ' ', '_', 'x', 'Y', '.'])[1 + n % 6] q) s;
 insert into users (email, display_name, password_hash, role)
-select (array['a', 'B', '-', 'z', 'É'])[1 + n % 5] || 'writer' || n || '@example.com',
+select (array['a', 'B', '-', 'z', chr(201)])[1 + n % 5] || 'writer' || n || '@example.com',
        'Writer ' || n, 'x', 'user'
 from generate_series(1, 500) n;
 SQL

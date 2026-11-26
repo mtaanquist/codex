@@ -244,9 +244,11 @@ export const OUTDATED_WARNINGS =
 // never stored against a list the writer did not see. The share lock holds
 // off a rename, removal or merge of a posted warning and a merge into or out
 // of one (mergeTag and unmergeTag lock the survivor too); a change to another
-// warning does not alter a posted warning's fold. The row lock comes first so
-// that a rename's move of the limits waits for this save or lands before the
-// list is read.
+// warning does not alter a posted warning's fold. The tag lock comes first,
+// then the row's, the order a rename (its tag row, then the limits it moves)
+// and an undone merge take them in, so none of them deadlock: a rename of a
+// posted warning has landed before this save reads the row and the list, or
+// waits for it.
 //
 // The form shows each warning's limit folded with the ones merged into it, so
 // a limit is compared with that and, where the writer changed it, replaces

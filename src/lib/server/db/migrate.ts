@@ -191,6 +191,9 @@ export async function runMigrations(
 			// Checked first so a server without it stops with directions instead
 			// of postgres's bare "extension is not available".
 			if (!(await checks.hasPgvector(client))) throw new Error(PGVECTOR_MISSING_MESSAGE);
+			// Some migrations rebuild indexes, which on a large database takes long
+			// enough to look like a hang.
+			console.log('Applying migrations. On a large database this can take several minutes.');
 			const cancelled = await holdOffLongReads(client);
 			if (cancelled > 0) {
 				console.log(`Cancelled ${cancelled} long-running read(s) so the migrations can run.`);

@@ -818,6 +818,83 @@ describe('content limits across merges, renames and removals', () => {
 		expect(await allPreferences()).toEqual(before);
 	});
 
+	it("keeps a story's own write over the universe's avoid on the survivor when the merge is undone", async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:gore': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'write']]);
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:gore': 'write', 'warning:blood': 'write' },
+			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
+		});
+		expect(await limits()).toEqual([
+			['Blood', 'write'],
+			['Gore', 'write']
+		]);
+	});
+
+	it('changes no limits when a merge into a removed warning is undone', async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);
+		// Neither applies while Gore is removed.
+		expect(await limits()).toEqual([]);
+		const before = await allPreferences();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
+		expect(await limits()).toEqual([['Blood', 'write']]);
+	});
+
+	it('locks the other warnings merged into the survivor while undoing a merge', async () => {
+		// A rename of Bruising takes its row first, so holding that row the way
+		// a rename does must hold off the undo, which reads Bruising's limits
+		// under its slug.
+		await db.insert(tags).values({ kind: 'warning', name: 'Bruising', slug: 'bruising' });
+		await saveUniverse({ 'warning:bruising': 'avoid' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('bruising'), 'Gore')).toEqual({ ok: true });
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = $1 for update', [await tagId('bruising')]);
+			let done = false;
+			const undo = unmergeTag(db, 'warning', await tagId('blood')).then((result) => {
+				done = true;
+				return result;
+			});
+			let blocked = false;
+			for (let tries = 0; tries < 200 && !blocked && !done; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where $1 = any(pg_blocking_pids(pid))`,
+					[me[0].pid]
+				);
+				blocked = rows[0].n >= 1;
+				if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(blocked).toBe(true);
+			expect(done).toBe(false);
+			await holder.query(
+				"update tags set slug = 'bruises', name = 'Bruises' where slug = 'bruising'"
+			);
+			await holder.query(
+				`update universes set assistant_preferences = '{"warning:bruises": "avoid"}'::jsonb where id = $1`,
+				[universeId]
+			);
+			await holder.query('commit');
+			expect(await undo).toBe(true);
+			expect((await allPreferences()).universe).toEqual({
+				'warning:bruises': 'avoid',
+				'warning:blood': 'avoid'
+			});
+		} finally {
+			holder.release();
+		}
+	});
+
 	it('leaves out a limit posted for a warning merged into one since removed', async () => {
 		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
 		await setTagRemoved(db, 'warning', await tagId('gore'), true, user.id);

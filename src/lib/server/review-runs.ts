@@ -48,10 +48,10 @@ export function reviewScopeKey(input: ScopeInput): string {
 }
 
 // A short hash of the settings a review's prompts read: the story language,
-// for a pass that reads the wording or runs a pattern pass the Assistant
-// preferences and the story's style notes (null for one that does neither, so
-// changing them does not restart a lore-only review; see storyReviewSettingsKey), and the native language only where the prompts hint at it
-// (see readsNative). Kept
+// the Assistant preferences each pass states (see storyReviewSettingsKey for
+// which), the story's style notes for a pass that reads the wording (null
+// otherwise, so changing them does not restart a lore-only review), and the
+// native language only where the prompts hint at it (see readsNative). Kept
 // on the run state rather than in the scope key, so the queue still holds one
 // job per scope, and compared when a capped run is adopted: a changed setting
 // starts a fresh run instead of carrying the old notes forward as done.

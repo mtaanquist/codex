@@ -12,7 +12,8 @@ CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
 -- unless the character type is a real locale (a C sort order over UTF-8
 -- text), whose case folding and word matching musl and glibc also differ on.
 -- Its indexes are rebuilt before anything else writes; a database created
--- under the same glibc skips this.
+-- under the same glibc skips this, except one with that C sort order, which
+-- is rebuilt once to be safe.
 DO $$
 DECLARE
 	t record;

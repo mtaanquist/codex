@@ -137,6 +137,20 @@
 	// over the newer ones in the form.
 	let saving = false;
 	let queued = false;
+	// The writer's last pick in each select, numbered in order. A change made
+	// while a save's refresh is landing is sent at once, and the refresh can
+	// then put the older stored value on show until that save lands; the pick
+	// is put back instead.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const picks = new Map<string, { value: string; at: number }>();
+	let pickCount = 0;
+	function onFormChange(event: Event & { currentTarget: HTMLFormElement }) {
+		const control = event.target;
+		if (control instanceof HTMLSelectElement && control.name) {
+			picks.set(control.name, { value: control.value, at: ++pickCount });
+		}
+		autosubmitForm(event);
+	}
 	const submitPreferences: SubmitFunction = async (input) => {
 		if (saving) {
 			queued = true;
@@ -150,7 +164,11 @@
 		const after = await autosaveSubmit(input);
 		return async (opts) => {
 			const { result, formElement } = opts;
-			if (result.type === 'success') {
+			const outdated = result.type === 'success' && Boolean(result.data?.notice);
+			// A limit the save left alone (the warning list changed) is still
+			// the writer's unsaved change, so a save queued behind this one
+			// sends it again and gets the same notice.
+			if (result.type === 'success' && !outdated) {
 				for (const [slug, count] of sent) {
 					if (changedLimits.get(slug) === count) changedLimits.delete(slug);
 				}
@@ -164,19 +182,26 @@
 				if (after) await after({ ...opts, update: async () => {} });
 				return;
 			}
+			const refreshedAt = pickCount;
 			if (after) await after(opts);
 			else await opts.update();
-			// A save that left the limits alone (the warning list changed) shows
-			// what is stored again. A select only takes its value when the stored
-			// one changes, so the writer's pick would otherwise stay on show.
-			if (result.type === 'success' && result.data?.notice && sent.size > 0) {
-				await tick();
-				for (const slug of sent.keys()) {
+			await tick();
+			for (const [name, pick] of picks) {
+				const select = formElement.elements.namedItem(name);
+				if (pick.at > refreshedAt && select instanceof HTMLSelectElement) {
+					select.value = pick.value;
+				}
+			}
+			// A save that left the limits alone shows what is stored again. A
+			// select only takes its value when the stored one changes, so the
+			// writer's pick would otherwise stay on show.
+			if (outdated) {
+				for (const [slug, count] of sent) {
+					if (changedLimits.get(slug) !== count) continue;
+					changedLimits.delete(slug);
 					const key = warningKey(slug);
 					const select = formElement.elements.namedItem(key);
-					if (select instanceof HTMLSelectElement && !changedLimits.has(slug)) {
-						select.value = values[key] ?? '';
-					}
+					if (select instanceof HTMLSelectElement) select.value = values[key] ?? '';
 				}
 			}
 		};
@@ -227,7 +252,7 @@
 		method="POST"
 		action={ownAction('saveAssistantPreferences')}
 		use:enhance={submitPreferences}
-		onchange={autosubmitForm}
+		onchange={onFormChange}
 		novalidate
 	>
 		<!-- novalidate: the browser's own check on the draft length would block

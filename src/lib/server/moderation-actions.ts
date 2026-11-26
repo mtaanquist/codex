@@ -29,17 +29,20 @@ export function moderationActions(scope: string) {
 			if (!isReportReason(reason)) {
 				return fail(400, { scope, message: 'Pick a reason for the takedown.' });
 			}
-			if (
-				!isUuid(publicationId) ||
-				!(await takedownPublication(db, publicationId, locals.user!.id, reason, { newerShown }))
-			) {
+			const outcome = isUuid(publicationId)
+				? await takedownPublication(db, publicationId, locals.user!.id, reason, { newerShown })
+				: false;
+			if (outcome !== true) {
 				if (isUuid(reportId) && (await reportClosed(db, reportId))) {
 					return fail(409, {
 						scope,
 						message: 'This report is already closed. Reload the page to see what changed.'
 					});
 				}
-				if (isUuid(publicationId) && (await editionReplaced(db, publicationId))) {
+				if (
+					outcome === 'newer-changed' ||
+					(isUuid(publicationId) && (await editionReplaced(db, publicationId)))
+				) {
 					return fail(409, {
 						scope,
 						message: 'This story has a newer edition. Reload the page and try again.'

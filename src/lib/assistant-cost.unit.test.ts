@@ -4,7 +4,8 @@ import {
 	cacheReadRate,
 	cacheWriteRate,
 	usageCostUsd,
-	usageRowCostUsd
+	usageRowCostUsd,
+	usageTotalPhrase
 } from './assistant-cost';
 
 const price = { prompt: 0.001, completion: 0.002 };
@@ -121,5 +122,53 @@ describe('usageRowCostUsd', () => {
 		expect(
 			usageRowCostUsd(pricing, { ...row, promptTokens: null, completionTokens: null }, 'openai')
 		).toBeNull();
+	});
+});
+
+describe('usageTotalPhrase', () => {
+	const row = (model: string, promptTokens: number | null, unreported = 0) => ({
+		model,
+		provider: null,
+		price: null,
+		promptTokens,
+		completionTokens: promptTokens === null ? null : 0,
+		cachedPromptTokens: null,
+		cacheWriteTokens: null,
+		cacheWrite1hTokens: null,
+		webSearchRequests: null,
+		unreported
+	});
+	const pricing = { priced: { prompt: 0.00001, completion: 0 } };
+
+	it('gives a plain total when every request was priced', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000)], false)).toBe('about $0.40');
+	});
+
+	it('gives a floor when a model has no price', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000), row('other', 10)], false)).toBe(
+			'at least $0.40, as some requests could not be priced'
+		);
+	});
+
+	it('gives a floor when some requests reported no counts', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000, 1)], false)).toBe(
+			'at least $0.40, as some requests could not be priced'
+		);
+	});
+
+	it('does not claim a floor over estimated counts', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 40000, 1)], true)).toBe(
+			'about $0.40, and some requests could not be priced'
+		);
+	});
+
+	it('names no amount under a cent when some requests could not be priced', () => {
+		expect(usageTotalPhrase(pricing, [row('priced', 100), row('other', 10)], false)).toBe(
+			'some requests could not be priced'
+		);
+	});
+
+	it('is null when nothing could be priced', () => {
+		expect(usageTotalPhrase(pricing, [row('other', 10), row('priced', null)], false)).toBeNull();
 	});
 });

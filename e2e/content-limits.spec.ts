@@ -127,3 +127,45 @@ test('the last of two quick limit picks is the one stored', async ({ page }) => 
 		await query(`delete from tags where slug = $1 and kind = 'warning'`, [slug]);
 	}
 });
+
+// A limit picked after the warning list changed, with another change queued
+// behind its slow save, is not stored, and the writer is told so instead of
+// seeing "Saved." while the pick quietly goes away.
+test('a limit not stored with a change queued behind it still says why', async ({ page }) => {
+	const stamp = Date.now();
+	const slug = `e2e-queued-${stamp}`;
+	const name = `E2E queued ${stamp}`;
+	const added = `e2e-queued-added-${stamp}`;
+	await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+	try {
+		await openUniversePreferences(page);
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+			`E2E queued added ${stamp}`,
+			added
+		]);
+		let first = true;
+		await page.route(
+			(url) => url.search.includes('saveAssistantPreferences'),
+			async (route) => {
+				if (first) {
+					first = false;
+					await new Promise((resolve) => setTimeout(resolve, 800));
+				}
+				await route.continue();
+			}
+		);
+		await page.getByRole('combobox', { name }).selectOption('avoid');
+		await page.getByRole('combobox', { name: 'Tense' }).selectOption('present');
+		await expect(
+			page.getByRole('status').filter({ hasText: 'your content limits were not changed' })
+		).toBeVisible();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('present');
+		await page.unrouteAll({ behavior: 'wait' });
+		await page.reload();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('present');
+	} finally {
+		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+	}
+});
