@@ -10,6 +10,17 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 8 (2026-11-26, `staging/v4.0.0`, #1851,
+#1852). The medium was the round 7 queue: a save refused as outdated cleared
+its limits from the changed set, so the save queued behind it said "Saved."
+and the limit went quietly back. A refused limit now stays marked until a
+save stores it or the writer sees the notice. Undo of a merge keeps a story's
+own "write" and does nothing for a removed survivor; it and rename lock rows
+in id order. Moving `saving = false` after the refresh was tried on paper and
+dropped: a pick during the refresh would then be queued behind a refresh that
+writes the old value back, so picks made then are put back instead. The usage
+total is a tested helper and says "about" when any count is an estimate.
+
 v4.0.0 staging review, round 7 (2026-11-26, `staging/v4.0.0`, #1848,
 #1849). The one medium was the content limits form again: after an outdated
 save the select kept the unsaved value, so the selects are now rebuilt from
