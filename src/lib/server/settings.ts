@@ -186,13 +186,26 @@ export async function saveInstanceType(db: Database, type: InstanceType): Promis
 }
 
 // Whether the public Browse page is on. Off unless an admin turns it on.
+// The root layout asks on every page, so it is cached in process for a
+// minute, like the asset storage settings. A save clears this process's copy
+// at once; another process picks the change up when its copy expires.
+const BROWSE_CACHE_MS = 60_000;
+let cachedBrowse: { value: boolean; at: number } | null = null;
+
+export function clearBrowseCache(): void {
+	cachedBrowse = null;
+}
+
 export async function browseEnabled(db: Database): Promise<boolean> {
-	const value = await readSetting<{ enabled?: unknown }>(db, BROWSE_KEY);
-	return value?.enabled === true;
+	if (cachedBrowse && Date.now() - cachedBrowse.at < BROWSE_CACHE_MS) return cachedBrowse.value;
+	const value = (await readSetting<{ enabled?: unknown }>(db, BROWSE_KEY))?.enabled === true;
+	cachedBrowse = { value, at: Date.now() };
+	return value;
 }
 
 export async function saveBrowseEnabled(db: Database, enabled: boolean): Promise<void> {
 	await writeSetting(db, BROWSE_KEY, { enabled });
+	clearBrowseCache();
 }
 
 // What the worker needs to actually send: the password is decrypted here.

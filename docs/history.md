@@ -11,7 +11,7 @@ version, date, branch or PR where it had one.
 ## Notes from the Open list
 
 Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
-and Allow in Browse now record the moderator and time (#1531, migration 0128):
+and Allow in Browse now record the moderator and time (#1531, migration 0129):
 plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
 only the latest restore or allow, rather than a moderation log table, since
 nothing yet needs the full history. The Published page lists current editions
@@ -24,6 +24,19 @@ image route serves only readable editions; widening it is #1791.
 Route-level tests cover the moderation actions and both orders of a publish
 racing a takedown (#1775), and design.md now names Remove from Browse in the
 report queue (#1777).
+
+Browse performance (v4.0.0, 2026-11-26, `staging/v4.0.0`). The Browse
+setting is cached in process for a minute like the asset storage settings, and
+a save clears it (#1769). The admin sections already loaded published editions
+only on their own page since bug round 5 (#1770). Migration 0128 adds the
+partial index `publications_browse` on (published_at, id), both descending
+with nulls first to match the ORDER BY, where the edition is current and not
+taken down (#1771). EXPLAIN on 60,000 editions showed the index was ignored at
+first: the `s.owner_id = p.owner_id` guard, as a join equality, made the
+planner guess about 40 rows instead of 20,000, so it sorted everything. The
+guard is now wrapped in coalesce, which keeps it but stops the misestimate, and
+the page cursor compares published_at as a timestamp so the index serves later
+pages too. The first page went from about 20 ms to about 1 ms there.
 
 Bug round 5 (2026-11-25, `staging/bug-fixes-5`). The 17 open bug issues
 (#1523 to #1571, less #1550, which shipped with #1572) were fixed in five

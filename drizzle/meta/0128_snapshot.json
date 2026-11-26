@@ -1,5 +1,5 @@
 {
-	"id": "9c932b68-8179-46c4-975b-3285e2f37ba6",
+	"id": "1afcca0f-9bf8-45bc-8abe-975f249b0cfc",
 	"prevId": "07ff10a7-0603-42bb-a0fa-3c826ba36285",
 	"version": "7",
 	"dialect": "postgresql",
@@ -4730,18 +4730,6 @@
 					"notNull": true,
 					"default": false
 				},
-				"restored_at": {
-					"name": "restored_at",
-					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"restored_by": {
-					"name": "restored_by",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"published_at": {
 					"name": "published_at",
 					"type": "timestamp with time zone",
@@ -4763,6 +4751,28 @@
 					],
 					"isUnique": true,
 					"where": "\"publications\".\"is_current\"",
+					"concurrently": false,
+					"method": "btree",
+					"with": {}
+				},
+				"publications_browse": {
+					"name": "publications_browse",
+					"columns": [
+						{
+							"expression": "published_at",
+							"isExpression": false,
+							"asc": false,
+							"nulls": "first"
+						},
+						{
+							"expression": "id",
+							"isExpression": false,
+							"asc": false,
+							"nulls": "first"
+						}
+					],
+					"isUnique": false,
+					"where": "\"publications\".\"is_current\" and \"publications\".\"removed_at\" is null",
 					"concurrently": false,
 					"method": "btree",
 					"with": {}
@@ -4801,15 +4811,6 @@
 					"tableFrom": "publications",
 					"tableTo": "users",
 					"columnsFrom": ["removed_by"],
-					"columnsTo": ["id"],
-					"onDelete": "set null",
-					"onUpdate": "no action"
-				},
-				"publications_restored_by_users_id_fk": {
-					"name": "publications_restored_by_users_id_fk",
-					"tableFrom": "publications",
-					"tableTo": "users",
-					"columnsFrom": ["restored_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"
@@ -6851,18 +6852,6 @@
 					"primaryKey": false,
 					"notNull": false
 				},
-				"browse_allowed_at": {
-					"name": "browse_allowed_at",
-					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"browse_allowed_by": {
-					"name": "browse_allowed_by",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"cover_asset_id": {
 					"name": "cover_asset_id",
 					"type": "uuid",
@@ -6992,15 +6981,6 @@
 					"tableFrom": "stories",
 					"tableTo": "users",
 					"columnsFrom": ["browse_blocked_by"],
-					"columnsTo": ["id"],
-					"onDelete": "set null",
-					"onUpdate": "no action"
-				},
-				"stories_browse_allowed_by_users_id_fk": {
-					"name": "stories_browse_allowed_by_users_id_fk",
-					"tableFrom": "stories",
-					"tableTo": "users",
-					"columnsFrom": ["browse_allowed_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"

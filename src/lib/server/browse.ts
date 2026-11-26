@@ -15,10 +15,13 @@ import type { ReportReason } from '../report-reasons.ts';
 const MAX_MERGE_DEPTH = 8;
 
 // The condition every listed story meets. Expects publications p, stories s
-// and users u in the FROM.
+// and users u in the FROM. The owner check is wrapped in coalesce (a no-op,
+// both columns are not null) because as a plain join equality the planner
+// takes it as independent of p.story_id = s.id, guesses a few dozen rows,
+// and sorts the whole set instead of reading publications_browse in order.
 const listed = sql`
 	p.is_current and p.removed_at is null
-	and s.owner_id = p.owner_id
+	and coalesce(s.owner_id = p.owner_id, false)
 	and s.deleted_at is null
 	and exists (select 1 from universes lu where lu.id = s.universe_id and lu.deleted_at is null)
 	and s.visibility = 'public' and s.listed_in_browse and s.browse_blocked_at is null
@@ -190,8 +193,10 @@ export async function browseStories(
 		)`);
 	}
 	if (query.after) {
+		// Compared as a timestamp, not as MICROS, so the publications_browse
+		// index serves the cursor as well as the order.
 		conditions.push(
-			sql`(${MICROS}, p.id) < (${query.after.micros}::bigint, ${query.after.id}::uuid)`
+			sql`(p.published_at, p.id) < (timestamptz 'epoch' + ${query.after.micros}::bigint * interval '1 microsecond', ${query.after.id}::uuid)`
 		);
 	}
 
