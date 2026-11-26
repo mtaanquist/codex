@@ -147,7 +147,7 @@
 		</style>
 	</head>
 	<body>
-		<main id="root" aria-live="polite">
+		<main id="root">
 			<p class="meta">Loading the guided pass...</p>
 		</main>
 		<script>
@@ -159,13 +159,19 @@
 				var waiting = {};
 				var host = { capabilities: {} };
 				var pass = null;
-				var key = null;
+				// The keys of the edits the writer may accept, by edit id, from the
+				// last result; null until a result brought them.
+				var keys = null;
 				// Skipped in this card: still waiting in Codex, but behind the writer.
 				var skipped = {};
 				var acceptedHere = [];
-				var editing = false;
+				// The edit whose wording the writer is changing, and what they typed.
+				var editingId = null;
+				var draft = '';
 				var busy = false;
 				var message = null;
+				// Set once the client has answered the handshake.
+				var ready = false;
 
 				function send(payload) {
 					window.parent.postMessage(Object.assign({ jsonrpc: '2.0' }, payload), '*');
@@ -194,9 +200,17 @@
 					}
 					if (data.method === 'ui/notifications/tool-result') {
 						takeResult(data.params);
-						// A client may leave the key out of what it hands the card; the
+						// A client may leave the keys out of what it hands the card; the
 						// card asks for the pass itself to get one.
-						if (pass && !key) refresh();
+						if (pass && !keys) refresh();
+					} else if (data.method === 'ui/notifications/tool-cancelled') {
+						if (!pass) {
+							message = {
+								failure: true,
+								text: 'The pass was not opened. Ask the app to open it again.'
+							};
+							render();
+						}
 					} else if (data.method === 'ui/notifications/host-context-changed') {
 						applyContext(data.params);
 					} else if (data.id !== undefined && data.method) {
@@ -224,8 +238,8 @@
 				// A result from open_guided_pass or decide_suggestion.
 				function takeResult(result) {
 					if (!result) return;
-					var cardKey = result._meta && result._meta['codex/cardKey'];
-					if (cardKey) key = cardKey;
+					var cardKeys = result._meta && result._meta['codex/cardKeys'];
+					if (cardKeys) keys = cardKeys;
 					if (result.isError || !result.structuredContent) {
 						message = { failure: true, text: textOf(result) || 'Something went wrong.' };
 					} else {
@@ -255,7 +269,7 @@
 					return callTool('open_guided_pass', { universeId: pass.universeId, noteId: pass.noteId })
 						.then(function (result) {
 							takeResult(result);
-							if (!key) {
+							if (!keys && !message) {
 								message = {
 									failure: true,
 									text: 'This app cannot show the buttons for this pass. Open it in Codex instead.'
@@ -297,7 +311,21 @@
 					return parts.join(', ');
 				}
 
+				// Rebuilding the card drops the focus, so it goes back to the first
+				// button of the new card, unless the writer had moved it elsewhere.
 				function render() {
+					var active = document.activeElement;
+					var hadFocus = !active || active === document.body || root.contains(active);
+					paint();
+					if (!hadFocus) return;
+					var target =
+						root.querySelector('textarea') ||
+						root.querySelector('.card button:not([disabled])') ||
+						root.querySelector('.card');
+					if (target) target.focus({ preventScroll: true });
+				}
+
+				function paint() {
 					root.textContent = '';
 					if (!pass) {
 						root.appendChild(
@@ -328,14 +356,13 @@
 						})
 					);
 					root.appendChild(step ? stepCard(step) : endCard(open));
-					if (message) {
-						root.appendChild(
-							el('p', {
-								class: message.failure ? 'message failure' : 'message',
-								text: message.text
-							})
-						);
-					}
+					root.appendChild(
+						el('p', {
+							class: message && message.failure ? 'message failure' : 'message',
+							role: 'status',
+							text: message ? message.text : ''
+						})
+					);
 					root.appendChild(
 						el('p', { class: 'footer' }, [
 							el('button', { class: 'link', text: 'Open in Codex', onclick: openInCodex })
@@ -353,7 +380,11 @@
 					var where = el('div', { class: 'where', text: place(edit) }, [
 						edit.followUp ? el('span', { class: 'badge', text: 'Follow-up' }) : null
 					]);
-					var card = el('section', { class: 'card', 'aria-label': 'Current edit' }, [where, prose]);
+					var card = el(
+						'section',
+						{ class: 'card', 'aria-label': 'Current edit', tabindex: '-1' },
+						[where, prose]
+					);
 					if (edit.reason)
 						card.appendChild(el('p', { class: 'reason', text: 'Why: ' + edit.reason }));
 					if (!edit.placed) {
@@ -364,10 +395,21 @@
 							})
 						);
 					}
-					var canAccept = edit.placed && key && !busy;
-					if (editing) {
+					// An accept goes through the client to Codex, which not every client allows.
+					var canCall = ready && host.capabilities.serverTools;
+					var canAccept = edit.placed && edit.stamp && keys && keys[edit.id] && canCall && !busy;
+					if (ready && !canCall && !message) {
+						message = {
+							failure: false,
+							text: 'This app cannot accept edits from the card. Open the note in Codex to decide on them.'
+						};
+					}
+					if (editingId === edit.id) {
 						var box = el('textarea', { 'aria-label': 'Your wording' });
-						box.value = edit.replacement;
+						box.value = draft;
+						box.addEventListener('input', function () {
+							draft = box.value;
+						});
 						card.appendChild(box);
 						card.appendChild(
 							el('div', { class: 'actions' }, [
@@ -375,21 +417,26 @@
 									class: 'primary',
 									text: 'Accept my wording',
 									onclick: function () {
-										accept(edit, box.value);
+										if (!draft.trim() && edit.replacement !== '') {
+											message = {
+												failure: true,
+												text: 'Write the wording to use, or skip this edit.'
+											};
+											render();
+											return;
+										}
+										accept(edit, draft);
 									}
 								}),
 								el('button', {
 									text: 'Cancel',
 									onclick: function () {
-										editing = false;
+										editingId = null;
 										render();
 									}
 								})
 							])
 						);
-						setTimeout(function () {
-							box.focus();
-						}, 0);
 					} else {
 						card.appendChild(
 							el('div', { class: 'actions' }, [
@@ -403,7 +450,8 @@
 								el('button', {
 									text: 'Edit',
 									onclick: function () {
-										editing = true;
+										editingId = edit.id;
+										draft = edit.replacement;
 										message = null;
 										render();
 									}
@@ -416,12 +464,14 @@
 										render();
 									}
 								}),
-								el('button', {
-									text: 'Discuss',
-									onclick: function () {
-										discuss(edit);
-									}
-								})
+								ready && host.capabilities.message
+									? el('button', {
+											text: 'Discuss',
+											onclick: function () {
+												discuss(edit);
+											}
+										})
+									: null
 							])
 						);
 					}
@@ -439,7 +489,11 @@
 				}
 
 				function endCard(open) {
-					var card = el('section', { class: 'card', 'aria-label': 'End of the pass' });
+					var card = el('section', {
+						class: 'card',
+						'aria-label': 'End of the pass',
+						tabindex: '-1'
+					});
 					if (open.length === 0) {
 						card.appendChild(el('p', { text: 'You have been through every edit in this note.' }));
 					} else {
@@ -468,7 +522,12 @@
 						card.appendChild(
 							el('p', {
 								class: 'message',
-								text: pass.more + ' more edits in this note are only shown in Codex.'
+								text:
+									pass.more +
+									(pass.more === 1
+										? ' more edit in this note is'
+										: ' more edits in this note are') +
+									' only shown in Codex.'
 							})
 						);
 					}
@@ -476,7 +535,7 @@
 				}
 
 				function accept(edit, wording) {
-					if (busy || !key) return;
+					if (busy || !keys || !keys[edit.id]) return;
 					busy = true;
 					message = null;
 					render();
@@ -485,16 +544,17 @@
 						noteId: pass.noteId,
 						suggestionId: edit.id,
 						seen: edit.stamp,
-						cardKey: key
+						cardKey: keys[edit.id]
 					};
 					if (wording !== undefined) args.replacement = wording;
 					callTool('decide_suggestion', args)
 						.then(function (result) {
 							busy = false;
-							if (result && !result.isError && result.structuredContent) {
-								editing = false;
+							if (result && !result.isError) {
+								editingId = null;
 								acceptedHere.push(edit.id);
-								takeResult(result);
+								if (result.structuredContent) takeResult(result);
+								else refresh();
 								tellModel();
 							} else {
 								message = {
@@ -502,8 +562,18 @@
 									text: textOf(result) || 'The edit could not be accepted.'
 								};
 								render();
-								// A revision or a change to the text: show the pass as it is now.
-								refresh();
+								// A revision, a change to the text or an old key: show the pass as
+								// it is now. The writer's own wording stays in the box.
+								var stale = message.text.indexOf('Only the guided pass card') === 0;
+								refresh().then(function () {
+									if (stale && keys) {
+										message = {
+											failure: true,
+											text: 'This edit was out of date. Read it again, then decide.'
+										};
+										render();
+									}
+								});
 							}
 						})
 						.catch(function () {
@@ -551,20 +621,33 @@
 						});
 				}
 
+				// The page's own height, measured so it can shrink as well as grow.
+				function watchSize() {
+					if (typeof ResizeObserver !== 'function') return;
+					var sent = { width: 0, height: 0 };
+					var report = function () {
+						var html = document.documentElement;
+						var previous = html.style.height;
+						html.style.height = 'max-content';
+						var height = Math.ceil(html.getBoundingClientRect().height);
+						html.style.height = previous;
+						var width = Math.ceil(window.innerWidth);
+						if (width === sent.width && height === sent.height) return;
+						sent = { width: width, height: height };
+						notify('ui/notifications/size-changed', { width: width, height: height });
+					};
+					var observer = new ResizeObserver(report);
+					observer.observe(document.documentElement);
+					observer.observe(document.body);
+					report();
+				}
+
 				function openInCodex() {
 					if (!pass) return;
 					request('ui/open-link', { url: pass.link }).catch(function () {
 						message = { failure: false, text: 'Open this address in your browser: ' + pass.link };
 						render();
 					});
-				}
-
-				if (typeof ResizeObserver === 'function') {
-					new ResizeObserver(function () {
-						notify('ui/notifications/size-changed', {
-							height: Math.ceil(document.documentElement.scrollHeight)
-						});
-					}).observe(document.documentElement);
 				}
 
 				request('ui/initialize', {
@@ -576,6 +659,9 @@
 						host.capabilities = (result && result.hostCapabilities) || {};
 						applyContext(result && result.hostContext);
 						notify('ui/notifications/initialized', {});
+						ready = true;
+						render();
+						watchSize();
 					})
 					.catch(function () {
 						message = { failure: true, text: 'This app could not start the card.' };

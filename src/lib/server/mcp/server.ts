@@ -84,16 +84,14 @@ function buildServer(connection: Connection): McpServer {
 			{
 				title: 'Guided pass',
 				description: 'A card for working through the edits of a pattern note.',
-				mimeType: PASS_CARD_MIME,
-				_meta: { ui: { prefersBorder: true } }
+				mimeType: PASS_CARD_MIME
 			},
 			async () => ({
 				contents: [
 					{
 						uri: PASS_CARD_URI,
 						mimeType: PASS_CARD_MIME,
-						text: PASS_CARD_HTML,
-						_meta: { ui: { prefersBorder: true } }
+						text: PASS_CARD_HTML
 					}
 				]
 			})

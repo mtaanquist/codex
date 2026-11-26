@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { isUuid } from '../../slug.ts';
 import { paragraphWindow } from '../../paragraphs.ts';
 import { patternEdits, patternName } from '../../review-ui.ts';
@@ -16,7 +16,15 @@ import {
 import { queueSceneMentions } from '../jobs.ts';
 import { decideSuggestion, isOwnNote, listSuggestions, type MachineAuthor } from '../review.ts';
 import { storyAssistantOn } from '../universe-scope.ts';
-import { APP_DIFF_BUDGET } from './constants.ts';
+import {
+	APP_DIFF_BUDGET,
+	STAGING_LOCK_TIMEOUT_MS,
+	STAGING_TRANSACTION_TIMEOUT_MS
+} from './constants.ts';
+import { stagingKey } from './call-gate.ts';
+
+// Postgres: a lock was not available within lock_timeout.
+const LOCK_NOT_AVAILABLE = '55P03';
 import type { BearerIdentity } from './oauth.ts';
 import cardHtml from './pass-card.html?raw';
 
@@ -29,23 +37,29 @@ import cardHtml from './pass-card.html?raw';
 // gave the apply permission: they are the listed exceptions to "one toolbox
 // for both" (see assistant.md). They are not in the Assistant's registry, so
 // no model run inside Codex can be handed decide_suggestion. The client hides
-// decide_suggestion from its model and lets only the card call it. Codex
-// cannot see who pressed what, so the call must also carry the card key that
-// came with the pass in the result's _meta, which clients pass to the card
-// and not to the model.
+// decide_suggestion from its model and lets only the card call it; that is
+// the real guard. Codex cannot see who pressed what, so the call must also
+// carry the card key that came with the pass in the result's _meta, which
+// the reference client passes to the card. Whether a client keeps _meta from
+// its model is not promised, so the key narrows the risk and does not close it.
 
 export const PASS_CARD_URI = 'ui://codex/guided-pass.html';
 export const PASS_CARD_MIME = 'text/html;profile=mcp-app';
 export const PASS_CARD_HTML: string = cardHtml;
-// Where the card key travels in a result's _meta.
-export const CARD_KEY_META = 'codex/cardKey';
+// Where the card keys travel in a result's _meta: one per edit the writer may
+// accept, by edit id.
+export const CARD_KEY_META = 'codex/cardKeys';
 
 const CARD_KEY_TTL_MS = 2 * 60 * 60 * 1000;
 // The most edits a pass sends, of those waiting and of those decided. A note
 // rarely holds more; the rest wait in Codex.
-export const MAX_CARD_EDITS = 100;
+export const MAX_CARD_EDITS = 50;
+// About the most characters of text a pass sends; edits past it wait in Codex.
+export const MAX_CARD_CHARS = 100_000;
 // How much of the paragraph on each side of a change the card shows.
 const CONTEXT_CHARS = 600;
+// How much of a decided edit's words the card shows.
+const DECIDED_CHARS = 300;
 
 export type CardToolName = 'open_guided_pass' | 'decide_suggestion';
 
@@ -92,7 +106,7 @@ export const CARD_TOOLS: CardTool[] = [
 				...NOTE_ARGUMENTS,
 				suggestionId: str('The id of the edit to accept.'),
 				seen: str('The stamp of the wording the writer was shown.'),
-				cardKey: str('The key the card was given with the pass.'),
+				cardKey: str('The key the card was given with this edit.'),
 				replacement: str("Optional: the writer's own wording, to accept in place of the edit's.")
 			},
 			required: ['universeId', 'noteId', 'suggestionId', 'seen', 'cardKey'],
@@ -135,13 +149,15 @@ export type PassCard = {
 	// The same pass in Codex.
 	link: string;
 	edits: CardEdit[];
-	// Edits left out by MAX_CARD_EDITS.
+	// Edits still waiting that MAX_CARD_EDITS left out.
 	more: number;
 };
 
 export type CardResult = {
 	text: string;
 	isError: boolean;
+	// The connection or the universe went while the call waited.
+	refused?: boolean;
 	structured?: Record<string, unknown>;
 	meta?: Record<string, unknown>;
 };
@@ -152,6 +168,9 @@ export type CardCall = {
 	universeId: string;
 	args: Record<string, unknown>;
 	origin: string;
+	// Asked inside the accept's transaction: whether the connection and the
+	// universe are still good (see the staging calls in dispatch.ts).
+	stillAllowed: (tx: Database) => Promise<boolean>;
 };
 
 const NO_NOTE = 'No pattern note of yours with that id.';
@@ -166,19 +185,29 @@ function author(identity: BearerIdentity): MachineAuthor {
 	};
 }
 
-function cardKey(grantId: string, noteId: string): string {
-	return signToken(`pass-card.${grantId}.${noteId}.${Date.now() + CARD_KEY_TTL_MS}`);
+// A key for one edit as the writer was shown it: this connection, this note,
+// this edit and this wording. A revision needs a new pass, and so a new key.
+type KeyTarget = { grantId: string; noteId: string; suggestionId: string; stamp: string };
+
+function cardKey(target: KeyTarget): string {
+	const { grantId, noteId, suggestionId, stamp } = target;
+	return signToken(
+		`pass-card.${grantId}.${noteId}.${suggestionId}.${stamp}.${Date.now() + CARD_KEY_TTL_MS}`
+	);
 }
 
-export function cardKeyValid(key: unknown, grantId: string, noteId: string): boolean {
+export function cardKeyValid(key: unknown, target: KeyTarget): boolean {
 	if (typeof key !== 'string') return false;
 	const payload = verifyToken(key);
 	if (!payload) return false;
-	const [purpose, grant, note, expires] = payload.split('.');
+	const [purpose, grant, note, suggestion, stamp, expires, extra] = payload.split('.');
 	return (
+		extra === undefined &&
 		purpose === 'pass-card' &&
-		grant === grantId &&
-		note === noteId &&
+		grant === target.grantId &&
+		note === target.noteId &&
+		suggestion === target.suggestionId &&
+		stamp === target.stamp &&
 		Number.isFinite(Number(expires)) &&
 		Date.now() <= Number(expires)
 	);
@@ -225,8 +254,8 @@ async function noteStory(
 function clipStart(text: string): string {
 	return text.length <= CONTEXT_CHARS ? text : `...${text.slice(text.length - CONTEXT_CHARS)}`;
 }
-function clipEnd(text: string): string {
-	return text.length <= CONTEXT_CHARS ? text : `${text.slice(0, CONTEXT_CHARS)}...`;
+function clipEnd(text: string, chars = CONTEXT_CHARS): string {
+	return text.length <= chars ? text : `${text.slice(0, chars)}...`;
 }
 
 async function buildPass(
@@ -267,7 +296,7 @@ async function buildPass(
 	const decided = ordered.filter((s) => s.status !== 'pending');
 	const shown = [...decided.slice(0, MAX_CARD_EDITS), ...waiting.slice(0, MAX_CARD_EDITS)];
 
-	const edits = shown.map((s): CardEdit => {
+	const all = shown.map((s): CardEdit => {
 		const scene = sceneById.get(s.sceneId)!;
 		const base = {
 			id: s.id,
@@ -278,7 +307,18 @@ async function buildPass(
 			reason: s.reason,
 			followUp: s.followsId !== null
 		};
-		if (s.status !== 'pending' || !s.anchor) {
+		if (s.status !== 'pending') {
+			return {
+				...base,
+				replacement: clipEnd(s.replacement, DECIDED_CHARS),
+				before: '',
+				after: '',
+				text: clipEnd(s.original, DECIDED_CHARS),
+				stamp: null,
+				placed: true
+			};
+		}
+		if (!s.anchor) {
 			return {
 				...base,
 				before: '',
@@ -300,6 +340,17 @@ async function buildPass(
 		};
 	});
 
+	// Held to a size a client takes in one result: an edit that would go past
+	// it waits in Codex, counted in `more`.
+	const edits: CardEdit[] = [];
+	let size = 0;
+	for (const edit of all) {
+		size += edit.before.length + edit.text.length + edit.replacement.length + edit.after.length;
+		size += edit.reason?.length ?? 0;
+		if (size > MAX_CARD_CHARS && edits.length > 0) break;
+		edits.push(edit);
+	}
+	const left = edits.filter((edit) => edit.status === 'pending').length;
 	return {
 		universeId: call.universeId,
 		noteId,
@@ -307,7 +358,7 @@ async function buildPass(
 		name: patternName(note.opening),
 		link: `${call.origin}/stories/${note.storyId}/review?scene=${note.sceneId}&pass=${noteId}`,
 		edits,
-		more: ordered.length - shown.length
+		more: waiting.length - left
 	};
 }
 
@@ -318,11 +369,24 @@ function passSummary(pass: PassCard): string {
 }
 
 function passResult(call: CardCall, pass: PassCard, text: string): CardResult {
+	const keys = Object.fromEntries(
+		pass.edits
+			.filter((edit) => edit.status === 'pending' && edit.placed && edit.stamp)
+			.map((edit) => [
+				edit.id,
+				cardKey({
+					grantId: call.identity.grantId,
+					noteId: pass.noteId,
+					suggestionId: edit.id,
+					stamp: edit.stamp!
+				})
+			])
+	);
 	return {
 		text,
 		isError: false,
 		structured: pass as unknown as Record<string, unknown>,
-		meta: { [CARD_KEY_META]: cardKey(call.identity.grantId, pass.noteId) }
+		meta: { [CARD_KEY_META]: keys }
 	};
 }
 
@@ -337,53 +401,81 @@ async function openGuidedPass(call: CardCall): Promise<CardResult> {
 	return passResult(call, pass, passSummary(pass));
 }
 
+const ACCEPT_BUSY = 'Another call is still running. Try again.';
+
+// The card's Accept. Run like a staging call: one transaction with a short
+// lock wait and an end, the writer's staging lock, and the connection checked
+// again inside it. The pass is built again by the caller, outside the place
+// in the queue this takes.
 async function decide(call: CardCall): Promise<CardResult> {
-	const { args, identity, db } = call;
+	const { args, identity } = call;
 	const noteId = typeof args.noteId === 'string' ? args.noteId : '';
 	const suggestionId = typeof args.suggestionId === 'string' ? args.suggestionId : '';
 	const seen = typeof args.seen === 'string' ? args.seen : '';
-	if (!cardKeyValid(args.cardKey, identity.grantId, noteId)) {
+	if (
+		!cardKeyValid(args.cardKey, { grantId: identity.grantId, noteId, suggestionId, stamp: seen })
+	) {
 		return {
 			text: 'Only the guided pass card can accept an edit. Open the pass again.',
 			isError: true
 		};
 	}
-	if (args.replacement !== undefined && typeof args.replacement !== 'string') {
+	const replacement = args.replacement;
+	if (replacement !== undefined && typeof replacement !== 'string') {
 		return { text: 'The wording must be text.', isError: true };
 	}
-	const note = await noteStory(call, noteId);
-	if (!note) return { text: NO_NOTE, isError: true };
-	// The edit must be one of this note's, whoever staged it.
-	const [edit] = isUuid(suggestionId)
-		? await db
-				.select({ id: reviewSuggestions.id })
-				.from(reviewSuggestions)
-				.where(
-					and(
-						eq(reviewSuggestions.id, suggestionId),
-						eq(reviewSuggestions.storyId, note.storyId),
-						eq(reviewSuggestions.patternThreadId, noteId)
-					)
-				)
-		: [];
-	if (!edit) {
-		return { text: 'That edit is not part of this note.', isError: true };
+	if (replacement?.includes('\u0000')) {
+		return { text: 'The wording holds a character that cannot be saved.', isError: true };
 	}
-	if (!seen) return { text: 'This edit changed. Read it again.', isError: true };
-	const result = await decideSuggestion(
-		db,
-		identity.userId,
-		note.storyId,
-		suggestionId,
-		true,
-		args.replacement as string | undefined,
-		seen,
-		createAnchorMapper(APP_DIFF_BUDGET)
-	);
-	if (!result.ok) return { text: result.reason, isError: true };
-	if (result.sceneId) await queueSceneMentions(result.sceneId);
-	const pass = await buildPass(call, noteId, note);
-	return passResult(call, pass, 'Accepted.');
+	try {
+		const result = await call.db.transaction(async (tx): Promise<CardResult> => {
+			await tx.execute(sql.raw(`set local lock_timeout = ${STAGING_LOCK_TIMEOUT_MS}`));
+			await tx.execute(
+				sql.raw(`set local transaction_timeout = ${STAGING_TRANSACTION_TIMEOUT_MS}`)
+			);
+			await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${stagingKey(identity.userId)}))`);
+			if (!(await call.stillAllowed(tx))) return { text: '', isError: true, refused: true };
+			const inTx = { ...call, db: tx };
+			const note = await noteStory(inTx, noteId);
+			if (!note) return { text: NO_NOTE, isError: true };
+			// The edit must be one of this note's, whoever staged it, on a scene
+			// that is not in the trash.
+			const [edit] = isUuid(suggestionId)
+				? await tx
+						.select({ id: reviewSuggestions.id })
+						.from(reviewSuggestions)
+						.innerJoin(scenes, eq(reviewSuggestions.sceneId, scenes.id))
+						.where(
+							and(
+								eq(reviewSuggestions.id, suggestionId),
+								eq(reviewSuggestions.storyId, note.storyId),
+								eq(reviewSuggestions.patternThreadId, noteId),
+								isNull(scenes.deletedAt)
+							)
+						)
+				: [];
+			if (!edit) return { text: 'That edit is not part of this note.', isError: true };
+			const decided = await decideSuggestion(
+				tx,
+				identity.userId,
+				note.storyId,
+				suggestionId,
+				true,
+				replacement,
+				seen,
+				createAnchorMapper(APP_DIFF_BUDGET)
+			);
+			if (!decided.ok) return { text: decided.reason, isError: true };
+			return { text: 'Accepted.', isError: false, structured: { sceneId: decided.sceneId } };
+		});
+		const sceneId = result.structured?.sceneId;
+		if (typeof sceneId === 'string') await queueSceneMentions(sceneId);
+		return result.isError ? result : { text: result.text, isError: false };
+	} catch (err) {
+		const code = (err as { cause?: { code?: unknown }; code?: unknown } | null)?.cause?.code;
+		if (code === LOCK_NOT_AVAILABLE) return { text: ACCEPT_BUSY, isError: true };
+		throw err;
+	}
 }
 
 export async function callCardTool(name: CardToolName, call: CardCall): Promise<CardResult> {

@@ -1259,16 +1259,23 @@ Exceptions to "one toolbox for both", each with its reason:
   the in-app guided pass is the page itself. `decide_suggestion` is the
   card's Accept (with the writer's own wording for Edit), marked for the card
   alone (`_meta.ui.visibility: ["app"]`), so the client hides it from its
-  model. Codex cannot see who pressed what, so the accept must also carry the
-  card key: an HMAC of the grant, the note and an expiry (two hours), sent in
-  the result's `_meta`, which clients hand to the card and not to the model;
-  and the stamp of the wording shown, as every accept in Codex does. Skip
-  stays in the card (the edit waits in Codex). Discuss sends the edit to the
-  conversation as the writer's message (`ui/message`), and each accept is
-  told to the model through `ui/update-model-context`; the in-app re-read
-  after an accept is not run, since the app's own model can stage a
-  follow-up with `followsSuggestionId`. Accepts take the staging budget and
-  queue. A client that cannot show cards gets the link to the pass in
+  model; that is the real guard. Codex cannot see who pressed what, so the
+  accept must also carry the card key for that edit: an HMAC of the grant,
+  the note, the edit, the stamp of its wording and an expiry (two hours),
+  sent in the result's `_meta`. The reference client hands `_meta` to the
+  card; the spec does not promise it stays away from the model, so the key
+  narrows the risk and the guarantee rests on the client. A revised edit
+  needs a new key. Skip stays in the card (the edit waits in Codex). Discuss
+  sends the edit to the conversation as the writer's message (`ui/message`),
+  and each accept is told to the model through `ui/update-model-context`;
+  the in-app re-read after an accept is not run, since the app's own model
+  can stage a follow-up with `followsSuggestionId`. An accept runs like a
+  staging call (one transaction with the lock and transaction timeouts, the
+  writer's staging lock, the connection checked again inside it) on a budget
+  of its own with the staging limits; the pass is built again afterwards as
+  a read. A pass holds at most 50 edits each way and about 100,000
+  characters; the rest wait in Codex. A client that cannot show cards gets
+  the link to the pass in
   Codex.
 
 ### Background jobs

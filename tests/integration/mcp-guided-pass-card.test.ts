@@ -39,8 +39,10 @@ const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { saveStoryLlmOverride } = await import('#lib/server/llm/config');
 const { TOOLS } = await import('#lib/server/llm/tools/registry');
 const { registerClient } = await import('#lib/server/mcp/clients');
-const { createAuthorizationCode, exchangeCode } = await import('#lib/server/mcp/oauth');
-const { CARD_KEY_META, PASS_CARD_MIME, PASS_CARD_URI } = await import('#lib/server/mcp/pass-card');
+const { createAuthorizationCode, exchangeCode, resolveBearer } =
+	await import('#lib/server/mcp/oauth');
+const { CARD_KEY_META, PASS_CARD_MIME, PASS_CARD_URI, cardKeyValid } =
+	await import('#lib/server/mcp/pass-card');
 const { addComment, ensureSuggestionThread } = await import('#lib/server/review');
 const route = await import('../../src/routes/api/mcp/+server');
 
@@ -183,7 +185,12 @@ type CardEdit = {
 	placed: boolean;
 };
 type Pass = { noteId: string; universeId: string; name: string; link: string; edits: CardEdit[] };
-type Answer = { text: string; isError: boolean; pass?: Pass; key?: string };
+type Answer = {
+	text: string;
+	isError: boolean;
+	pass?: Pass;
+	keys?: Record<string, string>;
+};
 
 async function call(token: string, name: string, args: Record<string, unknown>): Promise<Answer> {
 	const { result, error } = await rpc(token, 'tools/call', { name, arguments: args });
@@ -193,7 +200,7 @@ async function call(token: string, name: string, args: Record<string, unknown>):
 		text: content.map((part) => part.text).join(''),
 		isError: result.isError === true,
 		pass: result.structuredContent as Pass | undefined,
-		key: (result._meta as Record<string, string> | undefined)?.[CARD_KEY_META]
+		keys: (result._meta as Record<string, Record<string, string>> | undefined)?.[CARD_KEY_META]
 	};
 }
 
@@ -305,7 +312,7 @@ describe('open_guided_pass', () => {
 		expect(opened.text).toContain(
 			`/stories/${alice.storyId}/review?scene=${alice.sceneId}&pass=${noteId}`
 		);
-		expect(opened.key).toEqual(expect.any(String));
+		expect(Object.keys(opened.keys!).sort()).toEqual(opened.pass!.edits.map((e) => e.id).sort());
 		expect(opened.pass).toMatchObject({ noteId, universeId: alice.universeId, name: 'lanterns' });
 		expect(
 			opened.pass!.edits.map((edit) => [edit.before, edit.text, edit.replacement, edit.after])
@@ -343,55 +350,64 @@ describe('open_guided_pass', () => {
 });
 
 describe('decide_suggestion', () => {
-	async function opened() {
-		const noteId = await patternNote(alice.token, alice);
-		const pass = await open(alice.token, alice, noteId);
-		return { noteId, pass: pass.pass!, key: pass.key! };
+	async function opened(token = alice.token) {
+		const noteId = await patternNote(token, alice);
+		const pass = await open(token, alice, noteId);
+		return { noteId, pass: pass.pass!, keys: pass.keys! };
 	}
 	const decide = (token: string, args: Record<string, unknown>) =>
 		call(token, 'decide_suggestion', { universeId: alice.universeId, ...args });
-
-	it('accepts an edit the card shows, and gives the pass as it is now', async () => {
-		const { noteId, pass, key } = await opened();
-		const [first] = pass.edits;
-		const result = await decide(alice.token, {
-			noteId,
-			suggestionId: first.id,
-			seen: first.stamp,
-			cardKey: key
-		});
-		expect(result.isError).toBe(false);
-		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
-		expect(result.pass!.edits.map((edit) => edit.status)).toEqual(['accepted', 'pending']);
-		expect(result.key).toEqual(expect.any(String));
+	const accepting = (noteId: string, edit: CardEdit, keys: Record<string, string>) => ({
+		noteId,
+		suggestionId: edit.id,
+		seen: edit.stamp,
+		cardKey: keys[edit.id]
 	});
 
-	it("accepts the writer's own wording", async () => {
-		const { noteId, pass, key } = await opened();
+	it('accepts an edit the card shows, and gives the pass as it is now', async () => {
+		const { noteId, pass, keys } = await opened();
+		const [first] = pass.edits;
+		const result = await decide(alice.token, accepting(noteId, first, keys));
+		expect(result.isError).toBe(false);
+		expect(result.text).toBe('Accepted.');
+		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
+		expect(result.pass!.edits.map((edit) => edit.status)).toEqual(['accepted', 'pending']);
+		// Keys for what is still waiting only.
+		expect(Object.keys(result.keys!)).toEqual([pass.edits[1].id]);
+	});
+
+	it("accepts the writer's own wording, and not an empty one or one that cannot be saved", async () => {
+		const { noteId, pass, keys } = await opened();
 		const second = pass.edits[1];
+		for (const replacement of ['  ', 'faint\u0000lantern']) {
+			const refused = await decide(alice.token, {
+				...accepting(noteId, second, keys),
+				replacement
+			});
+			expect(refused.isError).toBe(true);
+		}
+		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 		const result = await decide(alice.token, {
-			noteId,
-			suggestionId: second.id,
-			seen: second.stamp,
-			cardKey: key,
+			...accepting(noteId, second, keys),
 			replacement: 'faint lantern'
 		});
 		expect(result.isError).toBe(false);
 		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('dark lantern', 'faint lantern'));
 	});
 
-	it('changes nothing without the key of this pass on this connection', async () => {
-		const { noteId, pass, key } = await opened();
-		const otherNote = await patternNote(alice.token, alice, 'Pattern note (wind): another habit.', [
-			{ original: 'swung', replacement: 'swayed' }
-		]);
-		const otherKey = (await open(alice.token, alice, otherNote)).key;
+	it('changes nothing without the key of this edit on this connection', async () => {
+		const { noteId, pass, keys } = await opened();
+		const [first, second] = pass.edits;
 		const otherAppNote = await patternNote(alice.otherApp, alice);
-		const otherAppKey = (await open(alice.otherApp, alice, otherAppNote)).key;
-		expect(otherKey).toEqual(expect.any(String));
-		expect(otherAppKey).toEqual(expect.any(String));
-		const [first] = pass.edits;
-		for (const cardKey of [undefined, '', 'forged', otherKey, otherAppKey, `${key}x`]) {
+		const otherAppKeys = (await open(alice.otherApp, alice, otherAppNote)).keys!;
+		for (const cardKey of [
+			undefined,
+			'',
+			'forged',
+			keys[second.id],
+			Object.values(otherAppKeys)[0],
+			`${keys[first.id]}x`
+		]) {
 			const result = await decide(alice.token, {
 				noteId,
 				suggestionId: first.id,
@@ -400,38 +416,52 @@ describe('decide_suggestion', () => {
 			});
 			expect(result.isError).toBe(true);
 		}
-		// Another app holding this pass's key cannot use it either.
-		expect(
-			(
-				await call(alice.otherApp, 'decide_suggestion', {
-					universeId: alice.universeId,
-					noteId,
-					suggestionId: first.id,
-					seen: first.stamp,
-					cardKey: key
-				})
-			).isError
-		).toBe(true);
+		// Another app holding this edit's key cannot use it either.
+		expect((await decide(alice.otherApp, accepting(noteId, first, keys))).isError).toBe(true);
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 		expect(new Set(await statuses())).toEqual(new Set(['pending']));
 	});
 
-	it('refuses an edit of another note, and one revised since the writer saw it', async () => {
-		const { noteId, pass, key } = await opened();
-		const otherNote = await patternNote(alice.otherApp, alice);
-		const foreign = (await open(alice.otherApp, alice, otherNote)).pass!.edits[0];
-		expect(
-			(
-				await decide(alice.token, {
-					noteId,
-					suggestionId: foreign.id,
-					seen: foreign.stamp,
-					cardKey: key
-				})
-			).text
-		).toBe('That edit is not part of this note.');
+	it('refuses a key past its time', async () => {
+		const { noteId, pass, keys } = await opened();
+		const grantId = (await resolveBearer(db, alice.token))!.grantId;
+		const [first] = pass.edits;
+		const target = { grantId, noteId, suggestionId: first.id, stamp: first.stamp! };
+		expect(cardKeyValid(keys[first.id], target)).toBe(true);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		try {
+			vi.setSystemTime(Date.now() + 3 * 60 * 60 * 1000);
+			expect(cardKeyValid(keys[first.id], target)).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 
-		// The app revises the first edit after the writer answered in its discussion.
+	it('takes one of two accepts of the same edit sent at once', async () => {
+		const { noteId, pass, keys } = await opened();
+		const results = await Promise.all([
+			decide(alice.token, accepting(noteId, pass.edits[0], keys)),
+			decide(alice.token, accepting(noteId, pass.edits[0], keys))
+		]);
+		expect(results.filter((result) => !result.isError)).toHaveLength(1);
+		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
+	});
+
+	it('changes nothing in a scene in the trash, or after the story is muted', async () => {
+		const { noteId, pass, keys } = await opened();
+		await db.update(scenes).set({ deletedAt: new Date() }).where(eq(scenes.id, alice.sceneId));
+		expect((await decide(alice.token, accepting(noteId, pass.edits[0], keys))).isError).toBe(true);
+		await db.update(scenes).set({ deletedAt: null }).where(eq(scenes.id, alice.sceneId));
+		await saveStoryLlmOverride(db, alice.storyId, { enabled: false });
+		expect(await decide(alice.token, accepting(noteId, pass.edits[0], keys))).toMatchObject({
+			text: NO_NOTE,
+			isError: true
+		});
+		expect(await sceneBody(alice.sceneId)).toBe(BODY);
+	});
+
+	it('refuses an edit revised since the writer saw it', async () => {
+		const { noteId, pass, keys } = await opened();
 		const [first] = pass.edits;
 		const thread = await ensureSuggestionThread(db, {
 			storyId: alice.storyId,
@@ -451,13 +481,15 @@ describe('decide_suggestion', () => {
 			replacement: 'closed door'
 		});
 		expect(revised.isError).toBe(false);
-		const stale = await decide(alice.token, {
-			noteId,
-			suggestionId: first.id,
-			seen: first.stamp,
-			cardKey: key
-		});
-		expect(stale.isError).toBe(true);
+		expect((await decide(alice.token, accepting(noteId, first, keys))).isError).toBe(true);
+		// The revised wording needs a key of its own, from the pass opened again.
+		const again = await open(alice.token, alice, noteId);
+		const now = again.pass!.edits.find((edit) => edit.id === first.id)!;
+		expect(
+			(await decide(alice.token, { ...accepting(noteId, first, keys), seen: now.stamp })).isError
+		).toBe(true);
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
+		expect((await decide(alice.token, accepting(noteId, now, again.keys!))).isError).toBe(false);
+		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'closed door'));
 	});
 });

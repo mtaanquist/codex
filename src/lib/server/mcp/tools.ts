@@ -188,16 +188,18 @@ export async function callMcpTool(
 	}
 
 	// Staging has its own, tighter budget, so a burst of reads cannot be spent
-	// on notes and a burst of notes does not stop the app reading. An accept
-	// from the card counts as staging.
+	// on notes and a burst of notes does not stop the app reading. The card's
+	// accepts have the staging limits on a budget of their own, so a writer
+	// working through a note is not held up by the app staging notes.
 	const windowMs = 60 * 1000;
 	const staging = tool.kind === 'write';
+	const budget = card && staging ? 'card' : tool.kind;
 	const perGrant = staging ? STAGING_CALLS_PER_MINUTE : READ_CALLS_PER_MINUTE;
 	const perUser = staging ? STAGING_CALLS_PER_MINUTE_PER_USER : READ_CALLS_PER_MINUTE_PER_USER;
 	const now = performance.now();
 	const budgets = [
-		[`mcp:${tool.kind}:grant:${identity.grantId}`, perGrant],
-		[`mcp:${tool.kind}:user:${identity.userId}`, perUser]
+		[`mcp:${budget}:grant:${identity.grantId}`, perGrant],
+		[`mcp:${budget}:user:${identity.userId}`, perUser]
 	] as const;
 	const limits = budgets.map(([key, limit]) => slidingRateLimit(key, limit, windowMs, now));
 	// A call turned away before it did anything (by the other budget, or a
@@ -251,8 +253,13 @@ export async function callMcpTool(
 				identity,
 				universeId,
 				args: rest,
-				origin
+				origin,
+				stillAllowed: async (tx) =>
+					(await mcpInstanceEnabled(tx)) &&
+					(await credentialLive(tx, identity)) &&
+					(await ownsUniverse(tx, identity.userId, universeId))
 			});
+			if (result.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);
 			log(result.isError ? 'refused' : staging ? 'accepted' : 'ok');
 			return { ...result, text: capped(result.text) };
 		}
@@ -298,7 +305,23 @@ export async function callMcpTool(
 		// Reading calls take a place before they touch the database; staging
 		// calls take theirs in the dispatcher, around the transaction. The card's
 		// accept is not dispatched, so it takes its place here.
-		if (card && staging) return await stagingGate.run(identity.userId, run);
+		if (card && staging) {
+			const accepted = await stagingGate.run(identity.userId, run);
+			if (accepted.isError) return accepted;
+			// The pass as it now stands, built after the accept has given its
+			// place back, as a read.
+			const pass = await readGate.run(identity.userId, () =>
+				callCardTool('open_guided_pass', {
+					db,
+					identity,
+					universeId: args.universeId as string,
+					args: { noteId: args.noteId },
+					origin,
+					stillAllowed: async () => true
+				})
+			);
+			return pass.isError ? accepted : { ...pass, text: accepted.text };
+		}
 		return staging ? await run() : await readGate.run(identity.userId, run);
 	} catch (err) {
 		if (err instanceof GateBusyError) {
