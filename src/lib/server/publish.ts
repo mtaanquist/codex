@@ -841,7 +841,10 @@ export async function listBrowseBlocked(db: Database) {
 	return await db
 		.select({
 			storyId: stories.id,
-			title: stories.title,
+			// The current edition's title, which readers saw, not the working
+			// title: the writer may have renamed the story since and made it
+			// private.
+			title: sql<string>`coalesce((select p.title from ${publications} p where p.story_id = ${stories.id} and p.is_current limit 1), '')`,
 			handle: users.handle,
 			browseBlockedAt: stories.browseBlockedAt,
 			browseBlockedReason: stories.browseBlockedReason,
@@ -908,6 +911,8 @@ function moderatorMayRead() {
 	// holds while an edition of the story is down with that time. A restore
 	// clears taken_down_at, and a later takedown sets a later time. A takedown
 	// from before migration 0133 has no taken_down_at and does not hold here.
+	// A takedown sets taken_down_at and closes its reports at one now(), so
+	// each takedown and restore must run in its own top-level transaction.
 	const takedownHolds = sql`exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null and d.taken_down_at = ${publicationReports.resolvedAt})`;
 	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or (${publicationReports.resolution} = 'taken_down' and ${takedownHolds}))))`;
 }

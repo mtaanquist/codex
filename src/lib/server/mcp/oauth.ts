@@ -492,7 +492,8 @@ export async function credentialLive(
 
 // Whether the grant still holds every permission in needed. The identity's
 // permissions were read when the request arrived; connecting the app again
-// updates the grant in place, so a call that waited reads them again.
+// updates the grant in place, so every call that waited its turn reads them
+// again (see callMcpTool).
 export async function grantPermits(
 	db: Database,
 	grantId: string,

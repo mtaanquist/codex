@@ -818,7 +818,10 @@ These cut across the surfaces and the architecture.
   merging it instead keeps them; one merged away and removed afterwards drops
   out of its survivor's fold too, and an undone merge leaves it out; a removed
   warning cannot be merged until it is restored, so its limits never come
-  back unseen). A merge copies nothing: `liveWarnings`
+  back unseen, and a limit the writer sets on a survivor also replaces the
+  keys of the removed warnings merged into it, which `liveWarnings` carries
+  apart from the fold, so restoring one never brings back a limit the
+  writer replaced). A merge copies nothing: `liveWarnings`
   gives each live warning the slugs of the warnings merged into it (along
   the whole chain), and `effectivePreferences` folds them in at read time.
   Each of those keys resolves as the story's own, else the universe's, and
@@ -855,17 +858,24 @@ These cut across the surfaces and the architecture.
   autosave of another field never touches a limit, along with a fingerprint
   of the warning list it was built from (`warningListFingerprint`: each live
   slug with its sorted merged slugs). `savePreferences` share-locks the
-  posted warnings' rows and locks the row being saved, then reads the live
+  posted warnings' rows and those of the warnings merged into them (removed
+  or not), in id order, then locks the row being saved and reads the live
   list; when it differs from the form's, no limit is changed and the save
-  answers with the outdated notice below. `mergeTag` and `unmergeTag` lock
-  the survivor's row, so a merge into or out of a posted warning waits for
-  the save. A changed limit is compared with the shown value
-  (`limitChanges`), and the same value changes no limit. A different value is
-  the writer's choice for the warning they see, so it is made the one that
-  applies: on a universe it is stored on the warning's key and clears the
-  row's keys on the warnings merged into it; on a story it is stored on all of
-  those keys, so it wins over the universe's limit on any of them (a blank
-  clears them all, so the story follows the universe again).
+  answers with the outdated notice below. So a rename, removal or restore of
+  a merged warning waits for the save, or lands before it reads the list.
+  `mergeTag` and `unmergeTag` lock the survivor's row, so a merge into or out
+  of a posted warning waits for the save. A changed limit that the row
+  already holds changes nothing (`limitChanges`): on a universe, one equal to
+  the folded value; on a story, one every key of the warning and of those
+  merged into it already holds (a blank: none of them set). The story's own
+  keys decide, not its universe's, which the save does not lock. Another
+  value is the writer's choice for the warning they see, so it is made the
+  one that applies: on a universe it is stored on the warning's key and
+  clears the row's keys on the warnings merged into it; on a story it is
+  stored on all of those keys, so it wins over the universe's limit on any of
+  them (a blank clears them all, so the story follows the universe again).
+  The keys of warnings merged in and removed since are cleared or overridden
+  the same way, though they stay out of the fold.
   Renaming a warning changes its slug, so the writer's limit moves to the new
   key (`moveContentLimits` in `tags.ts`). Only rows with a key under the old
   slug change, so a key already under the new slug in a row without one stays;
@@ -882,7 +892,10 @@ These cut across the surfaces and the architecture.
   the limits were not changed and the page needs a reload to set them. A refresh that brings a changed list to the open page some other way (another
   section's save, or moving between sections after a refused save) drops the
   limit changes not yet saved, puts their selects back to what is stored and
-  says so, so a later save cannot post the rebuilt select as the change. Review runs key the limits by the warning's tag id, which a rename
+  says so, so a later save cannot post the rebuilt select as the change. A
+  change the form's save in flight carries is left to that save: kept if it
+  lands, put back by the outdated notice if the list moved first, and dropped
+  with the note if the save fails. Review runs key the limits by the warning's tag id, which a rename
   keeps, so a rename does not restart a capped run. The limits go to drafts, `/write`, the chat frame and every
   review (the continuity confirm stage and the MCP continuity brief
   included), and say they never change the model's own usage policies. The summary

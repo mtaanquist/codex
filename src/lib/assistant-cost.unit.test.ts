@@ -126,10 +126,11 @@ describe('usageRowCostUsd', () => {
 });
 
 describe('usageTotalPhrase', () => {
+	const stored = { prompt: 0.00001, completion: 0 };
 	const row = (model: string, promptTokens: number | null, unreported = 0) => ({
 		model,
 		provider: null,
-		price: null,
+		price: model === 'priced' ? stored : null,
 		promptTokens,
 		completionTokens: promptTokens === null ? null : 0,
 		cachedPromptTokens: null,
@@ -158,6 +159,13 @@ describe('usageTotalPhrase', () => {
 
 	it('does not claim a floor over estimated counts', () => {
 		expect(usageTotalPhrase(pricing, [row('priced', 40000, 1)], true)).toBe(
+			'about $0.40, and some requests could not be priced'
+		);
+	});
+
+	it("does not claim a floor over rows priced at today's list", async () => {
+		const old = { ...row('priced', 40000), price: null };
+		expect(usageTotalPhrase(pricing, [old, row('other', 10)], false)).toBe(
 			'about $0.40, and some requests could not be priced'
 		);
 	});

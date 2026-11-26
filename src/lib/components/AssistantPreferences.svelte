@@ -150,8 +150,12 @@
 	// save made (whose handler deals with its limits), drops the limit changes
 	// not yet saved: they were picked against the old list, and a later save
 	// would otherwise post whatever the rebuilt select shows as the change.
-	// The selects go back to what is stored, and a note says so.
+	// The selects go back to what is stored, and a note says so. A change the
+	// save in flight carries is left to that save, which knows whether it
+	// landed (listMoved tells it the list changed meanwhile).
 	let refreshing = 0;
+	let inFlight: Map<string, number> | null = null;
+	let listMoved = false;
 	let limitsDropped = $state(false);
 	let formNode = $state<HTMLFormElement>();
 	let builtFrom = untrack(() => warningListFingerprint(warnings));
@@ -159,22 +163,26 @@
 		const list = warningListFingerprint(warnings);
 		if (list === builtFrom) return;
 		builtFrom = list;
-		if (refreshing > 0 || changedLimits.size === 0) return;
-		const dropped = [...changedLimits.keys()];
-		changedLimits.clear();
-		limitsDropped = true;
-		untrack(() => {
-			const shown = shownPreferences(own, universeOwn, warnings) as Record<string, unknown>;
-			tick().then(() => {
-				for (const slug of dropped) {
-					const key = warningKey(slug);
-					picks.delete(key);
-					const select = formNode?.elements.namedItem(key);
-					if (select instanceof HTMLSelectElement) select.value = String(shown[key] ?? '');
-				}
-			});
-		});
+		if (refreshing > 0) return;
+		if (inFlight) listMoved = true;
+		const dropped = [...changedLimits]
+			.filter(([slug, count]) => inFlight?.get(slug) !== count)
+			.map(([slug]) => slug);
+		if (dropped.length > 0) untrack(() => dropLimitChanges(dropped));
 	});
+	function dropLimitChanges(dropped: string[]) {
+		for (const slug of dropped) changedLimits.delete(slug);
+		limitsDropped = true;
+		const shown = shownPreferences(own, universeOwn, warnings) as Record<string, unknown>;
+		tick().then(() => {
+			for (const slug of dropped) {
+				const key = warningKey(slug);
+				picks.delete(key);
+				const select = formNode?.elements.namedItem(key);
+				if (select instanceof HTMLSelectElement) select.value = String(shown[key] ?? '');
+			}
+		});
+	}
 	const submitPreferences: SubmitFunction = async (input) => {
 		if (saving) {
 			queued = true;
@@ -184,6 +192,7 @@
 		saving = true;
 		limitsDropped = false;
 		const sent = new Map(changedLimits);
+		inFlight = sent;
 		for (const slug of sent.keys()) input.formData.append(CHANGED_LIMITS_FIELD, slug);
 		input.formData.set(WARNING_LIST_FIELD, warningListFingerprint(warnings));
 		const after = await autosaveSubmit(input);
@@ -199,11 +208,24 @@
 				}
 			}
 			saving = false;
+			inFlight = null;
+			// A save that did not land while the list changed under it leaves
+			// changes picked against the old list: dropped, as a refresh would.
+			const stale =
+				listMoved && result.type !== 'success'
+					? [...sent]
+							.filter(([slug, count]) => changedLimits.get(slug) === count)
+							.map(([slug]) => slug)
+					: [];
+			if (stale.length > 0) dropLimitChanges(stale);
+			listMoved = false;
 			if (queued) {
 				queued = false;
 				// Started before this save's own bookkeeping, so leaving the page
 				// still waits for it.
 				formElement.requestSubmit();
+				// The queued save starts by clearing the note.
+				if (stale.length > 0) limitsDropped = true;
 				if (after) await after({ ...opts, update: async () => {} });
 				return;
 			}

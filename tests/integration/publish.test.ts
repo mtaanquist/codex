@@ -445,6 +445,16 @@ describe('moderation lists', () => {
 			{ storyId, title: 'Book of Ash', handle: 'inkwright', browseBlockedReason: 'spam' }
 		]);
 	});
+
+	it('names a story removed from Browse by its published title, not a later private one', async () => {
+		await publishStory(db, authorId, storyId);
+		expect(await removeFromBrowse(db, storyId, authorId, 'spam')).toBe(true);
+		await db
+			.update(stories)
+			.set({ title: 'Letters to my sister', visibility: 'private' })
+			.where(eq(stories.id, storyId));
+		expect(await listBrowseBlocked(db)).toMatchObject([{ storyId, title: 'Book of Ash' }]);
+	});
 });
 
 describe('inline images owned by someone else', () => {

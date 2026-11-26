@@ -181,6 +181,12 @@ describe('createReport', () => {
 		[
 			'is suspended',
 			`update users set suspended_at = now() where id = (select owner_id from publications where id = $1)`
+		],
+		[
+			// As a publish does: the story row locked, the edition replaced.
+			'publishes a newer edition',
+			`with s as (select id from stories where id = (select story_id from publications where id = $1) for update)
+			 update publications set is_current = false where id = $1 and exists (select 1 from s)`
 		]
 	]) {
 		it(`a report filed while the writer ${what} waits and files nothing`, async () => {

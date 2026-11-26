@@ -192,6 +192,9 @@ export async function callMcpTool(
 	) {
 		return refuse('unknown_tool', `Unknown tool: ${name}.`);
 	}
+	// What the grant must still hold when a call that waited its turn runs:
+	// connecting the app again changes the grant's permissions in place.
+	const needed: McpPermission[] = shared ? [PERMISSION_FOR[shared.kind]] : ['apply', 'suggest'];
 
 	// Staging has its own, tighter budget, so a burst of reads cannot be spent
 	// on notes and a burst of notes does not stop the app reading. The card's
@@ -239,7 +242,14 @@ export async function callMcpTool(
 	// The universe run() checked, for building the pass again after an accept.
 	let checkedUniverse = '';
 	const run = async (waited = false): Promise<McpToolResult> => {
-		if (waited && !((await mcpInstanceEnabled(db)) && (await credentialLive(db, identity)))) {
+		if (
+			waited &&
+			!(
+				(await mcpInstanceEnabled(db)) &&
+				(await credentialLive(db, identity)) &&
+				(await grantPermits(db, identity.grantId, needed))
+			)
+		) {
 			return refuse('no_universe', NO_UNIVERSE_RESULT);
 		}
 		const { universeId: universeArgument, ...rest } = args;
@@ -266,7 +276,7 @@ export async function callMcpTool(
 				stillAllowed: async (tx) =>
 					(await mcpInstanceEnabled(tx)) &&
 					(await credentialLive(tx, identity)) &&
-					(await grantPermits(tx, identity.grantId, ['apply', 'suggest'])) &&
+					(await grantPermits(tx, identity.grantId, needed)) &&
 					(await ownsUniverse(tx, identity.userId, universeId))
 			});
 			if (result.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);
@@ -299,6 +309,7 @@ export async function callMcpTool(
 					stillAllowed: async (tx) =>
 						(await mcpInstanceEnabled(tx)) &&
 						(await credentialLive(tx, identity)) &&
+						(await grantPermits(tx, identity.grantId, needed)) &&
 						(universeId === '' || (await ownsUniverse(tx, identity.userId, universeId)))
 				}
 			},

@@ -130,8 +130,9 @@ export function usageRowCostUsd(
 // The cost part of the account page's thirty-day summary, or null when no
 // request could be priced. A model with no price, or requests that reported no
 // counts, are left out, and the phrase then says so. It reads "at least" only
-// when every counted request was reported by the endpoint; estimated counts
-// can run high, so with any of those it reads "about".
+// when every counted request was reported by the endpoint at a stored price;
+// estimated counts can run high, and older rows are priced at today's list, so
+// with any of those it reads "about".
 export function usageTotalPhrase(
 	pricing: Record<string, TokenPrice>,
 	rows: (UsageCostRow & { unreported: number })[],
@@ -141,11 +142,15 @@ export function usageTotalPhrase(
 	let total = 0;
 	let known = false;
 	let partial = false;
+	// A row from before prices were stored is priced at today's list, which may
+	// differ from what it cost then.
+	let approximate = estimated;
 	for (const row of rows) {
 		const cost = usageRowCostUsd(pricing, row, currentProvider);
 		if (cost !== null) {
 			total += cost;
 			known = true;
+			if (row.price === null) approximate = true;
 		}
 		if (cost === null || row.unreported > 0) partial = true;
 	}
@@ -153,7 +158,7 @@ export function usageTotalPhrase(
 	const amount = '$' + total.toFixed(2);
 	if (!partial) return 'about ' + amount;
 	if (total < 0.01) return 'some requests could not be priced';
-	return estimated
+	return approximate
 		? 'about ' + amount + ', and some requests could not be priced'
 		: 'at least ' + amount + ', as some requests could not be priced';
 }
