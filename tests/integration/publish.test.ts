@@ -17,10 +17,14 @@ import {
 	users
 } from '../../src/lib/server/db/schema';
 import { artifactForDownload } from '../../src/lib/server/export-artifacts';
+import { removeFromBrowse } from '../../src/lib/server/browse';
+import { instanceStats } from '../../src/lib/server/admin';
 import {
 	isPublicAsset,
 	isPublicAvatar,
-	listPublications,
+	listBrowseBlocked,
+	listLiveEditions,
+	LIVE_EDITIONS_PAGE_SIZE,
 	publicAuthorIdentity,
 	publicEdition,
 	publicProfile,
@@ -106,6 +110,17 @@ afterAll(async () => {
 	await pool.end();
 });
 
+// Every edition on the instance, superseded and taken down included.
+async function allEditions() {
+	return await db
+		.select({
+			id: publications.id,
+			title: publications.title,
+			isCurrent: publications.isCurrent
+		})
+		.from(publications);
+}
+
 describe('publishStory', () => {
 	it('is gated on the admin-granted archive and a handle', async () => {
 		await db.update(users).set({ publicArchiveEnabled: false }).where(eq(users.id, authorId));
@@ -141,7 +156,7 @@ describe('publishStory', () => {
 			'The gate stayed shut.'
 		);
 		// Exactly one current edition.
-		const all = await listPublications(db);
+		const all = await allEditions();
 		expect(all.filter((row) => row.isCurrent)).toHaveLength(1);
 		expect(all).toHaveLength(2);
 	});
@@ -164,7 +179,7 @@ describe('shelf and visibility', () => {
 describe('takedown and covers', () => {
 	it('an admin takedown hides the edition without touching the source', async () => {
 		await publishStory(db, authorId, storyId);
-		const [current] = (await listPublications(db)).filter((row) => row.isCurrent);
+		const [current] = (await allEditions()).filter((row) => row.isCurrent);
 		expect(await takedownPublication(db, current.id, null, 'other')).toBe(true);
 		expect(await takedownPublication(db, current.id, null, 'other')).toBe(false);
 		expect(await publicEdition(db, 'inkwright', storyId)).toBeNull();
@@ -220,11 +235,91 @@ describe('takedown and covers', () => {
 		expect(await publishStory(db, authorId, inlineStory.id)).toMatchObject({ ok: true });
 		expect(await isPublicAsset(db, asset.id)).toBe(true);
 
-		const [current] = (await listPublications(db)).filter(
+		const [current] = (await allEditions()).filter(
 			(row) => row.title === 'Illustrated' && row.isCurrent
 		);
 		await takedownPublication(db, current.id, null, 'other');
 		expect(await isPublicAsset(db, asset.id)).toBe(false);
+	});
+});
+
+describe('moderation lists', () => {
+	// n stories with one current edition each, all newer than anything
+	// published through publishStory in the test.
+	async function publishMany(n: number) {
+		const later = Date.now() + 60_000;
+		const ids: string[] = [];
+		for (let i = 0; i < n; i++) {
+			const [story] = await db
+				.insert(stories)
+				.values({ universeId, ownerId: authorId, title: `Story ${i}`, visibility: 'public' })
+				.returning();
+			const [edition] = await db
+				.insert(publications)
+				.values({
+					storyId: story.id,
+					ownerId: authorId,
+					handle: 'inkwright',
+					title: `Story ${i}`,
+					content: { chapters: [] },
+					publishedAt: new Date(later + i * 1000)
+				})
+				.returning();
+			ids.push(edition.id);
+		}
+		return ids;
+	}
+
+	it('lists only current editions that are up, however many newer ones are removed', async () => {
+		const first = await publishStory(db, authorId, storyId);
+		if (!first.ok) throw new Error(first.reason);
+		const second = await publishStory(db, authorId, storyId);
+		if (!second.ok) throw new Error(second.reason);
+		const newer = await publishMany(LIVE_EDITIONS_PAGE_SIZE + 1);
+		for (const id of newer) await takedownPublication(db, id, null, 'spam');
+
+		const live = await listLiveEditions(db);
+		expect(live.editions.map((row) => row.id)).toEqual([second.publicationId]);
+		expect(live).toMatchObject({ total: 1, page: 0, hasMore: false });
+		expect((await instanceStats(db)).publishedEditions).toBe(1);
+	});
+
+	it('pages through live editions and searches by handle or title', async () => {
+		await publishMany(LIVE_EDITIONS_PAGE_SIZE + 2);
+		const first = await listLiveEditions(db);
+		expect(first.editions).toHaveLength(LIVE_EDITIONS_PAGE_SIZE);
+		expect(first).toMatchObject({ total: LIVE_EDITIONS_PAGE_SIZE + 2, hasMore: true });
+		const second = await listLiveEditions(db, { page: 1 });
+		expect(second.editions).toHaveLength(2);
+		expect(second.hasMore).toBe(false);
+		const seen = new Set([...first.editions, ...second.editions].map((row) => row.id));
+		expect(seen.size).toBe(LIVE_EDITIONS_PAGE_SIZE + 2);
+		// A huge page number is an empty page, not an offset Postgres refuses.
+		const far = await listLiveEditions(db, { page: 1e20 });
+		expect(far).toMatchObject({ editions: [], total: LIVE_EDITIONS_PAGE_SIZE + 2, hasMore: false });
+
+		const found = await listLiveEditions(db, { query: 'story 7' });
+		expect(found.editions.map((row) => row.title)).toEqual(['Story 7']);
+		expect((await listLiveEditions(db, { query: 'INKWRIGHT' })).total).toBe(
+			LIVE_EDITIONS_PAGE_SIZE + 2
+		);
+		// Rows show the handle with '@', so a search may carry one.
+		expect((await listLiveEditions(db, { query: '@inkwright' })).total).toBe(
+			LIVE_EDITIONS_PAGE_SIZE + 2
+		);
+		// LIKE wildcards in the search are taken literally.
+		expect((await listLiveEditions(db, { query: '%' })).total).toBe(0);
+	});
+
+	it('lists a story removed from Browse on its own until it is allowed again', async () => {
+		await publishStory(db, authorId, storyId);
+		await publishMany(LIVE_EDITIONS_PAGE_SIZE + 1);
+		expect(await removeFromBrowse(db, storyId, authorId, 'spam')).toBe(true);
+		const live = await listLiveEditions(db);
+		expect(live.editions.some((row) => row.storyId === storyId)).toBe(false);
+		expect(await listBrowseBlocked(db)).toMatchObject([
+			{ storyId, title: 'Book of Ash', handle: 'inkwright', browseBlockedReason: 'spam' }
+		]);
 	});
 });
 
@@ -376,6 +471,41 @@ describe('concurrent publish', () => {
 		await expect(db.insert(publications).values(row)).rejects.toMatchObject({
 			cause: { code: '23505' }
 		});
+	});
+});
+
+describe('publish while the account deletion is being scheduled', () => {
+	it('waits for the schedule, then refuses', async () => {
+		const client = await pool.connect();
+		try {
+			// A deletion being scheduled holds the account row, as scheduleAccountDeletion does.
+			await client.query('begin');
+			await client.query(
+				`update users set deletion_scheduled_at = now() + interval '7 days' where id = $1`,
+				[authorId]
+			);
+			let settled = false;
+			const publishing = publishStory(db, authorId, storyId).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await publishing).toMatchObject({ ok: false });
+		} finally {
+			client.release();
+		}
+		expect(await allEditions()).toEqual([]);
+	});
+
+	it('is refused once the deletion is scheduled', async () => {
+		await db
+			.update(users)
+			.set({ deletionScheduledAt: new Date(Date.now() + 86_400_000) })
+			.where(eq(users.id, authorId));
+		expect(await publishStory(db, authorId, storyId)).toMatchObject({ ok: false });
+		expect(await allEditions()).toEqual([]);
 	});
 });
 
@@ -616,7 +746,7 @@ describe('public universe page', () => {
 		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
 		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).not.toBeNull();
 
-		const [current] = (await listPublications(db)).filter((row) => row.isCurrent);
+		const [current] = (await allEditions()).filter((row) => row.isCurrent);
 		await takedownPublication(db, current.id, null, 'other');
 		expect(await publicUniverse(db, 'inkwright', 'ember-reach')).toBeNull();
 	});

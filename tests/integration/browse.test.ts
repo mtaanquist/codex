@@ -38,7 +38,7 @@ const { createStoryInUniverse } = await import('../../src/lib/server/story-creat
 const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
 const { createReport } = await import('../../src/lib/server/reports');
 const { saveBrowseEnabled } = await import('../../src/lib/server/settings');
-const { addListEntries, checkTagNames, mergeTag, setStoryList, setStoryTags } =
+const { addListEntries, checkTagNames, mergeTag, renameTag, setStoryList, setStoryTags } =
 	await import('../../src/lib/server/tags');
 const {
 	allowInBrowse,
@@ -93,6 +93,11 @@ async function titles(search = '') {
 	const query = parseBrowseQuery(new URLSearchParams(search));
 	const result = await browseStories(db, query, await resolveFilters(db, query));
 	return result.books.map((book) => book.title);
+}
+
+async function writers(search: string) {
+	const query = parseBrowseQuery(new URLSearchParams(search));
+	return browseAuthors(db, query, await resolveFilters(db, query));
 }
 
 beforeAll(async () => {
@@ -172,17 +177,15 @@ describe('search and filters', () => {
 		// A standalone story's hidden universe is not searched.
 		expect(await titles('q=ardenfall')).toEqual(['The Bell']);
 		expect(await titles('q=100%25')).toEqual([]);
-		expect(await browseAuthors(db, 'bea')).toEqual([{ handle: 'bea', name: 'Bea', stories: 1 }]);
+		expect(await writers('q=bea')).toEqual([{ handle: 'bea', name: 'Bea', stories: 1 }]);
 	});
 
 	it('does not match the account name of an author who uses a pen name', async () => {
 		await story('The Bell');
 		// The author's display name is "author"; readers only see "Ada Teller".
 		expect(await titles('q=author')).toEqual([]);
-		expect(await browseAuthors(db, 'author')).toEqual([]);
-		expect(await browseAuthors(db, 'ada')).toEqual([
-			{ handle: 'teller', name: 'Ada Teller', stories: 1 }
-		]);
+		expect(await writers('q=author')).toEqual([]);
+		expect(await writers('q=ada')).toEqual([{ handle: 'teller', name: 'Ada Teller', stories: 1 }]);
 	});
 
 	it('leaves authors with only adult stories out of Writers unless adult work is shown', async () => {
@@ -191,8 +194,29 @@ describe('search and filters', () => {
 			.update(publications)
 			.set({ isAdult: true })
 			.where(eq(publications.id, grown.publicationId));
-		expect(await browseAuthors(db, 'ada')).toEqual([]);
-		expect(await browseAuthors(db, 'ada', true)).toHaveLength(1);
+		expect(await writers('q=ada')).toEqual([]);
+		expect(await writers('q=ada&adult=show')).toHaveLength(1);
+	});
+
+	it('counts only the stories the other filters let through in Writers', async () => {
+		await addListEntries(db, 'genre', 'Fantasy');
+		await addListEntries(db, 'warning', 'Death');
+		const { rows } = await pool.query('select id, kind from tags');
+		const id = (kind: string) => rows.find((row) => row.kind === kind).id as string;
+		const a = await story('A');
+		const b = await story('B');
+		await story('C');
+		await setStoryList(db, a.id, 'genre', [id('genre')]);
+		await setStoryList(db, b.id, 'genre', [id('genre')]);
+		await setStoryList(db, b.id, 'warning', [id('warning')]);
+		expect(await writers('q=ada')).toEqual([{ handle: 'teller', name: 'Ada Teller', stories: 3 }]);
+		expect(await writers('q=ada&genre=fantasy')).toEqual([
+			{ handle: 'teller', name: 'Ada Teller', stories: 2 }
+		]);
+		expect(await writers('q=ada&genre=fantasy&hide=death')).toEqual([
+			{ handle: 'teller', name: 'Ada Teller', stories: 1 }
+		]);
+		expect(await writers('q=ada&genre=nothing')).toEqual([]);
 	});
 
 	it('filters by genre, following merges, and hides chosen warnings', async () => {
@@ -211,7 +235,7 @@ describe('search and filters', () => {
 		await setStoryList(db, b.id, 'genre', [high]);
 		await setStoryList(db, b.id, 'warning', [death]);
 		expect(await titles('genre=fantasy')).toEqual(['A']);
-		await mergeTag(db, high, 'Fantasy');
+		await mergeTag(db, 'genre', high, 'Fantasy');
 		expect((await titles('genre=fantasy')).sort()).toEqual(['A', 'B']);
 		// The old slug lands on the surviving genre too.
 		expect((await titles('genre=high-fantasy')).sort()).toEqual(['A', 'B']);
@@ -235,6 +259,56 @@ describe('search and filters', () => {
 		await setStoryList(db, s.id, 'warning', [rows[0].id]);
 		await publishStory(db, author.id, s.id);
 		await setStoryList(db, s.id, 'warning', []);
+		expect(await titles('hide=death')).toEqual([]);
+	});
+
+	it('hides a story whose edition froze the name of a warning since merged into the hidden one', async () => {
+		await addListEntries(db, 'warning', 'Death\nCharacter death');
+		const { rows } = await pool.query("select id, slug from tags where kind = 'warning'");
+		const id = (slug: string) => rows.find((row) => row.slug === slug).id as string;
+		const s = await story('Frozen');
+		await setStoryList(db, s.id, 'warning', [id('character-death')]);
+		await publishStory(db, author.id, s.id);
+		await mergeTag(db, 'warning', id('character-death'), 'Death');
+		await setStoryList(db, s.id, 'warning', []);
+		expect(await titles()).toEqual(['Frozen']);
+		expect(await titles('hide=death')).toEqual([]);
+		// The old slug resolves to the survivor and hides it too.
+		expect(await titles('hide=character-death')).toEqual([]);
+	});
+
+	it('hides a story whose edition carried a warning since renamed', async () => {
+		await addListEntries(db, 'warning', 'Gore');
+		const { rows } = await pool.query("select id from tags where slug = 'gore'");
+		const s = await story('Frozen');
+		await setStoryList(db, s.id, 'warning', [rows[0].id]);
+		await publishStory(db, author.id, s.id);
+		await renameTag(db, 'warning', rows[0].id, 'Graphic violence');
+		await setStoryList(db, s.id, 'warning', []);
+		expect(await titles('hide=graphic-violence')).toEqual([]);
+	});
+
+	it('matches an edition from before warning ids were frozen by name', async () => {
+		await addListEntries(db, 'warning', 'Death');
+		const s = await story('Older');
+		// An older edition carries the names alone.
+		await pool.query(
+			`update publications set content_warnings = '{Death}', content_warning_ids = '{}' where story_id = $1`,
+			[s.id]
+		);
+		expect(await titles('hide=death')).toEqual([]);
+	});
+
+	it('hides an edition from before ids were frozen by the name of a warning since merged into the hidden one', async () => {
+		await addListEntries(db, 'warning', 'Death\nCharacter death');
+		const { rows } = await pool.query("select id from tags where slug = 'character-death'");
+		const s = await story('Older');
+		await pool.query(
+			`update publications set content_warnings = '{Character death}', content_warning_ids = '{}' where story_id = $1`,
+			[s.id]
+		);
+		await mergeTag(db, 'warning', rows[0].id, 'Death');
+		expect(await titles()).toEqual(['Older']);
 		expect(await titles('hide=death')).toEqual([]);
 	});
 
@@ -357,7 +431,7 @@ describe('the page', () => {
 		await saveBrowseEnabled(db, true);
 		await addListEntries(db, 'genre', 'Sci-fi\nScience fiction');
 		const [{ id }] = (await pool.query("select id from tags where slug = 'sci-fi'")).rows;
-		await mergeTag(db, id, 'Science fiction');
+		await mergeTag(db, 'genre', id, 'Science fiction');
 		const shown = await story('Far Off');
 		await setStoryList(db, shown.id, 'genre', [id]);
 		const result = (await load('?genre=sci-fi')) as {
@@ -372,7 +446,7 @@ describe('the page', () => {
 		await saveBrowseEnabled(db, true);
 		const hidden = await story('Draft', { listed: false });
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, hidden.id));
-		const checked = checkTagNames(['Project Nightjar']);
+		const checked = await checkTagNames(db, ['Project Nightjar']);
 		if (!checked.ok) throw new Error(checked.message);
 		await setStoryTags(db, hidden.id, checked.tags);
 		const result = (await load('?tag=project-nightjar')) as {

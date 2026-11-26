@@ -2,6 +2,13 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { isSceneStatus, type SceneStatus } from './scene-status';
 import { UUID_BODY } from './slug';
 import { toLf } from './line-endings';
+import { normaliseLanguage, type WritingLanguage } from './writing-languages';
+import {
+	MAX_ASSISTANT_NOTES,
+	normaliseNotes,
+	preferencesFromLines,
+	type StoredPreferences
+} from './assistant-preferences';
 
 // Parses our own story export zip back into a plan the importer can write:
 // story metadata, chapters and scenes in NN- prefix order, story notes, and
@@ -11,8 +18,11 @@ import { toLf } from './line-endings';
 export type ImportedScene = { title: string | null; status: SceneStatus | null; bodyMd: string };
 export type ImportedChapter = {
 	title: string | null;
-	// Only document imports that carry chapter summaries (AO3) set this.
+	// From chapter.md's body, or a document import that carries summaries
+	// (AO3); absent from document plans without them.
 	summaryMd?: string | null;
+	// Set when chapter.md marks the summary as the Assistant's (summary-by).
+	summaryByAssistant?: boolean;
 	scenes: ImportedScene[];
 };
 export type ImportedNote = {
@@ -59,6 +69,12 @@ export type ImportPlan = {
 		contentWarnings?: string[];
 		tags?: string[];
 		fandoms?: string[];
+		// The writer's settings from a Codex export's story.md, each absent
+		// when the file does not set it.
+		styleNotes?: string;
+		language?: WritingLanguage;
+		assistantPreferences?: StoredPreferences;
+		assistantNotes?: string;
 	};
 	chapters: ImportedChapter[];
 	unfiled: ImportedScene[];
@@ -96,12 +112,14 @@ export function parseFrontMatter(text: string): { fields: FrontMatter; body: str
 	const fields: FrontMatter = {};
 	let listKey: string | null = null;
 	for (const line of lines.slice(1, close)) {
-		const item = line.match(/^ {2}- (.*)$/);
+		// The s flag lets . match U+2028 and U+2029, which JSON.stringify
+		// leaves raw inside a quoted value.
+		const item = line.match(/^ {2}- (.*)$/s);
 		if (item && listKey) {
 			(fields[listKey] as string[]).push(parseScalar(item[1]));
 			continue;
 		}
-		const pair = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/);
+		const pair = line.match(/^([A-Za-z][A-Za-z0-9_-]*):(.*)$/s);
 		if (!pair) continue;
 		const value = pair[2].trim();
 		if (value === '') {
@@ -124,6 +142,17 @@ function parseScalar(value: string): string {
 	}
 }
 
+// A file's body without the blank lines around it. The first line keeps its
+// indent: four leading spaces make a code block. The end is trimmed with a
+// loop, since an unanchored-start regex like /[ \t\n]+$/ is quadratic on a
+// long whitespace run inside the body.
+function bodyText(body: string): string {
+	const text = body.replace(/^(?:[ \t]*\n)+/, '');
+	let end = text.length;
+	while (end > 0 && ' \t\n'.includes(text[end - 1])) end--;
+	return text.slice(0, end);
+}
+
 function scalar(fields: FrontMatter, key: string): string | null {
 	const value = fields[key];
 	return typeof value === 'string' && value !== '' ? value : null;
@@ -143,6 +172,46 @@ function labelLists(fields: FrontMatter) {
 		fandoms: list(fields, 'fandoms')
 	};
 	return Object.fromEntries(Object.entries(lists).filter(([, value]) => value.length > 0));
+}
+
+// The language and Assistant settings story.md carries. A value this site
+// cannot use is left off and reported, so the preview names it before the
+// story is created.
+function assistantSettings(fields: FrontMatter, problems: string[]) {
+	const out: {
+		styleNotes?: string;
+		language?: WritingLanguage;
+		assistantPreferences?: StoredPreferences;
+		assistantNotes?: string;
+	} = {};
+	const styleNotes = scalar(fields, 'style-notes');
+	if (styleNotes) out.styleNotes = styleNotes;
+	const rawLanguage = scalar(fields, 'language');
+	if (rawLanguage) {
+		const language = normaliseLanguage(rawLanguage);
+		if (language) out.language = language;
+		else
+			problems.push(
+				`story.md: the language "${rawLanguage}" is not one this site knows, so the story uses its universe's.`
+			);
+	}
+	const lines = list(fields, 'assistant-preferences');
+	if (lines.length > 0) {
+		const { preferences, unread } = preferencesFromLines(lines);
+		if (Object.keys(preferences).length > 0) out.assistantPreferences = preferences;
+		if (unread > 0) {
+			problems.push('story.md: some Assistant preferences were not recognised and were left off.');
+		}
+	}
+	const notes = normaliseNotes(scalar(fields, 'assistant-notes'));
+	if (notes && notes.length > MAX_ASSISTANT_NOTES) {
+		problems.push(
+			`story.md: the Assistant notes are longer than ${MAX_ASSISTANT_NOTES} characters, so they were left off.`
+		);
+	} else if (notes) {
+		out.assistantNotes = notes;
+	}
+	return out;
 }
 
 // "01-the-toll-road" -> "The toll road"; the readable fallback when a title
@@ -220,21 +289,29 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const inRoot = (path: string) => (path.startsWith(root) ? path.slice(root.length) : null);
 
 	const problems: string[] = [];
-	if (skippedDrafts) {
+	// A story folder re-zipped without its wrapping folder has drafts/ at the
+	// top, which the filter above cannot tell from a story named "drafts".
+	const rootDrafts = Object.keys(entries).some((path) => inRoot(path)?.startsWith('drafts/'));
+	if (skippedDrafts || rootDrafts) {
 		problems.push('The saved drafts in this archive were not imported, only the working draft.');
+	}
+	// The account export's review threads anchor to text; they are not recreated.
+	if (`${root}reviews.md` in entries) {
+		problems.push('The review comments in this archive were not imported.');
 	}
 	// An archive edited on Windows may carry \r\n line breaks; the editor and
 	// the front matter parser count a line break as one \n.
 	const read = (path: string) => toLf(strFromU8(entries[path]));
 
 	const storyDoc = parseFrontMatter(read(storyPath));
-	const story = {
+	const story: ImportPlan['story'] = {
 		title: scalar(storyDoc.fields, 'title') ?? deslug(root.replace(/\/$/, '')) ?? 'Imported story',
 		author: scalar(storyDoc.fields, 'author'),
 		brief: scalar(storyDoc.fields, 'brief'),
-		descriptionMd: storyDoc.body.trim(),
+		descriptionMd: bodyText(storyDoc.body),
 		...(scalar(storyDoc.fields, 'adult') === 'true' && { isAdult: true }),
-		...labelLists(storyDoc.fields)
+		...labelLists(storyDoc.fields),
+		...assistantSettings(storyDoc.fields, problems)
 	};
 	if (!scalar(storyDoc.fields, 'title')) {
 		problems.push(`story.md has no title; the story will be named "${story.title}".`);
@@ -251,7 +328,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				problems.push(`${rel}: unknown status "${rawStatus}"; the scene starts as a draft.`);
 			}
 		}
-		return { title: scalar(doc.fields, 'title'), status, bodyMd: doc.body.trim() };
+		return { title: scalar(doc.fields, 'title'), status, bodyMd: bodyText(doc.body) };
 	};
 
 	// Group chapter files by folder, ordered by the NN- prefix.
@@ -286,7 +363,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				problems.push(`${rel}: the note names no entity and will be skipped.`);
 				continue;
 			}
-			notes.push({ kind, name, notesMd: doc.body.trim() });
+			notes.push({ kind, name, notesMd: bodyText(doc.body) });
 		} else if (parts[0] === 'notebook' && parts.length === 2 && parts[1].endsWith('.md')) {
 			notebook.push({ rel, doc: parseFrontMatter(read(path)) });
 		} else if (parts[0] === 'waiting-drafts' && parts.length === 2 && parts[1].endsWith('.md')) {
@@ -303,10 +380,10 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 	const chapters = [...chapterFiles.values()]
 		.sort((a, b) => orderOf(a.name) - orderOf(b.name) || a.name.localeCompare(b.name))
 		.map((group, chapterIndex) => {
-			const meta = group.files.find((f) => f.file === 'chapter.md');
-			const title = meta
-				? scalar(parseFrontMatter(read(meta.path)).fields, 'title')
-				: deslug(group.name);
+			const metaFile = group.files.find((f) => f.file === 'chapter.md');
+			const meta = metaFile ? parseFrontMatter(read(metaFile.path)) : null;
+			const title = meta ? scalar(meta.fields, 'title') : deslug(group.name);
+			const summaryMd = (meta && bodyText(meta.body)) || null;
 			const scenes = group.files
 				.filter((f) => f.file !== 'chapter.md')
 				.sort((a, b) => orderOf(a.file) - orderOf(b.file) || a.file.localeCompare(b.file))
@@ -315,7 +392,9 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					scenePositions.set(rel, { chapter: chapterIndex, index });
 					return parseScene(f.path, rel);
 				});
-			return { title, scenes };
+			const summaryByAssistant =
+				!!summaryMd && !!meta && scalar(meta.fields, 'summary-by') === 'assistant';
+			return { title, summaryMd, ...(summaryByAssistant && { summaryByAssistant }), scenes };
 		});
 
 	const unfiledScenes = unfiled
@@ -338,7 +417,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 		const createdAt = created ? new Date(created) : null;
 		return {
 			title: scalar(doc.fields, 'title'),
-			bodyMd: doc.body.trim(),
+			bodyMd: bodyText(doc.body),
 			pinned: scalar(doc.fields, 'pinned') === 'true',
 			scene,
 			createdAt: createdAt && !Number.isNaN(createdAt.getTime()) ? createdAt : null
@@ -371,7 +450,7 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 					note: scalar(doc.fields, 'note'),
 					chapterBrief: scalar(doc.fields, 'chapter-brief'),
 					source: scalar(doc.fields, 'source') === 'app' ? 'app' : 'assistant',
-					textMd: doc.body.trim()
+					textMd: bodyText(doc.body)
 				}
 			];
 		});

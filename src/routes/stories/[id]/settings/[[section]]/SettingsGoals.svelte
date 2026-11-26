@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
+	import FormStatus from '#lib/components/FormStatus.svelte';
 	import type { ActionData, PageData } from './$types';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -14,7 +15,12 @@
 	</p>
 </div>
 <div class="settings-group">
-	<form method="POST" action="?/saveGoals" use:enhance={autosaveSubmit} onchange={autosubmitForm}>
+	<form
+		method="POST"
+		action={ownAction('saveGoals')}
+		use:enhance={autosaveSubmit}
+		onchange={autosubmitForm}
+	>
 		<div class="field-grid">
 			<div class="field">
 				<label for="goal-target">Target words (optional)</label>
@@ -41,11 +47,10 @@
 			</div>
 		</div>
 		<div class="settings-actions">
-			{#if form?.action === 'goals' && form.message}
-				<span class="field-hint" role="alert" style="color:var(--danger-ink);">{form.message}</span>
-			{:else if form?.action === 'goals' && form.saved}
-				<span class="field-hint" role="status" style="color:var(--status-final-ink);">Saved.</span>
-			{/if}
+			<FormStatus
+				error={form?.action === 'goals' && form.message ? form.message : null}
+				success={form?.action === 'goals' && form.saved ? 'Saved.' : null}
+			/>
 		</div>
 	</form>
 </div>

@@ -2,6 +2,7 @@ import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { assistantUsage } from '../db/schema.ts';
 import { logEvent } from '../log.ts';
+import { pageIndex } from '../paging.ts';
 import type { TokenUsage } from './providers/types.ts';
 
 // The usage log: one row of metadata per request the gateway sends to the
@@ -123,7 +124,7 @@ export async function recentAssistantUsage(
 	userId: string,
 	page = 0
 ): Promise<UsageSummary> {
-	const safePage = Math.max(0, Math.floor(page));
+	const safePage = pageIndex(page);
 	// Fetch one row past the page to learn whether an older page exists.
 	const rows = await db
 		.select({

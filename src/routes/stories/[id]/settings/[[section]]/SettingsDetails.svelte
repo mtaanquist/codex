@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { CATEGORY_COLORS, storyCoverColor } from '#lib/entity-color';
 	import FormStatus from '#lib/components/FormStatus.svelte';
+	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
 	import { inheritedChoiceLabel } from '#lib/assistant-preferences';
@@ -10,6 +11,7 @@
 		writingLanguageLabel
 	} from '#lib/writing-languages';
 	import type { ActionData, PageData } from './$types';
+	import { untrack } from 'svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -19,6 +21,14 @@
 	// What a story with no language of its own falls back to.
 	let universeLanguage = $derived(normaliseLanguage(data.universe.language));
 	let useInherited = $derived(inheritedChoiceLabel(data.universe.standalone));
+	// The text boxes start from the stored text, read once (the page keys this
+	// component by story). A value renders on the server, where defaultValue
+	// leaves a text box empty and a save before the page loads would post it
+	// empty; reading it once keeps a refresh from writing over newer typing.
+	const initial = untrack(() => ({
+		description: data.story.descriptionMd ?? '',
+		styleNotes: data.story.styleNotes ?? ''
+	}));
 </script>
 
 <div class="admin-block-head">
@@ -28,7 +38,13 @@
 	</p>
 </div>
 <div class="settings-group">
-	<form method="POST" action="?/update" use:enhance={autosaveSubmit} onchange={autosubmitForm}>
+	<!-- Posted by id: a save made while a rename is in flight must not use the old slug. -->
+	<form
+		method="POST"
+		action="{resolve('/stories/[id]/settings/[[section]]', { id: data.story.id })}?/update"
+		use:enhance={autosaveSubmit}
+		onchange={autosubmitForm}
+	>
 		<div class="field">
 			<label for="st-title">Title</label>
 			<input
@@ -71,7 +87,7 @@
 				class="input"
 				name="description"
 				rows="4"
-				defaultValue={data.story.descriptionMd ?? ''}></textarea>
+				value={initial.description}></textarea>
 		</div>
 		{#if !data.story.coverAssetId}
 			<div class="field">
@@ -121,7 +137,7 @@
 				class="input"
 				name="styleNotes"
 				rows="2"
-				defaultValue={data.story.styleNotes ?? ''}></textarea>
+				value={initial.styleNotes}></textarea>
 			<p class="field-hint">
 				A sentence on the genre and the style you are writing in, for example "epic fantasy serial,
 				omniscient narrator, formal prose". The intended audience and a comparison title or two also

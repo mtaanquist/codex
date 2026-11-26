@@ -8,7 +8,9 @@ test.use({ storageState: 'e2e/.auth/assistant.json' });
 
 // #1548: Assistant preferences is its own settings item, not part of Details.
 test('Assistant preferences has its own settings page for a universe and a story', async ({
-	page
+	page,
+	browser,
+	baseURL
 }) => {
 	await gotoReady(page, '/');
 	const name = `Prefs ${Date.now()}`;
@@ -76,4 +78,19 @@ test('Assistant preferences has its own settings page for a universe and a story
 	await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('past');
 	await expect(page.getByLabel('Your own habits')).toHaveValue('Fragments are on purpose.');
 	expect(await violations(page)).toEqual([]);
+
+	// The notes are in the page before its script runs, so a save from that
+	// state does not post them empty (#1683).
+	const plain = await browser.newContext({
+		baseURL,
+		javaScriptEnabled: false,
+		storageState: 'e2e/.auth/assistant.json'
+	});
+	try {
+		const plainPage = await plain.newPage();
+		await plainPage.goto(`/stories/${slug}/settings/preferences`);
+		await expect(plainPage.getByLabel('Your own habits')).toHaveValue('Fragments are on purpose.');
+	} finally {
+		await plain.close();
+	}
 });

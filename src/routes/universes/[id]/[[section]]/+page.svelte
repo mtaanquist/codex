@@ -3,7 +3,7 @@
 	import type { ResolvedPathname } from '$app/types';
 	import { confirmSubmit } from '#lib/confirm.svelte';
 	import { beforeNavigate, refreshAll } from '$app/navigation';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { enhance } from '#lib/enhance';
 	import {
 		autosaveSubmit,
@@ -270,38 +270,46 @@
 					belongs to one.
 				</p>
 			</div>
+			<!-- Posted by id: a save made while a rename is in flight must not use the old slug. -->
 			<form
 				method="POST"
-				action="?/update"
+				action="{resolve('/universes/[id]/[[section]]', { id: data.universe.id })}?/update"
 				bind:this={detailsForm}
 				use:enhance={autosaveSubmit}
 				onchange={onDetailsChange}
 			>
-				<div class="field">
-					<label for="u-name">Name</label>
-					<input
-						id="u-name"
-						class="input"
-						type="text"
-						name="name"
-						defaultValue={data.universe.name}
-						data-renames
-					/>
-					<span class="field-hint">
-						The web address follows the name: /universes/{data.universe.slug}. Renaming moves the
-						address; the old one stops working.
-					</span>
-				</div>
-				<div class="field">
-					<label for="u-description">Description</label>
-					<textarea
-						id="u-description"
-						class="input"
-						name="description"
-						rows="6"
-						defaultValue={data.universe.descriptionMd ?? ''}></textarea>
-					<span class="field-hint">Markdown is fine. Shown on the library card.</span>
-				</div>
+				<!-- Keyed by universe, so moving to another universe's settings starts
+				its fields afresh. The text box starts from the stored text, read once
+				per universe: a value renders on the server, unlike defaultValue, and
+				reading it once keeps a refresh from writing over newer typing. -->
+				{#key data.universe.id}
+					{@const initialDescription = untrack(() => data.universe.descriptionMd ?? '')}
+					<div class="field">
+						<label for="u-name">Name</label>
+						<input
+							id="u-name"
+							class="input"
+							type="text"
+							name="name"
+							defaultValue={data.universe.name}
+							data-renames
+						/>
+						<span class="field-hint">
+							The web address follows the name: /universes/{data.universe.slug}. Renaming moves the
+							address; the old one stops working.
+						</span>
+					</div>
+					<div class="field">
+						<label for="u-description">Description</label>
+						<textarea
+							id="u-description"
+							class="input"
+							name="description"
+							rows="6"
+							value={initialDescription}></textarea>
+						<span class="field-hint">Markdown is fine. Shown on the library card.</span>
+					</div>
+				{/key}
 				<div class="field">
 					<label for="u-language">Language</label>
 					<select
@@ -414,17 +422,19 @@
 	{#if data.assistantPreferencesShown}
 		<section class="admin-section" class:active={active === 'preferences'}>
 			<div class="admin-block">
-				<AssistantPreferences
-					level="universe"
-					standalone={data.universe.standalone}
-					stored={data.universe.assistantPreferences}
-					notes={data.universe.assistantNotes}
-					saved={form?.action === 'assistant-preferences' && form.saved === true}
-					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
-					submitted={form?.action === 'assistant-preferences' && 'submitted' in form
-						? form.submitted
-						: null}
-				/>
+				{#key data.universe.id}
+					<AssistantPreferences
+						level="universe"
+						standalone={data.universe.standalone}
+						stored={data.universe.assistantPreferences}
+						notes={data.universe.assistantNotes}
+						saved={form?.action === 'assistant-preferences' && form.saved === true}
+						error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+						submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+							? form.submitted
+							: null}
+					/>
+				{/key}
 			</div>
 		</section>
 	{/if}

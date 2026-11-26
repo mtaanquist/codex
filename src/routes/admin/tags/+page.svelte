@@ -10,8 +10,9 @@
 	<h1 class="admin-title">Tags</h1>
 	<p class="admin-lede">
 		The tags authors put on their stories. Merge a typo or a short form into the tag it means, and
-		every story with it shows the other one; undo the merge to split them again. Removing a tag
-		hides it from every story, and authors cannot add it again.
+		every story with it shows the other one. Undoing a merge brings back only that tag: any tags
+		merged into it earlier stay merged into the other one. Removing a tag hides it from every story,
+		and authors cannot add it again.
 	</p>
 </div>
 

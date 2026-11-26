@@ -7,19 +7,19 @@ import { universeTimeline, universeRevisionCount } from '#lib/server/revisions';
 import { listCategories, saveCategories, universeContents } from '#lib/server/categories';
 import { trashUniverse, UNIVERSE_TRASH_DAYS } from '#lib/server/universe-lifecycle';
 import { parseStoryZip, StoryZipError, type ImportPlan } from '#lib/import-markdown';
-import { parseDocument, DocumentImportError } from '#lib/server/import-document';
+import { parseDocumentInWorker, DocumentImportError } from '#lib/server/import-document';
 import { previewImport, runImport } from '#lib/server/import-story';
 import { quotaFailure } from '#lib/server/quotas';
 import { effectiveAssetConfig } from '#lib/server/assets';
 import { listUserExports, markExportFailed, requestExport } from '#lib/server/user-exports';
 import { queueUserExport } from '#lib/server/jobs';
-import { exportLimit } from '#lib/server/rate-limit';
+import { exportLimit, importLimit } from '#lib/server/rate-limit';
 import { formText } from '#lib/server/validation';
 import { assistantLayout, saveUniverseModels } from '#lib/server/llm/config';
 import { modelsFromForm, scopeModelSettings } from '#lib/server/llm/scope-models';
 import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/server/proposals';
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
-import { isUuid } from '#lib/slug';
+import { isUuid, slugAddress, withRef } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
 import { readPreferencesForm } from '#lib/assistant-preferences';
 import { assistantPreferencesShown, savePreferences } from '#lib/server/assistant-preferences';
@@ -27,7 +27,15 @@ import { pickableFandom, setUniverseFandom, universeFandom } from '#lib/server/t
 
 // The uploaded file, parsed into a plan: a Codex export zip, or a Word/EPUB
 // manuscript by its extension. Returns a fail() the action passes straight back.
-async function planFromUpload(data: FormData) {
+async function planFromUpload(userId: string, data: FormData) {
+	if (!importLimit(userId).allowed) {
+		return {
+			fail: fail(429, {
+				action: 'import' as const,
+				message: 'Too many imports just now. Try again shortly.'
+			})
+		};
+	}
 	const file = data.get('archive');
 	if (!(file instanceof File) || file.size === 0) {
 		return { fail: fail(400, { action: 'import' as const, message: 'Choose a file first.' }) };
@@ -35,7 +43,9 @@ async function planFromUpload(data: FormData) {
 	const bytes = new Uint8Array(await file.arrayBuffer());
 	const isManuscript = /\.(docx|epub)$/i.test(file.name);
 	try {
-		const plan = isManuscript ? await parseDocument(bytes, file.name) : parseStoryZip(bytes);
+		const plan = isManuscript
+			? await parseDocumentInWorker(bytes, file.name)
+			: parseStoryZip(bytes);
 		return { plan };
 	} catch (err) {
 		if (err instanceof StoryZipError || err instanceof DocumentImportError) {
@@ -45,7 +55,7 @@ async function planFromUpload(data: FormData) {
 	}
 }
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// Details rests on /universes/<slug> itself; the other sections have
 	// their own page.
 	if (
@@ -56,6 +66,9 @@ export const load: PageServerLoad = async ({ params, locals }) => {
 	)
 		error(404, 'Not found');
 	const universe = await ownedUniverse(params.id, locals.user!.id);
+	// A page reached by id moves to its slug address, where its links and a
+	// rename's redirect expect it to be (#1691).
+	if (params.id !== slugAddress(universe)) redirect(303, withRef(url, slugAddress(universe)));
 	const [contents, categories, timeline, revisionCount, assistant] = await Promise.all([
 		universeContents(db, universe.id),
 		listCategories(db, universe.id),
@@ -271,7 +284,7 @@ export const actions: Actions = {
 	},
 	previewImport: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
-		const upload = await planFromUpload(await request.formData());
+		const upload = await planFromUpload(locals.user!.id, await request.formData());
 		if (upload.fail) return upload.fail;
 		return {
 			action: 'import' as const,
@@ -280,7 +293,7 @@ export const actions: Actions = {
 	},
 	runImport: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
-		const upload = await planFromUpload(await request.formData());
+		const upload = await planFromUpload(locals.user!.id, await request.formData());
 		if (upload.fail) return upload.fail;
 		try {
 			return {

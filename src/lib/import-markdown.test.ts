@@ -33,6 +33,15 @@ describe('parseFrontMatter', () => {
 		expect(parseFrontMatter('---\nnever closed').body).toBe('---\nnever closed');
 	});
 
+	it('keeps values and list items that hold a line or paragraph separator', () => {
+		const value = 'One\u2028two\u2029three';
+		const { fields } = parseFrontMatter(
+			`---\nstyle-notes: ${JSON.stringify(value)}\naliases:\n  - ${JSON.stringify(value)}\n---\n`
+		);
+		expect(fields['style-notes']).toBe(value);
+		expect(fields.aliases).toEqual([value]);
+	});
+
 	it('falls back to the raw text for unquoted values', () => {
 		expect(parseFrontMatter('---\ntitle: Plain words\n---\n').fields.title).toBe('Plain words');
 	});
@@ -60,6 +69,61 @@ describe('parseStoryZip', () => {
 			[`halden/assets/${ASSET_ID}.png`]: new Uint8Array([1, 2, 3])
 		});
 
+	it('reads the language and Assistant settings from story.md', () => {
+		const plan = parseStoryZip(
+			zip({
+				'halden/story.md': [
+					'---',
+					'title: "Halden"',
+					'style-notes: "Epic fantasy,\\nformal prose."',
+					'language: "en-GB"',
+					'assistant-preferences:',
+					'  - "quoteMarks: single"',
+					'  - "filterVerbs: leave"',
+					'assistant-notes: "Keep \\"ye\\".\\nNo modern slang."',
+					'---',
+					''
+				].join('\n')
+			})
+		);
+		expect(plan.story).toMatchObject({
+			styleNotes: 'Epic fantasy,\nformal prose.',
+			language: 'en-GB',
+			assistantPreferences: { quoteMarks: 'single', filterVerbs: 'leave' },
+			assistantNotes: 'Keep "ye".\nNo modern slang.'
+		});
+		expect(plan.problems).toEqual([]);
+	});
+
+	it('leaves the settings out when story.md has none', () => {
+		const plan = parseStoryZip(zip({ 'halden/story.md': '---\ntitle: "Halden"\n---\n' }));
+		for (const key of ['styleNotes', 'language', 'assistantPreferences', 'assistantNotes']) {
+			expect(plan.story).not.toHaveProperty(key);
+		}
+	});
+
+	it('reports settings it cannot use instead of storing them', () => {
+		const plan = parseStoryZip(
+			zip({
+				'halden/story.md': [
+					'---',
+					'title: "Halden"',
+					'language: "Klingon"',
+					'assistant-preferences:',
+					'  - "tense: future"',
+					`assistant-notes: "${'x'.repeat(1001)}"`,
+					'---',
+					''
+				].join('\n')
+			})
+		);
+		for (const key of ['language', 'assistantPreferences', 'assistantNotes']) {
+			expect(plan.story).not.toHaveProperty(key);
+		}
+		expect(plan.problems).toHaveLength(3);
+		expect(plan.problems[0]).toContain('Klingon');
+	});
+
 	it('skips saved drafts without counting them against the file limit', () => {
 		const files: Record<string, string> = {
 			'halden/story.md': '---\ntitle: "Halden"\n---\n',
@@ -75,6 +139,32 @@ describe('parseStoryZip', () => {
 		expect(plan.problems).toContain(
 			'The saved drafts in this archive were not imported, only the working draft.'
 		);
+	});
+
+	it('reports saved drafts at the top of a re-zipped story folder and review comments', () => {
+		const plan = parseStoryZip(
+			zip({
+				'story.md': '---\ntitle: "Halden"\n---\n',
+				'reviews.md': '# Review comments\n',
+				'drafts/first/story.md': '---\ntitle: "Halden, then"\n---\n'
+			})
+		);
+		expect(plan.story.title).toBe('Halden');
+		expect(plan.problems).toEqual([
+			'The saved drafts in this archive were not imported, only the working draft.',
+			'The review comments in this archive were not imported.'
+		]);
+	});
+
+	it('reads a story folder named drafts as the story, not as saved drafts', () => {
+		const plan = parseStoryZip(
+			zip({
+				'drafts/story.md': '---\ntitle: "Drafts"\n---\n',
+				'drafts/unfiled/01-a.md': '---\ntitle: "A"\n---\nNow.'
+			})
+		);
+		expect(plan.unfiled.map((scene) => scene.bodyMd)).toEqual(['Now.']);
+		expect(plan.problems).toEqual([]);
 	});
 
 	it('rebuilds the story plan in NN order with notes and assets', () => {
@@ -128,6 +218,56 @@ describe('parseStoryZip', () => {
 		expect(plan.unfiled).toEqual([{ title: 'Loose end', status: 'final', bodyMd: 'One.\n\nTwo.' }]);
 		expect(plan.notes).toEqual([{ kind: 'lore', name: 'The Toll', notesMd: 'Steep.\nVery.' }]);
 		expect(plan.problems).toEqual([]);
+	});
+
+	it('keeps the indent of a first line and drops only blank lines around a body', () => {
+		const code = '    let x = 1;\n\nThen prose.';
+		const plan = parseStoryZip(
+			zip({
+				'h/story.md': `---\ntitle: "H"\n---\n${code}`,
+				'h/chapters/01-a/chapter.md': `---\ntitle: "A"\n---\n\n${code}\n\n`,
+				'h/chapters/01-a/01-s.md': `---\ntitle: "S"\n---\n${code}\n`,
+				'h/notes/characters/ann.md': `---\nname: "Ann"\n---\n${code}`,
+				'h/notebook/idea.md': `---\ntitle: "Idea"\n---\n${code}`,
+				'h/waiting-drafts/01.md': `---\nscene: "chapters/01-a/01-s.md"\n---\n${code}`
+			})
+		);
+		expect(plan.story.descriptionMd).toBe(code);
+		expect(plan.chapters[0].summaryMd).toBe(code);
+		expect(plan.chapters[0].scenes[0].bodyMd).toBe(code);
+		expect(plan.notes[0].notesMd).toBe(code);
+		expect(plan.freeformNotes![0].bodyMd).toBe(code);
+		expect(plan.waitingDrafts![0].textMd).toBe(code);
+	});
+
+	it("reads a chapter summary marked as the Assistant's, and only a non-blank one", () => {
+		const plan = parseStoryZip(
+			zip({
+				'h/story.md': '---\ntitle: "H"\n---\n',
+				'h/chapters/01-a/chapter.md': '---\ntitle: "A"\nsummary-by: "assistant"\n---\nIt ends.',
+				'h/chapters/02-b/chapter.md': '---\ntitle: "B"\n---\nMine.',
+				'h/chapters/03-c/chapter.md': '---\ntitle: "C"\nsummary-by: "assistant"\n---\n'
+			})
+		);
+		expect(plan.chapters.map((c) => [c.summaryMd, c.summaryByAssistant ?? false])).toEqual([
+			['It ends.', true],
+			['Mine.', false],
+			[null, false]
+		]);
+	});
+
+	it('trims a body with a long whitespace run inside it in linear time', () => {
+		const run = ' \t\n'.repeat(30_000);
+		const body = `a${run}x${run}`;
+		const started = performance.now();
+		const plan = parseStoryZip(
+			zip({
+				'h/story.md': '---\ntitle: "H"\n---\n',
+				'h/chapters/01-a/01-s.md': `---\ntitle: "S"\n---\n${body}`
+			})
+		);
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(plan.chapters[0].scenes[0].bodyMd).toBe(`a${run}x`);
 	});
 
 	it('flags unknown statuses as problems and starts those scenes as drafts', () => {

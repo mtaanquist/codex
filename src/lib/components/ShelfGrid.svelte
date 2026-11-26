@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { renderMarkdown } from '#lib/markdown';
+	import { markdownToPlainText } from '#lib/markdown';
 	import { formatLongDate } from '#lib/format';
 	import { slugAddress } from '#lib/slug';
 
@@ -64,9 +64,9 @@
 					</span>
 				{/if}
 				{#if book.descriptionMd}
-					<!-- Author markdown; renderMarkdown escapes raw HTML. -->
-					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					<span class="shelf-item-brief">{@html renderMarkdown(book.descriptionMd)}</span>
+					<!-- Plain text: the whole card is one link, so the description
+					     cannot carry links or images of its own. -->
+					<span class="shelf-item-brief">{markdownToPlainText(book.descriptionMd)}</span>
 				{/if}
 			</a>
 			{#if book.handle && book.byline}

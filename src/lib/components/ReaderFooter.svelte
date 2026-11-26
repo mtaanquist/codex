@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import Icon from './Icon.svelte';
+	import { browseHomeHref } from '#lib/browse-adult.svelte';
 
 	// The one footer the reading pages and the signed-out pages carry: the mark,
 	// who published the work, and a short row of links. It is the only brand
@@ -50,7 +51,7 @@
 			{/if}
 			<span class="reader-foot-links">
 				<a href={resolve('/docs/[topic]', { topic: 'publishing' })}>Reading in Codex</a>
-				{#if page.data.browse}<a href={resolve('/browse')} data-sveltekit-preload-data="tap">
+				{#if page.data.browse}<a href={browseHomeHref()} data-sveltekit-preload-data="tap">
 						Browse stories
 					</a>{/if}
 				<a href={resolve('/docs')}>About Codex</a>
@@ -62,7 +63,7 @@
 			<span class="reader-foot-links">
 				<a href={resolve('/docs')}>Handbook</a>
 				<a href={resolve('/docs/[topic]', { topic: 'publishing' })}>Reading in Codex</a>
-				{#if page.data.browse}<a href={resolve('/browse')} data-sveltekit-preload-data="tap">
+				{#if page.data.browse}<a href={browseHomeHref()} data-sveltekit-preload-data="tap">
 						Browse stories
 					</a>{/if}
 			</span>

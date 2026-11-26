@@ -1,5 +1,5 @@
 import { slugify } from '../slug.ts';
-import { findAssetReferences, renderMarkdown, rewriteAssetReferences } from '../markdown.ts';
+import { findAssetReferences, renderEpubMarkdown, rewriteAssetReferences } from '../markdown.ts';
 import { cssEscape, DEFAULT_PAGE_SETUP, lineHeightCss, type PageSetup } from '../page-setup.ts';
 import type { AssetLoader, AssetRef, ExportStory, StoryContent } from './export.ts';
 import { assetEntry, textEntry, type ZipArchive, type ZipEntry } from './zip-stream.ts';
@@ -80,7 +80,7 @@ export async function buildEpub(
 				const body = rewriteAssetReferences(scene.bodyMd, (id) =>
 					images.has(id) ? imageFile(id) : ''
 				);
-				return renderMarkdown(body, { xhtml: true });
+				return renderEpubMarkdown(body);
 			})
 			.join('\n<hr class="scene-break"/>\n');
 	chapterList.forEach((chapter, index) => {

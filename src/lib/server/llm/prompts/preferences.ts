@@ -65,9 +65,12 @@ export function houseStyleLine(
 	}`;
 	// Dialogue and quoted thoughts keep their own tense and person, so a check
 	// would otherwise flag every "I am" a character says in a past-tense,
-	// third-person story.
+	// third-person story, and a rewrite would put it into the narration's tense.
 	const { tense, narration } = style;
-	if (mode !== 'write' && (tense || narration)) {
+	if (mode === 'write' && (tense || narration)) {
+		return `${line} Dialogue and a character's quoted thoughts keep their own tense and person.`;
+	}
+	if (tense || narration) {
 		return `${line} The ${
 			tense && narration
 				? 'tense and point of view apply'
@@ -92,13 +95,19 @@ const HABIT_PHRASES: Record<HabitCheck, string> = {
 	sentenceShapes: 'repeated sentence shapes, openings, and character gestures'
 };
 
-// The habits the writer uses on purpose. They are also dropped from the lists
-// of what to look for; saying so outright keeps a model from flagging them
-// out of its own habit.
-export function leaveAloneLine(setting: PreferenceSetting): string {
+// The habits the writer uses on purpose, for review and the pattern pass
+// ('check') or the chat's story frame ('chat'). They are also dropped from the
+// lists of what to look for; saying so outright keeps a model from flagging
+// them out of its own habit. The chat may still discuss them when the writer
+// asks, so it is not told to stay silent about them.
+export function leaveAloneLine(setting: PreferenceSetting, mode: 'check' | 'chat'): string {
 	if (setting.leaveAlone.length === 0) return '';
 	const list = setting.leaveAlone.map((habit) => HABIT_PHRASES[habit]).join('; ');
-	return `The writer uses these on purpose in this story. Leave them alone, and do not flag, comment on, or change them: ${list}.`;
+	return `The writer uses these on purpose in this story. ${
+		mode === 'chat'
+			? 'Do not flag or change them unless the writer asks about them'
+			: 'Leave them alone, and do not flag, comment on, or change them'
+	}: ${list}.`;
 }
 
 const NOTES_INTRO = {
@@ -134,7 +143,7 @@ export function habitNotesLine(
 export function reviewPreferenceText(setting: PreferenceSetting): string {
 	return [
 		houseStyleLine(setting, 'check'),
-		leaveAloneLine(setting),
+		leaveAloneLine(setting, 'check'),
 		habitNotesLine(setting, 'review')
 	]
 		.filter(Boolean)

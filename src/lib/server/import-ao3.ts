@@ -28,45 +28,109 @@ type El = { tag: string; attrs: string; inner: string; outer: string };
 
 const VOID_TAGS = new Set(['br', 'hr', 'img', 'meta', 'link', 'input', 'col', 'wbr', 'area']);
 
+// html.indexOf for a reader that only moves forward: each string's next
+// position is remembered until the reader passes it, so a terminator missing
+// from the rest of the input (or far ahead) is searched for once, not once per
+// opener.
+type Find = (term: string, from: number) => number;
+
+function forwardFinder(html: string): Find {
+	const found = new Map<string, { from: number; at: number }>();
+	return (term, from) => {
+		const known = found.get(term);
+		if (known && known.from <= from && (known.at === -1 || known.at >= from)) return known.at;
+		const at = html.indexOf(term, from);
+		found.set(term, { from, at });
+		return at;
+	};
+}
+
+// Where a comment opened at i ends (just past it), or -1 when it never does.
+// As in an HTML parser, "<!-->" and "<!--->" end at once, and "--!>" ends a
+// comment as well as "-->".
+function commentEnd(find: Find, i: number): number {
+	const dashes = find('-->', i + 2);
+	const bang = find('--!>', i + 4);
+	if (bang !== -1 && (dashes === -1 || bang < dashes)) return bang + 4;
+	return dashes === -1 ? -1 : dashes + 3;
+}
+
+function endsAt(opener: string, terminator: string) {
+	return (find: Find, i: number) => {
+		const end = find(terminator, i + opener.length);
+		return end === -1 ? -1 : end + terminator.length;
+	};
+}
+
+// Markup skipped while reading: comments, CDATA, and processing instructions.
+// An opener that is never closed is read past as text.
+const SKIPPED = [
+	{ opener: '<!--', end: commentEnd },
+	{ opener: '<![CDATA[', end: endsAt('<![CDATA[', ']]>') },
+	{ opener: '<?', end: endsAt('<?', '?>') }
+];
+
 // The top-level elements of an XHTML fragment, in order. Text between them is
-// ignored; comments, CDATA, and processing instructions are skipped.
-function childElements(html: string): El[] {
+// ignored; comments, CDATA, and processing instructions are skipped. With
+// throughDivs, a div is a wrapper rather than an element: its children count
+// as top-level in its place, at any depth. With firstOnly, the walk stops at
+// the first element, and finds none when a wrapper div ends before one. One
+// pass either way, since descending a level at a time rescans each div's
+// inside once per level.
+function elements(html: string, throughDivs = false, firstOnly = false): El[] {
 	const out: El[] = [];
 	// Attribute text never contains "<" in well-formed XHTML; excluding it keeps
 	// a stray unterminated tag from making every match scan to the end.
-	const re =
-		/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<(\/?)([a-zA-Z][\w:-]*)((?:[^<>"']|"[^"<]*"|'[^'<]*')*?)(\/?)>/g;
-	let depth = 0;
+	const re = /<(\/?)([a-zA-Z][\w:-]*)((?:[^<>"']|"[^"<]*"|'[^'<]*')*?)(\/?)>/y;
+	const find = forwardFinder(html);
+	// The element being read, and how deep inside it the walk is.
 	let open: { tag: string; attrs: string; start: number; innerStart: number } | null = null;
-	for (let m = re.exec(html); m; m = re.exec(html)) {
-		if (!m[2]) continue;
+	let depth = 0;
+	for (let i = html.indexOf('<'); i !== -1;) {
+		const skip = SKIPPED.findIndex(({ opener }) => html.startsWith(opener, i));
+		if (skip !== -1) {
+			const end = SKIPPED[skip].end(find, i);
+			i = html.indexOf('<', end === -1 ? i + 1 : end);
+			continue;
+		}
+		re.lastIndex = i;
+		const m = re.exec(html);
+		i = html.indexOf('<', m ? re.lastIndex : i + 1);
+		if (!m) continue;
 		const closing = m[1] === '/';
 		const tag = m[2].toLowerCase();
-		const selfClosing = m[4] === '/' || VOID_TAGS.has(tag);
-		if (closing) {
-			// "<br></br>" is legal XHTML; the opening tag already counted as complete.
-			if (VOID_TAGS.has(tag)) continue;
-			depth -= 1;
-			if (depth === 0 && open) {
-				out.push({
-					tag: open.tag,
-					attrs: open.attrs,
-					inner: html.slice(open.innerStart, m.index),
-					outer: html.slice(open.start, m.index + m[0].length)
-				});
-				open = null;
-			}
-			if (depth < 0) depth = 0;
+		// "<br></br>" is legal XHTML; the opening tag already counted as complete.
+		if (closing && VOID_TAGS.has(tag)) continue;
+		const selfClosing = !closing && (m[4] === '/' || VOID_TAGS.has(tag));
+		if (open) {
+			if (closing) depth -= 1;
+			else if (!selfClosing) depth += 1;
+			if (depth > 0) continue;
+			out.push({
+				tag: open.tag,
+				attrs: open.attrs,
+				inner: html.slice(open.innerStart, m.index),
+				outer: html.slice(open.start, m.index + m[0].length)
+			});
+			open = null;
+		} else if (closing || (throughDivs && tag === 'div')) {
+			// A wrapper div opening, ending, or empty; a stray close is ignored.
+			if (firstOnly && (closing || selfClosing)) return out;
+			continue;
 		} else if (selfClosing) {
-			if (depth === 0) out.push({ tag, attrs: m[3], inner: '', outer: m[0] });
+			out.push({ tag, attrs: m[3], inner: '', outer: m[0] });
 		} else {
-			if (depth === 0) {
-				open = { tag, attrs: m[3], start: m.index, innerStart: m.index + m[0].length };
-			}
-			depth += 1;
+			open = { tag, attrs: m[3], start: m.index, innerStart: m.index + m[0].length };
+			depth = 1;
+			continue;
 		}
+		if (firstOnly) return out;
 	}
 	return out;
+}
+
+function childElements(html: string): El[] {
+	return elements(html);
 }
 
 function attrOf(el: El, name: string): string | null {
@@ -74,10 +138,19 @@ function attrOf(el: El, name: string): string | null {
 	return match ? (match[1] ?? match[2]) : null;
 }
 
+// A reference to a code point that cannot be stored (NUL, a surrogate, or past
+// U+10FFFF) reads as U+FFFD, as an HTML parser does.
+export function decodeCharRefs(text: string): string {
+	return text.replace(/&#(?:x([0-9a-f]+)|(\d+));/gi, (_, hex, dec) => {
+		const code = hex ? parseInt(hex, 16) : parseInt(dec, 10);
+		return code === 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)
+			? '\ufffd'
+			: String.fromCodePoint(code);
+	});
+}
+
 function decode(text: string): string {
-	return text
-		.replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
-		.replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+	return decodeCharRefs(text)
 		.replace(/&nbsp;/g, ' ')
 		.replace(/&lt;/g, '<')
 		.replace(/&gt;/g, '>')
@@ -94,15 +167,13 @@ function textOf(html: string): string {
 
 // The first non-div element, descending through wrapper divs.
 function firstLeaf(el: El): El | undefined {
-	if (el.tag !== 'div') return el;
-	const first = childElements(el.inner)[0];
-	return first ? firstLeaf(first) : undefined;
+	return el.tag === 'div' ? elements(el.inner, true, true)[0] : el;
 }
 
 // Descends through wrapper divs so label paragraphs and blockquotes sit in one
 // flat run whatever nesting Calibre's split left them in.
 function flatten(html: string): El[] {
-	return childElements(html).flatMap((el) => (el.tag === 'div' ? flatten(el.inner) : [el]));
+	return elements(html, true);
 }
 
 // The blockquote following each fixed label ("Summary", "Chapter Notes", ...).

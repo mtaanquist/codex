@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import { resolveRoleModel, type AssistantRole } from '#lib/assistant-tuning';
 	import { ROLE_META } from '#lib/assistant-roles';
 	import FormStatus from './FormStatus.svelte';
@@ -89,7 +89,7 @@
 <div class="settings-group">
 	<form
 		method="POST"
-		action="?/saveAssistantModels"
+		action={ownAction('saveAssistantModels')}
 		use:enhance={autosaveSubmit}
 		onchange={autosubmitForm}
 	>

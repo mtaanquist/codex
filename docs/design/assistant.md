@@ -759,9 +759,10 @@ These cut across the surfaces and the architecture.
   staleness is its request hash (arcs, chapter summaries, enrich) is built
   from the frame. The editor's `lang` follows the effective language and
   falls back to the `writingLanguage` editor preference. The app interface
-  language is a separate matter. Export carries a story's title, author and
-  brief but none of its settings (style notes, models, editor preferences),
-  so the language stays out of it too.
+  language is a separate matter. Exports carry the language (#1547):
+  `language` in story.md and in universe.md, left out when not set, and the
+  story import reads a story's back (a tag this site does not list is left
+  off and reported). Models and editor preferences stay out of the export.
 - **Assistant preferences (#1344, items 1 to 3).** A universe and a story each
   carry `assistant_preferences`, a jsonb object of known keys from
   `#lib/assistant-preferences` (absent is not set), and `assistant_notes`, one
@@ -789,13 +790,21 @@ These cut across the surfaces and the architecture.
   review-thread reply that may revise its pending suggestion
   (`update_suggestion`), with the language line. The chat in a story gets
   what a connected app gets from `list_stories`: its story frame carries the
-  language, the house style, the habits to leave alone and the fenced notes.
+  language, the house style, the habits to leave alone (which the chat does
+  not flag or change unprompted, but discusses when the writer asks) and the
+  fenced notes.
   Not set, every prompt reads byte for byte as before. The continuation is
   left out on purpose (short follow-on text that copies the prose around
   it). There is no free-form
   system prompt, and the rest of #1344 (feedback amount, reasons on edits,
-  summary and draft lengths, content limits) is not built. Like style notes,
-  the preferences are not in the export. The settings pages show the form
+  summary and draft lengths, content limits) is not built. Exports carry the
+  preferences and the notes, with the story's style notes (#1547): story.md
+  and universe.md list each set key as an `assistant-preferences` line
+  (`key: value`) and write `assistant-notes` (and story.md `style-notes`) as
+  one JSON-quoted line, every key left out when not set. The story import
+  reads them back, leaving off and reporting keys it does not know and notes
+  over the cap; there is no universe import, so a universe's stay in the
+  archive. The settings pages show the form
   with the Assistant tab on or with connected apps on for the account
   (`assistantPreferencesShown`), since both read the preferences, and a save
   changes only the keys the form posts.
@@ -1277,7 +1286,11 @@ hashes:
   out-of-date Assistant-written one out (`chapterSummaryToSend`, used by
   `storySkeleton` and `attachments.ts`), and the summaries pass rewrites
   exactly those. One the writer wrote (no `summary_generated_at`) is never
-  out of date.
+  out of date. An export marks an Assistant-written chapter summary with
+  `summary-by: assistant` in chapter.md, and an import stamps such a summary
+  with `summary_generated_at` and a null `summary_input`, so it reads as out
+  of date: it is left out of the context until a summaries pass rewrites it,
+  rather than being taken as the writer's own (#1655).
 - Enrich reads: the pass (`enrichUniverse`) builds every mentioned entity's
   request and sends only those whose hash differs from the stored one. The
   hash covers the entry's name and its passages, not what is recorded on it
@@ -1352,7 +1365,9 @@ A review job writes its progress to `assistant_review_runs` (one row per
 pg-boss job id, a jsonb state: phase, scenes completed, current scene, counts,
 and the failure list). The job-status endpoint reads it while the job runs, so
 the review window can show where the pass is; a retry of the same job after a
-worker restart reads it too and skips the scenes already handled. The state
+worker restart reads it too and skips the scenes already handled, unless the
+settings key recorded in it (see below) differs from the retry's, in which case
+the run starts over. The state
 also records the scope the run was over (the same key the queue holds one
 unfinished job per: the mode, the target and, for a copyedit, the categories
 it checks), so a run that stopped at the spend cap is picked up by the
@@ -1364,7 +1379,19 @@ scenes whose pass failed and those edited since their pass read them, which
 are reviewed again. A failure to read or adopt the earlier run fails the
 attempt for pg-boss to retry rather than starting over. A copyedit capped
 under the key from before v3.21.3 (no categories in it) is not continued; it
-starts over. The rows are
+starts over. A whole-story or chapter review also records a short hash of the
+settings its prompts read (`reviewSettingsKey`: the story language, plus the
+Assistant preferences and the story's style notes for a pass that reads the
+wording, and the native language where the prompts hint at it), kept beside the
+scope rather than in it so the queue key is unchanged; a capped run with a
+different hash is not continued, so a changed setting starts over instead of
+counting notes made under the old one as done. A row saved before the hash
+was recorded has none and is continued as before. A run reads the
+language, the preferences and the style notes once when it opens
+(`readReviewSettings`) and uses those values for every scene review, the
+pattern pass and the story frame, so an edit made while the run is going
+cannot split it between two sets of settings; the edit applies from the next
+run. The rows are
 disposable, and a daily worker sweep drops those older than 30 days. The
 review enqueue holds one unfinished job per scope (and the summaries enqueue one
 per story), so a duplicate request cannot start a second pass over the same

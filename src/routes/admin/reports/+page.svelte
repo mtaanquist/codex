@@ -57,7 +57,9 @@
 								{#if report.editionRemovedReason}<span class="pill">
 										taken down
 									</span>{:else if report.editionRemovedAt}<span class="pill">
-										hidden: account deletion pending
+										{report.ownerDeletionPending
+											? 'hidden: account deletion pending'
+											: 'hidden after a cancelled account deletion'}
 									</span>{/if}
 							</div>
 							<div class="list-sub">

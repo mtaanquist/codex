@@ -419,6 +419,8 @@ export const chapters = pgTable(
 		// The fingerprint of the request the Assistant's summary was written from
 		// (see llm/chapter-summary-request.ts). The summary is out of date when
 		// the request that would be sent now has a different one, or none is stored.
+		// An import of a summary chapter.md marks "summary-by: assistant" stores
+		// none, so it stays out of the context until a summaries pass rewrites it.
 		summaryInput: text('summary_input'),
 		metadata: jsonb('metadata').notNull().default({}),
 		updatedAt: timestamp('updated_at', { withTimezone: true })
@@ -1046,6 +1048,13 @@ export const publications = pgTable(
 			.array()
 			.notNull()
 			.default(sql`'{}'::text[]`),
+		// The same warnings' tag ids, frozen beside the names so the Browse hide
+		// filter still matches after a rename. Empty on editions from before ids
+		// were frozen, which match by name instead.
+		contentWarningIds: uuid('content_warning_ids')
+			.array()
+			.notNull()
+			.default(sql`'{}'::uuid[]`),
 		// Frozen chapters and scenes for this edition, as markdown.
 		content: jsonb('content').notNull(),
 		// Optional, e.g. 'Edition 2'.
@@ -1072,6 +1081,10 @@ export const publications = pgTable(
 		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
 		// A key from REPORT_REASONS (#lib/report-reasons), shown to the author.
 		removedReason: text('removed_reason'),
+		// Set on every edition of an author who schedules account deletion, so a
+		// later restore of a takedown clears the reason but leaves the edition
+		// down, as cancelling the deletion leaves the others.
+		hiddenByAccountDeletion: boolean('hidden_by_account_deletion').notNull().default(false),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
@@ -1822,6 +1835,10 @@ export type ReviewRunState = {
 	// What the run was over (mode and target, see reviewScopeKey), so a later
 	// run over the same scope can carry on from a capped one.
 	scope?: string;
+	// A hash of the language and preferences the run read (see
+	// reviewSettingsKey); a capped run is only continued under the same ones.
+	// Absent on rows saved before it was recorded.
+	settings?: string;
 	total: number;
 	completed: string[];
 	currentSceneTitle?: string | null;

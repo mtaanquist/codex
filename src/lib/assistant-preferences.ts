@@ -123,6 +123,26 @@ export function normalisePreferences(raw: unknown): StoredPreferences {
 	return out as StoredPreferences;
 }
 
+// The stored preferences as "key: value" lines, the way an export's front
+// matter lists them, and back. A line that names no known key or value is
+// counted as unread rather than kept.
+export function preferenceLines(raw: unknown): string[] {
+	return Object.entries(normalisePreferences(raw)).map(([key, value]) => `${key}: ${value}`);
+}
+
+export function preferencesFromLines(lines: string[]): {
+	preferences: StoredPreferences;
+	unread: number;
+} {
+	const raw: Record<string, string> = {};
+	for (const line of lines) {
+		const colon = line.indexOf(':');
+		if (colon > 0) raw[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+	}
+	const preferences = normalisePreferences(raw);
+	return { preferences, unread: lines.length - Object.keys(preferences).length };
+}
+
 // The lines the prompts put around the notes.
 export const NOTES_BEGIN = "--- the writer's notes ---";
 export const NOTES_END = '--- end of the notes ---';

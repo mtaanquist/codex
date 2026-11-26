@@ -125,6 +125,26 @@ jobs:
           const pdf = await renderEditionPdf('<p>smoke</p>');
           if (new TextDecoder().decode(pdf.slice(0, 5)) !== '%PDF-') process.exit(1);
           console.log('pdf bytes', pdf.length);"
+      - name: App converts a document in a worker thread
+        # The app server converts Word and EPUB uploads in a worker thread that
+        # runs src/lib/server/import-document-worker.ts from source, as the
+        # background worker does; a file missing from the image breaks only
+        # document imports, so convert a small EPUB the same way here.
+        run: >-
+          docker compose -f compose.yaml exec -T app node -e
+          "const { Worker } = require('node:worker_threads');
+          const { zipSync, strToU8 } = require('fflate');
+          const bytes = zipSync({
+            'META-INF/container.xml': strToU8('<container><rootfile full-path=\"c.opf\"/></container>'),
+            'c.opf': strToU8('<package><manifest><item id=\"a\" href=\"a.xhtml\"/></manifest><spine><itemref idref=\"a\"/></spine></package>'),
+            'a.xhtml': strToU8('<html><body><p>smoke</p></body></html>')
+          });
+          const worker = new Worker('/app/src/lib/server/import-document-worker.ts', { workerData: { bytes, filename: 'smoke.epub' } });
+          worker.on('message', (reply) => {
+            console.log(JSON.stringify(reply));
+            process.exit(reply.plan?.chapters[0]?.scenes[0]?.bodyMd === 'smoke' ? 0 : 1);
+          });
+          worker.on('error', (err) => { console.error(err); process.exit(1); });"
       - name: Form posts pass the origin check
         # SvelteKit refuses a form POST whose Origin does not match the app's
         # origin, which the image takes from ORIGIN at runtime. A same-origin

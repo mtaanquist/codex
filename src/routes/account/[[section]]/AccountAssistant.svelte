@@ -5,7 +5,7 @@
 	import { withQuery } from '#lib/href';
 	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import { usageRowCostUsd, type TokenPrice, type UsageCostRow } from '#lib/assistant-cost';
 	import { askConfirm } from '#lib/confirm.svelte';
 	import { formatDateTime, formatNumber, pluralSuffix, spentPhrase } from '#lib/format';
@@ -424,7 +424,7 @@
 			</header>
 			<form
 				method="POST"
-				action="?/saveAssistantIdentity"
+				action={ownAction('saveAssistantIdentity')}
 				use:enhance={autosaveSubmit}
 				onchange={autosubmitForm}
 			>
@@ -474,7 +474,7 @@
 			</header>
 			<form
 				method="POST"
-				action="?/saveAssistantEndpoint"
+				action={ownAction('saveAssistantEndpoint')}
 				use:enhance={autosaveSubmit}
 				onchange={autosubmitForm}
 			>
@@ -681,7 +681,7 @@
 							success={form?.scope === 'assistant-endpoint' && form.saved ? 'Saved.' : null}
 						/>
 					{/if}
-					<button type="submit" class="btn btn-ghost" formaction="?/testAssistant">
+					<button type="submit" class="btn btn-ghost" formaction={ownAction('testAssistant')}>
 						Test connection
 					</button>
 				</div>
@@ -700,7 +700,7 @@
 			</header>
 			<form
 				method="POST"
-				action="?/saveAssistantModels"
+				action={ownAction('saveAssistantModels')}
 				bind:this={modelsForm}
 				use:enhance={autosaveSubmit}
 				onchange={autosubmitForm}
@@ -865,7 +865,11 @@
 							success={form?.scope === 'assistant-models' && form.saved ? 'Saved.' : null}
 						/>
 					{/if}
-					<button type="submit" class="btn btn-ghost" formaction="?/discoverAssistantModels">
+					<button
+						type="submit"
+						class="btn btn-ghost"
+						formaction={ownAction('discoverAssistantModels')}
+					>
 						Discover models
 					</button>
 				</div>

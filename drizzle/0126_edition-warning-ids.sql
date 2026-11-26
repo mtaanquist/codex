@@ -1,0 +1,1 @@
+ALTER TABLE "publications" ADD COLUMN "content_warning_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL;

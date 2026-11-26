@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAo3Bodies } from './import-ao3';
+import { decodeCharRefs, parseAo3Bodies } from './import-ao3';
 
 describe('parseAo3Bodies', () => {
 	it('returns null for markup that is not an AO3 download', () => {
@@ -14,5 +14,67 @@ describe('parseAo3Bodies', () => {
 			parseAo3Bodies([`<div id="chapters"><div><p>${junk}</p></div></div>`, junk]);
 			expect(Date.now() - started).toBeLessThan(2000);
 		}
+	});
+
+	// Descending through wrapper divs used to rescan each div's inside once per
+	// level, which is quadratic in the nesting depth.
+	it('reads deeply nested wrapper divs in linear time', () => {
+		const nested =
+			'<div>'.repeat(1500) +
+			'<p>Summary</p><blockquote><p>Deep.</p></blockquote>' +
+			'</div>'.repeat(1500);
+		const preface = `<div id="preface">${nested.repeat(4)}</div>`;
+		const chapters = `<div id="chapters">${nested.repeat(4)}</div>`;
+		const started = Date.now();
+		const work = parseAo3Bodies([preface, chapters]);
+		expect(Date.now() - started).toBeLessThan(1000);
+		expect(work?.summaryHtml).toBe('<p>Deep.</p>');
+	});
+
+	// Each comment, CDATA section, or processing instruction that never closed
+	// used to be searched for to the end of the input, which is quadratic.
+	it('reads a run of unclosed comments in linear time', () => {
+		for (const opener of ['<!--x', '<![CDATA[x', '<?x']) {
+			const junk = opener.repeat(500_000 / opener.length);
+			const started = Date.now();
+			parseAo3Bodies([`<div id="chapters"><div><p>${junk}</p></div></div>`]);
+			expect(Date.now() - started).toBeLessThan(2000);
+		}
+	});
+
+	// A comment closed one way used to search to the end for the other ending
+	// every time, which is quadratic in the number of comments.
+	it('reads a run of closed comments in linear time', () => {
+		for (const comment of ['<!---->', '<!----!>']) {
+			const junk = comment.repeat(500_000 / comment.length);
+			const started = Date.now();
+			const work = parseAo3Bodies([
+				`<div id="chapters"><div class="userstuff2"><p>${junk}Prose.</p></div></div>`
+			]);
+			expect(Date.now() - started).toBeLessThan(2000);
+			expect(work?.chapters[0].proseHtml).toContain('Prose.');
+		}
+	});
+
+	it('reads past an unclosed comment and ends comments as an HTML parser does', () => {
+		const chapter = (comment: string) =>
+			`<div id="chapters">${comment}<div class="userstuff2"><p>Prose.</p></div><!-- end --></div>`;
+		for (const comment of ['<!-->', '<!--->', '<!-- a --!>']) {
+			const work = parseAo3Bodies([chapter(comment)]);
+			expect(work?.chapters[0].proseHtml).toContain('<p>Prose.</p>');
+		}
+		const unclosed = parseAo3Bodies([
+			'<div id="chapters"><!-- never closed<div class="userstuff2"><p>Prose.</p></div></div>'
+		]);
+		expect(unclosed?.chapters[0].proseHtml).toContain('<p>Prose.</p>');
+	});
+});
+
+describe('decodeCharRefs', () => {
+	it('decodes character references and reads impossible code points as U+FFFD', () => {
+		expect(decodeCharRefs('&#x41;&#66;&#x1F600;')).toBe('AB\u{1F600}');
+		expect(decodeCharRefs('&#x110000;&#xD800;&#57343;&#0;&#99999999999999999999;')).toBe(
+			'\ufffd'.repeat(5)
+		);
 	});
 });

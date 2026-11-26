@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
+import { strFromU8, unzipSync, zipSync } from 'fflate';
 import * as schema from '../../src/lib/server/db/schema';
 import {
 	chapters,
@@ -19,7 +21,7 @@ import {
 	universes,
 	users
 } from '../../src/lib/server/db/schema';
-import { buildStoryZip, gatherStory } from '../../src/lib/server/export';
+import { buildStoryZip, gatherStory, inMemoryAsset } from '../../src/lib/server/export';
 import { parseStoryZip } from '../../src/lib/import-markdown';
 import { previewImport, runImport } from '../../src/lib/server/import-story';
 import { checkTagNames, setStoryList, setStoryTags, storyTagView } from '../../src/lib/server/tags';
@@ -27,6 +29,9 @@ import type { Database } from '../../src/lib/server/auth';
 import { ensureTestDatabase, TEST_DATABASE_URL } from './test-db';
 import { zipBytes } from '../../src/lib/server/zip-stream';
 import { isCoverColor } from '../../src/lib/entity-color';
+import { MAX_ASSISTANT_NOTES } from '../../src/lib/assistant-preferences';
+import { needsSummary } from '../../src/lib/server/llm/summaries';
+import { generatedChapterSummaryIsCurrent } from '../../src/lib/server/llm/chapter-summary-request';
 
 let pool: pg.Pool;
 let db: Database;
@@ -268,6 +273,135 @@ describe('runImport', () => {
 		]);
 	});
 
+	it('combines two notes that match the same entity instead of failing', async () => {
+		const plan = await exportPlan(await seedStory());
+		plan.notes.push({ kind: 'character', name: 'alice vane', notesMd: 'Hates the rain.' });
+
+		const preview = await previewImport(db, universe, plan);
+		expect(preview.notes).toEqual([{ kind: 'character', name: 'Alice Vane', outcome: 'match' }]);
+		expect(preview.problems).toEqual([
+			'2 notes belong to the character "Alice Vane", so they were combined into one note.'
+		]);
+
+		const result = await runImport(db, universe, plan);
+		expect(result.notesAttached).toBe(1);
+		expect(result.problems).toEqual(preview.problems);
+		const noteRows = await db
+			.select()
+			.from(characterStoryNotes)
+			.where(eq(characterStoryNotes.storyId, result.storyId));
+		expect(noteRows.map((row) => row.notesMd)).toEqual(['Limps in this book.\n\nHates the rain.']);
+	});
+
+	// Each extra note for an entity used to copy everything combined so far,
+	// which is quadratic in the number of notes.
+	it('combines many notes for one entity in linear time, with one problem line', async () => {
+		const plan = await exportPlan(await seedStory());
+		const text = 'x'.repeat(10_000);
+		for (let i = 0; i < 2000; i++) {
+			plan.notes.push({ kind: 'character', name: 'alice vane', notesMd: text });
+		}
+		const started = performance.now();
+		const preview = await previewImport(db, universe, plan);
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(preview.notes).toEqual([{ kind: 'character', name: 'Alice Vane', outcome: 'match' }]);
+		expect(preview.problems).toEqual([
+			'2001 notes belong to the character "Alice Vane", so they were combined into one note.'
+		]);
+	});
+
+	it('round-trips chapter summaries', async () => {
+		const original = await seedStory();
+		await db
+			.update(chapters)
+			.set({
+				summaryMd: 'They leave at dawn.\n\n![map](/assets/11111111-1111-1111-1111-111111111111)'
+			})
+			.where(eq(chapters.title, 'The Caravan'));
+		const assetLoader = async (ids: string[]) =>
+			ids.map((id) => inMemoryAsset(id, 'image/png', new Uint8Array([1, 2, 3])));
+		const bytes = await zipBytes(
+			(await buildStoryZip(original, await gatherStory(db, original), assetLoader)).entries
+		);
+		const plan = parseStoryZip(bytes);
+		expect(plan.problems).toEqual([]);
+		expect(plan.chapters.map((chapter) => chapter.summaryMd)).toEqual([
+			'They leave at dawn.\n\n![map](../../assets/11111111-1111-1111-1111-111111111111.png)',
+			null
+		]);
+
+		const result = await runImport(db, universe, plan);
+		const chapterRows = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(chapterRows[0].summaryMd).toMatch(/^They leave at dawn\.\n\n!\[map\]/);
+		expect(chapterRows[1].summaryMd).toBeNull();
+	});
+
+	it('imports an Assistant summary as out of date and keeps the writer summary as theirs', async () => {
+		const original = await seedStory();
+		await db
+			.update(chapters)
+			.set({
+				summaryMd: 'The Assistant wrote this.',
+				summaryGeneratedAt: new Date('2026-01-01'),
+				summaryInput: 'some-fingerprint'
+			})
+			.where(eq(chapters.title, 'The Caravan'));
+		await db
+			.update(chapters)
+			.set({ summaryMd: 'The writer wrote this.' })
+			.where(eq(chapters.title, 'The Toll'));
+		const plan = await exportPlan(original);
+		expect(plan.chapters.map((chapter) => chapter.summaryByAssistant ?? false)).toEqual([
+			true,
+			false
+		]);
+
+		const result = await runImport(db, universe, plan);
+		const [assistant, writer] = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(assistant.summaryMd).toBe('The Assistant wrote this.');
+		expect(assistant.summaryGeneratedAt).not.toBeNull();
+		expect(assistant.summaryInput).toBeNull();
+		expect(
+			needsSummary({
+				summaryMd: assistant.summaryMd,
+				summaryGeneratedAt: assistant.summaryGeneratedAt,
+				changedSince: !generatedChapterSummaryIsCurrent(assistant, {
+					input: 'any',
+					inputAtUpgrade: 'any-at-upgrade',
+					messages: []
+				})
+			})
+		).toBe(true);
+		expect(writer.summaryMd).toBe('The writer wrote this.');
+		expect(writer.summaryGeneratedAt).toBeNull();
+	});
+
+	it('bundles images in the story description and links them for the import', async () => {
+		const original = await seedStory();
+		const imageId = '22222222-2222-2222-2222-222222222222';
+		await db
+			.update(stories)
+			.set({ descriptionMd: `The long road.\n\n![cover](/assets/${imageId})` })
+			.where(eq(stories.id, original.id));
+		const [story] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const assetLoader = async (ids: string[]) =>
+			ids.map((id) => inMemoryAsset(id, 'image/png', new Uint8Array([1, 2, 3])));
+		const bytes = await zipBytes(
+			(await buildStoryZip(story, await gatherStory(db, story), assetLoader)).entries
+		);
+		const plan = parseStoryZip(bytes);
+		expect(plan.story.descriptionMd).toBe(`The long road.\n\n![cover](assets/${imageId}.png)`);
+		expect(plan.assets.map((asset) => asset.id)).toEqual([imageId]);
+	});
+
 	it('creates missing entities, skips ambiguous ones, and reports both', async () => {
 		const plan = await exportPlan(await seedStory());
 		await db.insert(places).values([
@@ -306,7 +440,7 @@ describe('runImport', () => {
 		for (const tag of listed) {
 			await setStoryList(db, original.id, tag.kind as 'fandom' | 'genre' | 'warning', [tag.id]);
 		}
-		const checked = checkTagNames(['Found Family']);
+		const checked = await checkTagNames(db, ['Found Family']);
 		if (!checked.ok) throw new Error(checked.message);
 		await setStoryTags(db, original.id, checked.tags);
 
@@ -324,6 +458,245 @@ describe('runImport', () => {
 		expect(view.tags.map((tag) => tag.name)).toEqual(['Found Family']);
 		expect(view.fandoms.map((tag) => tag.name)).toEqual(['Forgotten Realms']);
 		expect(result.problems.some((problem) => problem.includes('Elsewhere'))).toBe(true);
+	});
+
+	it('round-trips the style notes, language and Assistant preferences', async () => {
+		const original = await seedStory();
+		const settings = {
+			styleNotes: 'Epic fantasy serial,\nomniscient narrator.',
+			language: 'en-GB',
+			assistantPreferences: { quoteMarks: 'single', tense: 'past', epithets: 'leave' },
+			assistantNotes: 'Keep "ye" and "thee".\n\nLeave the dialect alone.'
+		};
+		await db.update(stories).set(settings).where(eq(stories.id, original.id));
+		const [configured] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const plan = await exportPlan(configured);
+		expect(plan.problems).toEqual([]);
+
+		const result = await runImport(db, universe, plan);
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported).toMatchObject(settings);
+	});
+
+	it('round-trips text with line and paragraph separators, emoji, quotes, indents and blank lines', async () => {
+		const original = await seedStory();
+		// Four leading spaces make a code block, so a first line keeps its indent.
+		const code = '    let toll = 3;';
+		// U+2028 and U+2029 come in with text pasted from Word or a PDF, and
+		// JSON.stringify leaves them raw in the front matter.
+		const odd = 'One\u2028two\u2029three "quoted" \'single\' \u{1F409}';
+		const fields = {
+			title: `Halden ${odd}`,
+			author: `A. Vane ${odd}`,
+			brief: `A toll road.\u2028${odd}`,
+			descriptionMd: `The long road.\n\n\n${odd}`,
+			styleNotes: `Omniscient.\n\n${odd}\n\nNo slang.`,
+			// Notes up to the limit, emoji counting as two characters.
+			assistantNotes: `${odd}\n\n`.padEnd(MAX_ASSISTANT_NOTES - 2, 'x') + '\u{1F409}'
+		};
+		expect(fields.assistantNotes).toHaveLength(MAX_ASSISTANT_NOTES);
+		await db.update(stories).set(fields).where(eq(stories.id, original.id));
+		await db
+			.update(chapters)
+			.set({ title: `The Caravan ${odd}`, summaryMd: `${code}\n\n${odd}` })
+			.where(eq(chapters.storyId, original.id));
+		await db
+			.update(scenes)
+			.set({ title: `Departure ${odd}`, bodyMd: `${code}\n\nThe gate opened.\n\n\n${odd}` })
+			.where(eq(scenes.title, 'Departure'));
+		await db
+			.update(notes)
+			.set({ title: `Threads ${odd}`, bodyMd: `Who paid?\u2029${odd}` })
+			.where(eq(notes.title, 'Threads'));
+		await db
+			.update(characterStoryNotes)
+			.set({ notesMd: `${code}\nLimps.\n\n${odd}` })
+			.where(eq(characterStoryNotes.storyId, original.id));
+		await db
+			.update(characters)
+			.set({ name: `Alice ${odd}` })
+			.where(eq(characters.name, 'Alice Vane'));
+
+		const [configured] = await db.select().from(stories).where(eq(stories.id, original.id));
+		const plan = await exportPlan(configured);
+		expect(plan.problems).toEqual([]);
+		const result = await runImport(db, universe, plan);
+		expect(result.problems).toEqual([]);
+
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported).toMatchObject(fields);
+		const [chapter] = await db
+			.select()
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect([chapter.title, chapter.summaryMd]).toEqual([`The Caravan ${odd}`, `${code}\n\n${odd}`]);
+		const [scene] = await db
+			.select()
+			.from(scenes)
+			.where(eq(scenes.storyId, result.storyId))
+			.orderBy(asc(scenes.globalPosition));
+		expect([scene.title, scene.bodyMd]).toEqual([
+			`Departure ${odd}`,
+			`${code}\n\nThe gate opened.\n\n\n${odd}`
+		]);
+		const [note] = await db
+			.select()
+			.from(notes)
+			.where(eq(notes.storyId, result.storyId))
+			.orderBy(asc(notes.createdAt));
+		expect([note.title, note.bodyMd]).toEqual([`Threads ${odd}`, `Who paid?\u2029${odd}`]);
+		const [entityNote] = await db
+			.select()
+			.from(characterStoryNotes)
+			.where(eq(characterStoryNotes.storyId, result.storyId));
+		expect(entityNote.notesMd).toBe(`${code}\nLimps.\n\n${odd}`);
+		expect(result.notesAttached).toBe(1);
+		expect(result.entitiesCreated).toBe(0);
+	});
+
+	it('leaves unset settings out of story.md and imports them as unset', async () => {
+		const original = await seedStory();
+		const files = unzipSync(
+			await zipBytes(
+				(await buildStoryZip(original, await gatherStory(db, original), noAssets)).entries
+			)
+		);
+		const front = strFromU8(files['halden/story.md']);
+		for (const key of ['style-notes', 'language', 'assistant-preferences', 'assistant-notes']) {
+			expect(front).not.toContain(`${key}:`);
+		}
+		const result = await runImport(db, universe, parseStoryZip(zipSync(files)));
+		const [imported] = await db.select().from(stories).where(eq(stories.id, result.storyId));
+		expect(imported).toMatchObject({
+			styleNotes: null,
+			language: null,
+			assistantPreferences: {},
+			assistantNotes: null
+		});
+	});
+
+	it('resolves merged label names and keeps the first ones in file order', async () => {
+		const original = await seedStory();
+		const listed = await db
+			.insert(tags)
+			.values(
+				['Fantasy', 'Horror', 'Romance', 'Mystery', 'Grimdark'].map((name) => ({
+					kind: 'genre' as const,
+					name,
+					slug: name.toLowerCase()
+				}))
+			)
+			.returning();
+		const id = (name: string) => listed.find((tag) => tag.name === name)!.id;
+		await db
+			.update(tags)
+			.set({ mergedIntoId: id('Fantasy') })
+			.where(eq(tags.id, id('Grimdark')));
+		const plan = await exportPlan(original);
+		// A merged alias and its survivor are one genre; an unknown name takes no slot.
+		plan.story.genres = ['Mystery', 'Grimdark', 'Nope', 'Fantasy', 'Romance'];
+		plan.story.tags = ['A', 'a', 'B'];
+		const result = await runImport(db, universe, plan);
+		const view = await storyTagView(db, result.storyId);
+		expect(view.genres.map((tag) => tag.name)).toEqual(['Fantasy', 'Mystery', 'Romance']);
+		expect(result.problems.some((problem) => problem.startsWith('Only the first'))).toBe(false);
+
+		plan.story.genres = ['Romance', 'Horror', 'Grimdark', 'Mystery'];
+		const over = await runImport(db, universe, plan);
+		expect((await storyTagView(db, over.storyId)).genres.map((tag) => tag.name)).toEqual([
+			'Fantasy',
+			'Horror',
+			'Romance'
+		]);
+		expect(over.problems).toContain('Only the first 3 genres were kept.');
+	});
+
+	it('counts a merged tag name and its survivor once toward the 20 tags', async () => {
+		const original = await seedStory();
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Target', slug: 'target' },
+			{ kind: 'tag', name: 'M', slug: 'm' }
+		]);
+		await pool.query(
+			`update tags set merged_into_id = (select id from tags where slug = 'target') where slug = 'm'`
+		);
+		const plan = await exportPlan(original);
+		const nineteen = Array.from({ length: 19 }, (_, i) => `t${i}`);
+		plan.story.tags = ['Target', ...nineteen, 'M'];
+		const result = await runImport(db, universe, plan);
+		expect((await storyTagView(db, result.storyId)).tags).toHaveLength(20);
+		expect(result.problems.some((problem) => problem.startsWith('Only the first'))).toBe(false);
+
+		plan.story.tags = ['Target', ...nineteen, 'M', 'Extra'];
+		const over = await runImport(db, universe, plan);
+		const shown = (await storyTagView(db, over.storyId)).tags.map((tag) => tag.name);
+		expect(shown).toHaveLength(20);
+		expect(shown).not.toContain('Extra');
+		expect(over.problems).toContain('Only the first 20 tags were kept.');
+	});
+
+	it('leaves off a removed tag and one merged into a removed tag, and says so', async () => {
+		const original = await seedStory();
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Gone', slug: 'gone', removedAt: new Date() },
+			{ kind: 'tag', name: 'Alias', slug: 'alias' }
+		]);
+		await pool.query(
+			`update tags set merged_into_id = (select id from tags where slug = 'gone') where slug = 'alias'`
+		);
+		const plan = await exportPlan(original);
+		plan.story.tags = ['Kept', 'Gone', 'Alias'];
+		const result = await runImport(db, universe, plan);
+		expect((await storyTagView(db, result.storyId)).tags.map((tag) => tag.name)).toEqual(['Kept']);
+		const stored = await pool.query(
+			`select t.slug from story_tags st join tags t on t.id = st.tag_id where st.story_id = $1`,
+			[result.storyId]
+		);
+		expect(stored.rows.map((row) => row.slug)).toEqual(['kept']);
+		expect(result.problems).toEqual(
+			expect.arrayContaining([
+				'The tag "Gone" was removed by this site\'s moderators, so it was left off.',
+				'The tag "Alias" was removed by this site\'s moderators, so it was left off.'
+			])
+		);
+	});
+
+	it('keeps the tags when a merge is undone while the import counts them', async () => {
+		const original = await seedStory();
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Target', slug: 'target' },
+			{ kind: 'tag', name: 'M', slug: 'm' }
+		]);
+		await pool.query(
+			`update tags set merged_into_id = (select id from tags where slug = 'target') where slug = 'm'`
+		);
+		const plan = await exportPlan(original);
+		const nineteen = Array.from({ length: 19 }, (_, i) => `t${i}`);
+		plan.story.tags = ['Target', ...nineteen, 'M'];
+		// A moderator undoes the merge after the import's first count of the
+		// tags, so a second count sees 21.
+		let counts = 0;
+		const racing = new Proxy(db, {
+			get(target, prop) {
+				const value = Reflect.get(target, prop, target);
+				if (typeof value !== 'function') return value;
+				if (prop !== 'execute') return value.bind(target);
+				return async (query: Parameters<Database['execute']>[0]) => {
+					const result = await value.call(target, query);
+					const text = new PgDialect().sqlToQuery(query as SQL).sql;
+					if (text.includes('with recursive chain') && ++counts === 1) {
+						await pool.query(`update tags set merged_into_id = null where slug = 'm'`);
+					}
+					return result;
+				};
+			}
+		});
+		const result = await runImport(racing, universe, plan);
+		expect(counts).toBeGreaterThan(0);
+		const shown = (await storyTagView(db, result.storyId)).tags.map((tag) => tag.name);
+		expect(shown).toContain('Target');
+		expect(shown).toContain('t0');
 	});
 
 	it('keeps a fandom from the universe on export, and does not store it twice on import', async () => {
@@ -357,7 +730,6 @@ describe('runImport', () => {
 
 	// Only the story slug index is a clash a fresh pick can fix.
 	it('does not try again after a clash other than the slug', async () => {
-		await db.insert(characters).values({ universeId: universe.id, ownerId, name: 'Alice' });
 		let writes = 0;
 		const counting = new Proxy(db, {
 			get(target, prop) {
@@ -370,17 +742,29 @@ describe('runImport', () => {
 				};
 			}
 		});
-		const note = { kind: 'character' as const, name: 'Alice', notesMd: 'Twice.' };
+		// A scene holds one waiting draft; the parser keeps the first, so only a
+		// hand-built plan carries two.
+		const draft = {
+			scene: { chapter: null, index: 0 },
+			brief: 'Go on.',
+			targetWords: null,
+			pov: null,
+			note: null,
+			chapterBrief: null,
+			source: 'assistant' as const,
+			textMd: 'More prose.'
+		};
 		await expect(
 			runImport(counting, universe, {
 				story: { title: 'Twice', author: null, brief: null, descriptionMd: '' },
 				chapters: [],
 				unfiled: [{ title: null, status: null, bodyMd: 'Prose.' }],
-				notes: [note, note],
+				notes: [],
+				waitingDrafts: [draft, draft],
 				assets: [],
 				problems: []
 			})
-		).rejects.toMatchObject({ cause: { constraint: 'character_story_notes_unique' } });
+		).rejects.toMatchObject({ cause: { constraint: 'assistant_drafts_open_scene_idx' } });
 		expect(writes).toBe(1);
 		expect(await db.select().from(stories).where(eq(stories.title, 'Twice'))).toEqual([]);
 	});

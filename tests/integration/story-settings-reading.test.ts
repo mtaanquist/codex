@@ -64,7 +64,7 @@ afterAll(async () => {
 
 async function reading() {
 	const data = (await settings.load({
-		params: { id: storyId, section: 'publish' },
+		params: { id: 'the-toll', section: 'publish' },
 		locals: { user, session: null }
 	} as never)) as { reading: { handle: string; story: string } | null };
 	return data.reading;

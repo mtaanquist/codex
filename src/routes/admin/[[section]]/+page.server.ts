@@ -29,7 +29,6 @@ import {
 	listInviteCodes,
 	setInviteAllowance
 } from '#lib/server/invites';
-import { listPublications } from '#lib/server/publish';
 import {
 	instanceType,
 	saveInstanceType,
@@ -99,7 +98,6 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		browse: await browseEnabled(db),
 		users: await listAllUsers(db),
 		inviteCodes: await listInviteCodes(db),
-		published: await listPublications(db, 50),
 		backupsConfigured: (await effectiveBackupConfig(db)) !== null,
 		backupStorage: await backupStorageView(db),
 		backupRuns: await listRecentBackupRuns(db, 5),

@@ -39,7 +39,7 @@ describe('preference prompt lines', () => {
 	it('says nothing when nothing is set', () => {
 		expect(houseStyleLine(NO_PREFERENCES, 'write')).toBe('');
 		expect(houseStyleLine(NO_PREFERENCES, 'check')).toBe('');
-		expect(leaveAloneLine(NO_PREFERENCES)).toBe('');
+		expect(leaveAloneLine(NO_PREFERENCES, 'check')).toBe('');
 		expect(habitNotesLine(NO_PREFERENCES, 'review')).toBe('');
 	});
 
@@ -58,6 +58,16 @@ describe('preference prompt lines', () => {
 			'House style for this story: double quotation marks for dialogue ("Like this."). Check the text against it rather than inferring the style from the prose, and flag text that strays from it.'
 		);
 		expect(houseStyleLine(STYLE, 'write')).not.toContain('narration only');
+		// Writing keeps dialogue and quoted thoughts in their own tense and person.
+		expect(houseStyleLine(prefs({ houseStyle: { tense: 'past' } as never }), 'write')).toBe(
+			"House style for this story: past tense. Keep to it. Dialogue and a character's quoted thoughts keep their own tense and person."
+		);
+		expect(houseStyleLine(prefs({ houseStyle: { narration: 'first' } as never }), 'write')).toMatch(
+			/Keep to it\. Dialogue and a character's quoted thoughts keep their own tense and person\.$/
+		);
+		expect(houseStyleLine(prefs({ houseStyle: { quoteMarks: 'double' } as never }), 'write')).toBe(
+			'House style for this story: double quotation marks for dialogue ("Like this."). Keep to it.'
+		);
 		// The chat keeps to the style and comments on prose, so it gets both.
 		const chat = houseStyleLine(STYLE, 'chat');
 		expect(chat).toContain('Keep to it.');
@@ -82,7 +92,7 @@ describe('preference prompt lines', () => {
 
 	it('states each house-style choice that is set', () => {
 		expect(houseStyleLine(STYLE, 'write')).toBe(
-			"House style for this story: single quotation marks for dialogue ('Like this.'); no serial comma (red, white and blue); a character's direct thoughts in italics; present tense; third-person limited narration, one viewpoint character at a time. Keep to it."
+			"House style for this story: single quotation marks for dialogue ('Like this.'); no serial comma (red, white and blue); a character's direct thoughts in italics; present tense; third-person limited narration, one viewpoint character at a time. Keep to it. Dialogue and a character's quoted thoughts keep their own tense and person."
 		);
 		expect(houseStyleLine(STYLE, 'check')).toContain('flag text that strays from it.');
 		const each: [Partial<PreferenceSetting['houseStyle']>, string][] = [
@@ -102,9 +112,14 @@ describe('preference prompt lines', () => {
 	});
 
 	it('names the habits to leave alone, and the notes', () => {
-		expect(leaveAloneLine(leave('filterVerbs', 'commaSplices'))).toBe(
+		expect(leaveAloneLine(leave('filterVerbs', 'commaSplices'), 'check')).toBe(
 			'The writer uses these on purpose in this story. Leave them alone, and do not flag, comment on, or change them: filter verbs (saw, heard, felt, noticed); comma splices.'
 		);
+		// The chat keeps out of them unprompted but discusses them when asked.
+		expect(leaveAloneLine(leave('filterVerbs'), 'chat')).toBe(
+			'The writer uses these on purpose in this story. Do not flag or change them unless the writer asks about them: filter verbs (saw, heard, felt, noticed).'
+		);
+		expect(leaveAloneLine(NO_PREFERENCES, 'chat')).toBe('');
 		const notes = prefs({ notes: 'I overuse "just".' });
 		expect(habitNotesLine(notes, 'review')).toContain('Check first for what they ask');
 		expect(habitNotesLine(notes, 'pattern')).toContain('Look first for the habits they name');
@@ -199,7 +214,7 @@ describe('the prompts that carry the preferences', () => {
 		for (const categories of [[], ['mechanics'], ['prose'], [...REVIEW_CATEGORIES]]) {
 			const text = review(categories as never, p);
 			expect(text).toContain(houseStyleLine(p, 'check'));
-			expect(text).toContain(leaveAloneLine(p));
+			expect(text).toContain(leaveAloneLine(p, 'check'));
 			expect(text).toContain(habitNotesLine(p, 'review'));
 		}
 		const lore = review(['lore'], p);
@@ -222,14 +237,14 @@ describe('the prompts that carry the preferences', () => {
 			expect(text).not.toContain('- Filter verbs (saw');
 			expect(text).not.toContain('- A pet word or phrase');
 			expect(text).toContain('- Point-of-view epithets');
-			expect(text).toContain(leaveAloneLine(p));
+			expect(text).toContain(leaveAloneLine(p, 'check'));
 			expect(text).toContain(habitNotesLine(p, 'pattern'));
 		}
 		// With every kind left alone the survey still has something to look for.
 		const none = survey(leave('epithets', 'petPhrases', 'filterVerbs', 'sentenceShapes'));
 		expect(none).toContain(
 			'- Any habit that recurs often enough to register and is not one of those listed below to leave alone.\n' +
-				leaveAloneLine(leave('epithets', 'petPhrases', 'filterVerbs', 'sentenceShapes'))
+				leaveAloneLine(leave('epithets', 'petPhrases', 'filterVerbs', 'sentenceShapes'), 'check')
 		);
 		// It names none of the habits left alone as an example.
 		expect(none).not.toMatch(/a word, a construction, or a gesture/);

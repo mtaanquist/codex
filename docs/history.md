@@ -10,6 +10,87 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Bug round 5 (2026-11-25, `staging/bug-fixes-5`). The 17 open bug issues
+(#1523 to #1571, less #1550, which shipped with #1572) were fixed in five
+lanes, then reviewed by four fresh area reviewers per round (Browse and public
+pages, moderation, tags, export and import with the Assistant) until a round
+came back clean; every round's lows were fixed too, not just filed. Decisions
+taken on the way: public pages and EPUBs load only Codex-uploaded images and
+turn any other image into a link with its alt text (#1570, #1594), and the
+writer's own story EPUB follows the same rule because EPUB 3 forbids remote
+images; story tags split on commas but fandoms, aliases and keywords do not,
+since list names contain commas (#1540, #1599); a remembered adult choice
+applies when Browse loads, with links built from it and a `beforeNavigate`
+guard so in-app navigation fetches the filtered page once (#1571, #1595), while
+a full page load still costs one unfiltered render, as that needs a cookie to
+avoid; warning ids are frozen on each edition so hiding a warning survives a
+rename or merge, older editions keep matching by name (#1596, no backfill,
+since guessing ids from names is what broke); a tag merge lands on the survivor
+and takes the source's merged entries with it, and migration 0125 flattens old
+chains, picking the oldest entry of a loop as survivor and pointing anything
+more than 8 steps away straight at the survivor (#1524, #1597); a tag merged
+into a removed tag is skipped and reported like a removed one (#1644). Account
+deletion marks every edition when it is scheduled, so a cancelled deletion
+keeps them down until the writer republishes (#1528, migration 0124). The
+story export now carries chapter summaries, story settings (style notes,
+Assistant notes, language, preferences) and description images (#1547, #1614,
+#1644); an Assistant-written summary is marked `summary-by: assistant` so it
+stays refreshable after import (#1643). On import, two notes that match one
+entity are combined rather than one being dropped (#1615), and bodies keep a
+first-line indent (#1616). Capped review runs are keyed on the settings their
+prompts actually read (language, preferences, the native language only when
+hinted, and style notes for wording passes; #1552, #1625, #1648); a run reads
+those settings once and uses them for every scene, and a same-job retry whose
+stored key no longer matches starts the run over, re-reviewing scenes the
+first attempt did, since keeping either key would mix settings (#1658).
+Later rounds moved document conversion (EPUB, DOCX, AO3) into a worker thread
+with a 30 s limit, after a 5 MB flat chapter took 28 s of blocking Turndown time
+(#1693, Mads's call to fix it in this round); before Turndown, nesting deeper
+than 64 elements is refused and output is capped at 25 MB (#1685). The depth is measured on the tree Turndown's
+parser (domino) builds, parsed once and handed to Turndown, after three review
+rounds found markup a hand-written tokenizer scan read differently (#1724);
+domino's parse is quadratic in depth, so it stops once 131 elements are open. Settings
+autosave now posts Details by id so a field saved during a rename lands
+(#1667), keeps the page on a failed save and holds navigation until a retry
+succeeds (#1681, #1692), and an id address redirects to the slug (#1691).
+That hold now covers a same-route `goto` such as the command palette (#1709)
+and a Back or Forward press, which is replayed with `history.go` (#1710).
+Autosave forms post to an absolute action built from kit's `page.url`
+(`ownAction`), because during a held Back press the address bar already shows
+the target and a relative `?/action` saved one story's settings into another
+(#1721, reproduced end to end). Import limits closed in rounds 8 to 12: a
+10 MB cap on the Word XML parts mammoth reads, found through relationships
+on names normalised the way JSZip does (#1712, #1725, #1733), the embedded
+style map dropped (#1736), AO3 detected before converting and capped per
+chapter (#1714), self-closed non-void tags in EPUB bodies closed before
+parsing so page-break markers no longer read as deep nesting (#1735), zip
+entries kept on a null-prototype map (#1741), and the worker capped at no
+more heap than Node's own default (#1742, #1743).
+Lessons: two
+review rounds found a server-blocking import (a backtracking trailing-space
+regex, #1641, then quadratic note combining, #1661, fixed with the AO3 wrapper walk), both introduced by
+earlier fixes in the same round, so any import change now gets a timing test
+with a large input; and a migration added in a round can be edited in place
+while unreleased (#1642) rather than stacking a second repair.
+
+Settings text boxes render their stored text on the server (2026-11-25,
+#1683, `staging/bug-fixes-5`). Svelte renders `<textarea defaultValue>` empty
+on the server, so the boxes showed empty until the page loaded, and text typed
+into one in that window replaced the stored text on its next save. They
+now use `value` read once with `untrack`, keyed by the story or universe, so
+the text is in the server HTML and a refresh after a save still cannot write
+over newer typing. Inputs keep `defaultValue`, which Svelte does render.
+
+Repairing the account-deletion flag on old editions (2026-11-25, #1630,
+#1642, `staging/bug-fixes-5`). Migration 0124 added
+`hidden_by_account_deletion` with no backfill, so 0127 sets it on the editions
+an older deletion hid: every edition down without a takedown reason, and every
+edition of an owner whose deletion is still pending (one taken down while or
+before the deletion was pending carries a reason, so the first rule misses it).
+A deletion cancelled before the upgrade left nothing behind to tell its
+editions from ones a moderator took down, so a later restore of such an
+edition puts it back up.
+
 Assistant preferences gets its own settings item (2026-11-25, #1548,
 `feat/assistant-preferences-item`). Story and universe Details had grown to
 about 20 fields once the preferences form (#1344) joined them. A two-column

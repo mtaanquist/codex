@@ -20,7 +20,9 @@ import {
 	loadReviewRun,
 	ReviewRunLoadError,
 	reviewScopeKey,
-	saveReviewRun
+	reviewSettingsKey,
+	saveReviewRun,
+	type ReviewSettings
 } from '../review-runs.ts';
 import { needsSummary, summariseStory } from './summaries.ts';
 import {
@@ -42,6 +44,8 @@ import {
 	buildReviewMessage,
 	buildSurveyMessage,
 	parseCandidates,
+	readsNative,
+	readsWording,
 	splitSurveyChunks,
 	SURVEY_RETRY_MESSAGE,
 	type ContinuityCandidate,
@@ -51,6 +55,7 @@ import {
 import {
 	runPatternScope,
 	isFullReview,
+	parseCategories,
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
@@ -264,6 +269,9 @@ export async function reviewOneScene(
 		// Notes from the same run that cover this scene but sit elsewhere (a
 		// chapter pattern noted on another scene), carried like its own.
 		extraPrior?: PriorNote[];
+		// The run's language and preferences, read once when it opened; read
+		// here when unset (a single inline review).
+		settings?: ReviewSettings;
 	},
 	deps: GatewayDeps = {}
 ): Promise<ScenePassResult> {
@@ -316,8 +324,9 @@ export async function reviewOneScene(
 				sceneTextIncluded,
 				patternTool,
 				IN_CONTEXT,
-				await storyLanguage(db, opts.storyId, opts.userId),
-				await storyAssistantPreferences(db, opts.storyId, opts.userId)
+				opts.settings?.language ?? (await storyLanguage(db, opts.storyId, opts.userId)),
+				opts.settings?.preferences ??
+					(await storyAssistantPreferences(db, opts.storyId, opts.userId))
 			)
 	};
 	const messages: ChatMessage[] = system ? [system, task] : [task];
@@ -431,6 +440,8 @@ async function runConsistencyPass(
 		userId: string;
 		scope: ConsistencyScope;
 		scenes: SurveyScene[];
+		// A story run's style notes as read when it opened; read now when unset.
+		styleNotes?: string | null;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -444,7 +455,8 @@ async function runConsistencyPass(
 		? await assembleStoryFrame(db, {
 				userId: opts.userId,
 				storyId: story,
-				includeTiers: CONSISTENCY_TIERS
+				includeTiers: CONSISTENCY_TIERS,
+				styleNotes: opts.styleNotes
 			})
 		: await assembleContext(db, {
 				userId: opts.userId,
@@ -614,6 +626,7 @@ export async function reviewStoryConsistency(
 	opts: {
 		userId: string;
 		storyId: string;
+		styleNotes?: string | null;
 		meter?: SpendMeter;
 		signal?: AbortSignal;
 	},
@@ -627,6 +640,7 @@ export async function reviewStoryConsistency(
 			userId: opts.userId,
 			scope: { storyId: opts.storyId },
 			scenes: surveyScenes,
+			styleNotes: opts.styleNotes,
 			meter: opts.meter,
 			signal: opts.signal
 		},
@@ -741,6 +755,24 @@ export type ContinuityReviewResult = {
 	overCap?: boolean;
 };
 
+// The settings a review run states, read once when it opens. The style notes
+// are what the review frame asks the reviewer to judge the prose against.
+async function readReviewSettings(
+	db: Database,
+	storyId: string,
+	userId: string
+): Promise<ReviewSettings> {
+	const [row] = await db
+		.select({ styleNotes: stories.styleNotes })
+		.from(stories)
+		.where(eq(stories.id, storyId));
+	return {
+		language: await storyLanguage(db, storyId, userId),
+		preferences: await storyAssistantPreferences(db, storyId, userId),
+		styleNotes: row?.styleNotes ?? null
+	};
+}
+
 // The run state a review writes as it advances, when it was queued with a job
 // id. Saving progress is a convenience: a write that fails is logged and the
 // review carries on, and without a job id nothing is stored at all (the inline
@@ -755,17 +787,28 @@ async function openRun(
 		jobId?: string;
 		userId: string;
 		scope: string;
+		// The run's settings key (see reviewSettingsKey); left out where the run
+		// carries nothing forward that the settings shape.
+		settings?: string;
 	}
 ): Promise<RunWriter> {
 	let state: ReviewRunState | null = null;
 	if (opts.jobId) {
 		try {
 			state = await loadReviewRun(db, opts.jobId);
+			// A retry of the same job after a settings change starts over: the
+			// scenes it already did followed the old settings, and keeping them
+			// under either key would let a continuation carry them forward wrongly.
+			if (state?.settings && opts.settings && state.settings !== opts.settings) state = null;
 			// A capped run completes its job, so the writer's "run the review again
 			// to continue" arrives as a new job with no row of its own. The capped
 			// run over the same scope is adopted under the new id, so the scenes it
 			// already reviewed are not reviewed (and billed) a second time.
-			state ??= await adoptCappedRun(db, { userId: opts.userId, scope: opts.scope });
+			state ??= await adoptCappedRun(db, {
+				userId: opts.userId,
+				scope: opts.scope,
+				settings: opts.settings
+			});
 		} catch (err) {
 			logEvent('error', 'review_run.load_failed', { jobId: opts.jobId, ...errorFields(err) });
 			throw new ReviewRunLoadError(err);
@@ -773,6 +816,7 @@ async function openRun(
 	}
 	const current = state ?? emptyReviewRun();
 	current.scope = opts.scope;
+	if (opts.settings) current.settings = opts.settings;
 	// The earlier attempt's stop flags and reported spend described that attempt,
 	// so they are cleared. The cap is the meter's (jobSpendMeter): a retry of the
 	// same job carries on from what its earlier attempts spent, and only a new
@@ -1032,7 +1076,8 @@ export type StoryReviewResult = {
 // aborted, rather than counting the scenes never reached as failures.
 //
 // With a jobId the run records its progress as it goes, so the status endpoint
-// can show it and a retry of the same job skips the scenes already handled.
+// can show it and a retry of the same job skips the scenes already handled,
+// unless its settings key changed, which starts the run over.
 export async function reviewStoryScenes(
 	db: Database,
 	opts: {
@@ -1054,10 +1099,18 @@ export async function reviewStoryScenes(
 		categories: opts.categories,
 		patterns
 	};
+	const wording = readsWording(parseCategories(opts.categories));
+	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
-		scope: reviewScopeKey(scope)
+		scope: reviewScopeKey(scope),
+		settings: reviewSettingsKey(
+			settings.language,
+			wording ? settings.preferences : null,
+			readsNative(parseCategories(opts.categories), patterns),
+			wording ? settings.styleNotes : null
+		)
 	});
 	const done = new Set(run.state.completed);
 	// Only the scene failures carry over from an earlier attempt, alongside the
@@ -1112,7 +1165,8 @@ export async function reviewStoryScenes(
 			? ((await assembleStoryFrame(db, {
 					userId: opts.userId,
 					storyId: opts.storyId,
-					includeTiers: reviewTiers(opts.categories ?? [])
+					includeTiers: reviewTiers(opts.categories ?? []),
+					styleNotes: settings.styleNotes
 				})) ?? undefined)
 			: undefined;
 
@@ -1147,7 +1201,8 @@ export async function reviewStoryScenes(
 									scenes: targets,
 									contextWindow,
 									budgetTokens,
-									replyTokens: reviewerReplyTokens(resolved.config, contextWindow)
+									replyTokens: reviewerReplyTokens(resolved.config, contextWindow),
+									settings
 								})
 							).unit
 						]
@@ -1177,7 +1232,8 @@ export async function reviewStoryScenes(
 							await run.save();
 						},
 						meter,
-						signal: opts.signal
+						signal: opts.signal,
+						settings
 					},
 					deps
 				);
@@ -1231,7 +1287,8 @@ export async function reviewStoryScenes(
 					meter,
 					signal: opts.signal,
 					patternTool: offersPatternTool(resolved.config),
-					extraPrior: scenePrior.get(scene.id)
+					extraPrior: scenePrior.get(scene.id),
+					settings
 				},
 				deps
 			);
@@ -1284,7 +1341,13 @@ export async function reviewStoryScenes(
 		try {
 			const pass = await reviewStoryConsistency(
 				db,
-				{ userId: opts.userId, storyId: opts.storyId, meter, signal: opts.signal },
+				{
+					userId: opts.userId,
+					storyId: opts.storyId,
+					styleNotes: settings.styleNotes,
+					meter,
+					signal: opts.signal
+				},
 				deps
 			);
 			notes += pass.notes;

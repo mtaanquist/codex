@@ -1,7 +1,11 @@
+import { createHash } from 'node:crypto';
 import { and, desc, eq, lt, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { assistantReviewRuns, scenes, type ReviewRunState } from './db/schema.ts';
 import { parseCategories, type PatternScope, type ReviewCategory } from '../review-shape.ts';
+import type { PreferenceSetting } from '../assistant-preferences.ts';
+import type { LanguageSetting } from '../writing-languages.ts';
+import { hintedNative } from './llm/prompts/language.ts';
 
 // Progress storage for the background review job. The job writes its state as
 // it advances (one row per pg-boss job id), so the status endpoint can report
@@ -41,6 +45,44 @@ export function reviewScopeKey(input: ScopeInput): string {
 	// without one keeps the key it always had.
 	return input.patterns ? `${base}:patterns-${input.patterns}` : base;
 }
+
+// A short hash of the settings a review's prompts read: the story language,
+// for a pass that reads the wording the Assistant preferences and the story's
+// style notes (null for one that does not, so changing them does not restart a
+// lore-only review), and the native language only where the prompts hint at it
+// (see readsNative). Kept
+// on the run state rather than in the scope key, so the queue still holds one
+// job per scope, and compared when a capped run is adopted: a changed setting
+// starts a fresh run instead of carrying the old notes forward as done.
+export function reviewSettingsKey(
+	language: LanguageSetting,
+	preferences: PreferenceSetting | null,
+	readsNative: boolean,
+	styleNotes: string | null = null
+): string {
+	const input = JSON.stringify({
+		language: language.language,
+		native: readsNative ? hintedNative(language) : null,
+		preferences: preferences && {
+			houseStyle: Object.entries(preferences.houseStyle).sort(([a], [b]) => a.localeCompare(b)),
+			leaveAlone: [...preferences.leaveAlone].sort(),
+			notes: preferences.notes
+		},
+		// Only when set, so a run made before style notes were keyed, on a story
+		// without them, keeps its key.
+		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {})
+	});
+	return createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+// The settings a review run reads once when it opens: what it keys itself on
+// (reviewSettingsKey) and what every scene review and the pattern pass state,
+// so an edit made while the run is going cannot split it between two sets.
+export type ReviewSettings = {
+	language: LanguageSetting;
+	preferences: PreferenceSetting;
+	styleNotes: string | null;
+};
 
 // The earlier progress of a review could not be read. The review does not
 // start over in its place (that would bill every scene again); the attempt
@@ -92,12 +134,18 @@ export async function loadReviewRun(
 //
 // The counts come across, but not the ceiling: each run gets the whole budget
 // again, which is what "run the review again to continue" promises.
+//
+// A run made under other settings (see reviewSettingsKey) is not continued.
+// A row saved before the settings were recorded has none, and is continued as
+// it always was.
 export async function adoptCappedRun(
 	db: Database,
-	opts: { userId: string; scope: string }
+	opts: { userId: string; scope: string; settings?: string }
 ): Promise<ReviewRunState | null> {
 	const row = await newestRun(db, opts.userId, opts.scope);
-	return row && resumable(row.state) ? carryForward(db, row.state, opts.scope) : null;
+	if (!row || !resumable(row.state)) return null;
+	if (opts.settings && row.state.settings && row.state.settings !== opts.settings) return null;
+	return carryForward(db, row.state, opts.scope);
 }
 
 // The completed scenes edited since their pass read them. A scene with no

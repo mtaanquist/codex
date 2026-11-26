@@ -68,14 +68,85 @@ const renderer = new MarkdownIt({ html: false, linkify: false, typographer: fals
 	.use(pageBreaks)
 	.use(alignments)
 	.use(indents);
-// EPUB chapters are XHTML, which wants self-closed void elements.
-const xhtmlRenderer = new MarkdownIt({ html: false, linkify: false, xhtmlOut: true })
+
+export function renderMarkdown(markdown: string): string {
+	return renderer.render(markdown);
+}
+
+// Author markdown shown on a public page (the reading page, a profile bio)
+// can reach readers who never signed in, so it may only load images Codex
+// serves itself. Any other image becomes a plain link to it, labelled with its
+// alt text, so a listed author cannot learn who reads their page from an image
+// request. The writer's own views keep remote images (renderMarkdown).
+function localImagesOnly(isLocal: (src: string) => boolean) {
+	return (md: MarkdownItInstance) => {
+		const defaultImage = md.renderer.rules.image!;
+		md.renderer.rules.image = (tokens, index, options, env, self) => {
+			const token = tokens[index];
+			const src = String(token.attrGet('src') ?? '');
+			if (src && isLocal(src)) return defaultImage(tokens, index, options, env, self);
+			const escape = md.utils.escapeHtml;
+			// renderInlineAsText returns raw token content, so it must be escaped here.
+			const label = self.renderInlineAsText(token.children ?? [], options, env) || src;
+			// Inside a link the label alone stands in, since anchors cannot nest.
+			let linkDepth = 0;
+			for (const sibling of tokens.slice(0, index)) {
+				if (sibling.type === 'link_open') linkDepth++;
+				else if (sibling.type === 'link_close') linkDepth--;
+			}
+			if (!src || linkDepth > 0) return escape(label);
+			return `<a href="${escape(src)}" rel="noopener noreferrer nofollow">${escape(label)}</a>`;
+		};
+	};
+}
+
+const OWN_ASSET = new RegExp(`^/assets/${UUID_BODY}$`);
+const publicRenderer = new MarkdownIt({ html: false, linkify: false, typographer: false })
 	.use(pageBreaks)
 	.use(alignments)
-	.use(indents);
+	.use(indents)
+	.use(localImagesOnly((src) => OWN_ASSET.test(src)));
 
-export function renderMarkdown(markdown: string, options: { xhtml?: boolean } = {}): string {
-	return (options.xhtml ? xhtmlRenderer : renderer).render(markdown);
+export function renderPublicMarkdown(markdown: string): string {
+	return publicRenderer.render(markdown);
+}
+
+// EPUB chapters are XHTML, which wants self-closed void elements. An EPUB can
+// be offered to signed-out readers as a download, so it follows the public
+// rule: only the images bundled in it (rewritten to images/<id>.<ext>) load,
+// and any other image becomes a link.
+const EPUB_IMAGE = new RegExp(`^images/${UUID_BODY}\\.[a-z0-9]+$`);
+const epubRenderer = new MarkdownIt({ html: false, linkify: false, xhtmlOut: true })
+	.use(pageBreaks)
+	.use(alignments)
+	.use(indents)
+	.use(localImagesOnly((src) => EPUB_IMAGE.test(src)));
+
+export function renderEpubMarkdown(markdown: string): string {
+	return epubRenderer.render(markdown);
+}
+
+// The words of a markdown snippet with every bit of markup dropped, for a
+// place that shows a short text inside a link (a shelf card): link text stays,
+// images go, and each block ends on its own line.
+export function markdownToPlainText(markdown: string): string {
+	const lines: string[] = [];
+	for (const token of publicRenderer.parse(markdown, {})) {
+		if (token.type === 'inline') {
+			let line = '';
+			for (const child of token.children ?? []) {
+				if (child.type === 'text' || child.type === 'code_inline') line += child.content;
+				else if (child.type === 'softbreak' || child.type === 'hardbreak') line += ' ';
+			}
+			lines.push(line.replace(/\s+/g, ' '));
+		} else if (token.type === 'fence' || token.type === 'code_block') {
+			lines.push(token.content.replace(/\n$/, ''));
+		}
+	}
+	return lines
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.join('\n');
 }
 
 // Assistant replies are model output, so they get their own renderer: raw

@@ -24,6 +24,7 @@ import {
 } from './db/schema.ts';
 import { draftOutline, type DraftContent, type DraftEntityType } from '../drafts.ts';
 import { findAssetReferences, rewriteAssetReferences } from '../markdown.ts';
+import { preferenceLines } from '../assistant-preferences.ts';
 import { effectiveAssetConfig, s3AssetStore, type AssetObjectStore } from './assets.ts';
 import { extensionFor } from './media-types.ts';
 import { assetEntry, textEntry, type ZipArchive, type ZipEntry } from './zip-stream.ts';
@@ -40,6 +41,13 @@ import {
 // chapter order, with referenced images bundled into assets/ and the
 // links rewritten. Markdown in, markdown out; nothing is trapped.
 // Runs in the worker too (artifact generation).
+
+// chapter.md's fields. A summary the Assistant wrote is marked so an import
+// keeps refreshing it instead of taking it as the writer's own.
+function chapterFront(chapter: StoryContent['chapters'][number]) {
+	const byAssistant = !!chapter.summaryGeneratedAt && !!chapter.summaryMd?.trim();
+	return { title: chapter.title, 'summary-by': byAssistant ? 'assistant' : null };
+}
 
 function frontMatter(fields: Record<string, string | string[] | null | undefined>): string {
 	const lines = ['---'];
@@ -176,6 +184,12 @@ export type ExportStory = {
 	descriptionMd: string | null;
 	// Present for a live story; a frozen edition's export leaves it out.
 	isAdult?: boolean;
+	// The writer's settings for the Assistant, for a live story only: an
+	// edition is for readers and never carries them.
+	styleNotes?: string | null;
+	language?: string | null;
+	assistantPreferences?: unknown;
+	assistantNotes?: string | null;
 };
 
 // The content the builders consume: a live story gathered from the database,
@@ -207,7 +221,13 @@ export type ExportFreeformNote = {
 	createdAt: Date;
 };
 export type StoryContent = {
-	chapters: { id: string; title: string | null }[];
+	// Summaries are absent for frozen editions, which keep none.
+	chapters: {
+		id: string;
+		title: string | null;
+		summaryMd?: string | null;
+		summaryGeneratedAt?: Date | null;
+	}[];
 	scenes: ExportScene[];
 	// Both absent for frozen editions: notes are working material, not manuscript.
 	notes?: ExportNote[];
@@ -233,7 +253,25 @@ function storyFront(story: ExportStory, labels: { kind: string; name: string }[]
 		genres: names('genre'),
 		'content-warnings': names('warning'),
 		fandoms: names('fandom'),
-		tags: names('tag')
+		tags: names('tag'),
+		...assistantFront(story)
+	};
+}
+
+// The language and Assistant settings a story or universe.md carries, each
+// left out when not set. Notes stay one JSON-quoted line however many lines
+// they hold; the importer reads them back as typed.
+function assistantFront(owner: {
+	styleNotes?: string | null;
+	language?: string | null;
+	assistantPreferences?: unknown;
+	assistantNotes?: string | null;
+}) {
+	return {
+		'style-notes': owner.styleNotes,
+		language: owner.language,
+		'assistant-preferences': preferenceLines(owner.assistantPreferences),
+		'assistant-notes': owner.assistantNotes
 	};
 }
 
@@ -263,7 +301,12 @@ export async function gatherDrafts(db: Database, storyId: string): Promise<Expor
 
 export async function gatherStory(db: Database, story: ExportStory): Promise<StoryContent> {
 	const chapterList = await db
-		.select({ id: chapters.id, title: chapters.title })
+		.select({
+			id: chapters.id,
+			title: chapters.title,
+			summaryMd: chapters.summaryMd,
+			summaryGeneratedAt: chapters.summaryGeneratedAt
+		})
 		.from(chapters)
 		.where(eq(chapters.storyId, story.id))
 		.orderBy(asc(chapters.position));
@@ -373,7 +416,9 @@ export async function buildStoryZip(
 	const draftDocList = draftFolders(draftList, `${root}/drafts`);
 	const referenced = [
 		...new Set([
+			...findAssetReferences(story.descriptionMd ?? ''),
 			...sceneList.flatMap((scene) => findAssetReferences(scene.bodyMd)),
+			...chapterList.flatMap((chapter) => findAssetReferences(chapter.summaryMd ?? '')),
 			...noteList.flatMap((note) => findAssetReferences(note.notesMd)),
 			...freeformList.flatMap((note) => findAssetReferences(note.bodyMd)),
 			...docAssets(draftDocList)
@@ -388,7 +433,10 @@ export async function buildStoryZip(
 	entries.push(
 		textEntry(
 			`${root}/story.md`,
-			frontMatter(storyFront(story, content.labels)) + (story.descriptionMd ?? '')
+			frontMatter(storyFront(story, content.labels)) +
+				rewriteAssetReferences(story.descriptionMd ?? '', (id) =>
+					assetPath.has(id) ? assetPath.get(id)! : `/assets/${id}`
+				)
 		)
 	);
 
@@ -414,8 +462,14 @@ export async function buildStoryZip(
 	chapterList.forEach((chapter, chapterIndex) => {
 		const dir = `chapters/${String(chapterIndex + 1).padStart(2, '0')}-${slugify(chapter.title, 'chapter')}`;
 		// Carries the chapter's exact title (the folder name is only a slug)
-		// and keeps empty chapters present in the archive.
-		entries.push(textEntry(`${root}/${dir}/chapter.md`, frontMatter({ title: chapter.title })));
+		// and summary, and keeps empty chapters present in the archive.
+		const up = '../'.repeat(dir.split('/').length);
+		const summary = rewriteAssetReferences(chapter.summaryMd ?? '', (id) =>
+			assetPath.has(id) ? `${up}${assetPath.get(id)}` : `/assets/${id}`
+		);
+		entries.push(
+			textEntry(`${root}/${dir}/chapter.md`, frontMatter(chapterFront(chapter)) + summary)
+		);
 		sceneList
 			.filter((scene) => scene.chapterId === chapter.id)
 			.forEach((scene, sceneIndex) => sceneFile(scene, sceneIndex, dir));
@@ -588,7 +642,11 @@ async function gatherUniverseDocs(
 		docs.push({
 			dir: uDir,
 			name: 'universe.md',
-			front: { name: universe.name, fandom: (await universeFandom(db, universe.id))?.name ?? null },
+			front: {
+				name: universe.name,
+				fandom: (await universeFandom(db, universe.id))?.name ?? null,
+				...assistantFront(universe)
+			},
 			body: universe.descriptionMd ?? ''
 		});
 
@@ -682,7 +740,12 @@ async function gatherUniverseDocs(
 			};
 			chapterList.forEach((chapter, ci) => {
 				const dir = `${sDir}/chapters/${String(ci + 1).padStart(2, '0')}-${slugify(chapter.title, 'chapter')}`;
-				docs.push({ dir, name: 'chapter.md', front: { title: chapter.title }, body: '' });
+				docs.push({
+					dir,
+					name: 'chapter.md',
+					front: chapterFront(chapter),
+					body: chapter.summaryMd ?? ''
+				});
 				sceneList
 					.filter((s) => s.chapterId === chapter.id)
 					.forEach((s, si) => addScene(s, si, dir));

@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { withQuery } from '#lib/href';
+	import { browseAdult } from '#lib/browse-adult.svelte';
 	// A published story's genres, fandoms, tags and content warnings, under
 	// the byline on its reading page and on the adult gate. Warnings always
 	// show, and say so when the author added none.
@@ -9,17 +10,25 @@
 		genres,
 		fandoms,
 		tags,
-		contentWarnings
+		contentWarnings,
+		adult = false
 	}: {
 		genres: { name: string; slug: string }[];
 		fandoms: { name: string; slug: string }[];
 		tags: { name: string; slug: string }[];
 		contentWarnings: string[];
+		// Set on a confirmed adult story's page, so its label links include
+		// adult work in Browse instead of leaving this story and its like out.
+		adult?: boolean;
 	} = $props();
 
-	// With Browse on, a genre, fandom or tag links to the stories that share it.
+	// With Browse on, a genre, fandom or tag links to the stories that share it,
+	// including adult work when the reader chose that on this device too.
 	const browseHref = (key: 'genre' | 'fandom' | 'tag', slug: string) =>
-		withQuery(resolve('/browse'), { [key]: slug });
+		withQuery(resolve('/browse'), {
+			[key]: slug,
+			adult: adult || browseAdult.remembered ? 'show' : null
+		});
 </script>
 
 {#snippet list(key: 'genre' | 'fandom' | 'tag', items: { name: string; slug: string }[])}

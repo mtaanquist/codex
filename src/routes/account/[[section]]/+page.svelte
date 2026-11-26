@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import { trackSectionInView } from '#lib/section-tracker.svelte';
 	import { beforeNavigate } from '$app/navigation';
-	import { flushFocusedField } from '#lib/autosave-form';
+	import { flushBeforeNavigate, flushFocusedField } from '#lib/autosave-form';
 	import AppBar from '#lib/components/AppBar.svelte';
 	import { libraryCrumb, pageCrumb } from '#lib/chrome';
 	import SettingsShell from '#lib/components/SettingsShell.svelte';
@@ -26,7 +26,7 @@
 	// #lib/autosave-form. One-shot actions (claim a handle, change the
 	// password, test the connection) keep their buttons. Flushing a focused
 	// field before navigation is page-level, across every section.
-	beforeNavigate(flushFocusedField);
+	beforeNavigate(flushBeforeNavigate);
 
 	type Section =
 		| 'profile'

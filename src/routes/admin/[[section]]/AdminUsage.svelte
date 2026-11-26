@@ -174,7 +174,7 @@
 		</div>
 	{/if}
 
-	<form method="GET" class="usage-search" role="search">
+	<form method="GET" class="admin-search" role="search">
 		<input
 			class="input short"
 			type="search"
@@ -305,12 +305,6 @@
 </div>
 
 <style>
-	.usage-search {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		margin-bottom: 10px;
-	}
 	.plan-form {
 		display: inline-flex;
 		align-items: center;

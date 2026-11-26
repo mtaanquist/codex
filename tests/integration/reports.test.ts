@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import { isHttpError } from '@sveltejs/kit';
@@ -36,7 +37,7 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 };
 const { resetRateLimits } = await import('#lib/server/rate-limit');
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
-const { publishStory, restorePublication, takedownPublication } =
+const { listTakenDown, publishStory, restorePublication, takedownPublication } =
 	await import('../../src/lib/server/publish');
 const { createReport, dismissReport, listOpenReports, countOpenReports } =
 	await import('../../src/lib/server/reports');
@@ -105,7 +106,7 @@ describe('createReport', () => {
 		const mod = await user('mod@example.com', 'moderator');
 		const gone = await user('gone@example.com', 'moderator', { suspendedAt: new Date() });
 
-		await createReport(db, publicationId, 'spam', '  It is an advert.  ');
+		expect(await createReport(db, publicationId, 'spam', '  It is an advert.  ')).toBe(true);
 
 		const open = await listOpenReports(db);
 		expect(open).toHaveLength(1);
@@ -120,6 +121,47 @@ describe('createReport', () => {
 		expect(told).not.toContain(author.id);
 	});
 
+	it('files nothing and tells nobody once the edition is taken down', async () => {
+		await user('mod@example.com', 'moderator');
+		await takedownPublication(db, publicationId, null, 'spam');
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(false);
+		expect(await db.select().from(publicationReports)).toHaveLength(0);
+		expect(await db.select().from(notifications)).toHaveLength(0);
+	});
+
+	it('a report filed while a takedown runs waits for it and files nothing', async () => {
+		await user('mod@example.com', 'moderator');
+		const client = await pool.connect();
+		try {
+			// The takedown's own steps: the story lock, the edition, its reports.
+			await client.query('begin');
+			await client.query(
+				'select id from stories where id = (select story_id from publications where id = $1) for update',
+				[publicationId]
+			);
+			await client.query(
+				`update publications set removed_at = now(), removed_reason = 'spam' where id = $1`,
+				[publicationId]
+			);
+			await client.query(
+				`update publication_reports set resolved_at = now(), resolution = 'taken_down' where resolved_at is null`
+			);
+			let settled = false;
+			const filing = createReport(db, publicationId, 'copyright', '').then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await filing).toBe(false);
+		} finally {
+			client.release();
+		}
+		expect(await countOpenReports(db)).toBe(0);
+		expect(await db.select().from(notifications)).toHaveLength(0);
+	});
+
 	it('keeps an empty comment as null and caps a long one', async () => {
 		await createReport(db, publicationId, 'other', '   ');
 		await createReport(db, publicationId, 'other', 'x'.repeat(900));
@@ -130,6 +172,11 @@ describe('createReport', () => {
 });
 
 describe('the queue', () => {
+	async function editionState() {
+		const [row] = await db.select().from(publications).where(eq(publications.id, publicationId));
+		return { removed: row.removedAt !== null, removedReason: row.removedReason };
+	}
+
 	it('a takedown closes every open report on the edition and records the reason', async () => {
 		const mod = await user('mod@example.com', 'moderator');
 		await createReport(db, publicationId, 'copyright', '');
@@ -221,6 +268,143 @@ describe('the queue', () => {
 		expect(await cancelAccountDeletion(db, token)).toBe(true);
 		expect((await publishStory(db, author.id, storyId)).ok).toBe(false);
 		expect(await restorePublication(db, publicationId)).toBe(true);
+		// The restore lifts the hold but does not make the edition public; the
+		// writer publishes again if they want it back.
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
+	});
+
+	it('a takedown from before the deletion stays down after the deletion is cancelled and the edition restored', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		expect(await takedownPublication(db, publicationId, mod.id, 'spam')).toBe(true);
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+	});
+
+	// Editions hidden by a deletion scheduled before migration 0124 have the
+	// flag false: it was added with no backfill.
+	async function legacyDeletionHide() {
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		await db
+			.update(publications)
+			.set({ hiddenByAccountDeletion: false })
+			.where(eq(publications.id, publicationId));
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+	}
+
+	it('a takedown of an edition hidden by a deletion from before 0124 keeps it down on restore', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		await legacyDeletionHide();
+		expect(await takedownPublication(db, publicationId, mod.id, 'copyright')).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+	});
+
+	it('migration 0127 marks only editions down without a takedown reason', async () => {
+		const repairSql = readFileSync('drizzle/0127_mark-legacy-deletion-hides.sql', 'utf8');
+		const mod = await user('mod@example.com', 'moderator');
+		await legacyDeletionHide();
+		// A second story, taken down by a moderator while it was up.
+		const [universe] = await db
+			.insert(universes)
+			.values({ ownerId: author.id, name: 'Second', slug: 'second' })
+			.returning();
+		const story = await createStoryInUniverse(db, author.id, universe.id, 'The Ferry');
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, story.id));
+		await pool.query(
+			`insert into scenes (story_id, global_position, body_md) values ($1, 1, 'The oars.')`,
+			[story.id]
+		);
+		const second = await publishStory(db, author.id, story.id);
+		if (!second.ok) throw new Error(second.reason);
+		await takedownPublication(db, second.publicationId, mod.id, 'spam');
+
+		await pool.query(repairSql);
+		await takedownPublication(db, publicationId, mod.id, 'copyright');
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+		expect(await restorePublication(db, second.publicationId)).toBe(true);
+		const [up] = await db
+			.select()
+			.from(publications)
+			.where(eq(publications.id, second.publicationId));
+		expect(up).toMatchObject({ removedAt: null, hiddenByAccountDeletion: false });
+	});
+
+	it('migration 0127 marks every edition of an owner whose deletion is pending', async () => {
+		const repairSql = readFileSync('drizzle/0127_mark-legacy-deletion-hides.sql', 'utf8');
+		const mod = await user('mod@example.com', 'moderator');
+		const [{ storyId }] = await db
+			.select({ storyId: publications.storyId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		// A deletion pending at upgrade time, with the edition taken down while
+		// it was pending (before the upgrade, that left the flag false).
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		await takedownPublication(db, publicationId, mod.id, 'copyright');
+		await db
+			.update(publications)
+			.set({ hiddenByAccountDeletion: false })
+			.where(eq(publications.storyId, storyId));
+
+		await pool.query(repairSql);
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect(await restorePublication(db, publicationId)).toBe(true);
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: null });
+	});
+
+	it('says whether the deletion of a taken-down edition is still pending', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		await takedownPublication(db, publicationId, mod.id, 'spam');
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: publicationId, hiddenByAccountDeletion: true, ownerDeletionPending: true }
+		]);
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: publicationId, hiddenByAccountDeletion: true, ownerDeletionPending: false }
+		]);
+	});
+
+	it('a restore waits for a deletion being scheduled, then refuses', async () => {
+		const mod = await user('mod@example.com', 'moderator');
+		await takedownPublication(db, publicationId, mod.id, 'spam');
+		const client = await pool.connect();
+		try {
+			// A deletion being scheduled holds the account row, as scheduleAccountDeletion does.
+			await client.query('begin');
+			await client.query(
+				`update users set deletion_scheduled_at = now() + interval '7 days' where id = $1`,
+				[author.id]
+			);
+			let settled = false;
+			const restoring = restorePublication(db, publicationId).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await restoring).toBe(false);
+		} finally {
+			client.release();
+		}
+		expect(await editionState()).toMatchObject({ removed: true, removedReason: 'spam' });
+	});
+
+	it('says whether the deletion that hid a reported edition is still pending', async () => {
+		await createReport(db, publicationId, 'spam', '');
+		const token = await sentToken(db, await scheduleAccountDeletion(db, author.id));
+		const [pending] = await listOpenReports(db);
+		expect(pending).toMatchObject({ editionRemovedReason: null, ownerDeletionPending: true });
+		expect(pending.editionRemovedAt).not.toBeNull();
+
+		expect(await cancelAccountDeletion(db, token)).toBe(true);
+		const [cancelled] = await listOpenReports(db);
+		expect(cancelled).toMatchObject({ editionRemovedReason: null, ownerDeletionPending: false });
+		expect(cancelled.editionRemovedAt).not.toBeNull();
 	});
 
 	it('dismissing closes one report, once', async () => {

@@ -28,7 +28,10 @@
 	import { applyAppearance } from '#lib/appearance-apply';
 	import { followSystemTheme } from '#lib/theme';
 	import { TIMEZONE_COOKIE, TIMEZONE_TRIED_KEY, browserTimeZone } from '#lib/timezone';
-	import { refreshAll } from '$app/navigation';
+	import { afterNavigate, beforeNavigate, goto, refreshAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { withRememberedAdult } from '#lib/browse';
+	import { browseAdultRemembered, syncBrowseAdult } from '#lib/browse-adult.svelte';
 	import CommandPalette from '#lib/components/CommandPalette.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ActivityCenter from '#lib/components/ActivityCenter.svelte';
@@ -86,6 +89,35 @@
 		const secure = location.protocol === 'https:' ? '; secure' : '';
 		document.cookie = `${TIMEZONE_COOKIE}=${encodeURIComponent(timeZone)}; path=/; max-age=31536000; samesite=lax${secure}`;
 		void refreshAll();
+	});
+
+	// Browse includes adult work when the reader chose that on this device.
+	// Links to it read the choice once mounted, and again whenever another tab
+	// changes it; any other navigation into Browse is sent to adult=show here,
+	// before its data loads, so the page is not fetched (and counted against
+	// its rate limit) twice.
+	$effect(() => syncBrowseAdult());
+	beforeNavigate((navigation) => {
+		const to = navigation.to;
+		// A full page load is left to the pre-paint script, and going back to an
+		// older entry to the universal load (and the afterNavigate below).
+		if (navigation.willUnload || navigation.type === 'popstate') return;
+		if (!to || to.route.id !== '/browse') return;
+		const target = withRememberedAdult(to.url, browseAdultRemembered());
+		if (!target) return;
+		navigation.cancel();
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the navigation's own address
+		void goto(target);
+	});
+	// Going back or forward does not update the address when the load
+	// redirects, so it would still read the older address while the page shows
+	// adult work. Put the loaded address in the current entry.
+	afterNavigate((navigation) => {
+		const to = navigation.to;
+		if (navigation.type !== 'popstate' || to?.route.id !== '/browse') return;
+		if (to.url.href === location.href) return;
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- the navigation's own address
+		void goto(to.url, { replace: true, shallow: true, state: page.state });
 	});
 
 	// With no theme choice stored on this device, the palette follows the system

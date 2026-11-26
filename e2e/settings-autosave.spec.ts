@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 
@@ -14,6 +14,16 @@ async function slowSaves(page: Page) {
 	});
 }
 
+// A page that has not run its script (a slow load, or a script that failed).
+async function withoutScript(browser: Browser, baseURL: string | undefined) {
+	const context = await browser.newContext({
+		baseURL,
+		javaScriptEnabled: false,
+		storageState: 'e2e/.auth/e2e.json'
+	});
+	return { context, page: await context.newPage() };
+}
+
 async function newStory(page: Page) {
 	const stamp = Date.now();
 	await gotoReady(page, '/');
@@ -21,6 +31,7 @@ async function newStory(page: Page) {
 	await page.getByLabel('New universe').fill(`Autosave world ${stamp}`);
 	await page.getByRole('button', { name: 'Create universe' }).click();
 	await expect(page).toHaveURL(/\/universes\//);
+	const universeUrl = new URL(page.url()).pathname;
 	await gotoReady(page, '/');
 	await startStoryInUniverse(page, `Autosave world ${stamp}`);
 	await page.getByLabel('New story').fill(`Autosave ${stamp}`);
@@ -28,7 +39,7 @@ async function newStory(page: Page) {
 	await expect(page.locator('.story-title')).toHaveText(`Autosave ${stamp}`);
 	const slug = new URL(page.url()).pathname.split('/')[2];
 	await gotoReady(page, `/stories/${slug}/settings`);
-	return { slug, stamp };
+	return { slug, stamp, universeUrl };
 }
 
 test('typing in the next field while a save lands keeps focus and text', async ({ page }) => {
@@ -109,4 +120,358 @@ test('renaming and then leaving by a sidebar link does not end on a missing page
 	// The rename saves first, then the link goes on to the new address.
 	await expect(page).toHaveURL(`/stories/moved-${stamp}/settings/editor`);
 	await expect(page.getByLabel('Editing mode')).toBeVisible();
+});
+
+// Back pressed from a renamed title saves it, replaces the old settings
+// address, and goes on to the story at its new address (#1723).
+test('renaming and then pressing Back lands on the renamed story', async ({ page }) => {
+	const { slug, stamp } = await newStory(page);
+	await gotoReady(page, `/stories/${slug}`);
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'to-settings';
+		link.textContent = 'Settings';
+		document.body.append(link);
+	}, `/stories/${slug}/settings`);
+	await page.locator('#to-settings').click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await slowSaves(page);
+	await page.locator('#st-title').fill(`Backed ${stamp}`);
+	await page.evaluate(() => history.back());
+	await expect(page).toHaveURL(`/stories/backed-${stamp}`);
+	await expect(page.locator('.story-title')).toHaveText(`Backed ${stamp}`);
+	// The old settings address was replaced in the history by the new one.
+	await page.evaluate(() => history.back());
+	await expect(page).toHaveURL(`/stories/backed-${stamp}/settings`);
+	await expect(page.locator('#st-title')).toHaveValue(`Backed ${stamp}`);
+});
+
+// A settings page reached by id (as the Assistant links a universe's
+// suggestions) moves to its slug address, so a rename followed by a sidebar
+// link still lands on the renamed page (#1691).
+test('a settings page reached by id moves to its slug address', async ({ page }) => {
+	const { slug, stamp } = await newStory(page);
+	// The Details form posts by id.
+	const action = await page.locator('form:has(#st-title)').getAttribute('action');
+	const id = action!.split('/')[2];
+	expect(id).not.toBe(slug);
+	await gotoReady(page, `/stories/${id}/settings`);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await slowSaves(page);
+	await page.locator('#st-title').fill(`Moved ${stamp}`);
+	await page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' })
+		.click();
+	await expect(page).toHaveURL(`/stories/moved-${stamp}/settings/editor`);
+	await expect(page.getByLabel('Editing mode')).toBeVisible();
+});
+
+// A Details save refreshes the page data; a genre ticked on Publish, not yet
+// saved, must stay ticked (#1651).
+test('a genre ticked on Publish stays ticked when a Details save lands', async ({ page }) => {
+	await newStory(page);
+	const sections = page.getByRole('navigation', { name: 'Story settings' });
+	await sections.getByRole('link', { name: 'Publish' }).click();
+	await expect(page).toHaveURL(/\/settings\/publish$/);
+	const fantasy = page.getByRole('checkbox', { name: 'Fantasy' });
+	await fantasy.check();
+	await sections.getByRole('link', { name: 'Details' }).click();
+	const description = page.locator('#st-description');
+	await description.fill('A courier races the ash north.');
+	const refreshed = page.waitForResponse(/__data\.json/);
+	await description.press('Tab');
+	await refreshed;
+	await sections.getByRole('link', { name: 'Publish' }).click();
+	await expect(fantasy).toBeChecked();
+});
+
+// The rename commits at once but its answer arrives late, so the next field's
+// save is posted, and answered, while the page still has its old address. That
+// save must land and the page must stay (#1667).
+async function slowRenameAnswer(page: Page) {
+	let first = true;
+	await page.route(/\?\/update$/, async (route) => {
+		if (!first) return route.continue();
+		first = false;
+		const response = await route.fetch();
+		await new Promise((resolve) => setTimeout(resolve, 1500));
+		await route.fulfill({ response });
+	});
+}
+
+test('a story field saved while a rename is still saving is kept', async ({ page }) => {
+	const { stamp } = await newStory(page);
+	await slowRenameAnswer(page);
+	await page.locator('#st-title').fill(`Raced ${stamp}`);
+	await page.locator('#st-title').press('Tab');
+	await expect(page.locator('#st-author')).toBeFocused();
+	await page.keyboard.type('A. Writer');
+	const second = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('author=A.+Writer')
+	);
+	await page.keyboard.press('Tab');
+	expect((await second).ok()).toBe(true);
+	await expect(page).toHaveURL(`/stories/raced-${stamp}/settings`);
+	await expect(page.locator('#st-author')).toHaveValue('A. Writer');
+	await gotoReady(page, `/stories/raced-${stamp}/settings`);
+	await expect(page.locator('#st-title')).toHaveValue(`Raced ${stamp}`);
+	await expect(page.locator('#st-author')).toHaveValue('A. Writer');
+});
+
+test('a universe field saved while a rename is still saving is kept', async ({ page }) => {
+	const stamp = Date.now();
+	await gotoReady(page, '/');
+	await pickFromLibraryMenu(page, 'New universe');
+	await page.getByLabel('New universe').fill(`Race world ${stamp}`);
+	await page.getByRole('button', { name: 'Create universe' }).click();
+	await expect(page).toHaveURL(/\/universes\//);
+	await gotoReady(page, new URL(page.url()).pathname);
+	await slowRenameAnswer(page);
+	await page.locator('#u-name').fill(`Raced world ${stamp}`);
+	await page.locator('#u-name').press('Tab');
+	await expect(page.locator('#u-description')).toBeFocused();
+	await page.keyboard.type('Ash and bells.');
+	const second = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('description=Ash+and+bells.')
+	);
+	await page.keyboard.press('Tab');
+	expect((await second).ok()).toBe(true);
+	await expect(page).toHaveURL(`/universes/raced-world-${stamp}`);
+	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
+	await gotoReady(page, `/universes/raced-world-${stamp}`);
+	await expect(page.locator('#u-description')).toHaveValue('Ash and bells.');
+});
+
+// Moving to another universe's settings in the app starts its fields afresh,
+// so a name typed on the first is not saved as a rename of the second (#1699).
+test("moving to another universe's settings shows that universe's name", async ({ page }) => {
+	const stamp = Date.now();
+	const create = async (name: string) => {
+		await gotoReady(page, '/');
+		await pickFromLibraryMenu(page, 'New universe');
+		await page.getByLabel('New universe').fill(name);
+		await page.getByRole('button', { name: 'Create universe' }).click();
+		await expect(page).toHaveURL(/\/universes\//);
+		return new URL(page.url()).pathname;
+	};
+	const other = await create(`Other world ${stamp}`);
+	await gotoReady(page, await create(`First world ${stamp}`));
+	await page.locator('#u-name').fill(`Renamed world ${stamp}`);
+	await page.locator('#u-name').press('Tab');
+	await expect(page).toHaveURL(`/universes/renamed-world-${stamp}`);
+	// No link in the app reaches another universe's settings yet.
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'to-other-universe';
+		link.textContent = 'Other';
+		document.body.append(link);
+	}, other);
+	await page.locator('#to-other-universe').click();
+	await expect(page).toHaveURL(other);
+	await expect(page.locator('#u-name')).toHaveValue(`Other world ${stamp}`);
+});
+
+// The text boxes hold the stored text before the page's script runs, so they
+// never show empty and a save from that state does not post them empty (#1683).
+test('the Details text boxes hold the stored text before the script runs', async ({
+	page,
+	browser,
+	baseURL
+}) => {
+	const { slug, universeUrl } = await newStory(page);
+	const description = 'A courier races the ash north.';
+	const style = 'Epic fantasy serial, omniscient narrator.';
+	await page.locator('#st-description').fill(description);
+	await page.locator('#st-style-notes').fill(style);
+	const saved = page.waitForResponse(
+		(response) =>
+			/\?\/update$/.test(response.url()) &&
+			(response.request().postData() ?? '').includes('styleNotes=Epic')
+	);
+	await page.locator('#st-style-notes').press('Tab');
+	expect((await saved).ok()).toBe(true);
+	await gotoReady(page, universeUrl);
+	await page.locator('#u-description').fill('Ash and bells.');
+	const universeSaved = page.waitForResponse(/\?\/update$/);
+	await page.locator('#u-description').press('Tab');
+	expect((await universeSaved).ok()).toBe(true);
+
+	const plain = await withoutScript(browser, baseURL);
+	try {
+		await plain.page.goto(`/stories/${slug}/settings`);
+		await expect(plain.page.locator('#st-description')).toHaveValue(description);
+		await expect(plain.page.locator('#st-style-notes')).toHaveValue(style);
+
+		await plain.page.goto(universeUrl);
+		await expect(plain.page.locator('#u-description')).toHaveValue('Ash and bells.');
+	} finally {
+		await plain.context.close();
+	}
+});
+
+// A save that fails (no connection, a server fault) keeps the page and the
+// typed text, says it was not saved, and the next blur saves it (#1681).
+test('a failed save keeps the page and the text, and the next blur retries', async ({ page }) => {
+	await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-description');
+	await field.fill('A courier races the ash north.');
+	await field.press('Tab');
+	await expect(page.getByRole('alert')).toHaveText(
+		'Your change was not saved. Check your connection and try again.'
+	);
+	await expect(page.locator('#st-title')).toBeVisible();
+	await expect(field).toHaveValue('A courier races the ash north.');
+	await page.unroute(/\?\/update$/);
+	const saved = page.waitForResponse(/\?\/update$/);
+	await page.keyboard.press('Tab');
+	await saved;
+	await expect(page.getByRole('status')).toHaveText('Saved.');
+	await page.reload();
+	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});
+
+// Following a link while a save has failed tries the save again first, and
+// stays on the page if it fails again, so the change is not lost (#1692).
+test('leaving after a failed save waits for the save, and stays if it fails', async ({ page }) => {
+	const { slug } = await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-description');
+	await field.fill('A courier races the ash north.');
+	await field.press('Tab');
+	const alert = page.getByRole('alert');
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	const editorLink = page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' });
+	await editorLink.click();
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	await page.waitForTimeout(300);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await expect(field).toHaveValue('A courier races the ash north.');
+	// Once the connection is back, the same link saves and then goes on.
+	await page.unroute(/\?\/update$/);
+	await editorLink.click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});
+
+// A link clicked straight from an edited field (no Tab first) starts the save
+// on the way; the navigation waits for it, and stays if it fails (#1697).
+test('a link clicked straight from a field whose save fails stays on the page', async ({
+	page
+}) => {
+	const { slug } = await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-description');
+	await field.fill('A courier races the ash north.');
+	const libraryLink = page.getByRole('banner').getByRole('link', { name: 'Library', exact: true });
+	await libraryLink.click();
+	const alert = page.getByRole('alert');
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	await expect(alert).toBeInViewport();
+	await page.waitForTimeout(300);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await expect(field).toHaveValue('A courier races the ash north.');
+	await page.unroute(/\?\/update$/);
+	await libraryLink.click();
+	await expect(page).not.toHaveURL(/\/settings/);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-description')).toHaveValue('A courier races the ash north.');
+});
+
+test('a sidebar link clicked straight from a field whose save fails keeps the section', async ({
+	page
+}) => {
+	const { slug } = await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	const field = page.locator('#st-style-notes');
+	await field.fill('Omniscient narrator, formal prose.');
+	const editorLink = page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' });
+	await editorLink.click();
+	const alert = page.getByRole('alert');
+	await expect(alert).toHaveText('Your change was not saved. Check your connection and try again.');
+	await expect(alert).toBeInViewport();
+	await page.waitForTimeout(300);
+	await expect(page).toHaveURL(`/stories/${slug}/settings`);
+	await expect(field).toBeVisible();
+	await expect(field).toHaveValue('Omniscient narrator, formal prose.');
+	await page.unroute(/\?\/update$/);
+	await editorLink.click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-style-notes')).toHaveValue('Omniscient narrator, formal prose.');
+});
+
+// A link clicked straight from an edited field while the save is slow goes on
+// once the save lands.
+test('a link clicked straight from a field waits for a slow save, then goes on', async ({
+	page
+}) => {
+	const { slug } = await newStory(page);
+	await slowSaves(page);
+	await page.locator('#st-brief').fill('Ash and bells.');
+	await page
+		.getByRole('navigation', { name: 'Story settings' })
+		.getByRole('link', { name: 'Editor' })
+		.click();
+	await expect(page).toHaveURL(`/stories/${slug}/settings/editor`);
+	await gotoReady(page, `/stories/${slug}/settings`);
+	await expect(page.locator('#st-brief')).toHaveValue('Ash and bells.');
+});
+
+test('closing the tab after a failed save asks first', async ({ page }) => {
+	await newStory(page);
+	await page.route(/\?\/update$/, (route) => route.abort());
+	await page.locator('#st-description').fill('A courier races the ash north.');
+	await page.locator('#st-description').press('Tab');
+	await expect(page.getByRole('alert')).toBeVisible();
+	const dialog = page.waitForEvent('dialog');
+	await page.close({ runBeforeUnload: true });
+	const asked = await dialog;
+	expect(asked.type()).toBe('beforeunload');
+	await asked.accept();
+});
+
+// Back pressed from a field on one story's settings saves that field to that
+// story, not to the story the Back press was going to (#1721).
+test('a field saved by a Back press goes to its own story, not the one Back goes to', async ({
+	page
+}) => {
+	const first = await newStory(page);
+	const second = await newStory(page);
+	await gotoReady(page, `/stories/${first.slug}/settings/goals`);
+	const target = page.getByLabel('Target words (optional)');
+	await expect(target).toHaveValue('');
+	// Move to the second story's Goals in the app, as the command palette does.
+	await page.evaluate((href) => {
+		const link = document.createElement('a');
+		link.href = href;
+		link.id = 'to-other-story';
+		link.textContent = 'Other';
+		document.body.append(link);
+	}, `/stories/${second.slug}/settings/goals`);
+	await page.locator('#to-other-story').click();
+	await expect(page).toHaveURL(`/stories/${second.slug}/settings/goals`);
+	await target.fill('42000');
+	const saved = page.waitForRequest(
+		(request) => request.method() === 'POST' && request.url().includes('?/saveGoals')
+	);
+	await page.evaluate(() => history.back());
+	expect(new URL((await saved).url()).pathname).toBe(`/stories/${second.slug}/settings/goals`);
+	await expect(page).toHaveURL(`/stories/${first.slug}/settings/goals`);
+	await gotoReady(page, `/stories/${second.slug}/settings/goals`);
+	await expect(target).toHaveValue('42000');
+	await gotoReady(page, `/stories/${first.slug}/settings/goals`);
+	await expect(target).toHaveValue('');
 });

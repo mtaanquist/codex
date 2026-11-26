@@ -65,5 +65,6 @@ run before deleting your account.
 Delete asks for your password, then deactivates the account at once and takes
 down anything you published. The full removal happens after a short grace
 period, during which an emailed link can cancel it and bring the account back.
+If you cancel, your published stories stay down until you publish them again.
 After the grace period everything is erased for good. Export first if you want
 to keep anything.

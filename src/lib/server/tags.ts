@@ -1,6 +1,8 @@
-import { and, asc, eq, ilike, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { storyTags, tags, universes } from './db/schema.ts';
+import { isUniqueViolation } from './db-errors.ts';
+import { pageIndex } from './paging.ts';
 import { pattern } from './search.ts';
 import { isUuid } from '../slug.ts';
 import { cleanTagName, MAX_FANDOMS, MAX_TAG_LENGTH, MAX_TAGS, tagSlug } from '../story-tags.ts';
@@ -21,8 +23,9 @@ export type ShownTag = {
 	inherited?: true;
 };
 
-// Follows merged_into_id from each start id to the surviving tag. The depth
-// cap only guards against a cycle that a merge check missed.
+// Follows merged_into_id from each start id to the surviving tag. A merge
+// keeps every chain one step deep; the cap guards reads against a cycle or a
+// longer chain left by older data.
 const MAX_MERGE_DEPTH = 8;
 
 // The visible labels on each story, by story id, including the fandom its
@@ -94,13 +97,15 @@ export async function storyTagView(db: Database, storyId: string) {
 }
 
 // Cleans typed tag names, keyed by slug (the first spelling wins), or says
-// why one cannot be used. Nothing is written.
-export function checkTagNames(
+// why one cannot be used. The limit counts the tags the story would show, so
+// a merged-away name and its survivor count once. Nothing is written.
+export async function checkTagNames(
+	db: Database,
 	names: string[],
 	// How many the story shows now. A story already over the limit (after an
 	// unmerge or a restore) may keep them but not add more.
 	currentCount = 0
-): { ok: true; tags: Map<string, string> } | { ok: false; message: string } {
+): Promise<{ ok: true; tags: Map<string, string> } | { ok: false; message: string }> {
 	const cleaned = new Map<string, string>();
 	for (const raw of names) {
 		const result = cleanTagName(raw);
@@ -111,15 +116,53 @@ export function checkTagNames(
 		const slug = tagSlug(result.name);
 		if (!cleaned.has(slug)) cleaned.set(slug, result.name);
 	}
-	if (cleaned.size > Math.max(MAX_TAGS, currentCount)) {
-		return { ok: false, message: `A story can have up to ${MAX_TAGS} tags.` };
+	const limit = Math.max(MAX_TAGS, currentCount);
+	if (cleaned.size > limit) {
+		const shown = new Set((await tagSurvivors(db, [...cleaned.keys()])).values());
+		shown.delete(null);
+		if (shown.size > limit) {
+			return { ok: false, message: `A story can have up to ${MAX_TAGS} tags.` };
+		}
 	}
 	return { ok: true, tags: cleaned };
 }
 
+// What each free-form tag slug would show as on a story: the id of the
+// surviving tag, the slug itself for a tag that does not exist yet, or null
+// for one that would not show (removed, or merged into a removed tag).
+export async function tagSurvivors(
+	db: Database,
+	slugs: string[]
+): Promise<Map<string, string | null>> {
+	const result = new Map<string, string | null>(slugs.map((slug) => [slug, `new:${slug}`]));
+	if (slugs.length === 0) return result;
+	const rows = await db.execute(sql`
+		with recursive chain as (
+			select t.slug as start_slug, t.id, t.removed_at is not null as start_removed, 0 as depth
+			from tags t
+			where t.kind = 'tag' and t.slug in (${sql.join(
+				slugs.map((slug) => sql`${slug}`),
+				sql`, `
+			)})
+			union all
+			select c.start_slug, t.id, c.start_removed, c.depth + 1 from chain c
+			join tags m on m.id = c.id join tags t on t.id = m.merged_into_id
+			where c.depth < ${MAX_MERGE_DEPTH}
+		)
+		select distinct on (c.start_slug) c.start_slug, t.id,
+			c.start_removed or t.removed_at is not null as hidden
+		from chain c join tags t on t.id = c.id
+		order by c.start_slug, c.depth desc
+	`);
+	for (const row of rows.rows as { start_slug: string; id: string; hidden: boolean }[]) {
+		result.set(row.start_slug, row.hidden ? null : row.id);
+	}
+	return result;
+}
+
 // Replaces a story's free-form tags. A slug that matches an existing tag
-// reuses it (a merged one keeps pointing at its survivor); a removed tag
-// cannot be added back and comes back in `skipped`.
+// reuses it (a merged one keeps pointing at its survivor); a removed tag, or
+// one merged into a removed tag, cannot be added and comes back in `skipped`.
 export async function setStoryTags(
 	db: Database,
 	storyId: string,
@@ -137,12 +180,14 @@ export async function setStoryTags(
 			cleaned.size === 0
 				? []
 				: await tx
-						.select({ id: tags.id, name: tags.name, removedAt: tags.removedAt })
+						.select({ id: tags.id, name: tags.name, slug: tags.slug })
 						.from(tags)
 						.where(and(eq(tags.kind, 'tag'), inArray(tags.slug, [...cleaned.keys()])));
+		const survivors = await tagSurvivors(tx, [...cleaned.keys()]);
 		const keep = found.filter((tag) => {
-			if (tag.removedAt) skipped.push(tag.name);
-			return !tag.removedAt;
+			const hidden = survivors.get(tag.slug) === null;
+			if (hidden) skipped.push(tag.name);
+			return !hidden;
 		});
 		await replaceStoryTags(
 			tx,
@@ -154,25 +199,52 @@ export async function setStoryTags(
 	return { skipped };
 }
 
-// Matches names against a curated list by slug. Removed entries do not
-// match. Nothing is written.
+// Matches names against a curated list by slug, following merges to the
+// surviving entry. ids are the survivors in the order the names came, without
+// repeats, so a merged-away name and its survivor count once. Removed entries
+// (or a name whose survivor is removed) do not match. Nothing is written.
 export async function listedByName(
 	db: Database,
 	kind: ListKind,
 	names: string[]
-): Promise<{ ids: string[]; missing: string[] }> {
+): Promise<{ ids: string[]; slugs: string[]; missing: string[] }> {
 	const slugs = [...new Set(names.map(tagSlug).filter(Boolean))];
-	const found =
-		slugs.length === 0
-			? []
-			: await db
-					.select({ id: tags.id, slug: tags.slug })
-					.from(tags)
-					.where(and(eq(tags.kind, kind), inArray(tags.slug, slugs), isNull(tags.removedAt)));
-	return {
-		ids: found.map((tag) => tag.id),
-		missing: names.filter((name) => !found.some((tag) => tag.slug === tagSlug(name)))
-	};
+	const survivors = new Map<string, { id: string; slug: string }>();
+	if (slugs.length > 0) {
+		const rows = await db.execute(sql`
+			with recursive chain as (
+				select t.slug as start_slug, t.id, 0 as depth from tags t
+				where t.kind = ${kind} and t.removed_at is null and t.slug in (${sql.join(
+					slugs.map((slug) => sql`${slug}`),
+					sql`, `
+				)})
+				union all
+				select c.start_slug, t.id, c.depth + 1 from chain c
+				join tags m on m.id = c.id join tags t on t.id = m.merged_into_id
+				where c.depth < ${MAX_MERGE_DEPTH}
+			)
+			select distinct on (c.start_slug) c.start_slug, t.id, t.slug,
+				t.removed_at is null and t.merged_into_id is null as current
+			from chain c join tags t on t.id = c.id
+			order by c.start_slug, c.depth desc
+		`);
+		for (const row of rows.rows as {
+			start_slug: string;
+			id: string;
+			slug: string;
+			current: boolean;
+		}[]) {
+			if (row.current) survivors.set(row.start_slug, { id: row.id, slug: row.slug });
+		}
+	}
+	const found = new Map<string, string>();
+	const missing: string[] = [];
+	for (const name of names) {
+		const survivor = survivors.get(tagSlug(name));
+		if (!survivor) missing.push(name);
+		else found.set(survivor.id, survivor.slug);
+	}
+	return { ids: [...found.keys()], slugs: [...found.values()], missing };
 }
 
 // Finds fandoms on the curated list by name. A name not on it is refused;
@@ -187,22 +259,21 @@ export async function findFandoms(
 	// limit (its universe was linked later) may keep them but not add more.
 	currentCount = 0
 ): Promise<{ ok: true; ids: string[] } | { ok: false; message: string }> {
-	const names = typed.filter((name) => !inheritedSlugs.includes(tagSlug(name)));
-	const count = new Set(names.map(tagSlug).filter(Boolean)).size + inheritedSlugs.length;
-	if (count > Math.max(MAX_FANDOMS, currentCount)) {
+	const found = await listedByName(db, 'fandom', typed);
+	if (found.missing.length > 0) {
+		return {
+			ok: false,
+			message: `Not on the fandom list: ${found.missing.join(', ')}. Use a tag instead, or ask the people who run this site to add it.`
+		};
+	}
+	const ids = found.ids.filter((_, i) => !inheritedSlugs.includes(found.slugs[i]));
+	if (ids.length + inheritedSlugs.length > Math.max(MAX_FANDOMS, currentCount)) {
 		return {
 			ok: false,
 			message:
 				inheritedSlugs.length > 0
 					? `A story can have up to ${MAX_FANDOMS} fandoms, including the one its universe is set in.`
 					: `A story can have up to ${MAX_FANDOMS} fandoms.`
-		};
-	}
-	const { ids, missing } = await listedByName(db, 'fandom', names);
-	if (missing.length > 0) {
-		return {
-			ok: false,
-			message: `Not on the fandom list: ${missing.join(', ')}. Use a tag instead, or ask the people who run this site to add it.`
 		};
 	}
 	return { ok: true, ids };
@@ -309,7 +380,7 @@ export async function listTagsForModeration(
 	kind: TagKind,
 	options: { query?: string; page?: number } = {}
 ) {
-	const page = Math.max(0, Math.floor(options.page ?? 0));
+	const page = pageIndex(options.page ?? 0);
 	const query = options.query?.trim() ?? '';
 	const target = sql`(select name from tags m where m.id = ${tags.mergedIntoId})`;
 	const rows = await db
@@ -332,72 +403,127 @@ export async function listTagsForModeration(
 
 type ModResult = { ok: true } | { ok: false; message: string };
 
+// The moderation functions below take the kind the page manages, so an id
+// of another kind is not found.
+
 // Renames a tag or fandom. Its slug follows the new name, so a name that
 // another entry of the same kind already has is refused: merge them instead.
-export async function renameTag(db: Database, id: string, rawName: string): Promise<ModResult> {
+export async function renameTag(
+	db: Database,
+	kind: TagKind,
+	id: string,
+	rawName: string
+): Promise<ModResult> {
 	const cleaned = cleanTagName(rawName);
 	if (!cleaned.ok) return { ok: false, message: cleaned.reason };
 	const slug = tagSlug(cleaned.name);
-	const [tag] = await db.select().from(tags).where(eq(tags.id, id));
+	const [tag] = await db
+		.select()
+		.from(tags)
+		.where(and(eq(tags.id, id), eq(tags.kind, kind)));
 	if (!tag) return { ok: false, message: 'That entry does not exist.' };
+	const clashMessage = 'Another entry already has that name. Merge them instead.';
 	const [clash] = await db
 		.select({ id: tags.id })
 		.from(tags)
 		.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
-	if (clash && clash.id !== id) {
-		return { ok: false, message: 'Another entry already has that name. Merge them instead.' };
+	if (clash && clash.id !== id) return { ok: false, message: clashMessage };
+	try {
+		await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
+	} catch (err) {
+		// Another rename, or a writer adding that tag, took the slug since the check.
+		if (isUniqueViolation(err)) return { ok: false, message: clashMessage };
+		throw err;
 	}
-	await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
 	return { ok: true };
 }
 
 // Points a tag at another of the same kind. Reads follow it, so every story
-// with the source shows the target; undoing only clears the pointer.
+// with the source shows the target; undoing only clears the pointer. A merge
+// always lands on a surviving entry and takes the source's own merged entries
+// with it, so no chain is ever more than one step.
 export async function mergeTag(
 	db: Database,
+	kind: TagKind,
 	sourceId: string,
 	targetName: string
 ): Promise<ModResult> {
 	return await db.transaction(async (tx) => {
-		const [source] = await tx.select().from(tags).where(eq(tags.id, sourceId)).for('update');
+		const [source] = await tx
+			.select()
+			.from(tags)
+			.where(and(eq(tags.id, sourceId), eq(tags.kind, kind)));
 		if (!source) return { ok: false, message: 'That entry does not exist.' };
-		const [target] = await tx
+		const notFound = `There is no ${source.kind} called "${targetName.trim()}".`;
+		const [named] = await tx
 			.select()
 			.from(tags)
 			.where(and(eq(tags.kind, source.kind), eq(tags.slug, tagSlug(targetName))));
-		if (!target || target.removedAt) {
-			return { ok: false, message: `There is no ${source.kind} called "${targetName.trim()}".` };
+		if (!named || named.removedAt) return { ok: false, message: notFound };
+		if (named.id === source.id) return { ok: false, message: 'Pick a different entry.' };
+		const survivor = await survivorOf(tx, named.id);
+		if (!survivor.ended) {
+			return {
+				ok: false,
+				message: `"${named.name}" is merged in a loop or a chain too long to follow. Undo the merge on "${named.name}" first, then try again.`
+			};
 		}
-		if (target.id === source.id) return { ok: false, message: 'Pick a different entry.' };
-		// Refuse a merge that would loop back to the source.
-		const loop = await tx.execute(sql`
-			with recursive chain as (
-				select id, merged_into_id, 0 as depth from tags where id = ${target.id}
-				union all
-				select t.id, t.merged_into_id, c.depth + 1 from chain c join tags t on t.id = c.merged_into_id
-				where c.depth < ${MAX_MERGE_DEPTH}
-			)
-			select 1 from chain where id = ${source.id}
-		`);
-		if (loop.rows.length > 0) {
-			return { ok: false, message: `"${target.name}" is already merged into "${source.name}".` };
+		const survivorId = survivor.id;
+		// Lock every row this changes, in id order, so two merges that touch the
+		// same entries wait for each other instead of deadlocking or each passing
+		// the checks below and pointing at one another.
+		const locked = await tx
+			.select()
+			.from(tags)
+			.where(or(inArray(tags.id, [source.id, survivorId]), eq(tags.mergedIntoId, source.id)))
+			.orderBy(asc(tags.id))
+			.for('update');
+		if (survivorId === source.id) {
+			return { ok: false, message: `"${named.name}" is already merged into "${source.name}".` };
 		}
-		await tx.update(tags).set({ mergedIntoId: target.id }).where(eq(tags.id, source.id));
+		// A merge that committed while this one waited can have moved the target.
+		const target = locked.find((row) => row.id === survivorId);
+		if (!target || target.mergedIntoId) {
+			return { ok: false, message: 'That entry changed while you were working. Try again.' };
+		}
+		if (target.removedAt) return { ok: false, message: notFound };
+		await tx
+			.update(tags)
+			.set({ mergedIntoId: target.id })
+			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
 		return { ok: true };
 	});
 }
 
-export async function unmergeTag(db: Database, id: string): Promise<boolean> {
+// The entry a tag's merges end at (the tag itself when it is not merged).
+// ended is false when the merges never end within MAX_MERGE_DEPTH (a loop or
+// a longer chain); migration 0125 repaired those, so it means broken data.
+async function survivorOf(tx: Database, id: string): Promise<{ id: string; ended: boolean }> {
+	const rows = await tx.execute(sql`
+		with recursive chain as (
+			select id, merged_into_id, 0 as depth from tags where id = ${id}
+			union all
+			select t.id, t.merged_into_id, c.depth + 1 from chain c join tags t on t.id = c.merged_into_id
+			where c.depth < ${MAX_MERGE_DEPTH}
+		)
+		select id, merged_into_id is null as ended from chain order by depth desc limit 1
+	`);
+	const row = rows.rows[0] as { id: string; ended: boolean } | undefined;
+	return row ?? { id, ended: true };
+}
+
+export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
 	const updated = await db
 		.update(tags)
 		.set({ mergedIntoId: null })
-		.where(and(eq(tags.id, id), sql`${tags.mergedIntoId} is not null`))
+		.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`))
 		.returning({ id: tags.id });
 	return updated.length > 0;
 }
 
 export async function setTagRemoved(
 	db: Database,
+	kind: TagKind,
 	id: string,
 	removed: boolean,
 	by: string
@@ -405,7 +531,7 @@ export async function setTagRemoved(
 	const updated = await db
 		.update(tags)
 		.set(removed ? { removedAt: sql`now()`, removedBy: by } : { removedAt: null, removedBy: null })
-		.where(eq(tags.id, id))
+		.where(and(eq(tags.id, id), eq(tags.kind, kind)))
 		.returning({ id: tags.id });
 	return updated.length > 0;
 }

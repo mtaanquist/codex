@@ -13,8 +13,6 @@
 	}
 
 	const pending = $derived(data.users.filter((u) => !u.approvedAt && u.role !== 'admin'));
-	const liveEditions = $derived(data.published.filter((e) => !e.removedAt));
-	const publishedCount = $derived(liveEditions.filter((e) => e.isCurrent).length);
 
 	const lastBackup = $derived(data.backupRuns[0] ?? null);
 	const emailReady = $derived(data.smtp.source !== 'none');
@@ -109,7 +107,7 @@
 			<div class="admin-stat-top">
 				<span class="admin-stat-label">Published editions</span>
 			</div>
-			<div class="admin-stat-n">{publishedCount}</div>
+			<div class="admin-stat-n">{data.stats.publishedEditions}</div>
 			<div class="admin-stat-foot">
 				<span class="delta flat">current</span> on public pages
 			</div>

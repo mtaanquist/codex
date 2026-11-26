@@ -56,6 +56,20 @@ export function parseBrowseQuery(params: URLSearchParams): BrowseQuery {
 	};
 }
 
+// The page heading names every filter set: the genre and fandom, and the
+// tag. "Browse" when none is.
+export function browseHeading(filters: {
+	genre: string | null;
+	fandom: string | null;
+	tag: string | null;
+}): string {
+	const named = [filters.genre, filters.fandom].filter((name): name is string => Boolean(name));
+	if (!filters.tag) return named.length > 0 ? named.join(', ') : 'Browse';
+	return named.length > 0
+		? `${named.join(', ')} stories tagged ${filters.tag}`
+		: `Stories tagged ${filters.tag}`;
+}
+
 // Search engines may index the plain page and a page for one genre, fandom or
 // tag. A search, a combination of filters, adult work or a later page is not.
 export function browseIndexable(query: BrowseQuery): boolean {
@@ -63,4 +77,22 @@ export function browseIndexable(query: BrowseQuery): boolean {
 	return (
 		!query.q && filters <= 1 && query.hide.length === 0 && !query.adult && query.after === null
 	);
+}
+
+// A reader who includes adult work has that choice remembered on this device
+// (localStorage, which the server cannot read). Browse applies it on load: the
+// pre-paint script in app.html does it for a full page load, and the root
+// layout (links and beforeNavigate, src/lib/browse-adult.svelte.ts) for a
+// navigation inside the app, with the page's universal load as a fallback.
+// All of them read this key.
+export const BROWSE_ADULT_KEY = 'codex:browse-adult';
+
+// Where a Browse address should go when the reader has the adult choice
+// remembered, or null when it already includes adult work or nothing is
+// remembered.
+export function withRememberedAdult(url: URL, remembered: boolean): string | null {
+	if (!remembered || url.searchParams.get('adult') === 'show') return null;
+	const target = new URL(url);
+	target.searchParams.set('adult', 'show');
+	return target.pathname + target.search;
 }

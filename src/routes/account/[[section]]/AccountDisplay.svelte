@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { browser } from '$app/env';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import { ACCENT_PRESETS, DARK_THEMES, LIGHT_THEMES } from '#lib/appearance';
 	import { LIBRARY_VIEWS } from '#lib/dashboard';
 	import { applyAppearance } from '#lib/appearance-apply';
@@ -56,7 +56,7 @@
 	<div class="settings-group">
 		<form
 			method="POST"
-			action="?/saveAppearance"
+			action={ownAction('saveAppearance')}
 			bind:this={appearanceForm}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
@@ -171,7 +171,7 @@
 	<div class="settings-group">
 		<form
 			method="POST"
-			action="?/saveLibraryView"
+			action={ownAction('saveLibraryView')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>

@@ -1,8 +1,11 @@
 import {
 	and,
+	asc,
+	count,
 	desc,
 	eq,
 	exists,
+	ilike,
 	inArray,
 	isNotNull,
 	isNull,
@@ -29,6 +32,8 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import { likePattern } from './sql-like.ts';
+import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
@@ -119,11 +124,20 @@ export async function publishStory(
 		])
 	];
 	const shownLabels = (await tagsForStories(db, [story.id])).get(story.id) ?? [];
-	const contentWarnings = shownLabels
-		.filter((tag) => tag.kind === 'warning')
-		.map((tag) => tag.name);
+	const warnings = shownLabels.filter((tag) => tag.kind === 'warning');
 	try {
 		const publicationId = await db.transaction(async (tx) => {
+			// scheduleAccountDeletion updates this row first, so a deletion
+			// scheduled at the same moment either commits before this read (and
+			// the publish is refused) or waits and then takes the new edition
+			// down with the others. "No key update" still waits on that update but
+			// not on rows elsewhere that only reference this user.
+			const [owner] = await tx
+				.select({ deletionScheduledAt: users.deletionScheduledAt })
+				.from(users)
+				.where(eq(users.id, userId))
+				.for('no key update');
+			if (!owner || owner.deletionScheduledAt) return 'deleting' as const;
 			// Locked so a takedown running at the same moment waits for this
 			// publish (see takedownPublication).
 			await tx
@@ -145,7 +159,7 @@ export async function publishStory(
 						isNotNull(publications.removedAt)
 					)
 				);
-			if (current?.removedReason) return null;
+			if (current?.removedReason) return 'taken-down' as const;
 			await tx
 				.update(publications)
 				.set({ isCurrent: false })
@@ -158,8 +172,9 @@ export async function publishStory(
 					handle: user.handle!,
 					...frontMatter,
 					isAdult: story.isAdult,
-					// Like the adult flag, the author's current choice, by name.
-					contentWarnings,
+					// Like the adult flag, the author's current choice.
+					contentWarnings: warnings.map((tag) => tag.name),
+					contentWarningIds: warnings.map((tag) => tag.id),
 					content,
 					versionLabel: versionLabel?.trim() || null,
 					sourceDraftId: draftId || null
@@ -184,7 +199,10 @@ export async function publishStory(
 			}
 			return edition.id;
 		});
-		if (publicationId === null) {
+		if (publicationId === 'deleting') {
+			return { ok: false, reason: 'Your account is waiting to be deleted, so it cannot publish.' };
+		}
+		if (publicationId === 'taken-down') {
 			return {
 				ok: false,
 				reason:
@@ -594,10 +612,14 @@ export async function takedownPublication(
 			.update(publications)
 			// An edition already down with its author's account deletion gets
 			// the reason too, so the takedown holds if the deletion is cancelled.
+			// Down without a reason (the where clause) means account deletion
+			// hid it, so the flag is set here too: one hidden before migration
+			// 0124 has it false.
 			.set({
 				removedAt: sql`coalesce(${publications.removedAt}, now())`,
 				removedBy,
-				removedReason: reason
+				removedReason: reason,
+				hiddenByAccountDeletion: sql`${publications.hiddenByAccountDeletion} or ${publications.removedAt} is not null`
 			})
 			.where(
 				and(
@@ -628,50 +650,110 @@ export async function takedownPublication(
 	});
 }
 
-// Lifts a moderator's takedown, so the edition is public again and the author
-// can publish new editions. Never an edition account deletion took down, and
-// never while the author's account is waiting to be deleted.
+// Lifts a moderator's takedown, so the author can publish new editions and the
+// edition is public again, unless the author's account deletion also hid it:
+// then it stays down, as cancelling the deletion leaves the author's other
+// editions. Never while the author's account is waiting to be deleted.
 export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
-	const restored = await db
-		.update(publications)
-		.set({ removedAt: null, removedBy: null, removedReason: null })
-		.where(
-			and(
-				eq(publications.id, publicationId),
-				isNotNull(publications.removedAt),
-				isNotNull(publications.removedReason),
-				sql`not exists (select 1 from users du where du.id = ${publications.ownerId} and du.deletion_scheduled_at is not null)`
+	return await db.transaction(async (tx) => {
+		const [edition] = await tx
+			.select({ ownerId: publications.ownerId })
+			.from(publications)
+			.where(eq(publications.id, publicationId));
+		if (!edition) return false;
+		// scheduleAccountDeletion updates this row first, so a deletion
+		// scheduled at the same moment either commits before this read (and the
+		// restore is refused) or waits until the restore has committed.
+		const [owner] = await tx
+			.select({ deletionScheduledAt: users.deletionScheduledAt })
+			.from(users)
+			.where(eq(users.id, edition.ownerId))
+			.for('update');
+		if (!owner || owner.deletionScheduledAt) return false;
+		const restored = await tx
+			.update(publications)
+			.set({
+				removedAt: sql`case when ${publications.hiddenByAccountDeletion} then ${publications.removedAt} end`,
+				removedBy: null,
+				removedReason: null
+			})
+			.where(
+				and(
+					eq(publications.id, publicationId),
+					isNotNull(publications.removedAt),
+					isNotNull(publications.removedReason)
+				)
 			)
-		)
-		.returning({ id: publications.id });
-	return restored.length > 0;
+			.returning({ id: publications.id });
+		return restored.length > 0;
+	});
 }
 
-// The admin's view of everything published on this instance.
-export async function listPublications(db: Database, limit = 50) {
-	return await db
+export const LIVE_EDITIONS_PAGE_SIZE = 50;
+
+// The Published page: every story's current edition that is up, newest
+// first, one page at a time, optionally narrowed to a handle or title.
+export async function listLiveEditions(
+	db: Database,
+	{ query = '', page = 0 }: { query?: string; page?: number } = {}
+) {
+	const safePage = pageIndex(page);
+	const text = query.trim();
+	// Handles are stored without the '@' the pages show before them.
+	const handlePattern = likePattern(text.replace(/^@/, ''));
+	const where = and(
+		eq(publications.isCurrent, true),
+		isNull(publications.removedAt),
+		text
+			? or(ilike(publications.handle, handlePattern), ilike(publications.title, likePattern(text)))
+			: undefined
+	);
+	const [{ total }] = await db.select({ total: count() }).from(publications).where(where);
+	// One row past the page says whether a next page exists.
+	const rows = await db
 		.select({
 			id: publications.id,
 			handle: publications.handle,
 			title: publications.title,
 			isAdult: publications.isAdult,
-			isCurrent: publications.isCurrent,
-			removedAt: publications.removedAt,
-			removedReason: publications.removedReason,
 			publishedAt: publications.publishedAt,
 			storyId: publications.storyId,
 			listedInBrowse: stories.listedInBrowse,
-			browseBlockedAt: stories.browseBlockedAt,
-			browseBlockedReason: stories.browseBlockedReason
+			browseBlockedAt: stories.browseBlockedAt
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
-		.orderBy(desc(publications.publishedAt))
-		.limit(limit);
+		.where(where)
+		.orderBy(desc(publications.publishedAt), asc(publications.id))
+		.limit(LIVE_EDITIONS_PAGE_SIZE + 1)
+		.offset(safePage * LIVE_EDITIONS_PAGE_SIZE);
+	return {
+		editions: rows.slice(0, LIVE_EDITIONS_PAGE_SIZE),
+		total,
+		page: safePage,
+		hasMore: rows.length > LIVE_EDITIONS_PAGE_SIZE
+	};
+}
+
+// Stories a moderator removed from Browse, oldest first, so "Allow in Browse
+// again" stays reachable however many editions are published after them.
+export async function listBrowseBlocked(db: Database) {
+	return await db
+		.select({
+			storyId: stories.id,
+			title: stories.title,
+			handle: users.handle,
+			browseBlockedAt: stories.browseBlockedAt,
+			browseBlockedReason: stories.browseBlockedReason
+		})
+		.from(stories)
+		.innerJoin(users, eq(users.id, stories.ownerId))
+		.where(isNotNull(stories.browseBlockedAt))
+		.orderBy(stories.browseBlockedAt);
 }
 
 // Current editions a moderator took down, oldest takedown first, for the
-// Restore list. Separate from listPublications so none drop out of view.
+// Restore list. Separate from listLiveEditions so none drop out of view.
 export async function listTakenDown(db: Database) {
 	return await db
 		.select({
@@ -679,9 +761,12 @@ export async function listTakenDown(db: Database) {
 			handle: publications.handle,
 			title: publications.title,
 			removedAt: publications.removedAt,
-			removedReason: publications.removedReason
+			removedReason: publications.removedReason,
+			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
 		})
 		.from(publications)
+		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(
 			and(
 				eq(publications.isCurrent, true),

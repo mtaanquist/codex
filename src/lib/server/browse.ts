@@ -28,7 +28,9 @@ const listed = sql`
 // An edition's publish time in whole microseconds, for the page cursor.
 const MICROS = sql.raw('(extract(epoch from p.published_at) * 1000000)::bigint');
 
-type FilterTag = { name: string; slug: string; ids: string[] };
+// ids and names cover the entry and every entry merged into it; names match
+// the warnings an edition froze by name at publish.
+type FilterTag = { name: string; slug: string; ids: string[]; names: string[] };
 
 // A filter's tag by slug, followed through merges to the entry that survives,
 // with every entry merged into it, so a story tagged with an old spelling
@@ -48,14 +50,16 @@ export async function resolveFilterTag(
 	if (!tag || tag.removedAt || tag.mergedIntoId) return null;
 	const closure = await db.execute(sql`
 		with recursive closure as (
-			select id, 0 as depth from tags where id = ${tag.id}
+			select id, name, 0 as depth from tags where id = ${tag.id}
 			union all
-			select t.id, c.depth + 1 from tags t join closure c on t.merged_into_id = c.id
+			select t.id, t.name, c.depth + 1 from tags t join closure c on t.merged_into_id = c.id
 			where c.depth < ${MAX_MERGE_DEPTH}
 		)
-		select distinct id from closure
+		select distinct id, name from closure
 	`);
-	const ids = (closure.rows as { id: string }[]).map((row) => row.id);
+	const rows = closure.rows as { id: string; name: string }[];
+	const ids = rows.map((row) => row.id);
+	const names = [...new Set(rows.map((row) => row.name))];
 	// A free-form tag only counts once a listed story carries it, so a tag
 	// that lives on private stories alone is not revealed by its name.
 	if (kind === 'tag') {
@@ -72,7 +76,7 @@ export async function resolveFilterTag(
 		`);
 		if (used.rows.length === 0) return null;
 	}
-	return { name: tag.name, slug: tag.slug, ids };
+	return { name: tag.name, slug: tag.slug, ids, names };
 }
 
 function hasAny(ids: string[]): SQL {
@@ -122,27 +126,16 @@ export type BrowseBook = {
 // so a search never ties a pen name to the account's own name.
 const shownName = sql`coalesce(nullif(trim(u.pen_name), ''), u.display_name)`;
 
-export async function browseStories(
-	db: Database,
-	query: BrowseQuery,
-	filters: BrowseFilters
-): Promise<{ books: BrowseBook[]; next: string | null }> {
-	// A filter that names a missing or removed entry matches nothing.
-	if ((query.genre && !filters.genre) || (query.fandom && !filters.fandom)) {
-		return { books: [], next: null };
-	}
-	if (query.tag && !filters.tag) return { books: [], next: null };
+// The genre, fandom, tag, hidden warning and adult conditions a query sets,
+// shared by the stories and the Writers list so the two agree. Null when a
+// filter names a missing or removed entry, which matches nothing. Expects
+// publications p, stories s and universes un in the FROM.
+function filterConditions(query: BrowseQuery, filters: BrowseFilters): SQL[] | null {
+	if ((query.genre && !filters.genre) || (query.fandom && !filters.fandom)) return null;
+	if (query.tag && !filters.tag) return null;
 
-	const conditions: SQL[] = [listed];
+	const conditions: SQL[] = [];
 	if (!query.adult) conditions.push(sql`not p.is_adult`);
-	if (query.q) {
-		const like = pattern(query.q);
-		conditions.push(sql`(
-			p.title ilike ${like} or p.author ilike ${like} or p.description_md ilike ${like}
-			or ${shownName} ilike ${like}
-			or (not un.standalone and un.name ilike ${like})
-		)`);
-	}
 	for (const tag of [filters.genre, filters.tag]) {
 		if (tag) conditions.push(hasAny(tag.ids));
 	}
@@ -157,14 +150,44 @@ export async function browseStories(
 	}
 	if (filters.hide.length > 0) {
 		// Hidden if the story carries the warning now or its edition did at
-		// publish, so a reader is not shown a warning they asked to avoid.
-		conditions.push(sql`not ${hasAny(filters.hide.flatMap((tag) => tag.ids))}`);
+		// publish, so a reader is not shown a warning they asked to avoid. The
+		// edition froze the warnings' ids, which survive a rename and include
+		// entries since merged into the warning. Editions from before ids were
+		// frozen carry names alone and match by name.
+		const ids = filters.hide.flatMap((tag) => tag.ids);
+		conditions.push(sql`not ${hasAny(ids)}`);
 		conditions.push(
-			sql`not (p.content_warnings && array[${sql.join(
-				filters.hide.map((tag) => sql`${tag.name}`),
+			sql`not (p.content_warning_ids && array[${sql.join(
+				ids.map((id) => sql`${id}`),
+				sql`, `
+			)}]::uuid[])`
+		);
+		conditions.push(
+			sql`not (cardinality(p.content_warning_ids) = 0 and p.content_warnings && array[${sql.join(
+				filters.hide.flatMap((tag) => tag.names.map((name) => sql`${name}`)),
 				sql`, `
 			)}]::text[])`
 		);
+	}
+	return conditions;
+}
+
+export async function browseStories(
+	db: Database,
+	query: BrowseQuery,
+	filters: BrowseFilters
+): Promise<{ books: BrowseBook[]; next: string | null }> {
+	const filtered = filterConditions(query, filters);
+	if (!filtered) return { books: [], next: null };
+
+	const conditions: SQL[] = [listed, ...filtered];
+	if (query.q) {
+		const like = pattern(query.q);
+		conditions.push(sql`(
+			p.title ilike ${like} or p.author ilike ${like} or p.description_md ilike ${like}
+			or ${shownName} ilike ${like}
+			or (not un.standalone and un.name ilike ${like})
+		)`);
 	}
 	if (query.after) {
 		conditions.push(
@@ -245,20 +268,21 @@ export async function browseStories(
 	};
 }
 
-// Authors whose name matches a search, with at least one listed story.
-// Only the name readers see (see shownName). Adult-only authors are left out
-// unless the reader asked for adult work.
-export async function browseAuthors(db: Database, q: string, adult = false) {
-	if (!q) return [];
-	const like = pattern(q);
+// Authors whose name matches a search, with at least one listed story that
+// the query's other filters let through, counting only those stories. Only
+// the name readers see (see shownName).
+export async function browseAuthors(db: Database, query: BrowseQuery, filters: BrowseFilters) {
+	if (!query.q) return [];
+	const filtered = filterConditions(query, filters);
+	if (!filtered) return [];
+	const like = pattern(query.q);
 	const result = await db.execute(sql`
 		select p.handle, u.pen_name, u.display_name, count(distinct p.story_id)::int as stories
 		from publications p
 		join stories s on s.id = p.story_id
 		join users u on u.id = p.owner_id
-		where ${listed}
-			and ${shownName} ilike ${like}
-			${adult ? sql`` : sql`and not p.is_adult`}
+		join universes un on un.id = s.universe_id
+		where ${sql.join([listed, ...filtered, sql`${shownName} ilike ${like}`], sql` and `)}
 		group by p.handle, u.pen_name, u.display_name
 		order by count(distinct p.story_id) desc, p.handle
 		limit 6

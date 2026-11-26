@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gt, ilike, inArray, or, sql } from 'drizzle-orm';
 import { recountStorageUsed } from './quotas.ts';
 import { likePattern } from './sql-like.ts';
+import { pageIndex } from './paging.ts';
 import type { Database } from './auth.ts';
 import { entitlements, plans, users } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
@@ -189,7 +190,7 @@ export async function listAccountUsage(
 	db: Database,
 	{ query = '', page = 0 }: { query?: string; page?: number } = {}
 ): Promise<AccountUsagePage> {
-	const safePage = Math.max(0, Math.floor(Number.isFinite(page) ? page : 0));
+	const safePage = pageIndex(page);
 	const text = query.trim();
 	const pattern = likePattern(text);
 	const match = text

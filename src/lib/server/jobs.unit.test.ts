@@ -19,7 +19,9 @@ vi.mock('pg-boss', () => ({
 const { queueAssistantReview, queueAssistantSummaries, reviewJobState, ASSISTANT_REVIEW_QUEUE } =
 	await import('./jobs');
 const { ASSISTANT_JOB_EXPIRY_SECONDS } = await import('./queues');
-const { reviewScopeKey } = await import('./review-runs');
+const { reviewScopeKey, reviewSettingsKey } = await import('./review-runs');
+const { NO_PREFERENCES } = await import('../assistant-preferences');
+const { NO_LANGUAGE } = await import('../writing-languages');
 
 beforeEach(() => {
 	sends.length = 0;
@@ -104,6 +106,79 @@ describe('reviewScopeKey', () => {
 		// The continuity pass ignores categories, so they do not split its key.
 		expect(reviewScopeKey({ storyId: 's', mode: 'continuity', categories: ['prose'] })).toBe(
 			'continuity:s'
+		);
+	});
+});
+
+describe('reviewSettingsKey', () => {
+	const notes = { ...NO_PREFERENCES, notes: 'Splices on purpose.' };
+
+	it('changes with the language or the preferences', () => {
+		const plain = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true);
+		expect(plain).toBe(reviewSettingsKey(NO_LANGUAGE, { ...NO_PREFERENCES }, true));
+		expect(reviewSettingsKey(NO_LANGUAGE, notes, true)).not.toBe(plain);
+		expect(reviewSettingsKey({ language: 'da', native: null }, NO_PREFERENCES, true)).not.toBe(
+			plain
+		);
+		expect(
+			reviewSettingsKey(
+				NO_LANGUAGE,
+				{
+					...NO_PREFERENCES,
+					houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' }
+				},
+				true
+			)
+		).not.toBe(plain);
+	});
+
+	it('changes with the style notes, which the prose is judged against', () => {
+		const plain = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true);
+		const noir = reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, 'Hardboiled noir.');
+		expect(noir).not.toBe(plain);
+		expect(reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, 'Cosy mystery.')).not.toBe(noir);
+		// No notes keys as it did before style notes were part of the key.
+		expect(reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, null)).toBe(plain);
+		expect(reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true, '  ')).toBe(plain);
+	});
+
+	it('changes with the native language only where the prompts hint at it', () => {
+		const english = { language: 'en-GB', native: 'da' } as const;
+		const swedish = { language: 'en-GB', native: 'sv' } as const;
+		// A pass that never hints at it: a lore-only or general review.
+		expect(reviewSettingsKey(english, null, false)).toBe(reviewSettingsKey(swedish, null, false));
+		// A pass that does.
+		expect(reviewSettingsKey(english, NO_PREFERENCES, true)).not.toBe(
+			reviewSettingsKey(swedish, NO_PREFERENCES, true)
+		);
+		// No hint without a story language to compare, or when they match.
+		expect(reviewSettingsKey({ language: null, native: 'da' }, NO_PREFERENCES, true)).toBe(
+			reviewSettingsKey(NO_LANGUAGE, NO_PREFERENCES, true)
+		);
+		expect(reviewSettingsKey({ language: 'en-GB', native: 'en-US' }, NO_PREFERENCES, true)).toBe(
+			reviewSettingsKey({ language: 'en-GB', native: null }, NO_PREFERENCES, true)
+		);
+	});
+
+	it('ignores the order the habits were left alone in', () => {
+		expect(
+			reviewSettingsKey(
+				NO_LANGUAGE,
+				{
+					...NO_PREFERENCES,
+					leaveAlone: ['epithets', 'commaSplices']
+				},
+				true
+			)
+		).toBe(
+			reviewSettingsKey(
+				NO_LANGUAGE,
+				{
+					...NO_PREFERENCES,
+					leaveAlone: ['commaSplices', 'epithets']
+				},
+				true
+			)
 		);
 	});
 });

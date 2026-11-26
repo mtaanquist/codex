@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { browseHomeHref } from '#lib/browse-adult.svelte';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import type { PageData, ActionData } from './$types';
 
@@ -80,18 +80,16 @@
 		<div>
 			<h2 class="admin-block-title">Browse</h2>
 			<p class="admin-block-sub">
-				A public page at {#if data.browse}<a href={resolve('/browse')}>
-						/browse
-					</a>{:else}/browse{/if} where readers find stories from every author on this site. Authors choose
-				which public stories appear there. While it is off, the page does not exist and authors do not
-				see the option.
+				A public page at {#if data.browse}<a href={browseHomeHref()}>/browse</a>{:else}/browse{/if} where
+				readers find stories from every author on this site. Authors choose which public stories appear
+				there. While it is off, the page does not exist and authors do not see the option.
 			</p>
 		</div>
 	</div>
 	<div class="admin-card">
 		<form
 			method="POST"
-			action="?/saveBrowse"
+			action={ownAction('saveBrowse')}
 			use:enhance={autosaveSubmit}
 			onchange={autosubmitForm}
 		>

@@ -159,7 +159,7 @@ describe('the assistant preferences', () => {
 		expect(setting.notes).toBe('Short.');
 		// Details gets what the story inherits, as it does for a story in a universe.
 		const data = (await storySettings.load({
-			params: { id: loose.id },
+			params: { id: loose.slug },
 			locals: { user, session: null }
 		} as never)) as {
 			universe: { standalone: boolean; assistantPreferences: unknown; assistantNotes: string };
@@ -270,11 +270,11 @@ describe('the assistant preferences', () => {
 	it('shows the form with the Assistant off only when connected apps are on', async () => {
 		const loads = async () => {
 			const story = (await storySettings.load({
-				params: { id: storyId },
+				params: { id: 'the-toll' },
 				locals: { user, session: null }
 			} as never)) as { assistantPreferencesShown: boolean; assistantModels: unknown };
 			const universe = (await universePage.load({
-				params: { id: universeId },
+				params: { id: 'ardenfall' },
 				locals: { user, session: null }
 			} as never)) as { assistantPreferencesShown: boolean; assistantModels: unknown };
 			return [story, universe];
@@ -288,26 +288,26 @@ describe('the assistant preferences', () => {
 		// Hidden, the section's own page is not there either.
 		await expect(
 			storySettings.load({
-				params: { id: storyId, section: 'preferences' },
+				params: { id: 'the-toll', section: 'preferences' },
 				locals: { user, session: null }
 			} as never)
 		).rejects.toMatchObject({ status: 404 });
 		await expect(
 			universePage.load({
-				params: { id: universeId, section: 'preferences' },
+				params: { id: 'ardenfall', section: 'preferences' },
 				locals: { user, session: null }
 			} as never)
 		).rejects.toMatchObject({ status: 404 });
 		await db.update(users).set({ mcpEnabled: true }).where(eq(users.id, user.id));
 		await expect(
 			storySettings.load({
-				params: { id: storyId, section: 'preferences' },
+				params: { id: 'the-toll', section: 'preferences' },
 				locals: { user, session: null }
 			} as never)
 		).resolves.toMatchObject({ assistantPreferencesShown: true });
 		await expect(
 			universePage.load({
-				params: { id: universeId, section: 'preferences' },
+				params: { id: 'ardenfall', section: 'preferences' },
 				locals: { user, session: null }
 			} as never)
 		).resolves.toMatchObject({ assistantPreferencesShown: true });

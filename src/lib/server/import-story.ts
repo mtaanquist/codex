@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import {
 	assistantDrafts,
@@ -33,6 +33,7 @@ import {
 	listedByName,
 	setStoryList,
 	setStoryTags,
+	tagSurvivors,
 	universeFandom,
 	type ListKind
 } from './tags';
@@ -66,13 +67,16 @@ export type ImportPreview = {
 
 // Each note finds its entity by trimmed, case-insensitive name within its
 // kind. One candidate attaches, none creates, two or more skips: picking one
-// silently would be the only wrong answer.
+// silently would be the only wrong answer. Entity names are not unique, so
+// two notes ("Ann" and "ann") can find the same entity, which holds one note
+// per story: their texts are combined into the first one's, and a problem
+// says so.
 async function resolveNotes(
 	db: Database,
 	universeId: string,
 	notes: ImportedNote[]
-): Promise<NoteResolution[]> {
-	if (notes.length === 0) return [];
+): Promise<{ resolutions: NoteResolution[]; problems: string[] }> {
+	if (notes.length === 0) return { resolutions: [], problems: [] };
 	const namesIn = (type: EntityType) => {
 		const table = entityTable(type);
 		return db
@@ -86,10 +90,12 @@ async function resolveNotes(
 		lore: await namesIn('lore_entry')
 	};
 	const byName = (rows: { id: string; name: string }[]) => {
-		const map = new Map<string, string[]>();
+		const map = new Map<string, { id: string; name: string }[]>();
 		for (const row of rows) {
 			const key = row.name.trim().toLowerCase();
-			map.set(key, [...(map.get(key) ?? []), row.id]);
+			const same = map.get(key);
+			if (same) same.push(row);
+			else map.set(key, [row]);
 		}
 		return map;
 	};
@@ -98,12 +104,41 @@ async function resolveNotes(
 		place: byName(lists.place),
 		lore: byName(lists.lore)
 	};
-	return notes.map((note) => {
+	const resolutions: NoteResolution[] = [];
+	// Texts are gathered per entity and joined once, since appending to the
+	// combined text note by note is quadratic in the number of notes.
+	const matched = new Map<
+		string,
+		{ resolution: NoteResolution; entityName: string; texts: string[] }
+	>();
+	for (const note of notes) {
 		const candidates = maps[note.kind].get(note.name.trim().toLowerCase()) ?? [];
-		if (candidates.length === 1) return { ...note, outcome: 'match', entityId: candidates[0] };
-		if (candidates.length === 0) return { ...note, outcome: 'create', entityId: null };
-		return { ...note, outcome: 'ambiguous', entityId: null };
-	});
+		if (candidates.length === 0) {
+			resolutions.push({ ...note, outcome: 'create', entityId: null });
+		} else if (candidates.length > 1) {
+			resolutions.push({ ...note, outcome: 'ambiguous', entityId: null });
+		} else {
+			const entity = candidates[0];
+			const first = matched.get(entity.id);
+			if (first) {
+				first.texts.push(note.notesMd);
+				continue;
+			}
+			const resolution: NoteResolution = { ...note, outcome: 'match', entityId: entity.id };
+			matched.set(entity.id, { resolution, entityName: entity.name, texts: [note.notesMd] });
+			resolutions.push(resolution);
+		}
+	}
+	const problems: string[] = [];
+	for (const { resolution, entityName, texts } of matched.values()) {
+		if (texts.length === 1) continue;
+		resolution.notesMd = texts.filter((text) => text !== '').join('\n\n');
+		const kind = resolution.kind === 'lore' ? 'lore entry' : resolution.kind;
+		problems.push(
+			`${texts.length} notes belong to the ${kind} "${entityName}", so they were combined into one note.`
+		);
+	}
+	return { resolutions, problems };
 }
 
 export async function previewImport(
@@ -116,8 +151,8 @@ export async function previewImport(
 		.select({ title: stories.title })
 		.from(stories)
 		.where(eq(stories.universeId, universe.id));
-	const resolutions = await resolveNotes(db, universe.id, plan.notes);
-	const problems = [...plan.problems];
+	const { resolutions, problems: noteProblems } = await resolveNotes(db, universe.id, plan.notes);
+	const problems = [...plan.problems, ...noteProblems];
 	try {
 		await holdCountQuota(db, universe.ownerId, { stories: 1 });
 	} catch (err) {
@@ -234,7 +269,8 @@ export async function runImport(
 		const rewrite = (body: string) =>
 			rewriteBundledAssetLinks(body, (id) => assetLinks.get(id) ?? null);
 
-		const resolutions = await resolveNotes(db, universe.id, plan.notes);
+		const { resolutions, problems: noteProblems } = await resolveNotes(db, universe.id, plan.notes);
+		problems.push(...noteProblems);
 
 		// The slug is picked up front; the story row itself is inserted inside the
 		// transaction below, so a failure partway through the import rolls the empty
@@ -251,14 +287,15 @@ export async function runImport(
 		// Labels from a Codex export: genres, warnings and fandoms this site's
 		// lists do not have are left off and reported.
 		const listed = async (kind: ListKind, names: string[], noun: string) => {
-			const { ids, missing } = await listedByName(db, kind, names);
-			for (const name of missing) {
+			const found = await listedByName(db, kind, names);
+			for (const name of found.missing) {
 				problems.push(`The ${noun} "${name}" is not on this site's list, so it was left off.`);
 			}
-			return ids;
+			return found.ids;
 		};
-		const genreIds = (await listed('genre', plan.story.genres ?? [], 'genre')).slice(0, MAX_GENRES);
-		if ((plan.story.genres?.length ?? 0) > MAX_GENRES) {
+		const genres = await listed('genre', plan.story.genres ?? [], 'genre');
+		const genreIds = genres.slice(0, MAX_GENRES);
+		if (genres.length > MAX_GENRES) {
 			problems.push(`Only the first ${MAX_GENRES} genres were kept.`);
 		}
 		const warningIds = await listed('warning', plan.story.contentWarnings ?? [], 'content warning');
@@ -267,18 +304,35 @@ export async function runImport(
 			if (!cleaned.ok && !cleaned.empty) problems.push(`The tag was left off: ${cleaned.reason}`);
 			return cleaned.ok;
 		});
-		const checkedTags = checkTagNames(tagNames.slice(0, MAX_TAGS));
-		if ((plan.story.tags?.length ?? 0) > MAX_TAGS) {
-			problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
-		}
+		// The first tags in file order up to the limit, counting a merged-away
+		// name and its survivor once. A removed tag takes no slot; it is left off
+		// and reported when the tags are written.
+		const survivors = await tagSurvivors(db, [...new Set(tagNames.map(tagSlug))]);
+		const keptTags = new Set<string>();
+		let tagsDropped = false;
+		const tagsToKeep = tagNames.filter((name) => {
+			const shown = survivors.get(tagSlug(name));
+			if (!shown || keptTags.has(shown)) return true;
+			if (keptTags.size >= MAX_TAGS) {
+				tagsDropped = true;
+				return false;
+			}
+			keptTags.add(shown);
+			return true;
+		});
+		if (tagsDropped) problems.push(`Only the first ${MAX_TAGS} tags were kept.`);
+		// Already cut to the limit above; a merge undone since then must not
+		// make the check refuse them all, so it allows as many as are kept.
+		const checkedTags = await checkTagNames(db, tagsToKeep, tagsToKeep.length);
+		if (!checkedTags.ok) problems.push(`The tags were left off: ${checkedTags.message}`);
 		// The universe's own fandom counts toward the limit and is not stored on
 		// the story again.
 		const fromUniverse = await universeFandom(db, universe.id);
-		const ownFandoms = (plan.story.fandoms ?? []).filter(
-			(name) => !fromUniverse || tagSlug(name) !== tagSlug(fromUniverse.name)
+		const ownFandoms = (await listed('fandom', plan.story.fandoms ?? [], 'fandom')).filter(
+			(id) => id !== fromUniverse?.id
 		);
 		const fandomRoom = MAX_FANDOMS - (fromUniverse ? 1 : 0);
-		const fandomIds = (await listed('fandom', ownFandoms, 'fandom')).slice(0, fandomRoom);
+		const fandomIds = ownFandoms.slice(0, fandomRoom);
 		if (ownFandoms.length > fandomRoom) {
 			problems.push(`A story can have up to ${MAX_FANDOMS} fandoms, so some were left off.`);
 		}
@@ -303,7 +357,11 @@ export async function runImport(
 						author: plan.story.author,
 						brief: plan.story.brief,
 						descriptionMd: rewrite(plan.story.descriptionMd) || null,
-						isAdult: plan.story.isAdult ?? false
+						isAdult: plan.story.isAdult ?? false,
+						styleNotes: plan.story.styleNotes ?? null,
+						language: plan.story.language ?? null,
+						assistantPreferences: plan.story.assistantPreferences ?? {},
+						assistantNotes: plan.story.assistantNotes ?? null
 					})
 					.returning({ id: stories.id });
 				if (checkedTags.ok) {
@@ -352,6 +410,9 @@ export async function runImport(
 							storyId: story.id,
 							title: chapter.title,
 							summaryMd: chapter.summaryMd ? rewrite(chapter.summaryMd) : null,
+							// The Assistant's summary, stamped with no fingerprint so it
+							// counts as out of date and the next summary pass rewrites it.
+							summaryGeneratedAt: chapter.summaryByAssistant ? sql`now()` : null,
 							position: chapterIndex + 1
 						})
 						.returning({ id: chapters.id });

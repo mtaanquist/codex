@@ -134,26 +134,30 @@
 	</div>
 
 	<div class="admin-block" class:active={active === 'details'} id="details">
-		<SettingsDetails {data} {form} />
+		{#key data.story.id}
+			<SettingsDetails {data} {form} />
+		{/key}
 	</div>
 
 	{#if data.assistantPreferencesShown}
 		<div class="admin-block" class:active={active === 'preferences'} id="preferences">
-			<AssistantPreferences
-				level="story"
-				stored={data.story.assistantPreferences}
-				notes={data.story.assistantNotes}
-				inherited={{
-					preferences: data.universe.assistantPreferences,
-					notes: data.universe.assistantNotes
-				}}
-				standalone={data.universe.standalone}
-				saved={form?.action === 'assistant-preferences' && form.saved === true}
-				error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
-				submitted={form?.action === 'assistant-preferences' && 'submitted' in form
-					? form.submitted
-					: null}
-			/>
+			{#key data.story.id}
+				<AssistantPreferences
+					level="story"
+					stored={data.story.assistantPreferences}
+					notes={data.story.assistantNotes}
+					inherited={{
+						preferences: data.universe.assistantPreferences,
+						notes: data.universe.assistantNotes
+					}}
+					standalone={data.universe.standalone}
+					saved={form?.action === 'assistant-preferences' && form.saved === true}
+					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
+					submitted={form?.action === 'assistant-preferences' && 'submitted' in form
+						? form.submitted
+						: null}
+				/>
+			{/key}
 		</div>
 	{/if}
 

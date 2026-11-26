@@ -24,7 +24,7 @@ let universeId: string;
 
 // Answers every request with plain text, recording what was asked. onRequest can
 // throw to make one turn fail (the failure paths under test).
-function provider(onRequest?: (messages: ChatMessage[]) => void): {
+function provider(onRequest?: (messages: ChatMessage[]) => void | Promise<void>): {
 	provider: Provider;
 	seen: ChatMessage[][];
 } {
@@ -37,7 +37,7 @@ function provider(onRequest?: (messages: ChatMessage[]) => void): {
 			},
 			async respond(req) {
 				seen.push(req.messages);
-				onRequest?.(req.messages);
+				await onRequest?.(req.messages);
 				return { content: 'no notes', toolCalls: [] };
 			},
 			async listModels() {
@@ -354,5 +354,53 @@ describe('resuming a run', () => {
 		expect(adopted?.completed).toEqual([second]);
 		expect(adopted?.reviewed).toBe(1);
 		expect(adopted?.notes).toBe(5);
+	});
+
+	// #1658: the run keys itself on the settings it read when it opened, so every
+	// scene must follow those, not an edit made part-way through.
+	it('states the same preferences to every scene when they change mid-run', async () => {
+		const storyId = await seedStory(2);
+		await db
+			.update(stories)
+			.set({ assistantNotes: 'Keep the serial commas.' })
+			.where(eq(stories.id, storyId));
+		const { provider: p, seen } = provider(async (messages) => {
+			if (reviewing(messages, 'Scene 1'))
+				await db
+					.update(stories)
+					.set({ assistantNotes: 'Drop the serial commas.' })
+					.where(eq(stories.id, storyId));
+		});
+		await reviewStoryScenes(
+			db,
+			{ userId, storyId, categories: ['prose'], jobId: 'mid-run-1' },
+			{ provider: p }
+		);
+
+		const second = seen.find((messages) => reviewing(messages, 'Scene 2'));
+		expect(second && asked(second)).toContain('Keep the serial commas.');
+		expect(second && asked(second)).not.toContain('Drop the serial commas.');
+	});
+
+	it('a retry of the same job under changed settings reviews every scene again', async () => {
+		const storyId = await seedStory(2);
+		const [first] = await sceneIds(storyId);
+		await saveReviewRun(db, {
+			jobId: 'retry-1658',
+			userId,
+			state: {
+				...emptyReviewRun(),
+				phase: 'scenes',
+				total: 2,
+				completed: [first],
+				reviewed: 1,
+				settings: 'old-settings'
+			}
+		});
+		const { provider: p, seen } = provider();
+		await reviewStoryScenes(db, { userId, storyId, jobId: 'retry-1658' }, { provider: p });
+
+		expect(seen.filter((messages) => reviewing(messages, 'Scene 1'))).toHaveLength(1);
+		expect((await loadReviewRun(db, 'retry-1658'))?.settings).not.toBe('old-settings');
 	});
 });

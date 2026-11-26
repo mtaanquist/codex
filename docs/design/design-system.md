@@ -485,7 +485,11 @@ primitive's own class too, but do not copy the pattern.
 - Inline result messages: the `FormStatus.svelte` component. Pass `live`
   where the message changes without a page load (an enhanced form whose row
   goes away): the status region then stays in the page, so each new message
-  is read out. The older
+  is read out. In an autosaving form (`#lib/autosave-form`) whose last save
+  errored, the form's first `FormStatus` shows the not-saved message in place
+  of its own, so every autosaving form needs one. An autosaving form's
+  action is `ownAction('name')` (or an id-based address for a form that
+  renames its page), never a relative `?/name`. The older
   `.form-error`/`.form-saved` classes remain in some routes; do not spread
   them further.
 - Do not hand-roll a text field. The codebase has 15+ one-off inputs that
@@ -617,6 +621,10 @@ The remaining scoped spellings (`.role-tag`, `.nav-badge`, `.tfa-badge`,
   of buttons. A table too wide for a narrow card stacks per row with a
   container query and `data-label` cells (the admin accounts table) rather
   than scrolling, since a scroll wrapper clips the row menus.
+- A paged admin list (the accounts table, Published) takes a GET
+  `.admin-search` form above it (field, Find, Show all) and Previous/Next
+  links in a `.settings-actions` row under it, carrying `?q=` and a
+  zero-based `?page=`.
 - Icon-led row lists: `.list-row` with `.list-ic`, `.list-main`,
   `.list-title`, `.list-sub`, `.list-actions`. A long title (a web address,
   say) wraps anywhere, so its end is always shown.
@@ -1029,7 +1037,10 @@ once the drag handlers stop swallowing keyboard events.
 
 Reusable primitives: `Icon`, `EntityBadge`, `EntityQuickCard`, `FandomSuggest` (a text box with
 fandom-list suggestions as a combobox; new universe and universe settings), `TagInput` (chips; optional
-`suggestions` for the browser's completion list, used by story fandoms),
+`suggestions` for the browser's completion list, used by story fandoms and tags; optional
+`splitOnComma`, off by default so a comma stays part of a value such as an alias "Smith, John",
+on for story tags so a typed or pasted comma ends a chip while a picked suggestion stays whole;
+`inputId` for a `<label for>` outside),
 `ModeSwitcher`, `PanelStrip`, `NewMenu`, `ThemePicker`, `CrumbMenu`,
 `SidebarSearch`, `HelpLink`, `FormStatus`, `ReviewAvatar`, `ReviewReplyForm`,
 `ReviewReplyRow`, `ReviewMarginRail`, `ReviewSelectionToolbar`.

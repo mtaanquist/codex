@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { enhance } from '#lib/enhance';
-	import { autosaveSubmit, autosubmitForm } from '#lib/autosave-form';
+	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
+	import FormStatus from '#lib/components/FormStatus.svelte';
 	import {
 		FONT_SIZES,
 		GUTTERS,
@@ -39,7 +40,7 @@
 <div class="settings-group">
 	<form
 		method="POST"
-		action="?/savePageSetup"
+		action={ownAction('savePageSetup')}
 		use:enhance={autosaveSubmit}
 		onchange={autosubmitForm}
 	>
@@ -260,9 +261,7 @@
 			</div>
 		</div>
 		<div class="settings-actions">
-			{#if form?.action === 'pagesetup' && form.saved}
-				<span class="field-hint" role="status" style="color:var(--status-final-ink);">Saved.</span>
-			{/if}
+			<FormStatus success={form?.action === 'pagesetup' && form.saved ? 'Saved.' : null} />
 		</div>
 	</form>
 </div>

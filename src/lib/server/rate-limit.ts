@@ -132,6 +132,16 @@ export function exportLimit(userId: string, now: number = Date.now()): RateLimit
 	return rateLimit(`export:${userId}`, EXPORT_PER_HOUR, 3600 * 1000, now);
 }
 
+// The import budget: previewing or importing a story file per user. A preview
+// and its import count once each. Reading a Word or EPUB file holds a worker
+// thread for up to half a minute, and the server runs only a couple at once
+// (parseDocumentInWorker), so this keeps one account from holding them all in
+// a loop while leaving room to import a shelf of stories in an afternoon.
+const IMPORT_PER_HOUR = 60;
+export function importLimit(userId: string, now: number = Date.now()): RateLimitResult {
+	return rateLimit(`import:${userId}`, IMPORT_PER_HOUR, 3600 * 1000, now);
+}
+
 // Clears all counters. For tests; not used by the app.
 export function resetRateLimits(): void {
 	windows.clear();

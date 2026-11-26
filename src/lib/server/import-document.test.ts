@@ -1,6 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import { strToU8, zipSync, type Zippable } from 'fflate';
-import { parseDocument, DocumentImportError } from './import-document';
+import { EventEmitter } from 'node:events';
+import { describe, it, expect, vi } from 'vitest';
+import TurndownService from 'turndown';
+import mammoth from 'mammoth';
+import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
+import {
+	closeSelfClosedTags,
+	parseDocument,
+	parseDocumentInWorker,
+	workerHeapLimitMb,
+	DocumentImportError
+} from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
 
 // A real 1x1 PNG so the bytes survive the importer's magic-number sniff too.
@@ -64,6 +73,146 @@ function imageParagraph(): string {
 }
 
 describe('parseDocument (docx)', () => {
+	it('refuses tables nested too deeply to convert', async () => {
+		const depth = 80;
+		const open = '<w:tbl><w:tr><w:tc>'.repeat(depth);
+		const close = '</w:tc></w:tr></w:tbl>'.repeat(depth);
+		const docx = buildDocx(open + paragraph('Deep.') + close);
+		await expect(parseDocument(docx, 'deep.docx')).rejects.toThrow(/nested too deeply/);
+	});
+
+	// mammoth finds the main document and its styles through relationships, so
+	// a part can have any name.
+	function renamePart(docx: Uint8Array, from: string, to: string, rels: string): Uint8Array {
+		const files = unzipSync(docx);
+		files[to] = files[from];
+		delete files[from];
+		const relsXml = strFromU8(files[rels]).replace(
+			from.slice(rels.startsWith('word/') ? 5 : 0),
+			to.slice(rels.startsWith('word/') ? 5 : 0)
+		);
+		files[rels] = strToU8(relsXml);
+		return zipSync(files);
+	}
+
+	it('refuses a document too large to convert whatever its parts are named', async () => {
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const huge = buildDocx(paragraph('word '.repeat(2_200_000)));
+			const renamed = renamePart(huge, 'word/document.xml', 'word/main.bin', '_rels/.rels');
+			await expect(parseDocument(renamed, 'huge.docx')).rejects.toThrow(/too large to import/);
+
+			// A styles part named by a relationship, with an escaped target.
+			const files = unzipSync(buildDocx(paragraph('Short.')));
+			files['word/s.dat'] = strToU8(`<w:styles>${' '.repeat(11 * 1024 * 1024)}</w:styles>`);
+			files['word/_rels/document.xml.rels'] = strToU8(
+				strFromU8(files['word/_rels/document.xml.rels']).replace(
+					'</Relationships>',
+					'<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="s&#46;dat"/></Relationships>'
+				)
+			);
+			await expect(parseDocument(zipSync(files), 'styles.docx')).rejects.toThrow(
+				/too large to import/
+			);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	// mammoth's zip reader tidies entry names ("./a", "a//b", "x/../a" all read
+	// as "a"), so the size limit has to see the same names.
+	const untidyNames = ['./word/document.xml', 'word//document.xml', 'x/../word/document.xml'];
+
+	it.each(untidyNames)('refuses a document too large to convert stored as %s', async (name) => {
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const files = unzipSync(buildDocx(paragraph('word '.repeat(2_200_000))));
+			files[name] = files['word/document.xml'];
+			delete files['word/document.xml'];
+			await expect(parseDocument(zipSync(files), 'huge.docx')).rejects.toThrow(
+				/too large to import/
+			);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it.each(untidyNames)('imports a document stored as %s', async (name) => {
+		const files = unzipSync(buildDocx(paragraph('Untidy.') + imageParagraph(), { title: 'T' }));
+		files[name] = files['word/document.xml'];
+		delete files['word/document.xml'];
+		files['./docProps/core.xml'] = files['docProps/core.xml'];
+		delete files['docProps/core.xml'];
+		const plan = await parseDocument(zipSync(files), 'untidy.docx');
+		expect(plan.story.title).toBe('T');
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Untidy.');
+		expect(plan.assets).toHaveLength(1);
+	});
+
+	it('refuses a document with two files that read as the same name', async () => {
+		const files = unzipSync(buildDocx(paragraph('Small.')));
+		files['./word/document.xml'] = files['word/document.xml'];
+		await expect(parseDocument(zipSync(files), 'twice.docx')).rejects.toThrow(
+			/could not be read as a Word document/
+		);
+	});
+
+	// "./__proto__" tidies to "__proto__", which as a plain object key would
+	// replace the object's prototype, so the rezip would write one entry per byte.
+	it.each(['./__proto__', 'a/../__proto__', '../__proto__'])(
+		'ignores an entry stored as %s',
+		async (name) => {
+			const files = unzipSync(buildDocx(paragraph('Kept.')));
+			files[name] = new Uint8Array(200 * 1024);
+			const spy = vi.spyOn(mammoth, 'convertToHtml');
+			try {
+				const plan = await parseDocument(zipSync(files), 'proto.docx');
+				expect(plan.chapters[0].scenes[0].bodyMd).toContain('Kept.');
+				const passed = unzipSync(
+					new Uint8Array((spy.mock.calls[0][0] as { buffer: Buffer }).buffer)
+				);
+				expect(Object.keys(passed).length).toBeLessThan(10);
+			} finally {
+				spy.mockRestore();
+			}
+		}
+	);
+
+	it('ignores a style map stored inside the document', async () => {
+		const files = unzipSync(buildDocx(paragraph('Kept.')));
+		files['mammoth/style-map'] = strToU8('p => !');
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const plan = await parseDocument(zipSync(files), 'mapped.docx');
+			expect(plan.chapters[0].scenes[0].bodyMd).toContain('Kept.');
+			const passed = unzipSync(new Uint8Array((spy.mock.calls[0][0] as { buffer: Buffer }).buffer));
+			expect(Object.keys(passed)).not.toContain('mammoth/style-map');
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('imports a renamed main part and does not count images toward the size limit', async () => {
+		const files = unzipSync(
+			renamePart(
+				buildDocx(paragraph('Renamed.') + imageParagraph()),
+				'word/document.xml',
+				'word/main.bin',
+				'_rels/.rels'
+			)
+		);
+		files['word/_rels/main.bin.rels'] = files['word/_rels/document.xml.rels'];
+		delete files['word/_rels/document.xml.rels'];
+		const bigImage = new Uint8Array(12 * 1024 * 1024);
+		bigImage.set(PNG);
+		files['word/media/image1.png'] = bigImage;
+		const plan = await parseDocument(zipSync(files), 'renamed.docx');
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Renamed.');
+		expect(plan.assets).toHaveLength(1);
+	});
+
 	it('reads the title and author and splits chapters and scenes', async () => {
 		const docx = buildDocx(
 			[
@@ -109,6 +258,24 @@ describe('parseDocument (docx)', () => {
 			.map((s) => s.bodyMd)
 			.join('\n');
 		expect(body).toContain(`assets/${asset.id}.png`);
+	});
+
+	it('refuses a document too large to convert before converting it', async () => {
+		const spy = vi.spyOn(mammoth, 'convertToHtml');
+		try {
+			const docx = buildDocx(paragraph('word '.repeat(2_200_000)));
+			await expect(parseDocument(docx, 'huge.docx')).rejects.toThrow(/too large to import/);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('imports a long novel', async () => {
+		// About 150,000 words in Word's usual run markup.
+		const para = paragraph('word '.repeat(100)).replace('<w:r>', '<w:r w:rsidR="00A1B2C3">');
+		const plan = await parseDocument(buildDocx(para.repeat(1500)), 'novel.docx');
+		expect(plan.chapters.flatMap((c) => c.scenes)).toHaveLength(1);
 	});
 });
 
@@ -162,6 +329,16 @@ describe('parseDocument (epub)', () => {
 		expect(plan.chapters[0].scenes[0].bodyMd).toBe('Once upon a time.');
 	});
 
+	it('reads a character reference to an impossible code point as a replacement character', async () => {
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: '<p>Text.</p>' }], {
+			title: '&#x110000;',
+			author: 'A&#xD800;&#0;&#99999999999;'
+		});
+		const plan = await parseDocument(epub, 'odd.epub');
+		expect(plan.story.title).toBe('\ufffd');
+		expect(plan.story.author).toBe('A\ufffd\ufffd\ufffd');
+	});
+
 	it('falls back to one chapter per spine document when there are no headings', async () => {
 		const epub = buildEpub([
 			{ name: 'a.xhtml', xhtml: '<p>Chapter without a heading.</p>' },
@@ -188,6 +365,411 @@ describe('parseDocument (epub)', () => {
 			.map((s) => s.bodyMd)
 			.join('\n');
 		expect(body).toContain(`assets/${asset.id}.png`);
+	});
+
+	it('bundles an image used several times only once', async () => {
+		const img = '<img src="images/pic.png" alt="x"/>';
+		const epub = buildEpub(
+			[
+				{ name: 'ch1.xhtml', xhtml: `<h1>One</h1><p>${img} and ${img}</p>` },
+				{ name: 'ch2.xhtml', xhtml: `<h1>Two</h1><p>${img.replace('images/', './images/')}</p>` }
+			],
+			{ withImage: true }
+		);
+		const plan = await parseDocument(epub, 'book.epub');
+		expect(plan.assets).toHaveLength(1);
+		const body = plan.chapters
+			.flatMap((c) => c.scenes)
+			.map((s) => s.bodyMd)
+			.join('\n');
+		expect(body.split(`assets/${plan.assets[0].id}.png`)).toHaveLength(4);
+	});
+
+	it.each(['constructor', '__proto__', 'toString'])(
+		'leaves an image pointing at a missing file named %s alone',
+		async (name) => {
+			const epub = buildEpub([
+				{ name: 'ch1.xhtml', xhtml: `<h1>One</h1><p>See <img src="../${name}" alt="x"/></p>` }
+			]);
+			const plan = await parseDocument(epub, 'book.epub');
+			expect(plan.assets).toHaveLength(0);
+		}
+	);
+
+	it('ignores an entry named __proto__', async () => {
+		// Zipped under a stand-in name of the same length, then renamed in the
+		// archive bytes, since building it from an object would hit the same key.
+		const files = unzipSync(
+			buildEpub([{ name: 'ch1.xhtml', xhtml: '<h1>One</h1><p>See <img src="../1" alt="x"/></p>' }])
+		);
+		files['zzproto__'] = new Uint8Array([7, 7, 7]);
+		const archive = Buffer.from(zipSync(files));
+		for (let at = archive.indexOf('zzproto__'); at !== -1; at = archive.indexOf('zzproto__', at)) {
+			archive.write('__proto__', at);
+		}
+		const plan = await parseDocument(new Uint8Array(archive), 'book.epub');
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('See');
+		expect(plan.assets).toHaveLength(0);
+	});
+
+	it('reads paths with a malformed percent escape as written', async () => {
+		const epub = buildEpub([
+			{ name: 'ch%E0.xhtml', xhtml: '<h1>One</h1><p>See <img src="images/a%E0.png" alt="x"/></p>' }
+		]);
+		const plan = await parseDocument(
+			zip({ ...unzipSync(epub), 'OEBPS/images/a%E0.png': new Uint8Array(PNG) }),
+			'book.epub'
+		);
+		expect(plan.assets).toHaveLength(1);
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain(`assets/${plan.assets[0].id}.png`);
+	});
+
+	it('rejects markup nested too deeply to convert with a plain message', async () => {
+		const depth = 2500;
+		const epub = buildEpub([
+			{ name: 'ch1.xhtml', xhtml: '<div>'.repeat(depth) + '<p>Deep.</p>' + '</div>'.repeat(depth) }
+		]);
+		const outcome = parseDocument(epub, 'deep.epub');
+		await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
+		await expect(outcome).rejects.toThrow(/nested too deeply/);
+	});
+
+	it('refuses deeply nested quotes quickly instead of converting them', async () => {
+		// Converting these took over 20 seconds and 20 million characters.
+		const nest = '<blockquote><p>q</p>'.repeat(1000) + '</blockquote>'.repeat(1000);
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: nest.repeat(10) }]);
+		const started = performance.now();
+		await expect(parseDocument(epub, 'quotes.epub')).rejects.toThrow(/nested too deeply/);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it('refuses deeply nested quotes hidden behind stray end tags', async () => {
+		const nest = '<blockquote></i><p>a</p><p>b</p>'.repeat(1000);
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: nest.repeat(10) }]);
+		const started = performance.now();
+		await expect(parseDocument(epub, 'quotes.epub')).rejects.toThrow(/nested too deeply/);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it('refuses a section too large to convert before converting it', async () => {
+		const huge = `<p>${'word '.repeat(2_200_000)}</p>`;
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: huge }]);
+		const started = performance.now();
+		await expect(parseDocument(epub, 'huge.epub')).rejects.toThrow(/section too large/);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it('imports nesting as deep as real books use', async () => {
+		const quotes = '<blockquote><p>Quoted.</p>'.repeat(12) + '</blockquote>'.repeat(12);
+		const list = '<ul><li>Item'.repeat(9) + '</li></ul>'.repeat(9);
+		const unclosed = '<p>An unclosed paragraph.'.repeat(300);
+		const plan = await parseDocument(
+			buildEpub([
+				{ name: 'ch1.xhtml', xhtml: `<div><div>${quotes}${list}${unclosed}</div></div>` }
+			]),
+			'nested.epub'
+		);
+		const body = plan.chapters[0].scenes[0].bodyMd;
+		expect(body).toContain('> > > > > > > > > > > > Quoted.');
+		expect(body).toContain('Item');
+		expect(body.match(/An unclosed paragraph\./g)).toHaveLength(300);
+	});
+
+	it('refuses a book that would produce too much text', async () => {
+		const chapter = `<p>${'a'.repeat(1_000_000)}</p>`;
+		const docs = Array.from({ length: 27 }, (_, i) => ({ name: `ch${i}.xhtml`, xhtml: chapter }));
+		await expect(parseDocument(buildEpub(docs), 'long.epub')).rejects.toThrow(/too much text/);
+	});
+
+	it('reports a stack overflow while converting as nesting', async () => {
+		const spy = vi.spyOn(TurndownService.prototype, 'turndown').mockImplementation(() => {
+			throw new RangeError('Maximum call stack size exceeded');
+		});
+		try {
+			const outcome = parseDocument(buildEpub([{ name: 'a.xhtml', xhtml: '<p>A.</p>' }]), 'a.epub');
+			await expect(outcome).rejects.toThrow(/nested too deeply/);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it('lets any other conversion failure through unchanged', async () => {
+		const failure = new TypeError('converter bug');
+		const spy = vi.spyOn(TurndownService.prototype, 'turndown').mockImplementation(() => {
+			throw failure;
+		});
+		try {
+			const outcome = parseDocument(buildEpub([{ name: 'a.xhtml', xhtml: '<p>A.</p>' }]), 'a.epub');
+			await expect(outcome).rejects.toBe(failure);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});
+
+describe('parseDocumentInWorker', () => {
+	it('imports a document in a worker thread', async () => {
+		const epub = buildEpub(
+			[
+				{ name: 'ch1.xhtml', xhtml: '<h1>One</h1><p>See <img src="images/pic.png" alt="x"/></p>' },
+				{ name: 'ch2.xhtml', xhtml: '<h1>Two</h1><p>Later.</p>' }
+			],
+			{ title: 'Threaded', withImage: true }
+		);
+		const plan = await parseDocumentInWorker(epub, 'book.epub');
+		expect(plan.story.title).toBe('Threaded');
+		expect(plan.chapters.map((c) => c.title)).toEqual(['One', 'Two']);
+		expect(plan.chapters[1].scenes[0].bodyMd).toBe('Later.');
+		expect(plan.assets).toHaveLength(1);
+		expect(Buffer.from(plan.assets[0].bytes).equals(PNG)).toBe(true);
+	});
+
+	it('passes a refusal back as a plain import error', async () => {
+		const outcome = parseDocumentInWorker(new Uint8Array([1, 2, 3]), 'notes.txt');
+		await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
+		await expect(outcome).rejects.toThrow(/can import Word/);
+	});
+
+	it('stops a slow conversion at the time limit without holding up the server', async () => {
+		// Tens of seconds of Turndown: its time grows with the square of the
+		// siblings under one element.
+		const flat = `<div>${'<span>word </span>'.repeat(200_000)}</div>`;
+		const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: flat }]);
+		let longestGap = 0;
+		let last = performance.now();
+		const tick = setInterval(() => {
+			const now = performance.now();
+			longestGap = Math.max(longestGap, now - last);
+			last = now;
+		}, 10);
+		const started = performance.now();
+		try {
+			const outcome = parseDocumentInWorker(epub, 'flat.epub', 1000);
+			await expect(outcome).rejects.toBeInstanceOf(DocumentImportError);
+			await expect(outcome).rejects.toThrow(/took too long/);
+		} finally {
+			clearInterval(tick);
+		}
+		expect(performance.now() - started).toBeLessThan(5000);
+		expect(longestGap).toBeLessThan(500);
+	});
+});
+
+describe('parseDocumentInWorker limits', () => {
+	const small = () => buildEpub([{ name: 'ch1.xhtml', xhtml: '<h1>One</h1><p>Text.</p>' }]);
+
+	it('turns a file away while two others are being read, and takes it once they finish', async () => {
+		const first = parseDocumentInWorker(small(), 'a.epub');
+		const second = parseDocumentInWorker(small(), 'b.epub');
+		const third = parseDocumentInWorker(small(), 'c.epub');
+		await expect(third).rejects.toBeInstanceOf(DocumentImportError);
+		await expect(third).rejects.toThrow(/Another file is being read/);
+		await expect(first).resolves.toBeDefined();
+		await expect(second).resolves.toBeDefined();
+		const plan = await parseDocumentInWorker(small(), 'd.epub');
+		expect(plan.chapters.flatMap((c) => c.scenes).map((s) => s.bodyMd)).toEqual(['Text.']);
+	});
+
+	it('frees its place when a reading fails or runs out of time', async () => {
+		const flat = `<div>${'<span>word </span>'.repeat(200_000)}</div>`;
+		const slow = buildEpub([{ name: 'ch1.xhtml', xhtml: flat }]);
+		await expect(parseDocumentInWorker(new Uint8Array([1]), 'x.txt')).rejects.toThrow();
+		await expect(parseDocumentInWorker(slow, 'slow.epub', 300)).rejects.toThrow(/took too long/);
+		await expect(parseDocumentInWorker(slow, 'slow.epub', 300)).rejects.toThrow(/took too long/);
+		await expect(parseDocumentInWorker(small(), 'a.epub')).resolves.toBeDefined();
+	});
+
+	it('caps the worker heap at half the available memory, never above 2048 MB', () => {
+		const gb = 2 ** 30;
+		expect(workerHeapLimitMb(2 * gb)).toBe(1024);
+		expect(workerHeapLimitMb(3 * gb)).toBe(1536);
+		expect(workerHeapLimitMb(4 * gb)).toBe(2048);
+		expect(workerHeapLimitMb(64 * gb)).toBe(2048);
+	});
+
+	it('reports a worker out of memory as a file too large, and other failures as they are', async () => {
+		// A fake worker that fails the way Node reports the heap limit.
+		const options: { resourceLimits?: { maxOldGenerationSizeMb?: number } }[] = [];
+		const failWith = (error: Error) => {
+			class FailingWorker extends EventEmitter {
+				constructor(_entry: string, opts: (typeof options)[number]) {
+					super();
+					options.push(opts);
+					setImmediate(() => this.emit('error', error));
+				}
+				terminate() {
+					return Promise.resolve(1);
+				}
+			}
+			return FailingWorker;
+		};
+		const oom = Object.assign(new Error('Worker terminated due to reaching memory limit'), {
+			code: 'ERR_WORKER_OUT_OF_MEMORY'
+		});
+		const other = new Error('worker crashed');
+		vi.resetModules();
+		vi.doMock('node:worker_threads', () => ({ Worker: failWith(oom) }));
+		try {
+			const fresh = await import('./import-document');
+			const outcome = fresh.parseDocumentInWorker(small(), 'big.epub');
+			await expect(outcome).rejects.toBeInstanceOf(fresh.DocumentImportError);
+			await expect(outcome).rejects.toThrow(/too large to read/);
+			// The heap cap is what makes Node stop a runaway conversion this way.
+			expect(options[0].resourceLimits?.maxOldGenerationSizeMb).toBeGreaterThan(0);
+
+			vi.resetModules();
+			vi.doMock('node:worker_threads', () => ({ Worker: failWith(other) }));
+			const again = await import('./import-document');
+			await expect(again.parseDocumentInWorker(small(), 'a.epub')).rejects.toBe(other);
+		} finally {
+			vi.doUnmock('node:worker_threads');
+			vi.resetModules();
+		}
+	});
+});
+
+describe('parseDocumentInWorker start failure', () => {
+	it('frees its place when the worker cannot start', async () => {
+		const failure = new Error('cannot start worker');
+		vi.resetModules();
+		vi.doMock('node:worker_threads', () => ({
+			Worker: class {
+				constructor() {
+					throw failure;
+				}
+			}
+		}));
+		try {
+			const fresh = await import('./import-document');
+			const epub = buildEpub([{ name: 'ch1.xhtml', xhtml: '<p>Text.</p>' }]);
+			for (let attempt = 0; attempt < 3; attempt++) {
+				await expect(fresh.parseDocumentInWorker(epub, 'a.epub')).rejects.toBe(failure);
+			}
+		} finally {
+			vi.doUnmock('node:worker_threads');
+			vi.resetModules();
+		}
+	});
+});
+
+describe('closeSelfClosedTags', () => {
+	it('opens and closes self-closed elements that are not void', () => {
+		expect(closeSelfClosedTags('<span id="p1"/><div class="x" /><a b/><svg:g/>')).toBe(
+			'<span id="p1"></span><div class="x" ></div><a b></a><svg:g></svg:g>'
+		);
+	});
+
+	it('leaves ordinary markup exactly as it is', () => {
+		const ordinary = [
+			'<p>Text <em>one</em>.</p><br/><hr /><img src="a.png" alt="x"/><BR/>',
+			'<a href=x/>link</a>',
+			'<p title="a/">t</p><p>1 < 2 and 3 > 2 / 4</p>',
+			'<!-- <span/> --><!--> <span/><!---> <span/><!-- x --!><p/>',
+			'<script>var a = "<span/>";</script><style>p{} /* <div/> */</style>',
+			'<title>A <span/> title</title><textarea><b/></textarea>',
+			'<!DOCTYPE html><?xml version="1.0"?></p ><![CDATA[x]]>',
+			'<span/'
+		];
+		expect(ordinary.map(closeSelfClosedTags)).toEqual([
+			ordinary[0],
+			ordinary[1],
+			ordinary[2],
+			'<!-- <span/> --><!--> <span></span><!---> <span></span><!-- x --!><p></p>',
+			ordinary[4],
+			ordinary[5],
+			ordinary[6],
+			ordinary[7]
+		]);
+	});
+
+	it('leaves everything after an unclosed comment or script alone', () => {
+		const unclosed = ['<!-- <span/>', '<script><span/>', '<style x="1"><span/>', '<plaintext><b/>'];
+		for (const html of unclosed) {
+			expect(closeSelfClosedTags(html)).toBe(html);
+		}
+	});
+
+	it('reads junk markup in linear time', () => {
+		for (const junk of ['<a'.repeat(200_000), '<a "'.repeat(100_000), '<a=b/'.repeat(80_000)]) {
+			const started = performance.now();
+			closeSelfClosedTags(junk);
+			expect(performance.now() - started).toBeLessThan(1000);
+		}
+	});
+});
+
+describe('parseDocument nesting limit', () => {
+	const convert = (xhtml: string) =>
+		parseDocument(buildEpub([{ name: 'a.xhtml', xhtml }]), 'a.epub');
+
+	it('imports nesting up to the limit and refuses one level more', async () => {
+		const at = (depth: number) => '<div>'.repeat(depth - 1) + '<p>Deepest.</p>';
+		const plan = await convert(at(64));
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Deepest.');
+		await expect(convert(at(65))).rejects.toThrow(/nested too deeply/);
+	});
+
+	it('does not count markup inside comments, scripts or styles', async () => {
+		const deep = '<div>'.repeat(200);
+		const plan = await convert(
+			`<!-- ${deep} --><script>"${deep}"</script><style>${deep}</style><p>Kept.</p>`
+		);
+		expect(plan.chapters[0].scenes[0].bodyMd).toContain('Kept.');
+	});
+
+	it('refuses deep nesting however the markup hides it', async () => {
+		const deep = '<blockquote>'.repeat(200) + 'x' + '</blockquote>'.repeat(200);
+		const vectors = [
+			`<!-->${deep}<!-- -->`,
+			`<svg><style>${deep.replaceAll('blockquote', 'g')}</style></svg>`,
+			'<math><annotation-xml encoding="text/html">' +
+				'<li><section>'.repeat(300) +
+				'<p>q</p>'.repeat(2000),
+			'<svg><br>' + '<section>'.repeat(300),
+			'<math><p>' + '<section>'.repeat(300),
+			'<svg><font color="red">' + '<section>'.repeat(300),
+			'<section><!x </section>>'.repeat(300),
+			'<section><?x </section>>'.repeat(300),
+			'<section></1 </section>>'.repeat(300),
+			'<section><![CDATA[</section>>'.repeat(300)
+		];
+		for (const xhtml of vectors) {
+			const started = performance.now();
+			await expect(convert(xhtml)).rejects.toThrow(/nested too deeply/);
+			expect(performance.now() - started).toBeLessThan(2000);
+		}
+	});
+
+	// XHTML page-break markers are often written self-closed, which an HTML
+	// parser reads as an element left open around the rest of the chapter.
+	it('imports many self-closed page-break markers between paragraphs', async () => {
+		const pages = (marker: (n: number) => string) =>
+			Array.from({ length: 200 }, (_, n) => `${marker(n)}<p>Page ${n}.</p>`).join('');
+		const markers = [
+			(n: number) => `<span epub:type="pagebreak" id="page${n}" title="${n}"/>`,
+			() => `<div class="pagebreak" />`,
+			(n: number) => `<SPAN id="p${n}"/>`
+		];
+		for (const marker of markers) {
+			for (const xhtml of [pages(marker), `<section>${pages(marker)}</section>`]) {
+				const body = (await convert(xhtml)).chapters[0].scenes[0].bodyMd;
+				expect(body).toContain('Page 0.');
+				expect(body).toContain('Page 199.');
+				expect(body).not.toMatch(/^ {4}/m);
+			}
+		}
+	});
+
+	it('keeps the text of self-closed tags that would otherwise swallow the rest', async () => {
+		const body = (await convert('<p>One.</p><title/><textarea/><p>Two.</p>')).chapters[0].scenes[0]
+			.bodyMd;
+		expect(body).toContain('Two.');
+	});
+
+	it('stops reading markup thousands of levels deep early', async () => {
+		const started = performance.now();
+		await expect(convert('<div>'.repeat(200_000))).rejects.toThrow(/nested too deeply/);
+		expect(performance.now() - started).toBeLessThan(2000);
 	});
 });
 
@@ -365,6 +947,18 @@ describe('parseDocument (AO3 epub)', () => {
 				scenes: [{ title: null, status: null, bodyMd: 'The whole story.' }]
 			}
 		]);
+	});
+
+	it('refuses a chapter spread over files too large together, before converting any', async () => {
+		const part = `<div id="chapters"><div class="userstuff2"><p>${'word '.repeat(800_000)}</p></div></div>`;
+		const spy = vi.spyOn(TurndownService.prototype, 'turndown');
+		try {
+			const epub = buildAo3Epub([...ao3Preface('General Audiences'), part, part, part]);
+			await expect(parseDocument(epub, 'w.epub')).rejects.toThrow(/section too large/);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
 	});
 
 	it('keeps headings and chapter lines inside the prose', async () => {

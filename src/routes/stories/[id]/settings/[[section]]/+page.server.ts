@@ -1,5 +1,5 @@
 import { error, fail, redirect } from '@sveltejs/kit';
-import { isUuid } from '#lib/slug';
+import { isUuid, slugAddress, withRef } from '#lib/slug';
 import { and, eq } from 'drizzle-orm';
 import type { Actions, PageServerLoad } from './$types';
 import { db } from '#lib/server/db';
@@ -109,10 +109,13 @@ const SECTIONS = [
 	'danger'
 ];
 
-export const load: PageServerLoad = async ({ params, locals }) => {
+export const load: PageServerLoad = async ({ params, locals, url }) => {
 	// Details rests on /settings itself; the other sections have their own page.
 	if (params.section !== undefined && !SECTIONS.includes(params.section)) error(404, 'Not found');
 	const { story, universe } = await ownedStory(params.id, locals.user!.id);
+	// A page reached by id moves to its slug address, where its links and a
+	// rename's redirect expect it to be (#1691).
+	if (params.id !== slugAddress(story)) redirect(303, withRef(url, slugAddress(story)));
 	// These reads are independent; only the artifact list depends on the
 	// edition, so run the rest together and fetch artifacts after.
 	const [
@@ -415,7 +418,7 @@ export const actions: Actions = {
 		const data = await request.formData();
 		const view = await storyTagView(db, story.id);
 		// Checked before anything is written, so a refused name saves nothing.
-		const checked = checkTagNames(chipValues(data, 'tags'), view.tags.length);
+		const checked = await checkTagNames(db, chipValues(data, 'tags'), view.tags.length);
 		const genres = await pickListed(db, 'genre', data.getAll('genres'));
 		// Like fandoms, a story already over the limit (after an unmerge) may
 		// keep what it has but not add more.

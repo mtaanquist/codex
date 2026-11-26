@@ -5,7 +5,11 @@ sections are Profile, Security, Connected apps, Assistant, Display, Editor,
 Notifications, and Page setup, plus Invites once an admin has given you invites.
 Connected apps is missing when the person who runs your Codex has turned it off. Changes save on their own:
 a choice saves as soon as you make it, and a text field saves when you leave it.
-A "Saved." note confirms each save.
+A "Saved." note confirms each save. If a save fails, for example because you lost your connection, a note says
+your change was not saved; what you typed stays in the field, and leaving a field again tries the save once more.
+If you follow a link while a change is still saving, or has failed, the link waits for the save (trying it
+again if it failed) and you stay on the page with your text if it does not go through.
+If you close the tab or reload first, your browser asks you to confirm.
 
 On a large window, the sidebar lists the parts of Security and Assistant under
 "On this page". Pick one to jump to it.
@@ -423,9 +427,10 @@ Where to find what an app left:
 
 Suggested edits, suggested entries and proposed splits are not part of your
 export. What you accepted or kept is, because it is then part of your writing.
-Review comments are exported with the story they are on. Waiting drafts are in
-the export of your whole account (see [Security](/docs/security)), but not in a
-story's own export.
+Review comments and waiting drafts are in the export of your whole account (see
+[Security](/docs/security)), but not in a story's own export. Importing a story
+folder from that export brings its waiting drafts back, but not its review
+comments.
 
 A connected app is also given ready-made prompts for the work the Assistant
 does in Codex: review, copyedit, continuity review, pattern pass, write,
