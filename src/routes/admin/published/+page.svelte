@@ -89,9 +89,7 @@
 											: 'hidden after a cancelled account deletion'}
 									</span>{/if}
 								{#if edition.isAdult}<span class="pill">adult</span>{/if}
-								{#if edition.listedInBrowse && !edition.hiddenAt}<span class="pill">
-										listed in Browse
-									</span>{/if}
+								{#if edition.shownInBrowse}<span class="pill"> listed in Browse </span>{/if}
 								{#if edition.browseBlockedAt}<span class="pill">removed from Browse</span>{/if}
 							</div>
 							<div class="list-sub">
@@ -181,8 +179,8 @@
 		<div class="admin-block-head">
 			<h2 class="admin-block-title">Taken down</h2>
 			<p class="admin-block-sub">
-				The writer cannot publish these stories again until you restore the edition. Restoring also
-				restores any older edition of the story taken down with it.
+				The writer cannot publish these stories again until you restore the edition. Restoring lifts
+				the takedown from every edition of the story.
 			</p>
 		</div>
 		<div class="admin-card tight">

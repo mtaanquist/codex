@@ -10,6 +10,7 @@ import {
 	isNotNull,
 	isNull,
 	ne,
+	not,
 	or,
 	sql,
 	type AnyColumn
@@ -36,6 +37,7 @@ import { currentNotTakenDown, readersCanOpen } from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
+import { listedInBrowseCondition } from './browse.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
 
 // Publishing freezes the story's current prose into an edition; the
@@ -594,7 +596,11 @@ export async function takedownPublication(
 	removedBy: string | null,
 	// A takedown always has a reason. Account deletion hides editions by
 	// setting removed_at alone (see scheduleAccountDeletion).
-	reason: ReportReason
+	reason: ReportReason,
+	// Whether the moderator's page showed a newer edition that the takedown
+	// also puts down. False refuses when one exists now, since the moderator
+	// was not told; left out, nothing is checked.
+	{ newerShown }: { newerShown?: boolean } = {}
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const [target] = await tx
@@ -620,6 +626,19 @@ export async function takedownPublication(
 			.innerJoin(stories, eq(stories.id, publications.storyId))
 			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
 		if (!readable) return false;
+		if (newerShown === false) {
+			const [newer] = await tx
+				.select({ id: publications.id })
+				.from(publications)
+				.where(
+					and(
+						eq(publications.storyId, target.storyId),
+						ne(publications.id, publicationId),
+						currentNotTakenDown()
+					)
+				);
+			if (newer) return false;
+		}
 		const updated = await tx
 			.update(publications)
 			// An edition already down with its author's account deletion gets
@@ -686,7 +705,7 @@ export async function restorePublication(
 			.select({ deletionScheduledAt: users.deletionScheduledAt })
 			.from(users)
 			.where(eq(users.id, edition.ownerId))
-			.for('update');
+			.for('no key update');
 		if (!owner || owner.deletionScheduledAt) return false;
 		const restored = await tx
 			.update(publications)
@@ -753,6 +772,9 @@ export async function listLiveEditions(
 			storyId: publications.storyId,
 			listedInBrowse: stories.listedInBrowse,
 			browseBlockedAt: stories.browseBlockedAt,
+			// Whether Browse lists it now, which also needs its author to be
+			// active and not hidden from Browse.
+			shownInBrowse: sql<boolean>`exists (select 1 from publications p join stories s on s.id = p.story_id join users u on u.id = p.owner_id where p.id = ${publications.id} and ${listedInBrowseCondition})`,
 			// Down with no takedown reason: the author's account deletion hid it.
 			hiddenAt: publications.removedAt,
 			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
@@ -836,16 +858,17 @@ function takenDownAt() {
 // Whether a moderator may read an edition's text on its own page: it is the
 // current edition of a story still shared (not private, not in the trash), or
 // it has a report that is open, or one closed by a takedown that still holds
-// on the story (nothing restored since the report closed). A takedown alone does not unlock an edition, so one it put
+// on the story. A takedown alone does not unlock an edition, so one it put
 // down only because it was the story's current edition (of a story the author
 // made private) stays unread, and once the takedown is lifted (a mistake) its
 // reports unlock nothing. A dismissed report does not unlock it either.
 function moderatorMayRead() {
-	// A takedown that closed a report still holds while some edition of the
-	// story is down with a reason and none was restored since the report
-	// closed: a restore lifts every edition's takedown at once, so a later
-	// takedown (of a newer edition, with no report) does not count.
-	const takedownHolds = sql`(exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null) and not exists (select 1 from ${publications} r where r.story_id = ${publications.storyId} and r.restored_at > ${publicationReports.resolvedAt}))`;
+	// The takedown that closed a report set the report's resolved_at and the
+	// editions' taken_down_at to the same now() in one transaction, so it still
+	// holds while an edition of the story is down with that time. A restore
+	// clears taken_down_at, and a later takedown sets a later time. A takedown
+	// from before migration 0133 has no taken_down_at and does not hold here.
+	const takedownHolds = sql`exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null and d.taken_down_at = ${publicationReports.resolvedAt})`;
 	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or (${publicationReports.resolution} = 'taken_down' and ${takedownHolds}))))`;
 }
 
@@ -861,6 +884,24 @@ export async function editionReplaced(db: Database, publicationId: string): Prom
 				eq(publications.id, publicationId),
 				eq(publications.isCurrent, false),
 				isNull(publications.removedAt)
+			)
+		);
+	return Boolean(row);
+}
+
+// Whether an edition is the current one of a story its author has since made
+// private or moved to the trash, and not taken down: the takedown form says so
+// when it refuses one.
+export async function editionWithdrawn(db: Database, publicationId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publications.id })
+		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.where(
+			and(
+				eq(publications.id, publicationId),
+				currentNotTakenDown(),
+				or(eq(stories.visibility, 'private'), not(storyIsLive()))
 			)
 		);
 	return Boolean(row);
