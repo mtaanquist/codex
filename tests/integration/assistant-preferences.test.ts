@@ -1197,6 +1197,63 @@ describe('content limits across merges, renames and removals', () => {
 		}
 	});
 
+	it('does not deadlock a save with an undone merge right after a merge it waited on', async () => {
+		// A merge holds both rows while a save of the survivor's limit and an
+		// undo of that merge (which locks the merged row, then the survivor)
+		// queue behind it. Once it commits, the save must not hold the survivor
+		// while it waits for the merged row the undo already holds.
+		const gore = await tagId('gore');
+		const [mergedId, survivorId] = [gore, await tagId('blood')].sort();
+		const survivorSlug = survivorId === gore ? 'gore' : 'blood';
+		const holder = await pool.connect();
+		try {
+			await holder.query('begin');
+			const { rows: me } = await holder.query('select pg_backend_pid() as pid');
+			await holder.query('select id from tags where id = any($1) order by id for update', [
+				[mergedId, survivorId]
+			]);
+			await holder.query('update tags set merged_into_id = $1 where id = $2', [
+				survivorId,
+				mergedId
+			]);
+			const save = savePreferences(
+				db,
+				user.id,
+				{ storyId },
+				{ changes: { [`warning:${survivorSlug}`]: 'avoid' }, notes: undefined, warningList: '' }
+			);
+			const undo = pool.connect().then(async (client) => {
+				try {
+					await client.query('begin');
+					await client.query('select id from tags where id = any($1) order by id for update', [
+						[mergedId, survivorId]
+					]);
+					await client.query('commit');
+				} catch (error) {
+					await client.query('rollback');
+					throw error;
+				} finally {
+					client.release();
+				}
+			});
+			let blocked = false;
+			for (let tries = 0; tries < 200 && !blocked; tries++) {
+				const { rows } = await pool.query(
+					`select count(*)::int as n from pg_stat_activity
+					where $1 = any(pg_blocking_pids(pid))`,
+					[me[0].pid]
+				);
+				blocked = rows[0].n >= 2;
+				if (!blocked) await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+			expect(blocked).toBe(true);
+			await holder.query('commit');
+			await expect(Promise.all([save, undo])).resolves.toEqual(['outdated', undefined]);
+		} finally {
+			holder.release();
+		}
+	});
+
 	it("drops a removed warning's limit, and a restore brings it back", async () => {
 		await saveStory({ 'warning:gore': 'avoid' });
 		await saveUniverse({ 'warning:blood': 'write' });

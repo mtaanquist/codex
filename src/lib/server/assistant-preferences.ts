@@ -241,13 +241,17 @@ export const OUTDATED_WARNINGS =
 	'Your other changes are saved. The list of content warnings has changed, so your content limits were not changed. Reload the page to set them.';
 
 // Share-locks the warnings with these slugs and the warnings merged into
-// them, in id order. Read again until nothing new turns up, in case a merge
-// into one committed while the lock waited.
+// them, in one statement in id order. A merge into one that committed while
+// the lock waited is missed by that statement, so a plain read checks for new
+// rows afterwards; when there are any, every lock taken is let go (the
+// savepoint is rolled back) and the whole set is locked again, so a lock on a
+// lower id is never awaited while a higher one is held (an undone merge takes
+// its rows in id order too).
+const RELOCK = Symbol('relock');
 async function lockWarnings(tx: Database, slugs: string[]): Promise<void> {
 	const posted = alias(tags, 'posted');
-	const locked = new Set<string>();
-	for (;;) {
-		const rows = await tx
+	const matching = (db: Database) =>
+		db
 			.select({ id: tags.id })
 			.from(tags)
 			.where(
@@ -257,7 +261,7 @@ async function lockWarnings(tx: Database, slugs: string[]): Promise<void> {
 						inArray(tags.slug, slugs),
 						inArray(
 							tags.mergedIntoId,
-							tx
+							db
 								.select({ id: posted.id })
 								.from(posted)
 								.where(and(eq(posted.kind, 'warning'), inArray(posted.slug, slugs)))
@@ -265,11 +269,18 @@ async function lockWarnings(tx: Database, slugs: string[]): Promise<void> {
 					)
 				)
 			)
-			.orderBy(asc(tags.id))
-			.for('share');
-		const fresh = rows.filter(({ id }) => !locked.has(id));
-		if (fresh.length === 0) return;
-		for (const { id } of fresh) locked.add(id);
+			.orderBy(asc(tags.id));
+	for (;;) {
+		try {
+			await tx.transaction(async (savepoint) => {
+				const locked = new Set((await matching(savepoint).for('share')).map(({ id }) => id));
+				const now = await matching(savepoint);
+				if (now.some(({ id }) => !locked.has(id))) throw RELOCK;
+			});
+			return;
+		} catch (error) {
+			if (error !== RELOCK) throw error;
+		}
 	}
 }
 
