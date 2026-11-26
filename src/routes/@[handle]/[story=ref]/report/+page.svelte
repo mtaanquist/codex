@@ -23,6 +23,7 @@
 		</p>
 	{:else}
 		<form method="POST">
+			<input type="hidden" name="editionId" value={data.editionId} />
 			<p class="auth-lede">
 				Tell the people who look after this site what is wrong. They can take the story down. Your
 				report does not include your name or email address.

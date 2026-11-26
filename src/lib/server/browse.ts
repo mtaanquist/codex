@@ -357,8 +357,8 @@ export async function saveStoryVisibility(
 }
 
 // A moderator takes a story off Browse and keeps it off until allowed again.
-// Its pages stay up; that is what a takedown is for. Open reports on the
-// story's editions close as handled.
+// Its pages stay up; that is what a takedown is for. The report acted on
+// closes; others stay open.
 export async function removeFromBrowse(
 	db: Database,
 	storyId: string,
@@ -366,39 +366,49 @@ export async function removeFromBrowse(
 	reason: ReportReason,
 	// The report the moderator acted on, which closes. Other reports on the
 	// story stay open: its pages are still up, so they may need a takedown.
+	// When that report is already closed (another moderator got there first),
+	// nothing changes and the result is 'report-closed'.
 	reportId: string | null = null
-): Promise<boolean> {
-	return await db.transaction(async (tx) => {
-		const updated = await tx
-			.update(stories)
-			.set({
-				listedInBrowse: false,
-				browseBlockedAt: sql`now()`,
-				browseBlockedBy: by,
-				browseBlockedReason: reason
-			})
-			.where(and(eq(stories.id, storyId), isNull(stories.browseBlockedAt)))
-			.returning({ id: stories.id });
-		if (updated.length === 0) return false;
-		if (!reportId) return true;
-		await tx
-			.update(publicationReports)
-			.set({ resolvedAt: sql`now()`, resolvedBy: by, resolution: 'removed_from_browse' })
-			.where(
-				and(
-					eq(publicationReports.id, reportId),
-					isNull(publicationReports.resolvedAt),
-					inArray(
-						publicationReports.publicationId,
-						tx
-							.select({ id: publications.id })
-							.from(publications)
-							.where(eq(publications.storyId, storyId))
+): Promise<boolean | 'report-closed'> {
+	const closed = Symbol('report-closed');
+	return await db
+		.transaction(async (tx) => {
+			const updated = await tx
+				.update(stories)
+				.set({
+					listedInBrowse: false,
+					browseBlockedAt: sql`now()`,
+					browseBlockedBy: by,
+					browseBlockedReason: reason
+				})
+				.where(and(eq(stories.id, storyId), isNull(stories.browseBlockedAt)))
+				.returning({ id: stories.id });
+			if (updated.length === 0) return false;
+			if (!reportId) return true;
+			const resolved = await tx
+				.update(publicationReports)
+				.set({ resolvedAt: sql`now()`, resolvedBy: by, resolution: 'removed_from_browse' })
+				.where(
+					and(
+						eq(publicationReports.id, reportId),
+						isNull(publicationReports.resolvedAt),
+						inArray(
+							publicationReports.publicationId,
+							tx
+								.select({ id: publications.id })
+								.from(publications)
+								.where(eq(publications.storyId, storyId))
+						)
 					)
 				)
-			);
-		return true;
-	});
+				.returning({ id: publicationReports.id });
+			if (resolved.length === 0) throw closed;
+			return true;
+		})
+		.catch((caught) => {
+			if (caught === closed) return 'report-closed' as const;
+			throw caught;
+		});
 }
 
 // Lets the author list the story again. It does not list it for them.
