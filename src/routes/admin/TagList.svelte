@@ -151,7 +151,11 @@
 								onsubmit={confirmSubmit({
 									title: `Remove the ${noun} "${row.name}"?`,
 									body: row.mergedIntoName
-										? `Stories with it keep showing "${row.mergedIntoName}", and authors cannot add it again. If you undo the merge, it stays hidden until you restore it.`
+										? `Stories with it keep showing "${row.mergedIntoName}", and authors cannot add it again.${
+												kind === 'warning'
+													? ` Writers' Assistant content limits set on it stop counting toward "${row.mergedIntoName}".`
+													: ''
+											} If you undo the merge, it stays hidden until you restore it.`
 										: `It disappears from every story that has it, and authors cannot add it again.${
 												kind === 'warning'
 													? " Writers' Assistant content limits on it stop applying too. Merging it into another warning instead keeps them."

@@ -516,3 +516,45 @@ for (const failFirst of [false, true]) {
 		}
 	});
 }
+
+// A length typed while an earlier save of the box is landing is not written
+// over by that save's refresh, and is the one stored.
+test('a draft length typed while its last save lands is kept', async ({ page }) => {
+	await openUniversePreferences(page);
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => (release = resolve));
+	let held!: () => void;
+	const holding = new Promise<void>((resolve) => (held = resolve));
+	let first = true;
+	await page.route(
+		(url) => url.search.includes('saveAssistantPreferences'),
+		async (route) => {
+			if (!first) return route.continue();
+			first = false;
+			const response = await route.fetch();
+			held();
+			await gate;
+			await route.fulfill({ response });
+		}
+	);
+	const words = page.getByLabel('Length of a drafted scene, in words');
+	await words.fill('1500');
+	await words.press('Tab');
+	await holding;
+	await words.fill('2000');
+	await expect(words).toBeFocused();
+	const refreshed = page.waitForResponse((response) => response.url().includes('__data.json'));
+	release();
+	await refreshed;
+	await expect(page.getByRole('status').filter({ hasText: 'Saved.' }).first()).toBeVisible();
+	await page.waitForTimeout(300);
+	await expect(words).toHaveValue('2000');
+	const saved = page.waitForResponse((response) =>
+		response.url().includes('saveAssistantPreferences')
+	);
+	await words.press('Tab');
+	await saved;
+	await page.unrouteAll({ behavior: 'wait' });
+	await page.reload();
+	await expect(page.getByLabel('Length of a drafted scene, in words')).toHaveValue('2000');
+});
