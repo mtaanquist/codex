@@ -117,10 +117,10 @@
 
 	// Where a review held at the cap stops, in the names the options carry.
 	const OVER_CAP_STOP: Record<'scene' | 'continuity' | 'habits', string> = {
-		scene: 'at its longest scene',
+		scene: 'at its longest scene, or sooner',
 		continuity:
-			'when it starts comparing the scenes to each other (the cross-scene consistency pass)',
-		habits: 'when it starts to look for habits that repeat in the prose'
+			'when it starts comparing the scenes to each other (the cross-scene consistency pass), or sooner',
+		habits: 'while it looks for habits that repeat in the prose'
 	};
 
 	// The estimate is advisory: anything that does not carry the two figures the
@@ -495,8 +495,8 @@
 							<p class="rm-note">
 								Web search is on for this story, and these figures do not include it. Your spend cap
 								of ${money(estimate.capUsd)} is too low to leave room for searches, so the review will
-								stop {OVER_CAP_STOP[estimate.overCapAt ?? 'scene']}, or sooner. Raise the cap under
-								Account, Assistant to review more.
+								stop {OVER_CAP_STOP[estimate.overCapAt ?? 'scene']}. Raise the cap under Account,
+								Assistant to review more.
 							</p>
 						{:else if estimate.webSearch}
 							<p class="rm-note">

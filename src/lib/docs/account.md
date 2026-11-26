@@ -265,8 +265,9 @@ Your words are sent only to the endpoint you set here.
   sent to (requests made before Codex kept the provider use your current
   provider's rate). Each request keeps the price its model had when it was
   sent, so a later price change or provider switch does not change its cost.
-  Requests made before Codex kept the price use your current price list, so
-  after you switch provider they may show no cost or a different one.
+  Requests made before Codex kept the price, or sent while their model had
+  no price, use your current price list, so after you switch provider they
+  may show no cost or a different one.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
@@ -278,10 +279,10 @@ Your words are sent only to the endpoint you set here.
   estimate shown before a review leaves searches out, and says so when web
   search is on. Claude also charges a fee for each search on top of tokens
   (10 dollars per 1,000 searches). The cost shown includes it, and the spend
-  cap sets aside the fee for the most searches a request can make. The room
-  the cap keeps for search results is a fixed allowance per search, since
-  nothing limits how much a search brings back, so a run that searches can
-  end a little over the cap.
+  cap sets aside the fee for the most searches a request can make. Part of
+  the room it keeps is a set amount for each search's results, and a search
+  can bring back more than that, so a run that searches can end over the
+  cap.
 
 ### Which model to pick for each role
 

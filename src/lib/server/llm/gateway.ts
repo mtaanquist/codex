@@ -209,8 +209,8 @@ export function searchingPromptTokens(promptTokens: number, maxTokens: number): 
 // How a searching request's reported input compares with the room the cap held
 // for it, so the per-search ceiling above can be tuned from real figures (see
 // #1560). Undefined unless the endpoint reported searches and real counts.
-// The prompt is the messages' ceiling estimate, without the tool list, so the
-// allowance reads a little low.
+// The allowance uses the turn's reply limit, so a round resent with a larger
+// one after a cut-off reply reads low.
 export function searchAllowanceFields(
 	promptTokens: number,
 	maxTokens: number,
@@ -722,9 +722,10 @@ function recordUsage(
 	usage?: TokenUsage
 ): Promise<void> {
 	req.meter?.record(p.model, usage);
-	const search = p.webSearch
-		? searchAllowanceFields(ceilingPromptTokens(messages), p.maxTokens, usage)
-		: undefined;
+	const search =
+		p.webSearch && usage?.webSearchRequests
+			? searchAllowanceFields(ceilingPromptTokens(messages, p.tools), p.maxTokens, usage)
+			: undefined;
 	if (search) {
 		logEvent(search.overAllowance ? 'warn' : 'info', 'assistant.usage.search', {
 			model: p.model,

@@ -620,6 +620,23 @@ describe('usage provider (#1373)', () => {
 		expect(usageRowCostUsd({}, newSum, view.provider)).toBeCloseTo(1000 * 0.1, 10);
 	});
 
+	it('keeps rows at the same model and provider apart when their prices differ', async () => {
+		for (const prompt of [0.001, 0.002]) {
+			await recordAssistantUsage(db, {
+				userId,
+				role: 'chat',
+				provider: 'custom',
+				model: 'chat-model',
+				price: { prompt, completion: 0 },
+				usage: { promptTokens: 1000, completionTokens: 0 }
+			});
+		}
+		const { byModel } = await recentAssistantUsage(db, userId);
+		expect(byModel).toHaveLength(2);
+		const total = byModel.reduce((sum, row) => sum + (usageRowCostUsd({}, row) ?? 0), 0);
+		expect(total).toBeCloseTo(3, 10);
+	});
+
 	it('pins the search fee on a row that searched, and leaves the price null without one', async () => {
 		await recordAssistantUsage(db, {
 			userId,
