@@ -33,7 +33,7 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
-import { currentNotTakenDown, readersCanOpen } from './publication-scope.ts';
+import { currentNotTakenDown, newerEditionId, readersCanOpen } from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
@@ -602,13 +602,33 @@ export async function takedownPublication(
 	// that one now, since the moderator was not told; left out, nothing is
 	// checked.
 	{ newerShown }: { newerShown?: string | null } = {}
-): Promise<boolean> {
+	// 'newer-changed' when newerShown no longer names the story's newer edition.
+): Promise<boolean | 'newer-changed'> {
 	return await db.transaction(async (tx) => {
 		const [target] = await tx
 			.select({ storyId: publications.storyId })
 			.from(publications)
 			.where(eq(publications.id, publicationId));
 		if (!target) return false;
+		// The account rows of the story's editions first, then the story, the
+		// order publishStory and restorePublication take them in.
+		// scheduleAccountDeletion updates the account row before it hides the
+		// owner's editions, so it and this takedown run one after the other
+		// rather than each holding edition rows the other waits on.
+		await tx
+			.select({ id: users.id })
+			.from(users)
+			.where(
+				inArray(
+					users.id,
+					tx
+						.selectDistinct({ id: publications.ownerId })
+						.from(publications)
+						.where(eq(publications.storyId, target.storyId))
+				)
+			)
+			.orderBy(users.id)
+			.for('no key update');
 		// The same lock publishStory takes, so a publish running at the same
 		// moment either finishes first or waits and then sees the takedown.
 		await tx
@@ -628,17 +648,11 @@ export async function takedownPublication(
 			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
 		if (!readable) return false;
 		if (newerShown !== undefined) {
-			const [newer] = await tx
-				.select({ id: publications.id })
+			const [edition] = await tx
+				.select({ newer: newerEditionId() })
 				.from(publications)
-				.where(
-					and(
-						eq(publications.storyId, target.storyId),
-						ne(publications.id, publicationId),
-						currentNotTakenDown()
-					)
-				);
-			if ((newer?.id ?? null) !== newerShown) return false;
+				.where(eq(publications.id, publicationId));
+			if ((edition?.newer ?? null) !== newerShown) return 'newer-changed' as const;
 		}
 		const updated = await tx
 			.update(publications)

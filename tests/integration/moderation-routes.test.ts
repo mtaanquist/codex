@@ -449,6 +449,45 @@ describe('Admin > Reports actions', () => {
 		expect(current).toMatchObject({ removedReason: 'spam', hiddenByAccountDeletion: true });
 	});
 
+	it("accepts the queue's newer edition after an account deletion hid both", async () => {
+		const reportId = await fileReport();
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		await scheduleAccountDeletion(db, author.id);
+		const load = reportsPage.load as (event: unknown) => Promise<{
+			reports: { newerEdition: string | null; newerEditionId: string | null }[];
+		}>;
+		const [shown] = (await load({ locals: { user: moderator } })).reports;
+		expect(shown).toMatchObject({ newerEdition: 'hidden', newerEditionId: newer.publicationId });
+		expect(
+			await act(reportsPage, 'takedown', {
+				publicationId,
+				reportId,
+				newer: shown.newerEditionId!,
+				reason: 'spam'
+			})
+		).toMatchObject({ done: true });
+		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
+		expect(rows.map((row) => row.removedReason)).toEqual(['spam', 'spam']);
+	});
+
+	it('says the story has a newer edition when the reported one is hidden by an account deletion', async () => {
+		const reportId = await fileReport();
+		// The queue showed no newer edition, then the writer published again and
+		// scheduled their account's deletion, which hid both editions.
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		await scheduleAccountDeletion(db, author.id);
+		expect(
+			await act(reportsPage, 'takedown', { publicationId, reportId, newer: 'none', reason: 'spam' })
+		).toMatchObject({
+			status: 409,
+			data: { message: 'This story has a newer edition. Reload the page and try again.' }
+		});
+		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
+		expect(rows.map((row) => row.removedReason)).toEqual([null, null]);
+	});
+
 	it('says whether the reported edition is current and readers can open it', async () => {
 		await fileReport();
 		const load = reportsPage.load as (event: unknown) => Promise<{
@@ -833,6 +872,43 @@ describe('a takedown, restored, then taken down again', () => {
 		expect((await loadPublished()).takenDown).toMatchObject([
 			{ id: publicationId, viewable: false, notViewableBecause: 'olderTakedown' }
 		]);
+	});
+});
+
+describe('an account deletion racing a takedown of the same story', () => {
+	it("a takedown waits on the owner's account row before it takes the story row", async () => {
+		const client = await pool.connect();
+		try {
+			// A deletion in progress has updated the account row first, as
+			// scheduleAccountDeletion does.
+			await client.query('begin');
+			await client.query('update users set deletion_scheduled_at = now() where id = $1', [
+				author.id
+			]);
+			let settled = false;
+			const takingDown = act(publishedPage, 'takedown', { publicationId, reason: 'spam' }).then(
+				(value) => {
+					settled = true;
+					return value;
+				}
+			);
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			// The takedown holds neither the story row nor any edition row, so
+			// the deletion can go on to hide the editions without a deadlock.
+			await client.query('select id from stories where id = $1 for update nowait', [storyId]);
+			await client.query(
+				`update publications set removed_at = now(), hidden_by_account_deletion = true
+				 where owner_id = $1`,
+				[author.id]
+			);
+			await client.query('commit');
+			expect(await takingDown).toMatchObject({ done: true });
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		expect(await edition()).toMatchObject({ removedReason: 'spam', hiddenByAccountDeletion: true });
 	});
 });
 
