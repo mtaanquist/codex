@@ -830,9 +830,18 @@ These cut across the surfaces and the architecture.
   merged into it, a story's keys read over its universe's), the unmerged
   warning's key is set to `avoid`, over a `write` of that row's own
   (`unmergeTag`). A story with no key of its own on the warning is left alone
-  when its universe's row gets that `avoid`, since it inherits it. So the
-  unmerged warning never ends up wider than it was while merged, in any row
-  (the survivor itself goes back to its own keys, which can be wider).
+  when its universe's row gets that `avoid`, since it inherits it. A story
+  that read `write` while merged, because its own `write` overrode the
+  universe's `avoid`, gets `write` on the unmerged warning, so it keeps its
+  own choice rather than inheriting the universe's new `avoid`. So the
+  unmerged warning reads in every row what it read while merged, or `avoid`
+  where that row's own key was wider (the survivor itself goes back to its
+  own keys, which can be wider). Undoing a merge into a removed survivor
+  changes no limits, since none of them applied while it was removed. The
+  undo locks the entry, the survivor and the other warnings merged into it,
+  in id order, so a rename of one of them waits for it, and it and a
+  rename's `moveContentLimits` lock the story and universe rows they change
+  in id order before updating them, so the two cannot deadlock.
   `updated_at` is kept, as for a rename. `mergeTag` refuses a source already
   merged into another entry: its merge is undone first. The form shows each live warning's limit folded within its own
   row (`foldedPreferences`), with a note when the other level or a merged
