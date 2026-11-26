@@ -901,8 +901,22 @@
 		{
 			"idx": 128,
 			"version": "7",
-			"when": 1795675917561,
-			"tag": "0128_require-pgvector",
+			"when": 1795674057953,
+			"tag": "0128_browse-index",
+			"breakpoints": true
+		},
+		{
+			"idx": 129,
+			"version": "7",
+			"when": 1795675883451,
+			"tag": "0129_usage-row-price",
+			"breakpoints": true
+		},
+		{
+			"idx": 130,
+			"version": "7",
+			"when": 1795676909856,
+			"tag": "0130_require-pgvector",
 			"breakpoints": true
 		}
 	]

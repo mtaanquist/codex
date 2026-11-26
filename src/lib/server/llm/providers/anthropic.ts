@@ -306,8 +306,7 @@ function promptTotal(usage: {
 }
 
 // Web searches the request ran, from usage.server_tool_use. Claude bills
-// them per search; the count is logged, not priced (no per-search price is
-// discoverable from the endpoint).
+// them per search, priced at WEB_SEARCH_FEE_USD (see assistant-cost.ts).
 function webSearches(usage: { server_tool_use?: unknown }): number {
 	const tool = usage.server_tool_use as { web_search_requests?: unknown } | undefined;
 	const count = Number(tool?.web_search_requests);

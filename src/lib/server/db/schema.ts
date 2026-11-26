@@ -22,6 +22,7 @@ import { sql } from 'drizzle-orm';
 import type { EntityDetail, EntitySnapshot } from '../../entity-snapshot.ts';
 import type { DraftContent } from '../../drafts.ts';
 import type { ChatAttachment, ChatModelSettings } from '../../assistant-chat.ts';
+import type { TokenPrice } from '../../assistant-cost.ts';
 import { randomCoverColor } from '../../entity-color.ts';
 import { NOTIFICATION_KINDS, type NotificationPayload } from '../../notifications.ts';
 import { SCENE_STATUSES } from '../../scene-status.ts';
@@ -1092,7 +1093,13 @@ export const publications = pgTable(
 		// would create a second hits this and rolls back.
 		uniqueIndex('publications_one_current_per_story')
 			.on(table.storyId)
-			.where(sql`${table.isCurrent}`)
+			.where(sql`${table.isCurrent}`),
+		// Browse: listed editions newest first, with the page cursor. Nulls first
+		// to match the plain DESC of its ORDER BY; the WHERE matches the start
+		// of the `listed` condition in #lib/server/browse.
+		index('publications_browse')
+			.on(table.publishedAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+			.where(sql`${table.isCurrent} and ${table.removedAt} is null`)
 	]
 );
 
@@ -1780,6 +1787,11 @@ export const assistantUsage = pgTable(
 		estimated: boolean('estimated').notNull().default(false),
 		// Server-side web searches the endpoint reported, billed per search.
 		webSearchRequests: integer('web_search_requests'),
+		// The model's price when the request was sent, so a later price change or
+		// provider switch does not reprice it. Null when the model had no price,
+		// and on every row from before it was stored; such a row is priced from
+		// the account's current list.
+		price: jsonb('price').$type<TokenPrice>(),
 		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [index('assistant_usage_user_idx').on(table.userId, table.createdAt)]

@@ -18,7 +18,7 @@ database image moved from `postgres:18.6-alpine3.24` to
 image. That switch is not just an image swap: Alpine's musl and Debian's glibc
 sort text differently under `en_US.utf8`, and an existing volume opened by the
 new image had out-of-order text indexes (checked with amcheck on a database
-migrated to 0127 under the old image). Migration 0128 detects that case (the
+migrated to 0127 under the old image). Migration 0130 detects that case (the
 database records no collation version while the server reports one, which is
 what a musl-created database looks like under glibc) and reindexes every table
 the role owns before creating the extension; databases created under glibc
@@ -28,6 +28,35 @@ migrator checks `pg_available_extensions` first so a server without pgvector
 stops with directions instead of a bare Postgres error. Building pgvector into
 our own Alpine image was the alternative; it would have kept the sort order
 but meant publishing and maintaining a database image.
+
+Usage cost and spend (v4.0.0 lane 7, 2026-11-26, `staging/v4.0.0`). #1520:
+each usage row stores the model's price as jsonb (migration 0129) when it is
+recorded, and the account page prices from it, falling back to the current
+list only for older rows; the 30-day sums group by price as well as model and
+provider, so rows sent at different prices are priced apart. A price, not a
+computed cost, so the cache rates stay in one place. #1555: Anthropic's search
+fee ($10 per 1,000) is a constant in `assistant-cost.ts`, counted in every cost
+and pinned on the stored price of a row that searched; the cap reserves it for
+`WEB_SEARCH_MAX_USES` searches per searching request. #1560: the API has no
+per-search result size limit and reports usage only when a request ends, so
+the 10k allowance stays (Mads); each searching request logs
+`assistant.usage.search` with its reported input against the room held, to
+tune it from data. #1567: the over-cap note names the longest scene and says
+"or sooner", the legacy queue cleanup moved to `src/worker/legacy-queues.ts`
+with a test, and the continuity over-cap case has a test.
+
+Browse performance (v4.0.0, 2026-11-26, `staging/v4.0.0`). The Browse
+setting is cached in process for a minute like the asset storage settings, and
+a save clears it (#1769). The admin sections already loaded published editions
+only on their own page since bug round 5 (#1770). Migration 0128 adds the
+partial index `publications_browse` on (published_at, id), both descending
+with nulls first to match the ORDER BY, where the edition is current and not
+taken down (#1771). EXPLAIN on 60,000 editions showed the index was ignored at
+first: the `s.owner_id = p.owner_id` guard, as a join equality, made the
+planner guess about 40 rows instead of 20,000, so it sorted everything. The
+guard is now wrapped in coalesce, which keeps it but stops the misestimate, and
+the page cursor compares published_at as a timestamp so the index serves later
+pages too. The first page went from about 20 ms to about 1 ms there.
 
 Bug round 5 (2026-11-25, `staging/bug-fixes-5`). The 17 open bug issues
 (#1523 to #1571, less #1550, which shipped with #1572) were fixed in five
