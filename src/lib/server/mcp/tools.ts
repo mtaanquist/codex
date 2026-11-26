@@ -339,7 +339,14 @@ export async function callMcpTool(
 			// failed: without the pass, the card asks for it again.
 			try {
 				const pass = await readGate.run(identity.userId, async (waited) => {
-					if (waited && !((await mcpInstanceEnabled(db)) && (await credentialLive(db, identity))))
+					if (
+						waited &&
+						!(
+							(await mcpInstanceEnabled(db)) &&
+							(await credentialLive(db, identity)) &&
+							(await grantPermits(db, identity.grantId, needed))
+						)
+					)
 						return null;
 					return callCardTool('open_guided_pass', {
 						db,

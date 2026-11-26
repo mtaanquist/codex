@@ -25,7 +25,7 @@ universe
 - **Database**: Postgres
 - **Content format**: Markdown in `text` columns (rendered on display/export)
 - **Search**: `tsvector` for full-text, `pg_trgm` for fuzzy name matching
-- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; nothing uses it yet
+- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; nothing uses it yet. It is required now so the database image change, and the index rebuild that comes with it, happen once at a major version rather than in the release that first stores vectors
 - **Case-insensitive handles**: `citext` for the public profile handle (requires the `citext` extension)
 - **Squishy fields**: `jsonb` with GIN indexes where queried
 
