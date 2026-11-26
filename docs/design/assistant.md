@@ -813,11 +813,20 @@ These cut across the surfaces and the architecture.
   forms open with and the MCP draft prompts fall back to, over the median;
   `warning:<slug>` (write, avoid) is one content limit per entry of the
   admin's content warning list (decided on #1782), named from the live list
-  at read time (`liveWarnings`), so a warning removed or merged away drops
-  out. Merging a warning copies a writer's `avoid` on it (or on a warning
-  merged into it earlier) to the survivor where the survivor has no limit
-  set; a `write` is not carried, since it would widen what the Assistant
-  writes about the survivor. Undoing the merge leaves the copied `avoid`.
+  at read time (`liveWarnings`), so a warning removed drops out with its
+  limits (the confirmation on Admin > Content warnings says so, and that
+  merging it instead keeps them; one already merged away still counts toward
+  its survivor, which its stories keep showing). A merge copies nothing: `liveWarnings`
+  gives each live warning the slugs of the warnings merged into it (along
+  the whole chain), and `effectivePreferences` folds them in at read time.
+  Each of those keys resolves as the story's own, else the universe's, and
+  the warning's limit is `avoid` if any resolves to `avoid`, else `write` if
+  any resolves to `write`. Folding after resolving, rather than per row, means
+  a universe's `avoid` on a merged warning is not undone by a story's `write`
+  on the survivor, and a writer's save that races a merge still counts.
+  Undoing a merge leaves nothing behind, since each warning's own key was
+  never touched. The form shows and saves only the writer's own key for each
+  live warning, never the folded value, so a save cannot write the fold back.
   Renaming a warning changes its slug, so the writer's limit moves to the new
   key (`moveContentLimits` in `tags.ts`); a stray key already under the new
   slug gives way, except that an `avoid` on either key is kept, and renaming
@@ -826,8 +835,8 @@ These cut across the surfaces and the architecture.
   marks it outdated) writes every other field and the notes as usual, writes
   no limit at all, so every stored limit stays as it is, and answers with a
   notice that the limits were not changed and the page needs a reload to set
-  them. Review runs key the limits by slug, so a rename does not restart a
-  capped run. The limits go to drafts, `/write`, the chat frame and every
+  them. Review runs key the limits by the warning's tag id, which a rename
+  keeps, so a rename does not restart a capped run. The limits go to drafts, `/write`, the chat frame and every
   review (the continuity confirm stage and the MCP continuity brief
   included), and say they never change the model's own usage policies. The summary
   length changes the request sent, not its fingerprint (the short request is

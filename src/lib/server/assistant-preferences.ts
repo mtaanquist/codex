@@ -1,13 +1,14 @@
-import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { isUuid } from '../slug.ts';
-import { scenes, stories, universes } from './db/schema.ts';
+import { scenes, stories, tags, universes } from './db/schema.ts';
 import { storyAssistantOn, storyIsLive } from './universe-scope.ts';
 import { mcpAccountEnabled, mcpInstanceEnabled } from './mcp/settings.ts';
-import { listEntries } from './tags.ts';
+import { MAX_MERGE_DEPTH } from './tags.ts';
 import {
 	effectivePreferences,
 	NO_PREFERENCES,
+	type LiveWarning,
 	type PreferenceChanges,
 	type PreferenceSetting
 } from '../assistant-preferences.ts';
@@ -19,12 +20,40 @@ import {
 // owner's, reads as nothing set, and so, with assistantOn, does a story the
 // Assistant is muted on.
 
-// The content warnings on the admin's list as they stand, slug to name: the
-// switches a writer sets content limits with. A warning removed or merged
-// away is not on it, so a limit set on it no longer applies.
-export async function liveWarnings(db: Database): Promise<Map<string, string>> {
-	const entries = await listEntries(db, 'warning');
-	return new Map(entries.map((entry) => [entry.slug, entry.name]));
+// The content warnings on the admin's list as they stand, in list order: the
+// switches a writer sets content limits with. Each carries the slugs of the
+// warnings merged into it, directly or along a chain, whose limits it folds in
+// (effectivePreferences). A warning removed drops out with its limits, and so
+// do the ones merged into it.
+export async function liveWarnings(db: Database): Promise<LiveWarning[]> {
+	const rows = await db
+		.select({
+			id: tags.id,
+			name: tags.name,
+			slug: tags.slug,
+			mergedIntoId: tags.mergedIntoId,
+			removed: sql<boolean>`${tags.removedAt} is not null`
+		})
+		.from(tags)
+		.where(eq(tags.kind, 'warning'))
+		.orderBy(asc(tags.name));
+	const byId = new Map(rows.map((row) => [row.id, row]));
+	const live = new Map<string, LiveWarning>();
+	for (const row of rows) {
+		if (!row.removed && !row.mergedIntoId) {
+			live.set(row.id, { id: row.id, name: row.name, slug: row.slug, merged: [] });
+		}
+	}
+	for (const row of rows) {
+		let at = row;
+		for (let depth = 0; at.mergedIntoId && depth < MAX_MERGE_DEPTH; depth++) {
+			const next = byId.get(at.mergedIntoId);
+			if (!next) break;
+			at = next;
+		}
+		if (at !== row && !at.mergedIntoId) live.get(at.id)?.merged.push(row.slug);
+	}
+	return [...live.values()];
 }
 
 export async function storyAssistantPreferences(

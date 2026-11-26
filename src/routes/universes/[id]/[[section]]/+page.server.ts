@@ -98,7 +98,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 		assistantPreferencesShown: preferencesShown,
 		// The content warnings the preferences set a limit on, in list order.
 		contentWarnings: preferencesShown
-			? [...(await liveWarnings(db))].map(([slug, name]) => ({ slug, name }))
+			? (await liveWarnings(db)).map(({ slug, name }) => ({ slug, name }))
 			: [],
 		universe,
 		contents,
@@ -141,9 +141,10 @@ export const actions: Actions = {
 	},
 	saveAssistantPreferences: async ({ request, params, locals }) => {
 		const universe = await ownedUniverse(params.id, locals.user!.id);
-		const read = readPreferencesForm(await request.formData(), [
-			...(await liveWarnings(db)).keys()
-		]);
+		const read = readPreferencesForm(
+			await request.formData(),
+			(await liveWarnings(db)).map(({ slug }) => slug)
+		);
 		// The universe's own notes are always used, so the story-only choice is
 		// not stored here.
 		if (read.ok) delete read.changes[USE_UNIVERSE_NOTES];

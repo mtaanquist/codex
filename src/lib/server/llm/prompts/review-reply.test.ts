@@ -126,7 +126,7 @@ describe('buildReviewReplyMessage', () => {
 			transcript: [{ author: 'Author', body: 'Shorter?' }],
 			preferences: {
 				...NO_PREFERENCES,
-				contentLimits: [{ slug: 'gore', name: 'Gore', limit: 'avoid' as const }]
+				contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
 			}
 		};
 		const revising = buildReviewReplyMessage({

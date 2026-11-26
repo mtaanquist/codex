@@ -400,8 +400,8 @@ describe('feedback, reasons and content limits', () => {
 	it('states the content limits where the Assistant drafts or comments', () => {
 		const p = prefs({
 			contentLimits: [
-				{ slug: 'graphic-violence', name: 'Graphic violence', limit: 'avoid' },
-				{ slug: 'strong-language', name: 'Strong language', limit: 'write' }
+				{ id: 'graphic-violence', name: 'Graphic violence', limit: 'avoid' },
+				{ id: 'strong-language', name: 'Strong language', limit: 'write' }
 			]
 		});
 		expect(contentLimitsLine(NO_PREFERENCES, 'write')).toBe('');
@@ -437,7 +437,7 @@ describe('feedback, reasons and content limits', () => {
 		).toContain(write);
 		expect(
 			contentLimitsLine(
-				prefs({ contentLimits: [{ slug: 'gore', name: 'Gore', limit: 'avoid' }] }),
+				prefs({ contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' }] }),
 				'chat'
 			)
 		).not.toContain('comfortable');
