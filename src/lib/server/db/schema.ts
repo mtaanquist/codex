@@ -1092,6 +1092,10 @@ export const publications = pgTable(
 		removedBy: uuid('removed_by').references(() => users.id, { onDelete: 'set null' }),
 		// A key from REPORT_REASONS (#lib/report-reasons), shown to the author.
 		removedReason: text('removed_reason'),
+		// When the takedown happened. removed_at keeps the earlier date when an
+		// account deletion hid the edition first. Null on a takedown made before
+		// migration 0133, where removed_at is the date to show.
+		takenDownAt: timestamp('taken_down_at', { withTimezone: true }),
 		// Set on every edition of an author who schedules account deletion, so a
 		// later restore of a takedown clears the reason but leaves the edition
 		// down, as cancelling the deletion leaves the others.

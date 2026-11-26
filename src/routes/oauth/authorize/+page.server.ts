@@ -4,7 +4,7 @@ import { db } from '#lib/server/db';
 import { logEvent } from '#lib/server/log';
 import { publicOrigin } from '#lib/server/origin';
 import { formText } from '#lib/server/validation';
-import { BASE_PERMISSION, PERMISSION_TEXT } from '#lib/mcp-access';
+import { BASE_PERMISSION, PERMISSION_TEXT, withUsableApply } from '#lib/mcp-access';
 import {
 	AUTHORIZE_FIELDS,
 	checkAuthorizeRequest,
@@ -66,7 +66,7 @@ export const load: PageServerLoad = async ({ url, locals, setHeaders }) => {
 			...PERMISSION_TEXT[id],
 			required: id === BASE_PERMISSION,
 			// An app the writer already connected starts from what it has.
-			checked: (connected?.permissions ?? check.requested).includes(id)
+			checked: withUsableApply(connected?.permissions ?? check.requested).includes(id)
 		})),
 		fields: AUTHORIZE_FIELDS.map((name) => ({ name, value: url.searchParams.get(name) })).filter(
 			(entry): entry is { name: (typeof AUTHORIZE_FIELDS)[number]; value: string } =>

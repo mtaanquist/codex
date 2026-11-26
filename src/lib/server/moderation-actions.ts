@@ -4,6 +4,7 @@ import { requireModerator } from './roles';
 import { formText } from './validation';
 import { allowInBrowse, removeFromBrowse } from './browse';
 import { editionReplaced, takedownPublication } from './publish';
+import { reportClosed } from './reports';
 import { isUuid } from '#lib/slug';
 import { isReportReason } from '#lib/report-reasons';
 
@@ -16,6 +17,8 @@ export function moderationActions(scope: string) {
 			const data = await request.formData();
 			const publicationId = formText(data, 'publicationId');
 			const reason = formText(data, 'reason');
+			// Sent from the report queue: the report the moderator was looking at.
+			const reportId = formText(data, 'reportId');
 			if (!isReportReason(reason)) {
 				return fail(400, { scope, message: 'Pick a reason for the takedown.' });
 			}
@@ -23,6 +26,12 @@ export function moderationActions(scope: string) {
 				!isUuid(publicationId) ||
 				!(await takedownPublication(db, publicationId, locals.user!.id, reason))
 			) {
+				if (isUuid(reportId) && (await reportClosed(db, reportId))) {
+					return fail(409, {
+						scope,
+						message: 'This report is already closed. Reload the page to see what changed.'
+					});
+				}
 				if (isUuid(publicationId) && (await editionReplaced(db, publicationId))) {
 					return fail(409, {
 						scope,

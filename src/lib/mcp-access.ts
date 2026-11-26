@@ -37,6 +37,14 @@ export function parsePermissions(values: readonly string[]): McpPermission[] {
 	return MCP_PERMISSIONS.filter((permission) => values.includes(permission));
 }
 
+// Accepting works only through the card, which also needs suggest, so apply
+// without suggest would be granted and do nothing.
+export function withUsableApply(permissions: readonly McpPermission[]): McpPermission[] {
+	return permissions.filter(
+		(permission) => permission !== 'apply' || permissions.includes('suggest')
+	);
+}
+
 // A scope string as OAuth carries it: names separated by spaces.
 export function permissionsFromScope(scope: string | null | undefined): McpPermission[] {
 	return parsePermissions((scope ?? '').split(/\s+/).filter(Boolean));

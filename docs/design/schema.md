@@ -792,9 +792,10 @@ publications (
   version_label   text,                  -- optional, e.g. 'Edition 2'
   source_draft_id uuid references story_drafts(id) on delete set null,  -- the saved draft it came from, if any
   is_current      boolean not null default true,
-  removed_at      timestamptz,           -- set by a takedown (admin or moderator); hides the edition without deleting the source
+  removed_at      timestamptz,           -- set by a takedown (admin or moderator) or an account deletion; hides the edition without deleting the source
   removed_by      uuid references users on delete set null, -- who took it down
   removed_reason  text,                  -- a REPORT_REASONS key (#lib/report-reasons), shown to the author
+  taken_down_at   timestamptz,           -- when the takedown happened (removed_at keeps an earlier account-deletion hide); cleared by a restore, null on takedowns before 0133
   hidden_by_account_deletion boolean not null default false, -- set when the author schedules deletion; a restore then leaves the edition down
   published_at    timestamptz not null
 )

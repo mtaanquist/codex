@@ -4,6 +4,7 @@ import {
 	GRANTABLE_PERMISSIONS,
 	OFF_BY_DEFAULT,
 	permissionsFromScope,
+	withUsableApply,
 	type McpPermission
 } from '../../mcp-access.ts';
 import { findClient, type FetchClientDocument, type OauthClient } from './clients.ts';
@@ -141,7 +142,7 @@ export function chosenPermissions(
 	offered: readonly McpPermission[],
 	ticked: readonly string[]
 ): McpPermission[] {
-	return offered.filter(
-		(permission) => permission === BASE_PERMISSION || ticked.includes(permission)
+	return withUsableApply(
+		offered.filter((permission) => permission === BASE_PERMISSION || ticked.includes(permission))
 	);
 }

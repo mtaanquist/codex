@@ -27,6 +27,7 @@ import { uniqueSlug } from './slugs.ts';
 import { isSerializationFailure, isUniqueViolation } from './db-errors.ts';
 import { copiedSummaryStamp, summaryIsCurrent } from './summary-currency.ts';
 import { holdStoryQuota, quotaFailure } from './quotas.ts';
+import { storyPreferencesForCopy } from './assistant-preferences.ts';
 import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
 import {
@@ -611,6 +612,9 @@ export async function newStoryFromDraft(
 
 	async function copy(slug: string) {
 		return await db.transaction(async (tx) => {
+			// Read here rather than from story: a warning renamed since then has
+			// moved its limits.
+			const assistantPreferences = await storyPreferencesForCopy(tx, story.id);
 			await holdStoryQuota(tx, userId, story.universeId);
 			const [created] = await tx
 				.insert(stories)
@@ -624,7 +628,7 @@ export async function newStoryFromDraft(
 					descriptionMd: content.story.descriptionMd,
 					styleNotes: story.styleNotes,
 					language: story.language,
-					assistantPreferences: story.assistantPreferences,
+					assistantPreferences,
 					assistantNotes: story.assistantNotes,
 					isAdult: story.isAdult,
 					coverColor: story.coverColor,

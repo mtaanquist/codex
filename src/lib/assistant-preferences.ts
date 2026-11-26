@@ -300,7 +300,8 @@ export function preferencesFromLines(lines: string[]): {
 		if (colon > 0) raw[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
 	}
 	// The form only stores warnings on the live list, so an import is the one
-	// way in for any slug; it is capped here.
+	// way in for any slug; it is capped here, and the import leaves out those
+	// this site does not list (usableContentLimits).
 	let warnings = 0;
 	const capped = Object.fromEntries(
 		Object.entries(raw).filter(
@@ -350,17 +351,7 @@ export function effectivePreferences(
 		(houseStyle as Record<string, string | null>)[key] = merged[key] ?? null;
 	}
 	const contentLimits = warnings
-		.map(({ id, name, slug, merged: folded }) => {
-			const limits = [slug, ...folded].map(
-				(each) => merged[warningKey(each) as `warning:${string}`]
-			);
-			const limit: ContentLimit | undefined = limits.includes('avoid')
-				? 'avoid'
-				: limits.includes('write')
-					? 'write'
-					: undefined;
-			return { id, name, limit };
-		})
+		.map((warning) => ({ id: warning.id, name: warning.name, limit: foldedLimit(merged, warning) }))
 		.filter((entry): entry is { id: string; name: string; limit: ContentLimit } =>
 			Boolean(entry.limit)
 		);
@@ -376,6 +367,78 @@ export function effectivePreferences(
 		draftWords: merged.draftWords ?? null,
 		contentLimits
 	};
+}
+
+// A live warning's limit in one set of preferences, folding in the limits on
+// the warnings merged into it: "avoid" when any of them is, else "write" when
+// any is, else not set.
+export function foldedLimit(
+	preferences: StoredPreferences,
+	warning: Pick<LiveWarning, 'slug' | 'merged'>
+): ContentLimit | undefined {
+	const limits = [warning.slug, ...warning.merged].map(
+		(each) => preferences[warningKey(each) as `warning:${string}`]
+	);
+	return limits.includes('avoid') ? 'avoid' : limits.includes('write') ? 'write' : undefined;
+}
+
+// The preferences with each live warning's key set to its folded limit, the
+// way the form shows them: one select per live warning, standing for it and
+// the warnings merged into it.
+export function foldedPreferences(
+	preferences: StoredPreferences,
+	warnings: readonly Pick<LiveWarning, 'slug' | 'merged'>[]
+): StoredPreferences {
+	const out: Record<string, unknown> = { ...preferences };
+	for (const warning of warnings) {
+		const key = warningKey(warning.slug);
+		const limit = foldedLimit(preferences, warning);
+		if (limit) out[key] = limit;
+		else delete out[key];
+	}
+	return out as StoredPreferences;
+}
+
+// The content-limit changes a form makes to one row (a story or a universe),
+// given what it stores. The form shows each live warning's folded limit
+// (foldedPreferences), so a posted value equal to that is no change and the
+// row is left as it is. A different value is the writer's own choice for the
+// warning at this level: it is stored, and this row's keys on the warnings
+// merged into it are cleared, so the choice is the one that applies.
+export function limitChanges(
+	changes: PreferenceChanges,
+	stored: StoredPreferences,
+	warnings: readonly LiveWarning[]
+): PreferenceChanges {
+	const out: PreferenceChanges = { ...changes };
+	for (const warning of warnings) {
+		const key = warningKey(warning.slug);
+		if (!(key in changes)) continue;
+		const posted = changes[key] ?? undefined;
+		if (posted === foldedLimit(stored, warning)) {
+			delete out[key];
+			continue;
+		}
+		for (const slug of warning.merged) out[warningKey(slug)] = null;
+	}
+	return out;
+}
+
+// Why a warning's limit on the form is not simply its own key, or null. The
+// select shows the limit folded within its row (foldedPreferences), which can
+// come from a warning merged into this one ('merged'). On a story whose shown
+// limit is "write", the universe's "avoid" on a merged warning the story has
+// no limit for still applies ('universe').
+export function limitNote(
+	own: StoredPreferences,
+	universe: StoredPreferences | null,
+	warning: Pick<LiveWarning, 'slug' | 'merged'>
+): 'merged' | 'universe' | null {
+	const shown = foldedLimit(own, warning);
+	if (universe && shown === 'write' && foldedLimit({ ...universe, ...own }, warning) === 'avoid') {
+		return 'universe';
+	}
+	return shown && own[warningKey(warning.slug) as `warning:${string}`] !== shown ? 'merged' : null;
 }
 
 export type PreferencesForm =

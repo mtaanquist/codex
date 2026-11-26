@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import type pg from 'pg';
 import {
 	reviewSuggestions,
+	revisions,
 	scenes,
 	stories,
 	universes,
@@ -382,6 +383,8 @@ describe('open_guided_pass', () => {
 		expect(opened.pass!.edits).toHaveLength(MAX_CARD_EDITS);
 		expect(opened.pass!.more).toBe(5);
 		expect(Object.keys(opened.keys!)).toHaveLength(MAX_CARD_EDITS);
+		// The app is told every edit that waits, not only the ones on the card.
+		expect(opened.text).toContain(`${MAX_CARD_EDITS + 5} edits waiting`);
 	});
 
 	it('sends the edits past MAX_CARD_CHARS as more', async () => {
@@ -472,6 +475,17 @@ describe('decide_suggestion', () => {
 		expect(result.pass!.decided).toBe(1);
 		// Keys for what is still waiting only.
 		expect(Object.keys(result.keys!)).toEqual([pass.edits[1].id]);
+		// The scene's history says the accept was made in the app.
+		const [latest] = await db
+			.select({ reason: revisions.reason, label: revisions.label })
+			.from(revisions)
+			.where(eq(revisions.entityId, alice.sceneId))
+			.orderBy(desc(revisions.createdAt))
+			.limit(1);
+		expect(latest).toEqual({
+			reason: 'suggestion',
+			label: 'Accepted in Writing Desk (app.example)'
+		});
 	});
 
 	it("accepts the writer's own wording, and not an empty one or one that cannot be saved", async () => {

@@ -29,7 +29,7 @@ You choose this on the page where you allow the app:
 
 - **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. The app also sees each story's language, its Assistant preferences, and your notes for the Assistant. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash.
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
-- **Let you accept its suggestions in the app.** This is off unless you tick it. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
+- **Let you accept its suggestions in the app.** This is off unless you tick it, and you can tick it only while "Leave suggestions and comments" is ticked. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
 
 No app can change your text on its own, delete anything, publish a story, or see another person's writing. An edit only changes your text when it is accepted, in Codex or with Accept on the app's card. If you tick "Let you accept its suggestions in the app", the app itself must keep that button for you alone, so tick it only for an app you trust (see below). The same goes for a token with it ticked.
 
@@ -64,7 +64,7 @@ If you ticked "Let you accept its suggestions in the app", you can go through a 
 - **Discuss** hands the edit back to the conversation, so you can talk it over with the app before you decide.
 - **Open in Codex** opens the same note in Codex.
 
-Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. A very long edit is shown cut short on the card and cannot be accepted there; open it in Codex to decide on it. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
+Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. An edit accepted on the card shows in the scene's History as "Suggestion accepted", with the app's name under it. A very long edit is shown cut short on the card and cannot be accepted there; open it in Codex to decide on it. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
 
 ## Disconnect an app
 

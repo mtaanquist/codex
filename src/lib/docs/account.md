@@ -390,9 +390,9 @@ for each kind of event. Emails arrive batched, so a busy hour sends one message.
 ## Connected apps
 
 An AI app you already use can read your writing in Codex and leave suggestions
-for you. It can never delete or publish your text, and it only changes your text
-when you accept one of its suggestions. Nothing can connect
-until you turn this on. For a walk through connecting an app for the first
+for you. It can never delete or publish your text. It only changes your text
+when you accept one of its suggestions, or, if you allow it, when it accepts one
+for you. Nothing can connect until you turn this on. For a walk through connecting an app for the first
 time, and what to do when it does not work, see
 [Connecting an app](/docs/connecting-apps).
 
@@ -468,7 +468,8 @@ To make a token:
 3. Leave "Leave suggestions and comments" ticked if the tool should be able to
    leave them, or untick it to let the tool read only. Tick "Let you accept its
    suggestions in the app" only if the tool can show you its notes to accept
-   and you trust it: a tool with this ticked can accept edits itself. See
+   and you trust it: a tool with this ticked can accept edits itself. It can
+   be ticked only while "Leave suggestions and comments" is ticked. See
    [Connecting an app](/docs/connecting-apps).
 4. Choose how long the token lasts. It stops working after that, and you make
    a new one.

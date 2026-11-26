@@ -10,6 +10,19 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 5 (2026-11-26, `staging/v4.0.0`, #1840 to
+#1843). The preferences form now shows each warning's limit folded within its
+row, so a limit that came from a merged warning is visible and can be
+changed: a different choice is stored and clears that row's keys for the
+merged warnings, while an autosave of the shown value changes nothing (taking
+the brief's "clear on save" literally would have let any autosave loosen a
+merged avoid). Undoing a merge copies the survivor's avoid onto the unmerged
+warning where it has none, so an undo only narrows. Takedowns get their own
+date (`taken_down_at`, migration 0133; older rows fall back to `removed_at`
+at read time rather than a backfill). A guided pass card accept is labelled
+"Accepted in <app>" on the revision, so History tells it apart from one made
+in Codex.
+
 v4.0.0 staging review, round 4 (2026-11-26, `staging/v4.0.0`). Content
 limits on a merged warning now fold at read time instead of being copied at
 merge: each live warning takes the limits of every warning merged into it,

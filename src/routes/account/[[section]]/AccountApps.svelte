@@ -63,6 +63,9 @@
 			await update({ reset: false });
 		};
 	};
+	// Accepting needs suggestions too, so its box waits for that one.
+	let tokenSuggest = $state(true);
+	let tokenApply = $state(false);
 	const lasts = (days: number) => (days === 365 ? '1 year' : `${days} days`);
 	const now = Date.now();
 
@@ -80,8 +83,8 @@
 	<h1 class="admin-title">Connected apps</h1>
 	<p class="admin-lede">
 		Let an AI app you use read your writing in Codex and leave suggestions for you. An app can never
-		delete or publish your text, and it only changes your text when you accept one of its
-		suggestions.
+		delete or publish your text. It only changes your text when you accept one of its suggestions,
+		or, if you allow it, when it accepts one for you.
 	</p>
 </div>
 
@@ -333,7 +336,15 @@
 			</div>
 			<div class="field">
 				<label class="check-row">
-					<input type="checkbox" name="permission" value="suggest" checked />
+					<input
+						type="checkbox"
+						name="permission"
+						value="suggest"
+						bind:checked={tokenSuggest}
+						onchange={() => {
+							if (!tokenSuggest) tokenApply = false;
+						}}
+					/>
 					{PERMISSION_TEXT.suggest.label}
 				</label>
 				<p class="field-hint">
@@ -344,7 +355,13 @@
 			</div>
 			<div class="field">
 				<label class="check-row">
-					<input type="checkbox" name="permission" value="apply" />
+					<input
+						type="checkbox"
+						name="permission"
+						value="apply"
+						bind:checked={tokenApply}
+						disabled={!tokenSuggest}
+					/>
 					{PERMISSION_TEXT.apply.label}
 				</label>
 				<p class="field-hint">{PERMISSION_TEXT.apply.description}</p>

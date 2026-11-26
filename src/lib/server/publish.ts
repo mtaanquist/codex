@@ -32,7 +32,7 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
-import { currentNotTakenDown } from './publication-scope.ts';
+import { currentNotTakenDown, readersCanOpen } from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
@@ -631,6 +631,7 @@ export async function takedownPublication(
 				removedAt: sql`coalesce(${publications.removedAt}, now())`,
 				removedBy,
 				removedReason: reason,
+				takenDownAt: sql`now()`,
 				hiddenByAccountDeletion: sql`${publications.hiddenByAccountDeletion} or ${publications.removedAt} is not null`
 			})
 			.where(
@@ -693,6 +694,7 @@ export async function restorePublication(
 				removedAt: sql`case when ${publications.hiddenByAccountDeletion} then ${publications.removedAt} end`,
 				removedBy: null,
 				removedReason: null,
+				takenDownAt: null,
 				restoredAt: sql`now()`,
 				restoredBy
 			})
@@ -759,7 +761,8 @@ export async function listLiveEditions(
 			browseAllowedAt: stories.browseAllowedAt,
 			browseAllowedByName: moderatorName(stories.browseAllowedBy),
 			// Whether the title links to the moderator's view of the text.
-			viewable: moderatorMayRead()
+			viewable: moderatorMayRead(),
+			readable: readersCanOpen()
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
@@ -802,7 +805,7 @@ export async function listTakenDown(db: Database) {
 			id: publications.id,
 			handle: publications.handle,
 			title: publications.title,
-			removedAt: publications.removedAt,
+			takenDownAt: takenDownAt(),
 			removedReason: publications.removedReason,
 			removedByName: moderatorName(publications.removedBy),
 			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
@@ -819,7 +822,15 @@ export async function listTakenDown(db: Database) {
 				isNotNull(publications.removedReason)
 			)
 		)
-		.orderBy(publications.removedAt);
+		.orderBy(takenDownAt());
+}
+
+// When a taken-down edition was taken down. An edition taken down before
+// taken_down_at existed has only removed_at.
+function takenDownAt() {
+	return sql<Date | null>`coalesce(${publications.takenDownAt}, ${publications.removedAt})`.mapWith(
+		publications.takenDownAt
+	);
 }
 
 // Whether a moderator may read an edition's text on its own page: it is the
@@ -881,7 +892,6 @@ export async function moderatorMayReadAsset(db: Database, assetId: string): Prom
 // when it has an open report, or one closed by a takedown that still holds
 // (moderatorMayRead).
 export async function moderatorEdition(db: Database, publicationId: string) {
-	const shared = sql`(${stories.visibility} <> 'private' and ${storyIsLive()})`;
 	const [edition] = await db
 		.select({
 			id: publications.id,
@@ -896,14 +906,14 @@ export async function moderatorEdition(db: Database, publicationId: string) {
 			publishedAt: publications.publishedAt,
 			isCurrent: publications.isCurrent,
 			removedAt: publications.removedAt,
+			takenDownAt: takenDownAt(),
 			removedReason: publications.removedReason,
 			removedByName: moderatorName(publications.removedBy),
 			restoredAt: publications.restoredAt,
 			restoredByName: moderatorName(publications.restoredBy),
 			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
 			// Whether readers can open it at its public address right now.
-			// The same checks as publicEdition, so the link it gates never 404s.
-			readable: sql<boolean>`(${shared} and ${stories.ownerId} = ${publications.ownerId} and ${publications.isCurrent} and ${publications.removedAt} is null and ${users.suspendedAt} is null)`
+			readable: readersCanOpen()
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))

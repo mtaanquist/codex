@@ -37,7 +37,8 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 const { createStoryInUniverse } = await import('../../src/lib/server/story-create');
 const { publishStory, takedownPublication } = await import('../../src/lib/server/publish');
 const { createReport, dismissReport } = await import('../../src/lib/server/reports');
-const { scheduleAccountDeletion } = await import('../../src/lib/server/account-deletion');
+const { adminCancelDeletion, scheduleAccountDeletion } =
+	await import('../../src/lib/server/account-deletion');
 const publishedPage = await import('../../src/routes/admin/published/+page.server');
 const reportsPage = await import('../../src/routes/admin/reports/+page.server');
 const editionPage = await import('../../src/routes/admin/published/[id=uuid]/+page.server');
@@ -235,6 +236,43 @@ describe('Admin > Published actions', () => {
 		expect(after.live.editions).toEqual([]);
 		expect(after.takenDown).toMatchObject([{ id: publicationId, removedReason: 'illegal' }]);
 	});
+
+	it('dates a takedown by the takedown, not by an earlier account deletion hide', async () => {
+		await scheduleAccountDeletion(db, author.id);
+		const hiddenAt = new Date('2020-01-01T00:00:00Z');
+		await db
+			.update(publications)
+			.set({ removedAt: hiddenAt })
+			.where(eq(publications.id, publicationId));
+		const before = Date.now();
+		expect(await act(publishedPage, 'takedown', { publicationId, reason: 'spam' })).toMatchObject({
+			done: true
+		});
+		const [listed] = (await loadPublished()).takenDown;
+		expect((listed.takenDownAt as Date).getTime()).toBeGreaterThanOrEqual(before - 1000);
+		expect(
+			((await loadEdition(publicationId)).edition.takenDownAt as Date).getTime()
+		).toBeGreaterThanOrEqual(before - 1000);
+		// The hide keeps its own date, so cancelling the deletion and restoring
+		// leaves the edition hidden as before.
+		expect((await edition()).removedAt).toEqual(hiddenAt);
+		expect(await adminCancelDeletion(db, author.id)).toBe(true);
+		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		expect(await edition()).toMatchObject({
+			removedAt: hiddenAt,
+			removedReason: null,
+			takenDownAt: null
+		});
+	});
+
+	it('dates a takedown made before the takedown date was recorded by when it came down', async () => {
+		const removedAt = new Date('2021-06-01T00:00:00Z');
+		await db
+			.update(publications)
+			.set({ removedAt, removedReason: 'spam', removedBy: moderator.id })
+			.where(eq(publications.id, publicationId));
+		expect((await loadPublished()).takenDown).toMatchObject([{ takenDownAt: removedAt }]);
+	});
 });
 
 describe('Admin > Reports actions', () => {
@@ -339,6 +377,27 @@ describe('Admin > Reports actions', () => {
 			.from(publications)
 			.where(eq(publications.id, newer.publicationId));
 		expect(current).toMatchObject({ removedReason: 'spam', hiddenByAccountDeletion: true });
+	});
+
+	it('says whether the reported edition is current and readers can open it', async () => {
+		await fileReport();
+		const load = reportsPage.load as (event: unknown) => Promise<{
+			reports: { editionCurrent: boolean; editionReadable: boolean }[];
+		}>;
+		const locals = { user: moderator };
+		expect((await load({ locals })).reports).toMatchObject([
+			{ editionCurrent: true, editionReadable: true }
+		]);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect((await load({ locals })).reports).toMatchObject([
+			{ editionCurrent: true, editionReadable: false }
+		]);
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect((await load({ locals })).reports).toMatchObject([
+			{ editionCurrent: false, editionReadable: false }
+		]);
 	});
 
 	it('is a 404 for writers', async () => {
@@ -496,6 +555,161 @@ describe("the moderator's view of an edition", () => {
 		await expect404(loadEdition(publicationId, { user: { id: author.id, role: 'user' } }));
 		await expect404(loadEdition(publicationId, { user: null }));
 		await expect404(loadEdition('00000000-0000-4000-8000-000000000000'));
+	});
+});
+
+describe('a dismissal racing a takedown of the same report', () => {
+	async function fileReport() {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		const [row] = await db.select().from(publicationReports);
+		return row.id;
+	}
+
+	it('a dismissal that starts while a takedown runs waits, then finds the report closed', async () => {
+		const reportId = await fileReport();
+		const client = await pool.connect();
+		try {
+			// A takedown in progress holds the story row, as takedownPublication does.
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [storyId]);
+			await client.query(
+				`update publications set removed_at = now(), removed_by = $2, removed_reason = 'spam'
+				 where id = $1`,
+				[publicationId, moderator.id]
+			);
+			await client.query(
+				`update publication_reports set resolved_at = now(), resolved_by = $2,
+				 resolution = 'taken_down' where id = $1`,
+				[reportId, moderator.id]
+			);
+			let settled = false;
+			const dismissing = act(reportsPage, 'dismiss', { reportId }).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await dismissing).toMatchObject({ status: 400 });
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		const [report] = await db
+			.select()
+			.from(publicationReports)
+			.where(eq(publicationReports.id, reportId));
+		expect(report.resolution).toBe('taken_down');
+	});
+
+	it('a takedown of a replaced edition that starts while a dismissal runs says the report closed', async () => {
+		const reportId = await fileReport();
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		const client = await pool.connect();
+		try {
+			// A dismissal in progress holds the story row, as dismissReport does.
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [storyId]);
+			await client.query(
+				`update publication_reports set resolved_at = now(), resolved_by = $2,
+				 resolution = 'dismissed' where id = $1`,
+				[reportId, moderator.id]
+			);
+			let settled = false;
+			const takingDown = act(reportsPage, 'takedown', {
+				publicationId,
+				reportId,
+				reason: 'spam'
+			}).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await takingDown).toMatchObject({
+				status: 409,
+				data: { message: 'This report is already closed. Reload the page to see what changed.' }
+			});
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+		// The dismissal stands and nothing came down.
+		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
+		expect(rows.map((row) => row.removedReason)).toEqual([null, null]);
+		const [report] = await db
+			.select()
+			.from(publicationReports)
+			.where(eq(publicationReports.id, reportId));
+		expect(report.resolution).toBe('dismissed');
+	});
+
+	it('a dismissal waits while a takedown holds the story row', async () => {
+		const reportId = await fileReport();
+		const client = await pool.connect();
+		try {
+			await client.query('begin');
+			await client.query('select id from stories where id = $1 for update', [storyId]);
+			let settled = false;
+			const dismissing = dismissReport(db, reportId, moderator.id).then((value) => {
+				settled = true;
+				return value;
+			});
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(settled).toBe(false);
+			await client.query('commit');
+			expect(await dismissing).toBe(true);
+		} finally {
+			await client.query('rollback').catch(() => {});
+			client.release();
+		}
+	});
+});
+
+describe('a takedown, restored, then taken down again', () => {
+	// Whether the moderator could read the edition if the writer made the story
+	// private now: only a report closed by a takedown that still holds opens it.
+	async function readableWhilePrivate() {
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		try {
+			return await loadEdition(publicationId).then(
+				() => true,
+				() => false
+			);
+		} finally {
+			await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
+		}
+	}
+
+	it('opens the edition only while a reported takedown holds', async () => {
+		const takedown = () => act(publishedPage, 'takedown', { publicationId, reason: 'spam' });
+		const restore = () => act(publishedPage, 'restore', { publicationId });
+
+		// 1. A takedown with no report.
+		expect(await takedown()).toMatchObject({ done: true });
+		expect((await edition()).takenDownAt).toBeInstanceOf(Date);
+		expect(await readableWhilePrivate()).toBe(false);
+		// 2. Restored.
+		expect(await restore()).toMatchObject({ done: true });
+		expect((await edition()).takenDownAt).toBeNull();
+		expect(await readableWhilePrivate()).toBe(false);
+		// 3. Reported, then taken down: the report it closed opens it.
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		expect(await act(reportsPage, 'takedown', { publicationId, reason: 'spam' })).toMatchObject({
+			done: true
+		});
+		expect(await readableWhilePrivate()).toBe(true);
+		// 4. Restored: the closed report no longer opens it.
+		expect(await restore()).toMatchObject({ done: true });
+		expect(await readableWhilePrivate()).toBe(false);
+		// 5. Taken down again with no new report: still closed to the moderator.
+		expect(await takedown()).toMatchObject({ done: true });
+		expect(await edition()).toMatchObject({ removedReason: 'spam' });
+		expect(await readableWhilePrivate()).toBe(false);
+		// Public again, the current edition reads as usual.
+		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
 	});
 });
 

@@ -1647,12 +1647,21 @@ describe('the consent page', () => {
 		expect(await listGrants(db, bob)).toHaveLength(0);
 	});
 
-	it('grants the apply permission when the writer ticks it', async () => {
+	it('grants the apply permission when the writer ticks it with suggest', async () => {
+		const fields = authorizeQuery();
+		fields.append('permission', 'suggest');
+		fields.append('permission', 'apply');
+		const result = await answer('allow', alice, fields);
+		const exchanged = await exchange(new URL(result.continueTo!).searchParams.get('code')!);
+		expect(exchanged.ok && exchanged.tokens.permissions).toEqual(['read', 'suggest', 'apply']);
+	});
+
+	it('drops apply ticked without suggest, since it would do nothing', async () => {
 		const fields = authorizeQuery();
 		fields.append('permission', 'apply');
 		const result = await answer('allow', alice, fields);
 		const exchanged = await exchange(new URL(result.continueTo!).searchParams.get('code')!);
-		expect(exchanged.ok && exchanged.tokens.permissions).toEqual(['read', 'apply']);
+		expect(exchanged.ok && exchanged.tokens.permissions).toEqual(['read']);
 	});
 
 	it('grants reading alone when nothing else is ticked', async () => {
@@ -1704,9 +1713,15 @@ describe('the consent page', () => {
 	});
 
 	it('keeps the apply permission ticked for an app that already has it', async () => {
+		await exchange(await codeFor(alice, ['read', 'suggest', 'apply']));
+		const data = await load(alice);
+		expect(data.permissions.map((p) => p.checked)).toEqual([true, true, true]);
+	});
+
+	it('leaves apply unticked for an app that has it without suggest', async () => {
 		await exchange(await codeFor(alice, ['read', 'apply']));
 		const data = await load(alice);
-		expect(data.permissions.map((p) => p.checked)).toEqual([true, false, true]);
+		expect(data.permissions.map((p) => p.checked)).toEqual([true, false, false]);
 	});
 });
 
@@ -1753,6 +1768,8 @@ describe('personal access tokens', () => {
 			'suggest',
 			'apply'
 		]);
+		const idle = await made(alice, { name: 'Idle', permissions: ['apply'] });
+		expect((await resolveBearer(db, idle.token))?.permissions).toEqual(['read']);
 	});
 
 	it('refuses a bad name, a repeat of a name, a bad lifetime and an account with access off', async () => {

@@ -384,6 +384,8 @@ logged there and shown in the admin panel's run history.
 
 ## Updating
 
+Updating from 3.x to 4.0.0? Follow "Updating to 4.0.0" below first.
+
 Change the image tag (or pull `latest`) and run `docker compose up -d`. Pending
 migrations apply when the app or worker container starts. Migrations are
 forward-only, so take a backup before updating if you are not running the
@@ -461,6 +463,8 @@ is missing (nothing is changed when that happens).
    image tag to 4.0.0 or later. Keep the same volume; the data carries over.
    Do not run an older Codex against the new database image, even briefly:
    until 4.0.0 has rebuilt the indexes, it can write rows the indexes miss.
+   If you build Codex from source, `git pull` (or checking out the 4.0.0
+   tag) makes both changes, so do it only now, after step 2.
 4. Run `docker compose pull` and then `docker compose up -d`. If you build
    Codex from source, run `docker compose up -d --build` instead.
 
@@ -483,13 +487,15 @@ written since the update is lost.
    ```
 
 3. Set the `db` image and the Codex image tag back to what they were, and run
-   `docker compose up -d`.
+   `docker compose up -d`. If you build Codex from source, check out the
+   release you had before and run `docker compose up -d --build`.
 
 Switching the image back without the copy leaves the indexes out of order.
 Keep the `-trixie` tag of the database image pinned: a new Debian release can
 change the sort order again, and Postgres does not warn about it for a
 database first created by the old image. If you move to another Debian base,
-run `REINDEX DATABASE codex;` after the change.
+run `REINDEX DATABASE codex;` and then
+`ALTER DATABASE codex REFRESH COLLATION VERSION;` after the change.
 
 If you run your own PostgreSQL 18 server, install pgvector on it (the
 `postgresql-18-pgvector` package on Debian and Ubuntu) before updating. Only

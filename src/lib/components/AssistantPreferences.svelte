@@ -13,10 +13,13 @@
 	import {
 		ASSISTANT_CHOICES,
 		CONTENT_LIMITS,
+		foldedLimit,
+		foldedPreferences,
 		HABIT_CHECKS,
 		HOUSE_STYLE,
 		inheritedChoiceLabel,
 		inheritedLabel,
+		limitNote,
 		MAX_ASSISTANT_NOTES,
 		normaliseNotes,
 		normalisePreferences,
@@ -44,8 +47,9 @@
 		inherited?: { preferences: unknown; notes: string | null } | null;
 		// A standalone story, or the universe that holds them.
 		standalone?: boolean;
-		// The content warnings on the site's list, for the content limits.
-		warnings?: { slug: string; name: string }[];
+		// The content warnings on the site's list, for the content limits, each
+		// with the slugs of the warnings merged into it.
+		warnings?: { slug: string; name: string; merged: string[] }[];
 		saved?: boolean;
 		// Shown in place of "Saved." when a save left some settings alone.
 		notice?: string | null;
@@ -55,10 +59,13 @@
 	} = $props();
 
 	// A refused save shows what it sent over the stored values: it carries no
-	// value for a warning the form did not show.
+	// value for a warning the form did not show. Each warning shows its limit
+	// folded with the ones merged into it, which is what applies at this level
+	// (the save compares against the same, see limitChanges).
+	const own = $derived(normalisePreferences(stored));
 	const values: Record<string, string> = $derived({
 		...Object.fromEntries(
-			Object.entries({ ...normalisePreferences(stored), assistantNotes: notes ?? '' }).map(
+			Object.entries({ ...foldedPreferences(own, warnings), assistantNotes: notes ?? '' }).map(
 				([key, value]) => [key, String(value)]
 			)
 		),
@@ -69,7 +76,8 @@
 	// defaultValue, and reading it once keeps a refresh from writing over newer
 	// typing.
 	const initialNotes = untrack(() => values.assistantNotes ?? '');
-	const fromUniverse = $derived(inherited ? normalisePreferences(inherited.preferences) : null);
+	const universeOwn = $derived(inherited ? normalisePreferences(inherited.preferences) : null);
+	const fromUniverse = $derived(universeOwn ? foldedPreferences(universeOwn, warnings) : null);
 	const universeNotes = $derived(inherited ? normaliseNotes(inherited.notes) : null);
 	const id = (key: string) => `${level}-pref-${key}`;
 
@@ -83,6 +91,22 @@
 
 	const blankLabel = (key: string, fallback: string) =>
 		inheritedLabel(key, fromUniverse, fallback, standalone);
+
+	// A note under a warning whose select does not tell the whole story.
+	function limitHint(warning: { slug: string; merged: string[] }): string | null {
+		const note = limitNote(own, universeOwn, warning);
+		if (note === 'universe') {
+			return standalone
+				? 'Kept off the page anyway, because the settings for all your standalone stories keep a warning merged into this one off the page. To write freely, change it there.'
+				: "Kept off the page anyway, because the universe's settings keep a warning merged into this one off the page. To write freely, change it in the universe's settings.";
+		}
+		if (note === 'merged') {
+			return foldedLimit(own, warning) === 'avoid'
+				? 'Kept off the page because of a warning that was merged into this one. Pick another choice to change it.'
+				: 'Set on a warning that was merged into this one. Pick another choice to change it.';
+		}
+		return null;
+	}
 
 	// The draft length box is blank when not set; on a story it shows the
 	// universe's length, when it has one, as the placeholder.
@@ -244,10 +268,12 @@
 					freely" tells it the subject is fine where the story calls for it. The Assistant's own
 					rules still apply either way. A limit you set on a warning that was later merged into
 					another still applies to the one it was merged into. Where the two differ, "Keep it off
-					the page" wins.
+					the page" wins, and the choice shown here already counts both. Pick a different choice to
+					replace both.
 				</p>
 				{#each warnings as warning, index (warning.slug)}
 					{@const key = warningKey(warning.slug)}
+					{@const hint = limitHint(warning)}
 					<!-- A slug may hold characters an element id cannot, so the id goes by position. -->
 					<div class="field">
 						<label for={id(`warning-${index}`)}>{warning.name}</label>
@@ -257,6 +283,9 @@
 								<option value={option.value}>{option.label}</option>
 							{/each}
 						</select>
+						{#if hint}
+							<p class="field-hint">{hint}</p>
+						{/if}
 					</div>
 				{/each}
 			</fieldset>
