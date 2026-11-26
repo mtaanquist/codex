@@ -257,3 +257,104 @@ test('a refused pick is not put back by a slower refresh', async ({ page }) => {
 		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
 	}
 });
+
+// A refresh that brings a changed list while a limit's own save is in flight
+// leaves that limit to the save: it landed, so no note says it was not saved.
+test('a limit saved while the list changes under its save says nothing was lost', async ({
+	page
+}) => {
+	const stamp = Date.now();
+	const slug = `e2e-inflight-${stamp}`;
+	const name = `E2E inflight ${stamp}`;
+	const added = `e2e-inflight-added-${stamp}`;
+	await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+	try {
+		await openUniversePreferences(page);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		let handled!: () => void;
+		const processed = new Promise<void>((resolve) => (handled = resolve));
+		await page.route(
+			(url) => url.search.includes('saveAssistantPreferences'),
+			async (route) => {
+				const response = await route.fetch();
+				handled();
+				await gate;
+				await route.fulfill({ response });
+			}
+		);
+		await page.getByRole('combobox', { name }).selectOption('avoid');
+		await processed;
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+			`E2E inflight added ${stamp}`,
+			added
+		]);
+		// Another section's save refreshes the page with the new list.
+		const refreshed = page.waitForResponse((response) => response.url().includes('__data.json'));
+		await page.evaluate(() =>
+			document.querySelector<HTMLFormElement>('form[action$="?/update"]')!.requestSubmit()
+		);
+		await refreshed;
+		await expect(page.getByRole('combobox', { name: `E2E inflight added ${stamp}` })).toBeVisible();
+		release();
+		await expect(page.getByRole('status').filter({ hasText: 'Saved.' }).first()).toBeVisible();
+		await page.waitForTimeout(300);
+		await expect(
+			page.getByRole('status').filter({ hasText: 'the content limits you changed were not saved' })
+		).toHaveCount(0);
+		await page.unrouteAll({ behavior: 'wait' });
+		await page.reload();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('avoid');
+	} finally {
+		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+	}
+});
+
+// One whose save fails while a refresh brings a changed list is dropped with
+// a note, so the next save cannot post it against the new list.
+test('a limit whose save fails while the list changes is not sent again', async ({ page }) => {
+	const stamp = Date.now();
+	const slug = `e2e-failed-${stamp}`;
+	const name = `E2E failed ${stamp}`;
+	const added = `e2e-failed-added-${stamp}`;
+	await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+	try {
+		await openUniversePreferences(page);
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		let held!: () => void;
+		const holding = new Promise<void>((resolve) => (held = resolve));
+		await page.route(
+			(url) => url.search.includes('saveAssistantPreferences'),
+			async (route) => {
+				held();
+				await gate;
+				await route.abort();
+			},
+			{ times: 1 }
+		);
+		await page.getByRole('combobox', { name }).selectOption('avoid');
+		await holding;
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+			`E2E failed added ${stamp}`,
+			added
+		]);
+		const refreshed = page.waitForResponse((response) => response.url().includes('__data.json'));
+		await page.evaluate(() =>
+			document.querySelector<HTMLFormElement>('form[action$="?/update"]')!.requestSubmit()
+		);
+		await refreshed;
+		release();
+		await expect(
+			page.getByRole('status').filter({ hasText: 'the content limits you changed were not saved' })
+		).toBeVisible();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await page.getByRole('combobox', { name: 'Tense' }).selectOption('present');
+		await expect(page.getByRole('status').filter({ hasText: 'Saved.' }).first()).toBeVisible();
+		await page.reload();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('present');
+	} finally {
+		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+	}
+});

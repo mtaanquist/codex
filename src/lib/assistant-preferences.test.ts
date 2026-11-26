@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	effectivePreferences,
+	foldedLimit,
 	foldedPreferences,
 	HABIT_CHECKS,
 	HOUSE_STYLE,
@@ -553,22 +554,70 @@ describe('content limits folded with the warnings merged in', () => {
 		const own = { 'warning:violence': 'write' } as const;
 		const universe = { 'warning:gore': 'avoid' } as const;
 		expect(shownLimit(own, universe, violence)).toBe('avoid');
-		expect(limitChanges({ 'warning:violence': 'write' }, own, [violence], universe)).toEqual({
+		expect(limitChanges({ 'warning:violence': 'write' }, own, [violence], true)).toEqual({
 			'warning:violence': 'write',
 			'warning:gore': 'write'
 		});
-		// Posting what the select showed changes nothing.
-		expect(limitChanges({ 'warning:violence': 'avoid' }, own, [violence], universe)).toEqual({});
-		// A blank clears the story's own keys, so it follows the universe.
-		expect(limitChanges({ 'warning:violence': null }, own, [violence], universe)).toEqual({
-			'warning:violence': null,
-			'warning:gore': null
-		});
-		expect(limitChanges({ 'warning:violence': null }, {}, [violence], universe)).toEqual({});
-		expect(limitChanges({ 'warning:violence': 'avoid' }, {}, [violence], universe)).toEqual({
+		// Posting what the select showed stores it on the story's own keys.
+		expect(limitChanges({ 'warning:violence': 'avoid' }, own, [violence], true)).toEqual({
 			'warning:violence': 'avoid',
 			'warning:gore': 'avoid'
 		});
+		// A blank clears the story's own keys, so it follows the universe.
+		expect(limitChanges({ 'warning:violence': null }, own, [violence], true)).toEqual({
+			'warning:violence': null,
+			'warning:gore': null
+		});
+		expect(limitChanges({ 'warning:violence': null }, {}, [violence], true)).toEqual({});
+		expect(limitChanges({ 'warning:violence': 'avoid' }, {}, [violence], true)).toEqual({
+			'warning:violence': 'avoid',
+			'warning:gore': 'avoid'
+		});
+	});
+
+	it("skips a story's limit only when its own keys already hold it, whatever the universe holds", () => {
+		const both = { 'warning:violence': 'write', 'warning:gore': 'write' } as const;
+		expect(limitChanges({ 'warning:violence': 'write' }, both, [violence], true)).toEqual({});
+		// Only some of its keys: stored on all of them.
+		expect(
+			limitChanges({ 'warning:violence': 'write' }, { 'warning:gore': 'write' }, [violence], true)
+		).toEqual({ 'warning:violence': 'write', 'warning:gore': 'write' });
+		expect(
+			limitChanges({ 'warning:violence': null }, { 'warning:gore': 'write' }, [violence], true)
+		).toEqual({ 'warning:violence': null, 'warning:gore': null });
+	});
+
+	it('replaces the limits of a warning merged in and removed since, without folding them', () => {
+		const withRemoved = { ...violence, merged: [], removed: ['gore'] };
+		const stored = { 'warning:gore': 'avoid' } as const;
+		// Not in the fold, so the universe's select shows blank.
+		expect(foldedLimit(stored, withRemoved)).toBeUndefined();
+		expect(limitChanges({ 'warning:violence': 'write' }, stored, [withRemoved])).toEqual({
+			'warning:violence': 'write',
+			'warning:gore': null
+		});
+		// Blank posted over a removed key: cleared, so a restore brings nothing back.
+		expect(limitChanges({ 'warning:violence': null }, stored, [withRemoved])).toEqual({
+			'warning:violence': null,
+			'warning:gore': null
+		});
+		expect(limitChanges({ 'warning:violence': null }, {}, [withRemoved])).toEqual({});
+		expect(limitChanges({ 'warning:violence': 'write' }, stored, [withRemoved], true)).toEqual({
+			'warning:violence': 'write',
+			'warning:gore': 'write'
+		});
+		expect(limitChanges({ 'warning:violence': null }, stored, [withRemoved], true)).toEqual({
+			'warning:violence': null,
+			'warning:gore': null
+		});
+		expect(
+			limitChanges(
+				{ 'warning:violence': 'write' },
+				{ 'warning:violence': 'write', 'warning:gore': 'write' },
+				[withRemoved],
+				true
+			)
+		).toEqual({});
 	});
 
 	it('notes a limit that comes from a merged warning or from the universe', () => {
