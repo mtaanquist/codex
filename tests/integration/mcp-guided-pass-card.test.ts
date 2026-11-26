@@ -50,6 +50,7 @@ const { createAuthorizationCode, exchangeCode, resolveBearer, revokeGrant } =
 	await import('#lib/server/mcp/oauth');
 const {
 	CARD_KEY_META,
+	CARD_TURNED_OFF,
 	MAX_CARD_CHARS,
 	MAX_CARD_EDIT_CHARS,
 	MAX_CARD_EDITS,
@@ -687,7 +688,8 @@ describe('decide_suggestion', () => {
 				.where(eq(oauthGrants.id, grantId));
 			release();
 			await ahead;
-			expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+			// Said plainly to the card: it is the writer's own choice.
+			expect(await waiting).toMatchObject({ text: CARD_TURNED_OFF, isError: true });
 			expect(await sceneBody(alice.sceneId)).toBe(BODY);
 		} finally {
 			release();
@@ -800,6 +802,29 @@ describe('an accept that waited its turn', () => {
 		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
 	});
 
+	it('is not given the pass again once the universe went to the trash while that waited', async () => {
+		const args = await opened();
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const held = [readGate.run(alice.userId, () => gate), readGate.run(alice.userId, () => gate)];
+		try {
+			const accepting = call(alice.token, 'decide_suggestion', args);
+			await untilWaiting(readGate, alice.userId);
+			await db
+				.update(universes)
+				.set({ deletedAt: new Date() })
+				.where(eq(universes.id, alice.universeId));
+			release();
+			const result = await accepting;
+			expect(result).toMatchObject({ text: 'Accepted.', isError: false });
+			expect(result.pass).toBeUndefined();
+			expect(result.keys).toBeUndefined();
+		} finally {
+			release();
+			await Promise.all(held);
+		}
+	});
+
 	it('opens no pass once accepting in the app was taken away while the call waited', async () => {
 		const noteId = await patternNote(alice.token, alice);
 		const grantId = (await resolveBearer(db, alice.token))!.grantId;
@@ -819,7 +844,7 @@ describe('an accept that waited its turn', () => {
 				.where(eq(oauthGrants.id, grantId));
 			release();
 			const result = await opening;
-			expect(result).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+			expect(result).toMatchObject({ text: CARD_TURNED_OFF, isError: true });
 			expect(result.keys).toBeUndefined();
 		} finally {
 			release();

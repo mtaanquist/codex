@@ -42,6 +42,7 @@ import {
 } from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
+import { microsText } from './db-clock.ts';
 import { tagsForStories } from './tags.ts';
 import { listedInBrowseCondition } from './browse.ts';
 import { isUuid, readingAddress, slugAddress } from '#lib/slug';
@@ -711,8 +712,13 @@ export async function takedownPublication(
 export async function restorePublication(
 	db: Database,
 	publicationId: string,
-	restoredBy: string | null
-): Promise<boolean> {
+	restoredBy: string | null,
+	// When the moderator's page showed the edition taken down, as microsText
+	// (listTakenDown's takenDownMicros). Refused with 'changed' when the
+	// takedown holding the edition now is a later one; left out, nothing is
+	// checked.
+	{ takenDownShown }: { takenDownShown?: string } = {}
+): Promise<boolean | 'changed'> {
 	return await db.transaction(async (tx) => {
 		const [edition] = await tx
 			.select({ storyId: publications.storyId })
@@ -747,6 +753,16 @@ export async function restorePublication(
 			.from(stories)
 			.where(eq(stories.id, edition.storyId))
 			.for('update');
+		if (takenDownShown !== undefined) {
+			// Checked under the lock and in SQL, to the microsecond, so a restore
+			// and a new takedown since the page loaded are seen.
+			const [held] = await tx
+				.select({ shown: sql<boolean>`${microsText(takenDownAt())} = ${takenDownShown}` })
+				.from(publications)
+				.where(and(eq(publications.id, publicationId), isNotNull(publications.removedReason)));
+			if (!held) return false;
+			if (!held.shown) return 'changed' as const;
+		}
 		const restored = await tx
 			.update(publications)
 			.set({
@@ -861,6 +877,8 @@ export async function listBrowseBlocked(db: Database) {
 			title: titleModeratorMayRead(),
 			handle: users.handle,
 			browseBlockedAt: stories.browseBlockedAt,
+			// Posted back by Allow in Browse, so a removal placed since is not lifted.
+			browseBlockedMicros: microsText(stories.browseBlockedAt),
 			browseBlockedReason: stories.browseBlockedReason,
 			browseBlockedByName: moderatorName(stories.browseBlockedBy)
 		})
@@ -883,6 +901,8 @@ export async function listTakenDown(db: Database) {
 			handle: publications.handle,
 			title: titleModeratorMayRead(),
 			takenDownAt: takenDownAt(),
+			// Posted back by Restore, so a takedown placed since is not lifted.
+			takenDownMicros: microsText(takenDownAt()),
 			removedReason: publications.removedReason,
 			removedByName: moderatorName(publications.removedBy),
 			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
@@ -992,6 +1012,8 @@ export async function moderatorEdition(db: Database, publicationId: string) {
 			isCurrent: publications.isCurrent,
 			removedAt: publications.removedAt,
 			takenDownAt: takenDownAt(),
+			// Posted back by Restore, so a takedown placed since is not lifted.
+			takenDownMicros: microsText(takenDownAt()),
 			removedReason: publications.removedReason,
 			removedByName: moderatorName(publications.removedBy),
 			restoredAt: publications.restoredAt,

@@ -15,7 +15,14 @@ import {
 	TOOL_RESULT_MAX_CHARS
 } from './constants.ts';
 import { GateBusyError, readGate, stagingGate } from './call-gate.ts';
-import { CARD_TOOLS, callCardTool, cardTool, PASS_CARD_URI, type CardTool } from './pass-card.ts';
+import {
+	CARD_TOOLS,
+	CARD_TURNED_OFF,
+	callCardTool,
+	cardTool,
+	PASS_CARD_URI,
+	type CardTool
+} from './pass-card.ts';
 import { credentialLive, grantPermits, type BearerIdentity } from './oauth.ts';
 import { mcpInstanceEnabled } from './settings.ts';
 
@@ -241,16 +248,21 @@ export async function callMcpTool(
 	// stillAllowed does for a staging call.
 	// The universe run() checked, for building the pass again after an accept.
 	let checkedUniverse = '';
+	// A card call the grant no longer allows (the writer connected the app
+	// again without accepting in the app) is told so, so the card can say so.
+	// It is the writer's own grant, so this says nothing about any universe.
+	const connectionLive = async () =>
+		(await mcpInstanceEnabled(db)) && (await credentialLive(db, identity));
+	const notAllowed = async (): Promise<McpToolResult> =>
+		card && (await connectionLive()) && !(await grantPermits(db, identity.grantId, needed))
+			? refuse('turned_off', CARD_TURNED_OFF)
+			: refuse('no_universe', NO_UNIVERSE_RESULT);
 	const run = async (waited = false): Promise<McpToolResult> => {
 		if (
 			waited &&
-			!(
-				(await mcpInstanceEnabled(db)) &&
-				(await credentialLive(db, identity)) &&
-				(await grantPermits(db, identity.grantId, needed))
-			)
+			!((await connectionLive()) && (await grantPermits(db, identity.grantId, needed)))
 		) {
-			return refuse('no_universe', NO_UNIVERSE_RESULT);
+			return notAllowed();
 		}
 		const { universeId: universeArgument, ...rest } = args;
 		let universeId = '';
@@ -279,7 +291,7 @@ export async function callMcpTool(
 					(await grantPermits(tx, identity.grantId, needed)) &&
 					(await ownsUniverse(tx, identity.userId, universeId))
 			});
-			if (result.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);
+			if (result.refused) return notAllowed();
 			if (result.busy) {
 				refund();
 				return refuse('busy', result.text);
@@ -339,12 +351,13 @@ export async function callMcpTool(
 			// failed: without the pass, the card asks for it again.
 			try {
 				const pass = await readGate.run(identity.userId, async (waited) => {
+					// The universe may have gone to the trash meanwhile, too.
 					if (
 						waited &&
 						!(
-							(await mcpInstanceEnabled(db)) &&
-							(await credentialLive(db, identity)) &&
-							(await grantPermits(db, identity.grantId, needed))
+							(await connectionLive()) &&
+							(await grantPermits(db, identity.grantId, needed)) &&
+							(await ownsUniverse(db, identity.userId, checkedUniverse))
 						)
 					)
 						return null;

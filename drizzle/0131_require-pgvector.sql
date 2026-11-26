@@ -49,7 +49,7 @@ BEGIN
 			BEGIN
 				EXECUTE format('REINDEX TABLE %s', t.rel);
 			EXCEPTION WHEN unique_violation THEN
-				RAISE EXCEPTION 'Rebuilding the indexes of % found duplicate rows, likely written while the new database image ran an older version of Codex. Put back the copy of the database taken before the update (see "Updating to 4.0.0" in docs/SELF-HOSTING.md). If that fails the same way, the rows differ only in letter case and one of each pair must be removed by hand.', t.rel
+				RAISE EXCEPTION 'Rebuilding the indexes of % found duplicate rows, likely written while the new database image ran an older version of Codex. Put back the copy of the database taken before the update (see "Updating to 4.0.0" in docs/SELF-HOSTING.md). If that fails the same way, the rows differ only in letter case (the new image can fold some letters to lower case differently) and one of each pair must be removed by hand.', t.rel
 					USING DETAIL = SQLERRM;
 			END;
 		END LOOP;

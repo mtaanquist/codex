@@ -547,7 +547,10 @@ test('a draft length typed while its last save lands is kept', async ({ page }) 
 	release();
 	await refreshed;
 	await expect(page.getByRole('status').filter({ hasText: 'Saved.' }).first()).toBeVisible();
-	await page.waitForTimeout(300);
+	// Two frames after the refresh, so any write it would make has run.
+	await page.evaluate(
+		() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+	);
 	await expect(words).toHaveValue('2000');
 	const saved = page.waitForResponse((response) =>
 		response.url().includes('saveAssistantPreferences')

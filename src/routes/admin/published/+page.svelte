@@ -178,6 +178,7 @@
 								action={actionKeepingQuery('allowInBrowse', page.url.searchParams)}
 							>
 								<input type="hidden" name="storyId" value={story.storyId} />
+								<input type="hidden" name="browseBlockedAt" value={story.browseBlockedMicros} />
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
@@ -246,6 +247,7 @@
 						<div class="list-actions">
 							<form method="POST" action={actionKeepingQuery('restore', page.url.searchParams)}>
 								<input type="hidden" name="publicationId" value={edition.id} />
+								<input type="hidden" name="takenDownAt" value={edition.takenDownMicros} />
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"

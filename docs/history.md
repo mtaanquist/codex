@@ -10,6 +10,14 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 14 (2026-11-26, `staging/v4.0.0`, #1871).
+The loop's last round: every area found only lows, after content limits had
+turned up a medium in each of rounds 4 to 12. The lows were fixed before the
+staging-to-main merge, as Mads asked: stale moderation undo actions now match
+the takedown or block they were shown to the microsecond, the guided pass
+card got its first tests (Playwright, loading the card in a frame with a fake
+host), and estimate notes compare figures to the cent as they are shown.
+
 v4.0.0 staging review, round 13 (2026-11-26, `staging/v4.0.0`, #1868,
 #1869). The first round in which content limits turned up only lows. The one
 medium was older than the branch: the review window called its estimate the
@@ -250,7 +258,8 @@ migrated to 0127 under the old image). Migration 0131 detects that case (the
 database records no collation version while the server reports one, which is
 what a musl-created database looks like under glibc) and, after creating the
 extension, reindexes every table the role owns; databases created under glibc
-skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
+skip it, unless their recorded collation version differs or they sort with C
+over a real locale. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
 version, so the version stays unrecorded; the migration runs once anyway. The
 migrator checks `pg_available_extensions` first so a server without pgvector
 stops with directions instead of a bare Postgres error, and a refused

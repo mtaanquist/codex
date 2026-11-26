@@ -33,7 +33,7 @@ export const TOOLS: ToolDef[] = [
 		external: true,
 		name: 'list_universes',
 		description:
-			"List the writer's universes with each one's id, name, description, language and spelling convention (null when not set), Assistant preferences (the default for its stories) and number of stories. Every other tool needs a universe id from this list.",
+			"List the writer's universes with each one's id, name, description, language and spelling convention (null when not set), Assistant preferences (the default for its stories; the fields are those list_stories describes) and number of stories. Every other tool needs a universe id from this list.",
 		parameters: obj({}, [])
 	},
 	{
@@ -41,7 +41,7 @@ export const TOOLS: ToolDef[] = [
 		external: true,
 		name: 'list_stories',
 		description:
-			"List the stories in this universe with each one's id, title, one-line brief, language and spelling convention (null when not set; then work it out from the text), Assistant preferences and number of scenes. The preferences hold the house style (quoteMarks, serialComma, thoughts, tense, narration; null when not set, then follow the text), leaveAlone (habits the writer uses on purpose: do not flag them) and notes (the writer's own notes on habits to look for or leave alone). Use list_scenes for their chapters and scenes.",
+			"List the stories in this universe with each one's id, title, one-line brief, language and spelling convention (null when not set; then work it out from the text), Assistant preferences and number of scenes. The preferences hold the house style (quoteMarks, serialComma, thoughts, tense, narration; null when not set, then follow the text), leaveAlone (habits the writer uses on purpose: do not flag them), notes (the writer's own notes on habits to look for or leave alone), feedback (how much a review points out: sparing, normal or thorough), editReasons (when to give a reason with a suggested edit: always, unobvious or never), summaryLength (short or detailed summaries), draftWords (about how many words a drafted scene runs to) and contentLimits (name and limit for each content warning the writer set a limit on: avoid means keep it off the page, implied or passed over rather than shown, and do not suggest adding it; write means the writer is comfortable with it where the story calls for it). A null preference is not set. Use list_scenes for their chapters and scenes.",
 		parameters: obj({}, [])
 	},
 	{

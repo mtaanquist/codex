@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { publicationReports, publications, stories, tags } from './db/schema.ts';
 import { pattern } from './search.ts';
@@ -8,6 +8,8 @@ import { authorName } from '../author-name.ts';
 import { slugAddress } from '../slug.ts';
 import { BROWSE_PAGE_SIZE, encodeCursor, type BrowseQuery } from '../browse.ts';
 import type { ReportReason } from '../report-reasons.ts';
+import { microsText } from './db-clock.ts';
+import { moderatorMayRead } from './publication-scope.ts';
 
 // The public Browse page: current editions of public stories their authors
 // listed, across the whole instance. Unlisted and private stories never show.
@@ -369,10 +371,47 @@ export async function removeFromBrowse(
 	// When that report is already closed (another moderator got there first),
 	// nothing changes and the result is 'report-closed'.
 	reportId: string | null = null
-): Promise<boolean | 'report-closed'> {
+	// 'withdrawn' when the moderator may not read the story's current edition
+	// (the writer made it private or moved it to the trash, or never published
+	// it) nor the open report's edition.
+): Promise<boolean | 'report-closed' | 'withdrawn'> {
 	const closed = Symbol('report-closed');
 	return await db
 		.transaction(async (tx) => {
+			// The lock saveStoryVisibility's update and the takedown also take, so
+			// the check below sees a visibility change that just committed.
+			const [story] = await tx
+				.select({ id: stories.id })
+				.from(stories)
+				.where(eq(stories.id, storyId))
+				.for('update');
+			if (!story) return false;
+			const [readable] = await tx
+				.select({ id: publications.id })
+				.from(publications)
+				.innerJoin(stories, eq(stories.id, publications.storyId))
+				.where(
+					and(
+						eq(publications.storyId, storyId),
+						moderatorMayRead(),
+						// The current edition, or the edition of the report acted on,
+						// which an open report lets the moderator read.
+						reportId
+							? or(
+									eq(publications.isCurrent, true),
+									inArray(
+										publications.id,
+										tx
+											.select({ id: publicationReports.publicationId })
+											.from(publicationReports)
+											.where(eq(publicationReports.id, reportId))
+									)
+								)
+							: eq(publications.isCurrent, true)
+					)
+				)
+				.limit(1);
+			if (!readable) return 'withdrawn' as const;
 			const updated = await tx
 				.update(stories)
 				.set({
@@ -415,8 +454,12 @@ export async function removeFromBrowse(
 export async function allowInBrowse(
 	db: Database,
 	storyId: string,
-	allowedBy: string | null
-): Promise<boolean> {
+	allowedBy: string | null,
+	// When the moderator's page showed the story removed, as microsText
+	// (listBrowseBlocked's browseBlockedMicros). Refused with 'changed' when
+	// the removal now is a later one; left out, nothing is checked.
+	{ blockedShown }: { blockedShown?: string } = {}
+): Promise<boolean | 'changed'> {
 	const updated = await db
 		.update(stories)
 		.set({
@@ -426,7 +469,22 @@ export async function allowInBrowse(
 			browseAllowedAt: sql`now()`,
 			browseAllowedBy: allowedBy
 		})
-		.where(and(eq(stories.id, storyId), sql`${stories.browseBlockedAt} is not null`))
+		.where(
+			and(
+				eq(stories.id, storyId),
+				sql`${stories.browseBlockedAt} is not null`,
+				// In SQL, to the microsecond: a JS Date would drop them.
+				blockedShown === undefined
+					? undefined
+					: sql`${microsText(stories.browseBlockedAt)} = ${blockedShown}`
+			)
+		)
 		.returning({ id: stories.id });
-	return updated.length > 0;
+	if (updated.length > 0) return true;
+	if (blockedShown === undefined) return false;
+	const [still] = await db
+		.select({ id: stories.id })
+		.from(stories)
+		.where(and(eq(stories.id, storyId), isNotNull(stories.browseBlockedAt)));
+	return still ? 'changed' : false;
 }

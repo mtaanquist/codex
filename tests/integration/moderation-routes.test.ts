@@ -135,6 +135,27 @@ async function storyRow() {
 	return row;
 }
 
+// The Restore and Allow in Browse forms, as the Published page posts them: with
+// when the page showed the edition taken down or the story removed ('' when it
+// is not, for a page that is out of date).
+async function restoreForm(id: string) {
+	const { rows } = await pool.query(
+		`select (extract(epoch from coalesce(taken_down_at, removed_at)) * 1000000)::bigint::text as at
+		from publications where id = $1 and removed_reason is not null`,
+		[id]
+	);
+	return { publicationId: id, takenDownAt: rows[0]?.at ?? '' };
+}
+
+async function allowForm() {
+	const { rows } = await pool.query(
+		`select (extract(epoch from browse_blocked_at) * 1000000)::bigint::text as at
+		from stories where id = $1`,
+		[storyId]
+	);
+	return { storyId, browseBlockedAt: rows[0]?.at ?? '' };
+}
+
 async function expect404(run: Promise<unknown>) {
 	const caught = await run.then(
 		() => null,
@@ -153,7 +174,9 @@ describe('Admin > Published actions', () => {
 			{ id: publicationId, removedByName: 'mod' }
 		]);
 
-		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
+			done: true
+		});
 		const restored = await edition();
 		expect(restored).toMatchObject({ removedAt: null, restoredBy: moderator.id });
 		expect(restored.restoredAt).toBeInstanceOf(Date);
@@ -162,7 +185,7 @@ describe('Admin > Published actions', () => {
 		]);
 
 		// A second restore has nothing to undo.
-		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
 			status: 400
 		});
 	});
@@ -179,7 +202,9 @@ describe('Admin > Published actions', () => {
 			{ storyId, browseBlockedByName: 'mod' }
 		]);
 
-		expect(await act(publishedPage, 'allowInBrowse', { storyId })).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'allowInBrowse', await allowForm())).toMatchObject({
+			done: true
+		});
 		const allowed = await storyRow();
 		expect(allowed).toMatchObject({ browseBlockedAt: null, browseAllowedBy: moderator.id });
 		expect(allowed.browseAllowedAt).toBeInstanceOf(Date);
@@ -187,7 +212,9 @@ describe('Admin > Published actions', () => {
 			{ id: publicationId, browseAllowedByName: 'mod' }
 		]);
 
-		expect(await act(publishedPage, 'allowInBrowse', { storyId })).toMatchObject({ status: 400 });
+		expect(await act(publishedPage, 'allowInBrowse', await allowForm())).toMatchObject({
+			status: 400
+		});
 	});
 
 	it('says whether Browse shows the story, which also depends on its author', async () => {
@@ -272,7 +299,9 @@ describe('Admin > Published actions', () => {
 		// leaves the edition hidden as before.
 		expect((await edition()).removedAt).toEqual(hiddenAt);
 		expect(await adminCancelDeletion(db, author.id)).toBe(true);
-		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
+			done: true
+		});
 		expect(await edition()).toMatchObject({
 			removedAt: hiddenAt,
 			removedReason: null,
@@ -333,7 +362,9 @@ describe('Admin > Reports actions', () => {
 			resolution: 'removed_from_browse'
 		});
 		expect(rows.filter((row) => row.resolvedAt === null)).toHaveLength(1);
-		expect(await act(reportsPage, 'allowInBrowse', { storyId })).toMatchObject({ done: true });
+		expect(await act(reportsPage, 'allowInBrowse', await allowForm())).toMatchObject({
+			done: true
+		});
 		expect((await storyRow()).browseAllowedBy).toBe(moderator.id);
 	});
 
@@ -636,14 +667,18 @@ describe("the moderator's view of an edition", () => {
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
 		// Still down: the moderator can read it before deciding on a restore.
 		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
-		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
+			done: true
+		});
 		await expect404(loadEdition(publicationId));
 	});
 
 	it('a later takedown with no report does not reopen an edition whose takedown was restored', async () => {
 		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
 		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
-		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
+			done: true
+		});
 		const newer = await publishStory(db, author.id, storyId);
 		if (!newer.ok) throw new Error(newer.reason);
 		expect(await takedownPublication(db, newer.publicationId, moderator.id, 'other')).toBe(true);
@@ -654,7 +689,7 @@ describe("the moderator's view of an edition", () => {
 		]);
 		// A new report on it, closed by a new takedown, opens it again.
 		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
-		await act(publishedPage, 'restore', { publicationId: newer.publicationId });
+		await act(publishedPage, 'restore', await restoreForm(newer.publicationId));
 		await db.insert(publicationReports).values({ publicationId, reason: 'spam' });
 		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
@@ -666,7 +701,9 @@ describe("the moderator's view of an edition", () => {
 		const newer = await publishStory(db, author.id, storyId);
 		if (!newer.ok) throw new Error(newer.reason);
 		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
-		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
+			done: true
+		});
 		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
 		expect(rows.map((row) => [row.removedAt, row.removedReason])).toEqual([
 			[null, null],
@@ -862,7 +899,7 @@ describe('a takedown, restored, then taken down again', () => {
 
 	it('opens the edition only while a reported takedown holds', async () => {
 		const takedown = () => act(publishedPage, 'takedown', { publicationId, reason: 'spam' });
-		const restore = () => act(publishedPage, 'restore', { publicationId });
+		const restore = async () => act(publishedPage, 'restore', await restoreForm(publicationId));
 
 		// 1. A takedown with no report.
 		expect(await takedown()).toMatchObject({ done: true });
@@ -923,6 +960,163 @@ describe('a takedown, restored, then taken down again', () => {
 		expect((await loadPublished()).takenDown).toMatchObject([
 			{ id: publicationId, viewable: false, notViewableBecause: 'olderTakedown' }
 		]);
+	});
+});
+
+describe('an undo or Browse removal from a page loaded before a change', () => {
+	const RELOAD_TAKEDOWN =
+		'This edition was taken down again since you loaded the page. Reload the page to see what changed.';
+	const RELOAD_BROWSE =
+		'This story was removed from Browse again since you loaded the page. Reload the page to see what changed.';
+	const WITHDRAWN = 'The writer made this story private or moved it to the trash. Reload the page.';
+
+	async function shownTakedown() {
+		const [row] = (await loadPublished()).takenDown;
+		return { publicationId: row.id as string, takenDownAt: row.takenDownMicros as string };
+	}
+	async function shownBlock() {
+		const [row] = (await loadPublished()).browseBlocked;
+		return { storyId: row.storyId as string, browseBlockedAt: row.browseBlockedMicros as string };
+	}
+
+	it('a stale Restore does not lift a takedown placed after the page loaded', async () => {
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		const stale = await shownTakedown();
+		// Another moderator restores it, and a third takes it down again.
+		expect(await act(publishedPage, 'restore', await restoreForm(publicationId))).toMatchObject({
+			done: true
+		});
+		expect(await takedownPublication(db, publicationId, moderator.id, 'illegal')).toBe(true);
+		expect(await act(publishedPage, 'restore', stale)).toMatchObject({
+			status: 409,
+			data: { message: RELOAD_TAKEDOWN }
+		});
+		expect(await edition()).toMatchObject({ removedReason: 'illegal' });
+		expect((await edition()).removedAt).toBeInstanceOf(Date);
+		// The reloaded page restores it.
+		expect(await act(publishedPage, 'restore', await shownTakedown())).toMatchObject({
+			done: true
+		});
+		expect(await edition()).toMatchObject({ removedAt: null, removedReason: null });
+	});
+
+	it('matches the shown takedown to the microsecond', async () => {
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		await pool.query(
+			`update publications set taken_down_at = '2026-03-01 10:00:00.123456+00' where id = $1`,
+			[publicationId]
+		);
+		const shown = await shownTakedown();
+		expect(shown.takenDownAt).toBe(String(Date.UTC(2026, 2, 1, 10) * 1000 + 123456));
+		// A takedown in the same millisecond, one microsecond later.
+		await pool.query(
+			`update publications set taken_down_at = '2026-03-01 10:00:00.123457+00' where id = $1`,
+			[publicationId]
+		);
+		expect(await act(publishedPage, 'restore', shown)).toMatchObject({ status: 409 });
+		expect((await edition()).removedReason).toBe('spam');
+		expect(await act(publishedPage, 'restore', await shownTakedown())).toMatchObject({
+			done: true
+		});
+	});
+
+	it('refuses a Restore that does not say when the page showed the takedown', async () => {
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ status: 400 });
+		expect((await edition()).removedReason).toBe('spam');
+	});
+
+	it('a stale Allow in Browse does not lift a removal placed after the page loaded', async () => {
+		expect(await act(publishedPage, 'removeFromBrowse', { storyId, reason: 'spam' })).toMatchObject(
+			{ done: true }
+		);
+		const stale = await shownBlock();
+		expect(await act(publishedPage, 'allowInBrowse', await allowForm())).toMatchObject({
+			done: true
+		});
+		expect(
+			await act(publishedPage, 'removeFromBrowse', { storyId, reason: 'other' })
+		).toMatchObject({ done: true });
+		expect(await act(publishedPage, 'allowInBrowse', stale)).toMatchObject({
+			status: 409,
+			data: { message: RELOAD_BROWSE }
+		});
+		expect(await act(reportsPage, 'allowInBrowse', stale)).toMatchObject({ status: 409 });
+		expect(await storyRow()).toMatchObject({ browseBlockedReason: 'other' });
+		expect(await act(publishedPage, 'allowInBrowse', await shownBlock())).toMatchObject({
+			done: true
+		});
+		expect((await storyRow()).browseBlockedAt).toBeNull();
+	});
+
+	it('matches the shown Browse removal to the microsecond', async () => {
+		await pool.query(
+			`update stories set browse_blocked_at = '2026-03-01 10:00:00.123456+00', browse_blocked_reason = 'spam' where id = $1`,
+			[storyId]
+		);
+		const shown = await shownBlock();
+		await pool.query(
+			`update stories set browse_blocked_at = '2026-03-01 10:00:00.123457+00' where id = $1`,
+			[storyId]
+		);
+		expect(await act(publishedPage, 'allowInBrowse', shown)).toMatchObject({ status: 409 });
+		expect((await storyRow()).browseBlockedAt).toBeInstanceOf(Date);
+		expect(await act(publishedPage, 'allowInBrowse', { storyId })).toMatchObject({ status: 400 });
+		expect((await storyRow()).browseBlockedAt).toBeInstanceOf(Date);
+	});
+
+	it('refuses a Browse removal of a story the writer made private since the page loaded', async () => {
+		expect((await loadPublished()).live.editions).toMatchObject([{ listedInBrowse: true }]);
+		await db
+			.update(stories)
+			.set({ visibility: 'private', listedInBrowse: false })
+			.where(eq(stories.id, storyId));
+		expect(await act(publishedPage, 'removeFromBrowse', { storyId, reason: 'spam' })).toMatchObject(
+			{ status: 409, data: { message: WITHDRAWN } }
+		);
+		expect(await storyRow()).toMatchObject({ browseBlockedAt: null, browseBlockedReason: null });
+	});
+
+	it('refuses a Browse removal of a story in the trash or never published', async () => {
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		expect(await act(publishedPage, 'removeFromBrowse', { storyId, reason: 'spam' })).toMatchObject(
+			{ status: 409, data: { message: WITHDRAWN } }
+		);
+		expect((await storyRow()).browseBlockedAt).toBeNull();
+
+		const [universe] = await db.select().from(universes);
+		const draft = await createStoryInUniverse(db, author.id, universe.id, 'Unshared');
+		expect(
+			await act(publishedPage, 'removeFromBrowse', { storyId: draft.id, reason: 'spam' })
+		).toMatchObject({ status: 409, data: { message: WITHDRAWN } });
+		const [row] = await db.select().from(stories).where(eq(stories.id, draft.id));
+		expect(row.browseBlockedAt).toBeNull();
+	});
+
+	it('still removes a story in the trash from Browse from an open report', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		const [report] = await db.select().from(publicationReports);
+		// A newer edition, so the report is about an edition no longer current.
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		expect(
+			await act(reportsPage, 'removeFromBrowse', { storyId, reportId: report.id, reason: 'spam' })
+		).toMatchObject({ done: true });
+		expect(await storyRow()).toMatchObject({ browseBlockedReason: 'spam' });
+	});
+
+	it('says the report closed when a Browse removal from a dismissed report is refused', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		const [report] = await db.select().from(publicationReports);
+		expect(await dismissReport(db, report.id, moderator.id)).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(
+			await act(reportsPage, 'removeFromBrowse', { storyId, reportId: report.id, reason: 'spam' })
+		).toMatchObject({
+			status: 409,
+			data: { message: 'This report is already closed. Reload the page to see what changed.' }
+		});
 	});
 });
 
