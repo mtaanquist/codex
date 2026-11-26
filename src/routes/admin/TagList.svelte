@@ -104,7 +104,8 @@
 									<input id="rename-{row.id}" class="input" name="name" value={row.name} required />
 									<button class="btn btn-secondary btn-sm" type="submit">Rename</button>
 								</form>
-								{#if !row.mergedIntoName}
+								<!-- A removed entry is restored before it can be merged (mergeTag). -->
+								{#if !row.mergedIntoName && !row.removedAt}
 									<form method="POST" action={actionKeepingQuery('merge', page.url.searchParams)}>
 										<input type="hidden" name="id" value={row.id} />
 										<label class="visually-hidden" for="merge-{row.id}">

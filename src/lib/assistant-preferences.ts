@@ -400,11 +400,14 @@ export function foldedPreferences(
 }
 
 // The content-limit changes a form makes to one row (a story or a universe),
-// given what it stores. The form shows each live warning's folded limit
-// (foldedPreferences), so a posted value equal to that is no change and the
-// row is left as it is. A different value is the writer's own choice for the
-// warning at this level: it is stored, and this row's keys on the warnings
-// merged into it are cleared, so the choice is the one that applies.
+// given what it stores. The form posts only the limits the writer changed
+// (CHANGED_LIMITS_FIELD), and shows each live warning's folded limit
+// (foldedPreferences). A posted value different from that fold is the
+// writer's own choice for the warning at this level: it is stored, and this
+// row's keys on the warnings merged into it are cleared, so the choice is the
+// one that applies. A posted value equal to the fold changes no limit, but is
+// still stored on the warning's own key when that key differs: on a story,
+// that key is what overrides the universe's limit on the same warning.
 export function limitChanges(
 	changes: PreferenceChanges,
 	stored: StoredPreferences,
@@ -416,7 +419,7 @@ export function limitChanges(
 		if (!(key in changes)) continue;
 		const posted = changes[key] ?? undefined;
 		if (posted === foldedLimit(stored, warning)) {
-			delete out[key];
+			if (stored[key as `warning:${string}`] === posted) delete out[key];
 			continue;
 		}
 		for (const slug of warning.merged) out[warningKey(slug)] = null;
@@ -426,20 +429,63 @@ export function limitChanges(
 
 // Why a warning's limit on the form is not simply its own key, or null. The
 // select shows the limit folded within its row (foldedPreferences), which can
-// come from a warning merged into this one ('merged'). On a story whose shown
-// limit is "write", the universe's "avoid" on a merged warning the story has
-// no limit for still applies ('universe').
+// come from a warning merged into this one ('merged'). On a story whose own
+// limit is "write" while the universe's settings keep the warning off the
+// page: 'universe' when that comes from a warning merged into this one, which
+// the story cannot override, else 'survivor' when it comes from the universe's
+// limit on this warning itself, which the story's own limit on it overrides.
+// The story's select then shows the universe's choice (see shownPreferences).
 export function limitNote(
 	own: StoredPreferences,
 	universe: StoredPreferences | null,
 	warning: Pick<LiveWarning, 'slug' | 'merged'>
-): 'merged' | 'universe' | null {
+): 'merged' | 'universe' | 'survivor' | null {
 	const shown = foldedLimit(own, warning);
-	if (universe && shown === 'write' && foldedLimit({ ...universe, ...own }, warning) === 'avoid') {
-		return 'universe';
+	if (universe && shown === 'write') {
+		const combined: Record<string, unknown> = { ...universe, ...own };
+		if (warning.merged.some((slug) => combined[warningKey(slug)] === 'avoid')) return 'universe';
+		if (combined[warningKey(warning.slug)] === 'avoid') return 'survivor';
 	}
 	return shown && own[warningKey(warning.slug) as `warning:${string}`] !== shown ? 'merged' : null;
 }
+
+// The values a preferences form starts from: the row's own preferences with
+// each warning folded (foldedPreferences), except that a story's warning in
+// the 'survivor' case of limitNote shows as blank, which reads as the
+// universe's choice. Picking "Write freely" there then stores the story's own
+// limit on the warning (limitChanges).
+export function shownPreferences(
+	own: StoredPreferences,
+	universe: StoredPreferences | null,
+	warnings: readonly Pick<LiveWarning, 'slug' | 'merged'>[]
+): StoredPreferences {
+	const out = foldedPreferences(own, warnings) as Record<string, unknown>;
+	for (const warning of warnings) {
+		if (limitNote(own, universe, warning) === 'survivor') delete out[warningKey(warning.slug)];
+	}
+	return out as StoredPreferences;
+}
+
+// The warning list a form was built from, as one string: each live warning's
+// slug with the sorted slugs merged into it. The form posts it
+// (WARNING_LIST_FIELD), and a save whose list no longer matches changes no
+// limit (savePreferences).
+export function warningListFingerprint(
+	warnings: readonly Pick<LiveWarning, 'slug' | 'merged'>[]
+): string {
+	const rows = warnings.map((warning): [string, string[]] => [
+		warning.slug,
+		[...warning.merged].sort()
+	]);
+	rows.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	return JSON.stringify(rows);
+}
+
+// The fields the form adds when it saves: the slugs of the warnings whose
+// limit the writer changed on the page, one value each, and the list's
+// fingerprint.
+export const CHANGED_LIMITS_FIELD = 'changedLimits';
+export const WARNING_LIST_FIELD = 'warningList';
 
 export type PreferencesForm =
 	| {
@@ -449,6 +495,9 @@ export type PreferencesForm =
 			// The form showed a warning no longer on the list, so no limits were
 			// read (see readPreferencesForm).
 			outdated?: true;
+			// The warning list the form was built from (warningListFingerprint),
+			// when it posted a limit.
+			warningList?: string;
 	  }
 	| { ok: false; reason: string; submitted: SubmittedPreferences };
 
@@ -475,22 +524,34 @@ const FIELD_KEYS = [
 // value that is not on its list is refused rather than dropped, so a tampered
 // form does not silently clear a setting.
 //
-// The form posts a select for every warning it shows, and a warning is read
-// only when it is on the live list (liveSlugs). A form that posts a warning no
-// longer on the list was opened before that warning was renamed, merged away
-// or removed, so its limits may not show what the list's changes moved there:
-// it is marked outdated and none of its limits are read, which leaves every
-// stored limit as it is. Its other fields save as usual.
+// The form posts a select for every warning it shows, but a limit is read
+// only for a warning the post names as changed (CHANGED_LIMITS_FIELD) and
+// that is on the live list (liveSlugs), so a save of another field never
+// touches a limit. A form that names a changed warning no longer on the list
+// was opened before that warning was renamed, merged away or removed, so its
+// limits may not show what the list's changes moved there: it is marked
+// outdated and none of its limits are read, which leaves every stored limit
+// as it is. So is one that posts no warning list (WARNING_LIST_FIELD) with
+// its limits. Its other fields save as usual.
 export function readPreferencesForm(
 	data: FormData,
 	liveSlugs: readonly string[] = []
 ): PreferencesForm {
 	const live = new Set(liveSlugs);
-	const posted = [...new Set(data.keys())].filter((key) => key.startsWith(WARNING_PREFIX));
-	const outdated = posted.some((key) => !live.has(key.slice(WARNING_PREFIX.length)));
+	const changed = new Set(
+		data.getAll(CHANGED_LIMITS_FIELD).filter((slug) => typeof slug === 'string')
+	);
+	const posted = [...changed].filter((slug) => data.has(warningKey(slug)));
+	const list = data.get(WARNING_LIST_FIELD);
+	const warningList = typeof list === 'string' ? list : undefined;
+	const outdated =
+		posted.length > 0 && (warningList === undefined || posted.some((slug) => !live.has(slug)));
 	const warningKeys = outdated
 		? []
-		: liveSlugs.map(warningKey).filter((key) => isWarningKey(key) && data.has(key));
+		: liveSlugs
+				.filter((slug) => changed.has(slug))
+				.map(warningKey)
+				.filter((key) => isWarningKey(key) && data.has(key));
 	const submitted: SubmittedPreferences = {};
 	for (const key of [...FIELD_KEYS, ...warningKeys]) {
 		const raw = data.get(key);
@@ -540,5 +601,8 @@ export function readPreferencesForm(
 	if (notes && notes.length > MAX_ASSISTANT_NOTES) {
 		return refuse(`Keep your notes to ${MAX_ASSISTANT_NOTES} characters or fewer.`);
 	}
-	return outdated ? { ok: true, changes, notes, outdated } : { ok: true, changes, notes };
+	if (outdated) return { ok: true, changes, notes, outdated };
+	return warningKeys.length > 0
+		? { ok: true, changes, notes, warningList }
+		: { ok: true, changes, notes };
 }

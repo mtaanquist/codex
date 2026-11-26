@@ -479,6 +479,7 @@ export async function mergeTag(
 			.from(tags)
 			.where(and(eq(tags.id, sourceId), eq(tags.kind, kind)));
 		if (!source) return { ok: false, message: 'That entry does not exist.' };
+		if (source.removedAt) return removedSource(source.name);
 		const notFound = `There is no ${source.kind} called "${targetName.trim()}".`;
 		const [named] = await tx
 			.select()
@@ -512,7 +513,9 @@ export async function mergeTag(
 		if (survivorId === source.id) {
 			return { ok: false, message: `"${named.name}" is already merged into "${source.name}".` };
 		}
-		// A merge that committed while this one waited can have moved the target.
+		// A merge that committed while this one waited can have moved the target,
+		// and a removal the source.
+		if (locked.find((row) => row.id === source.id)?.removedAt) return removedSource(source.name);
 		const target = locked.find((row) => row.id === survivorId);
 		if (!target || target.mergedIntoId) {
 			return { ok: false, message: 'That entry changed while you were working. Try again.' };
@@ -531,6 +534,13 @@ export async function mergeTag(
 		// the survivor folds them in when they are read (liveWarnings).
 		return { ok: true };
 	});
+}
+
+// A removed entry is not merged: its stories do not show it, and a removed
+// warning's limits do not apply, so a merge would bring them back unseen.
+// Restoring it first shows it again, and merging it then is the usual merge.
+function removedSource(name: string): ModResult {
+	return { ok: false, message: `"${name}" is removed. Restore it first, then merge it.` };
 }
 
 // A writer's limit (Assistant preferences) on a renamed warning moves to its
@@ -587,22 +597,44 @@ async function survivorOf(tx: Database, id: string): Promise<{ id: string; ended
 // Undoing a merge gives the warning its own limits back. A writer who set
 // "avoid" on the survivor while the two were merged had it cover this one as
 // well, so each row with that "avoid" and no limit of its own on this warning
-// gets "avoid" here too: an undo never lets the Assistant write more freely.
+// gets "avoid" here too, so the unmerged warning is never wider than it was
+// while merged. The survivor's row is locked too, so a writer's save of the
+// survivor's limit waits for the undo (see savePreferences).
 export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
 	return await db.transaction(async (tx) => {
-		const [tag] = await tx
-			.select({ slug: tags.slug, kind: tags.kind, mergedIntoId: tags.mergedIntoId })
-			.from(tags)
-			.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`))
-			.for('update');
-		if (!tag || !tag.mergedIntoId) return false;
-		const survivor = await survivorOf(tx, tag.mergedIntoId);
+		// The entry and its survivor are locked in id order, as mergeTag locks,
+		// and read again in case a merge moved the entry meanwhile.
+		let survivor: { id: string; ended: boolean } | null = null;
+		let tag: { slug: string; kind: TagKind; mergedIntoId: string | null } | undefined;
+		let survivorSlug = '';
+		for (let attempt = 0; attempt < 3 && !survivor; attempt++) {
+			const [row] = await tx
+				.select({ mergedIntoId: tags.mergedIntoId })
+				.from(tags)
+				.where(and(eq(tags.id, id), eq(tags.kind, kind), sql`${tags.mergedIntoId} is not null`));
+			if (!row?.mergedIntoId) return false;
+			const found = await survivorOf(tx, row.mergedIntoId);
+			const locked = await tx
+				.select({
+					id: tags.id,
+					slug: tags.slug,
+					kind: tags.kind,
+					mergedIntoId: tags.mergedIntoId
+				})
+				.from(tags)
+				.where(inArray(tags.id, [id, found.id]))
+				.orderBy(asc(tags.id))
+				.for('update');
+			tag = locked.find((each) => each.id === id);
+			if (!tag?.mergedIntoId) return false;
+			const now = await survivorOf(tx, tag.mergedIntoId);
+			if (now.id !== found.id) continue;
+			survivor = found;
+			survivorSlug = locked.find((each) => each.id === found.id)?.slug ?? '';
+		}
+		if (!survivor || !tag) return false;
 		await tx.update(tags).set({ mergedIntoId: null }).where(eq(tags.id, id));
 		if (tag.kind !== 'warning' || !survivor.ended) return true;
-		const [{ slug: survivorSlug }] = await tx
-			.select({ slug: tags.slug })
-			.from(tags)
-			.where(eq(tags.id, survivor.id));
 		const from = warningKey(survivorSlug);
 		const to = warningKey(tag.slug);
 		const keep = (
