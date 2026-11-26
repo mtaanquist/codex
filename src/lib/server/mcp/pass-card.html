@@ -578,11 +578,16 @@
 								// A revision, a change to the text or an old key: show the pass as
 								// it is now. The writer's own wording stays in the box.
 								var stale = message.text.indexOf('Only the guided pass card') === 0;
+								// An expired key keeps its own message: the edit itself is unchanged.
+								var expired = message.text.indexOf('This card was open for a long time') === 0;
+								var said = message.text;
 								refresh().then(function () {
-									if (stale && keys) {
+									if ((stale || expired) && keys) {
 										message = {
 											failure: true,
-											text: 'This edit was out of date. Read it again, then decide.'
+											text: expired
+												? said
+												: 'This edit was out of date. Read it again, then decide.'
 										};
 										render();
 									}

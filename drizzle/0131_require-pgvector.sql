@@ -8,7 +8,9 @@ CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
 -- duplicates. Such a database records no collation version (musl has none)
 -- while the running server reports one, which is how it is told apart here.
 -- A database whose recorded version differs from the server's (another glibc
--- or ICU version) is caught the same way; C and POSIX report none and skip.
+-- or ICU version) is caught the same way; C and POSIX report none and skip,
+-- unless the character type is a real locale (a C sort order over UTF-8
+-- text), whose case folding and word matching musl and glibc also differ on.
 -- Its indexes are rebuilt before anything else writes; a database created
 -- under the same glibc skips this.
 DO $$
@@ -19,7 +21,15 @@ BEGIN
 	IF EXISTS (
 		SELECT 1 FROM pg_database
 		WHERE datname = current_database()
-			AND datcollversion IS DISTINCT FROM pg_database_collation_actual_version(oid)
+			AND (
+				datcollversion IS DISTINCT FROM pg_database_collation_actual_version(oid)
+				OR (
+					datlocprovider = 'c'
+					AND datcollversion IS NULL
+					AND datctype NOT IN ('C', 'POSIX')
+					AND datctype NOT LIKE 'C.%'
+				)
+			)
 	) THEN
 		FOR t IN
 			SELECT DISTINCT i.indrelid::regclass AS rel, pg_has_role(c.relowner, 'USAGE') AS owned

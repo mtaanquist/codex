@@ -312,8 +312,9 @@ take a fresh dump first if there is anything live worth keeping.
    on the next start. The backup
    history on the admin page starts empty after a restore, and the next
    backup uploads in full. The database user in `DATABASE_URL` must own the
-   tables in the `public` schema (the bundled Postgres does); on a managed
-   database where it does not, the restore stops with a "must be owner of"
+   tables in the `public` schema and may create objects in it (the bundled
+   Postgres does both); on a managed database where it may not, the restore
+   stops with a "must be owner of" or "permission denied for schema public"
    error and changes nothing. A dump from 4.0.0 or later also needs the pgvector extension: when
    you restore into a new, empty database as a user that is not a superuser,
    connect to it as a superuser and run `CREATE EXTENSION vector;` first.
@@ -494,10 +495,14 @@ Switching the image back without the copy leaves the indexes out of order.
 Keep the `-trixie` tag of the database image pinned: a new Debian release can
 change the sort order again, and Postgres does not warn about it for a
 database first created by the old image. If you move to another Debian base,
-rebuild the indexes after the change:
+stop the app and worker first, start only the new database, rebuild the
+indexes, then bring the stack back:
 
 ```bash
+docker compose stop app worker
+docker compose up -d db
 docker compose exec db psql -U codex -d codex -c 'REINDEX DATABASE codex;'
+docker compose up -d
 ```
 
 For a database first created by the new image, also run

@@ -131,6 +131,8 @@ export type UsageSummary = {
 		cacheWriteTokens: number;
 		cacheWrite1hTokens: number;
 		webSearchRequests: number;
+		// Requests in the group that reported no token counts at all.
+		unreported: number;
 	}[];
 };
 
@@ -191,7 +193,9 @@ export async function recentAssistantUsage(
 			cachedPromptTokens: sql<number>`coalesce(sum(${assistantUsage.cachedPromptTokens}), 0)::int`,
 			cacheWriteTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWriteTokens}), 0)::int`,
 			cacheWrite1hTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWrite1hTokens}), 0)::int`,
-			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::int`
+			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::int`,
+			// Requests in the group that reported no counts, which a sum leaves out.
+			unreported: sql<number>`(count(*) filter (where ${assistantUsage.promptTokens} is null and ${assistantUsage.completionTokens} is null))::int`
 		})
 		.from(assistantUsage)
 		.where(and(eq(assistantUsage.userId, userId), gte(assistantUsage.createdAt, since)))
