@@ -55,12 +55,7 @@
 			<option value={option.key}>{option.label}</option>
 		{/each}
 	</select>
-	<button
-		type="submit"
-		class="btn btn-ghost btn-sm"
-		style="color:var(--danger-ink);"
-		aria-label="{label} {title}"
-	>
+	<button type="submit" class="btn btn-ghost btn-sm danger" aria-label="{label} {title}">
 		{label}
 	</button>
 </form>

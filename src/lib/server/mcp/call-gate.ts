@@ -45,6 +45,9 @@ export type CallGate = {
 	// Throws GateBusyError at once when the writer's line is full, and at the
 	// deadline when no place came.
 	run<T>(writer: string, work: (waited: boolean) => Promise<T>): Promise<T>;
+	// How many of the writer's calls are waiting for a place. For tests, which
+	// wait on it rather than on a guessed delay.
+	waiting(writer: string): number;
 };
 
 export function createCallGate(limits: GateLimits): CallGate {
@@ -114,6 +117,9 @@ export function createCallGate(limits: GateLimits): CallGate {
 				else runningBy.delete(writer);
 				admit();
 			}
+		},
+		waiting(writer) {
+			return lines.get(writer)?.length ?? 0;
 		}
 	};
 }

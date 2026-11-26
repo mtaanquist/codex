@@ -1,4 +1,4 @@
-import { usageCostUsd } from '../../assistant-cost.ts';
+import { usageCostUsd, type TokenPrice } from '../../assistant-cost.ts';
 import type { ModelPricing } from './config.ts';
 import type { ProviderId } from './providers/presets.ts';
 import type { TokenUsage } from './providers/types.ts';
@@ -98,12 +98,15 @@ export class SpendMeter {
 		this.uncapped = opts.meterUncapped ?? false;
 	}
 
-	// One request's reported usage. A model with no price marks the run
+	// One request's reported usage. price is the one the request was sent at,
+	// which its usage row stores, so a price changed during the run meters as
+	// the row shows it; without one, the price the meter was built with. The
+	// same goes for wouldPassCap and exceedsCap. A model with no price marks the run
 	// unpriceable; so does a priced model the endpoint reported no counts for,
 	// which would otherwise accrue nothing and let the ceiling pass unenforced.
-	record(model: string, usage?: TokenUsage): void {
+	record(model: string, usage?: TokenUsage, price?: TokenPrice): void {
 		if (!this.capUsd && !this.uncapped) return;
-		if (!this.pricing?.[model]) {
+		if (!(price ?? this.pricing?.[model])) {
 			this.unpriced = true;
 			return;
 		}
@@ -111,11 +114,7 @@ export class SpendMeter {
 			this.unreported = true;
 			return;
 		}
-		const cost = requestCostUsd(this.pricing, model, usage, this.provider);
-		if (cost === undefined) {
-			this.unpriced = true;
-			return;
-		}
+		const cost = this.costOf(model, usage, price) ?? 0;
 		if (usage.estimated) this.estimated = true;
 		this.usd += cost;
 		if (this.persist) {
@@ -163,20 +162,25 @@ export class SpendMeter {
 
 	// Whether one request, at the usage it could bill at most, could cost more
 	// than the whole ceiling on its own. False when it cannot be priced.
-	exceedsCap(model: string, usage: TokenUsage): boolean {
+	exceedsCap(model: string, usage: TokenUsage, price?: TokenPrice): boolean {
 		if (this.capUsd === undefined) return false;
-		const cost = requestCostUsd(this.pricing, model, usage, this.provider);
+		const cost = this.costOf(model, usage, price);
 		return cost !== undefined && cost > this.capUsd + 1e-9;
 	}
 
 	// Whether one more request, at the usage it could bill at most, could take
 	// the run past its ceiling. True at or over the ceiling whatever the model;
 	// otherwise false when the request cannot be priced (see notApplied).
-	wouldPassCap(model: string, usage: TokenUsage): boolean {
+	wouldPassCap(model: string, usage: TokenUsage, price?: TokenPrice): boolean {
 		if (this.capUsd === undefined) return false;
 		if (this.capReached) return true;
-		const cost = requestCostUsd(this.pricing, model, usage, this.provider);
+		const cost = this.costOf(model, usage, price);
 		return cost !== undefined && this.usd + cost > this.capUsd + 1e-9;
+	}
+
+	private costOf(model: string, usage: TokenUsage, price?: TokenPrice): number | undefined {
+		const metered = price ?? this.pricing?.[model];
+		return metered ? usageCostUsd(metered, usage, this.provider) : undefined;
 	}
 
 	// A cap was set, but at least one request could not be priced, so the ceiling

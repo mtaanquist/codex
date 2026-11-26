@@ -1466,6 +1466,35 @@ describe('anthropicProvider.chatStream', () => {
 		expect(usage).toMatchObject({ usage: { webSearchRequests: 2, estimated: true } });
 	});
 
+	it('does not bill a streamed search whose result came back as an error before the drop', async () => {
+		const data = (obj: unknown) => `data: ${JSON.stringify(obj)}\n`;
+		const frames = [
+			data({ type: 'message_start', message: { usage: { input_tokens: 9 } } }),
+			data({
+				type: 'content_block_start',
+				index: 0,
+				content_block: { type: 'server_tool_use', id: 's1', name: 'web_search', input: {} }
+			}),
+			data({
+				type: 'content_block_start',
+				index: 1,
+				content_block: {
+					type: 'web_search_tool_result',
+					tool_use_id: 's1',
+					content: { type: 'web_search_tool_result_error', error_code: 'too_many_requests' }
+				}
+			}),
+			data({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'ok' } })
+		];
+		const http: HttpRequest = async () => sseResponse(frames);
+		const events = await drain(
+			anthropicProvider.chatStream({ model: 'claude-x', messages: [], maxTokens: 16 }, conn, http)
+		);
+		const usage = events.find((event) => event.type === 'usage');
+		expect(usage).toMatchObject({ usage: { promptTokens: expect.any(Number), estimated: true } });
+		expect(usage).not.toHaveProperty('usage.webSearchRequests');
+	});
+
 	it('carries a max_tokens stop reason on the done frame as length', async () => {
 		const frames = [
 			'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}\n',

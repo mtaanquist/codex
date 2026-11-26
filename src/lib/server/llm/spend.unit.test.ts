@@ -219,6 +219,26 @@ describe('SpendMeter', () => {
 	});
 });
 
+describe('SpendMeter at the price a request was sent at', () => {
+	const usage = { promptTokens: 100, completionTokens: 0 };
+
+	it('meters and checks at the passed price over the one it was built with', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 1 });
+		const raised = { prompt: 0.004, completion: 0.002 };
+		meter.record('priced', usage, raised);
+		expect(meter.spentUsd).toBeCloseTo(0.4, 10);
+		expect(meter.wouldPassCap('priced', usage, raised)).toBe(false);
+		expect(meter.wouldPassCap('priced', { ...usage, promptTokens: 200 }, raised)).toBe(true);
+		expect(meter.exceedsCap('priced', { ...usage, promptTokens: 300 }, raised)).toBe(true);
+	});
+
+	it('falls back to the price it was built with when none is passed', () => {
+		const meter = new SpendMeter({ pricing, capUsd: 1 });
+		meter.record('priced', usage, undefined);
+		expect(meter.spentUsd).toBeCloseTo(0.1, 10);
+	});
+});
+
 describe('SpendMeter carried across attempts (#1117)', () => {
 	it('starts from what an earlier attempt spent', () => {
 		const meter = new SpendMeter({ pricing, capUsd: 1, spentUsd: 0.95 });

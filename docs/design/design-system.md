@@ -429,6 +429,8 @@ primitive's own class too, but do not copy the pattern.
 - `.btn` with `.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`,
   `.btn-accept`, size modifier `.btn-sm`. Defined in `pages.css`. This is
   the only general button system.
+- `.btn-ghost.danger` is a quiet destructive action in a row of ghost
+  buttons (Delete, Take down). Use it instead of inlining `--danger-ink`.
 - `.btn-accept` is the affirmative decision (accept a suggestion, approve a
   pass), built on `--status-final`. It is a variant, not a second family.
 - Every variant carries `:hover:not(:disabled)`, `:active`,

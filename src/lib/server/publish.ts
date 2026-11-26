@@ -806,11 +806,13 @@ export async function listTakenDown(db: Database) {
 		.orderBy(publications.removedAt);
 }
 
-// Whether a moderator may read an edition's text on its own page: the story is
-// still shared (not private, not in the trash), or the edition was taken down
-// or reported, so work an author withdrew is not read without cause.
+// Whether a moderator may read an edition's text on its own page: it is the
+// current edition of a story still shared (not private, not in the trash), or
+// the edition was taken down, or has a report that is open or was resolved by
+// a takedown. So work an author withdrew, or an edition they replaced, is not
+// read without cause, and a dismissed report does not unlock it for good.
 function moderatorMayRead() {
-	return sql<boolean>`((${stories.visibility} <> 'private' and ${storyIsLive()}) or ${publications.removedReason} is not null or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id}))`;
+	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or ${publications.removedReason} is not null or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or ${publicationReports.resolution} = 'taken_down')))`;
 }
 
 // Whether a moderator may load an uploaded image: one shown inline in an
@@ -834,9 +836,9 @@ export async function moderatorMayReadAsset(db: Database, assetId: string): Prom
 
 // One edition as a moderator sees it: taken down, hidden by an account
 // deletion, superseded or live. For checking the text of a report before
-// acting on it, or again before a restore. An edition of a story the author
-// has since made private or put in the trash opens only when it was taken
-// down or reported, so withdrawn work is not readable by moderators.
+// acting on it, or again before a restore. An older edition, or one of a
+// story the author has since made private or put in the trash, opens only
+// when it was taken down or has an open or upheld report (moderatorMayRead).
 export async function moderatorEdition(db: Database, publicationId: string) {
 	const shared = sql`(${stories.visibility} <> 'private' and ${storyIsLive()})`;
 	const [edition] = await db

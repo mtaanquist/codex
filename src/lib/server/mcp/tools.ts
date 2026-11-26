@@ -230,6 +230,8 @@ export async function callMcpTool(
 	// been disconnected or access for outside apps turned off. The endpoint
 	// checked both before the call queued; they are checked again here, as
 	// stillAllowed does for a staging call.
+	// The universe run() checked, for building the pass again after an accept.
+	let checkedUniverse = '';
 	const run = async (waited = false): Promise<McpToolResult> => {
 		if (waited && !((await mcpInstanceEnabled(db)) && (await credentialLive(db, identity)))) {
 			return refuse('no_universe', NO_UNIVERSE_RESULT);
@@ -245,6 +247,7 @@ export async function callMcpTool(
 				return refuse('no_universe', NO_UNIVERSE_RESULT);
 			}
 			universeId = universeArgument;
+			checkedUniverse = universeId;
 		}
 
 		if (card) {
@@ -323,7 +326,7 @@ export async function callMcpTool(
 					return callCardTool('open_guided_pass', {
 						db,
 						identity,
-						universeId: args.universeId as string,
+						universeId: checkedUniverse,
 						args: { noteId: args.noteId },
 						origin,
 						stillAllowed: async () => true

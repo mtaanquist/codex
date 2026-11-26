@@ -396,8 +396,9 @@ export async function listTagsForModeration(
 			removedAt: tags.removedAt,
 			mergedIntoId: tags.mergedIntoId,
 			mergedIntoName: sql<string | null>`${target}`,
-			// Written out: drizzle leaves a column of the only table unqualified,
-			// which the subquery's own id columns would shadow.
+			// tags.id is written out by hand: in a select from one table, drizzle
+			// strips the table name from a column placed directly in a selection
+			// field's sql, and a bare id here would resolve to the subquery's s.id.
 			uses: sql<number>`(select count(*)::int from (
 				select st.story_id from story_tags st where st.tag_id = tags.id
 				union
@@ -534,18 +535,19 @@ export async function mergeTag(
 	});
 }
 
-// A writer's content limits (Assistant preferences) on a warning merged away
-// carry over to the surviving warning wherever none is set on it yet: the
-// merged warning's own limit, else, from the warnings merged into it earlier
-// (which the writer can no longer see), the more careful one. The old keys
-// stay, so an undone merge keeps them.
+// A writer's "Keep it off the page" limit (Assistant preferences) on a warning
+// merged away, or on one merged into it earlier (which the writer can no
+// longer see), is copied to the surviving warning wherever no limit is set on
+// it yet. A "Write freely" limit is not carried: it would widen what the
+// Assistant writes about the survivor, which the writer never chose. The old
+// keys stay, so an undone merge keeps them, and the copied "avoid" stays too,
+// which only keeps the Assistant more careful.
 async function carryContentLimits(
 	tx: Database,
 	sourceSlug: string,
 	childSlugs: string[],
 	toSlug: string
 ) {
-	const own = warningKey(sourceSlug);
 	const from = sql`array[${sql.join(
 		[sourceSlug, ...childSlugs].map((slug) => sql`${warningKey(slug)}`),
 		sql`, `
@@ -554,11 +556,8 @@ async function carryContentLimits(
 	const carry = (
 		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
 	) => ({
-		set: sql`${column} || jsonb_build_object(${to}::text, case
-			when ${column} ->> ${own}::text in ('avoid', 'write') then ${column} ->> ${own}::text
-			when exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid') then 'avoid'
-			else 'write' end)`,
-		where: sql`jsonb_exists_any(${column}, ${from}) and not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k in ('avoid', 'write'))`
+		set: sql`${column} || jsonb_build_object(${to}::text, 'avoid')`,
+		where: sql`jsonb_exists_any(${column}, ${from}) and not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid')`
 	});
 	// updated_at is kept as it was: this is the site's change, not the writer's.
 	const story = carry(stories.assistantPreferences);

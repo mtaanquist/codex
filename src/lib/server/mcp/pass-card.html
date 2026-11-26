@@ -392,7 +392,9 @@
 						card.appendChild(
 							el('p', {
 								class: 'message',
-								text: 'The text this edit applies to has changed. Skip it, or turn it down in Codex.'
+								text: edit.tooLong
+									? 'This edit is too long to show here. Skip it, or open it in Codex to decide on it.'
+									: 'The text this edit applies to has changed. Skip it, or turn it down in Codex.'
 							})
 						);
 					}

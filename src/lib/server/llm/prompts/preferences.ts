@@ -187,7 +187,7 @@ export function feedbackLine(setting: PreferenceSetting, where: string): string 
 export function editReasonLine(setting: PreferenceSetting): string {
 	switch (setting.editReasons) {
 		case 'always':
-			return 'Give every edit a one-sentence reason the author can learn from, even an obvious fix such as a typo.';
+			return 'Give every edit a one-sentence reason the author can learn from, even when the fix looks obvious.';
 		case 'never':
 			return 'Leave out the reason; the author does not want reasons on suggested edits.';
 		default:

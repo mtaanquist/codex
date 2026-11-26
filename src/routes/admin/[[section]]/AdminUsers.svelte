@@ -338,13 +338,7 @@
 									</button>
 									<form method="POST" action="?/deleteInvite">
 										<input type="hidden" name="inviteId" value={code.id} />
-										<button
-											type="submit"
-											class="btn btn-ghost btn-sm"
-											style="color:var(--danger-ink);"
-										>
-											Delete
-										</button>
+										<button type="submit" class="btn btn-ghost btn-sm danger"> Delete </button>
 									</form>
 								</div>
 							</td>

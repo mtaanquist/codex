@@ -209,12 +209,9 @@
 				<input
 					id={id('draftWords')}
 					class="input"
-					type="number"
+					type="text"
 					name="draftWords"
 					inputmode="numeric"
-					min={MIN_DRAFT_WORDS}
-					max={MAX_DRAFT_WORDS}
-					step="1"
 					placeholder={inheritedWords ? `${useInherited}: ${inheritedWords}` : ''}
 					value={values.draftWords ?? ''}
 				/>

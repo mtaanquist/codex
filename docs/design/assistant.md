@@ -814,7 +814,10 @@ These cut across the surfaces and the architecture.
   `warning:<slug>` (write, avoid) is one content limit per entry of the
   admin's content warning list (decided on #1782), named from the live list
   at read time (`liveWarnings`), so a warning removed or merged away drops
-  out. The limits go to drafts, `/write`, the chat frame and every review,
+  out. Merging a warning copies a writer's `avoid` on it (or on a warning
+  merged into it earlier) to the survivor where the survivor has no limit
+  set; a `write` is not carried, since it would widen what the Assistant
+  writes about the survivor. Undoing the merge leaves the copied `avoid`. The limits go to drafts, `/write`, the chat frame and every review,
   and say they never change the model's own usage policies. The summary
   length changes the request sent, not its fingerprint (the short request is
   hashed whatever the length), so changing it marks nothing out of date and
@@ -1282,7 +1285,7 @@ Exceptions to "one toolbox for both", each with its reason:
   the note, the edit, the stamp of its wording and an expiry (two hours),
   sent in the result's `_meta`. The reference client hands `_meta` to the
   card; the spec does not promise it stays away from the model, so the key
-  narrows the risk and the guarantee rests on the client. A revised edit
+  narrows the risk and the guarantee rests on the client. The residual risk is an arbitrary write, not only an accept: Edit sends the card's own `replacement`, so a client that leaked the key to its model would let the model write any wording into the scene (the help says to tick the permission only for a trusted app). A revised edit
   needs a new key. Skip stays in the card (the edit waits in Codex). Discuss
   sends the edit to the conversation as the writer's message (`ui/message`),
   and each accept is told to the model through `ui/update-model-context`;

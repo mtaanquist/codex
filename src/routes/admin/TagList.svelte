@@ -157,9 +157,7 @@
 								})}
 							>
 								<input type="hidden" name="id" value={row.id} />
-								<button class="btn btn-ghost btn-sm" type="submit" style="color:var(--danger-ink);">
-									Remove
-								</button>
+								<button class="btn btn-ghost btn-sm danger" type="submit"> Remove </button>
 							</form>
 						{/if}
 					</div>
