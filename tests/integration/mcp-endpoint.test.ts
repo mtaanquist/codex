@@ -1428,6 +1428,36 @@ describe('the same call sent several times at once', () => {
 		expect(await stagedRows()).toBe(0);
 	});
 
+	it('stages nothing for a call that was waiting when suggesting was taken away', async () => {
+		const [grant] = await db
+			.select({ id: oauthGrants.id, permissions: oauthGrants.permissions })
+			.from(oauthGrants)
+			.where(eq(oauthGrants.userId, alice.userId));
+		let open!: () => void;
+		const gate = new Promise<void>((resolve) => (open = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		const waiting = comment(alice);
+		try {
+			await untilWaiting(stagingGate, alice.userId);
+			// What connecting the app again with the box unticked does to the grant.
+			await db
+				.update(oauthGrants)
+				.set({ permissions: ['read'] })
+				.where(eq(oauthGrants.id, grant.id));
+			open();
+			await ahead;
+			expect(await waiting).toEqual({ text: NO_UNIVERSE_RESULT, isError: true });
+			expect(await stagedRows()).toBe(0);
+		} finally {
+			open();
+			await ahead;
+			await db
+				.update(oauthGrants)
+				.set({ permissions: grant.permissions })
+				.where(eq(oauthGrants.id, grant.id));
+		}
+	});
+
 	it('stages nothing for a call that was waiting when access for apps was turned off', async () => {
 		let open!: () => void;
 		const gate = new Promise<void>((resolve) => (open = resolve));

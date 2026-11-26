@@ -173,14 +173,16 @@ export async function recentAssistantUsage(
 	const [totals] = await db
 		.select({
 			requests: sql<number>`count(*)::int`,
-			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::int`,
-			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::int`,
+			promptTokens: sql<number>`coalesce(sum(${assistantUsage.promptTokens}), 0)::float8`,
+			completionTokens: sql<number>`coalesce(sum(${assistantUsage.completionTokens}), 0)::float8`,
 			estimatedRequests: sql<number>`(count(*) filter (where ${assistantUsage.estimated}))::int`,
-			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::int`
+			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::float8`
 		})
 		.from(assistantUsage)
 		.where(and(eq(assistantUsage.userId, userId), gte(assistantUsage.createdAt, since)));
 
+	// Sums are float8, not int: thirty days of tokens can pass 2^31, and float8
+	// holds whole numbers exactly far beyond that and reaches here as a number.
 	const byModel = await db
 		.select({
 			provider: assistantUsage.provider,
@@ -188,12 +190,12 @@ export async function recentAssistantUsage(
 			price: assistantUsage.price,
 			// Null when no row in the group reported counts, so it prices as
 			// unknown rather than free.
-			promptTokens: sql<number | null>`sum(${assistantUsage.promptTokens})::int`,
-			completionTokens: sql<number | null>`sum(${assistantUsage.completionTokens})::int`,
-			cachedPromptTokens: sql<number>`coalesce(sum(${assistantUsage.cachedPromptTokens}), 0)::int`,
-			cacheWriteTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWriteTokens}), 0)::int`,
-			cacheWrite1hTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWrite1hTokens}), 0)::int`,
-			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::int`,
+			promptTokens: sql<number | null>`sum(${assistantUsage.promptTokens})::float8`,
+			completionTokens: sql<number | null>`sum(${assistantUsage.completionTokens})::float8`,
+			cachedPromptTokens: sql<number>`coalesce(sum(${assistantUsage.cachedPromptTokens}), 0)::float8`,
+			cacheWriteTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWriteTokens}), 0)::float8`,
+			cacheWrite1hTokens: sql<number>`coalesce(sum(${assistantUsage.cacheWrite1hTokens}), 0)::float8`,
+			webSearchRequests: sql<number>`coalesce(sum(${assistantUsage.webSearchRequests}), 0)::float8`,
 			// Requests in the group that reported no counts, which a sum leaves out.
 			unreported: sql<number>`(count(*) filter (where ${assistantUsage.promptTokens} is null and ${assistantUsage.completionTokens} is null))::int`
 		})

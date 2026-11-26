@@ -453,11 +453,12 @@ is missing (nothing is changed when that happens).
 Before you start, check which locale the database was created with:
 
 ```bash
-docker compose exec db psql -U codex -d codex -tAc "SELECT datcollate FROM pg_database WHERE datname = 'codex';"
+docker compose exec db psql -U codex -d codex -tAc "SELECT datcollate, datctype FROM pg_database WHERE datname = 'codex';"
 ```
 
-The new image has only the `en_US.utf8`, `C` and `C.UTF-8` locales. If the
-answer is anything else, the new image cannot open the database: build your
+The new image has only the `en_US.utf8`, `C` and `C.UTF-8` locales
+(`en_US.utf8` and `en_US.UTF-8` are the same one). If either value is
+anything else, the new image cannot open the database: build your
 own image from `pgvector/pgvector:0.8.7-pg18-trixie` that adds that locale
 (the image's documentation shows how, under "Locale Customization") and use
 it in step 3 instead.
@@ -485,9 +486,9 @@ The first start of the new database image takes over the data files, and the
 first start of the new version rebuilds the database's indexes if the data
 was created by the old image, because the new image sorts text slightly
 differently. Both run once and take a while on a large database. Watch
-`docker compose logs -f app` and wait for "Migrations applied." after
-"Applying migrations."; do not restart the app meanwhile, as that starts the
-rebuild over. If `docker compose up -d`
+`docker compose logs -f app worker` and wait for "Migrations applied." after
+"Applying migrations." (whichever of the two starts first runs them); do not
+restart either meanwhile, as that starts the rebuild over. If `docker compose up -d`
 reports `db` or `app` as unhealthy meanwhile, run it again once they are done.
 
 To go back to the earlier version, put the copy from step 2 back. Everything
@@ -514,7 +515,7 @@ indexes, then bring the stack back:
 
 ```bash
 docker compose stop app worker
-docker compose up -d db
+docker compose up -d --wait db
 docker compose exec db psql -U codex -d codex -c 'REINDEX DATABASE codex;'
 docker compose up -d
 ```
