@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { isHttpError } from '@sveltejs/kit';
 import type pg from 'pg';
 import {
@@ -382,7 +382,7 @@ describe('Admin > Reports actions', () => {
 		const newer = await publishStory(db, author.id, storyId);
 		if (!newer.ok) throw new Error(newer.reason);
 		expect(
-			await act(reportsPage, 'takedown', { publicationId, reportId, newer: 'no', reason: 'spam' })
+			await act(reportsPage, 'takedown', { publicationId, reportId, newer: 'none', reason: 'spam' })
 		).toMatchObject({
 			status: 409,
 			data: { message: 'This story has a newer edition. Reload the page and try again.' }
@@ -390,18 +390,43 @@ describe('Admin > Reports actions', () => {
 		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
 		expect(rows.map((row) => row.removedReason)).toEqual([null, null]);
 		expect((await reportRow(reportId)).resolvedAt).toBeNull();
-		// After a reload the queue shows the newer edition, and the takedown goes ahead.
+		// A newer edition other than the one the queue showed is refused too.
+		const newest = await publishStory(db, author.id, storyId);
+		if (!newest.ok) throw new Error(newest.reason);
 		expect(
-			await act(reportsPage, 'takedown', { publicationId, reportId, newer: 'yes', reason: 'spam' })
+			await act(reportsPage, 'takedown', {
+				publicationId,
+				reportId,
+				newer: newer.publicationId,
+				reason: 'spam'
+			})
+		).toMatchObject({ status: 409 });
+		// After a reload the queue shows the newest edition, and the takedown goes ahead.
+		const load = reportsPage.load as (event: unknown) => Promise<{
+			reports: { newerEditionId: string | null }[];
+		}>;
+		const [shown] = (await load({ locals: { user: moderator } })).reports;
+		expect(shown.newerEditionId).toBe(newest.publicationId);
+		expect(
+			await act(reportsPage, 'takedown', {
+				publicationId,
+				reportId,
+				newer: shown.newerEditionId!,
+				reason: 'spam'
+			})
 		).toMatchObject({ done: true });
-		const after = await db.select().from(publications).where(eq(publications.storyId, storyId));
-		expect(after.map((row) => row.removedReason)).toEqual(['spam', 'spam']);
+		const after = await db
+			.select()
+			.from(publications)
+			.where(and(eq(publications.storyId, storyId), eq(publications.isCurrent, true)));
+		expect(after.map((row) => row.removedReason)).toEqual(['spam']);
+		expect((await edition()).removedReason).toBe('spam');
 	});
 
 	it('takes down a reported current edition the queue showed with no newer one', async () => {
 		const reportId = await fileReport();
 		expect(
-			await act(reportsPage, 'takedown', { publicationId, reportId, newer: 'no', reason: 'spam' })
+			await act(reportsPage, 'takedown', { publicationId, reportId, newer: 'none', reason: 'spam' })
 		).toMatchObject({ done: true });
 		expect(await reportRow(reportId)).toMatchObject({ resolution: 'taken_down' });
 	});
@@ -514,7 +539,10 @@ describe("the moderator's view of an edition", () => {
 		if (!newer.ok) throw new Error(newer.reason);
 		expect((await loadEdition(newer.publicationId)).edition).toMatchObject({ readable: true });
 		await expect404(loadEdition(publicationId));
-		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		// Filed while it was still the current edition: a reader cannot report a
+		// replaced one.
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(false);
+		await db.insert(publicationReports).values({ publicationId, reason: 'spam' });
 		expect((await loadEdition(publicationId)).edition).toMatchObject({
 			isCurrent: false,
 			readable: false
@@ -531,7 +559,7 @@ describe("the moderator's view of an edition", () => {
 		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
 		await expect404(loadEdition(newer.publicationId));
 		expect((await loadPublished()).takenDown).toMatchObject([
-			{ id: newer.publicationId, viewable: false }
+			{ id: newer.publicationId, viewable: false, notViewableBecause: 'withdrawn' }
 		]);
 	});
 
@@ -584,7 +612,7 @@ describe("the moderator's view of an edition", () => {
 		// A new report on it, closed by a new takedown, opens it again.
 		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, storyId));
 		await act(publishedPage, 'restore', { publicationId: newer.publicationId });
-		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		await db.insert(publicationReports).values({ publicationId, reason: 'spam' });
 		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
 		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
@@ -800,6 +828,11 @@ describe('a takedown, restored, then taken down again', () => {
 			.set({ takenDownAt: null })
 			.where(eq(publications.id, publicationId));
 		expect(await readableWhilePrivate()).toBe(false);
+		// The Taken down list says why it does not link while the story is private.
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect((await loadPublished()).takenDown).toMatchObject([
+			{ id: publicationId, viewable: false, notViewableBecause: 'olderTakedown' }
+		]);
 	});
 });
 

@@ -19,8 +19,13 @@ export function moderationActions(scope: string) {
 			const reason = formText(data, 'reason');
 			// Sent from the report queue: the report the moderator was looking at.
 			const reportId = formText(data, 'reportId');
-			// Whether the page showed a newer edition this takedown also puts down.
-			const newerShown = data.has('newer') ? formText(data, 'newer') === 'yes' : undefined;
+			// The newer edition the page showed this takedown also puts down
+			// ('none' when it showed none), so a takedown is refused when that changed.
+			const newer = data.has('newer') ? formText(data, 'newer') : undefined;
+			if (newer !== undefined && newer !== 'none' && !isUuid(newer)) {
+				return fail(400, { scope, message: 'Reload the page and try again.' });
+			}
+			const newerShown = newer === undefined ? undefined : newer === 'none' ? null : newer;
 			if (!isReportReason(reason)) {
 				return fail(400, { scope, message: 'Pick a reason for the takedown.' });
 			}

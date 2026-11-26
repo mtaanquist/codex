@@ -192,7 +192,11 @@
 								{#if edition.viewable}
 									<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
 								{:else}
-									<span title="The writer made this story private or moved it to the trash.">
+									<span
+										title={edition.notViewableBecause === 'olderTakedown'
+											? 'The story is private or in the trash, and older takedowns like this one cannot be opened here.'
+											: 'The writer made this story private or moved it to the trash.'}
+									>
 										@{edition.handle}/{edition.title}
 									</span>
 								{/if}

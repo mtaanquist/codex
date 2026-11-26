@@ -74,6 +74,7 @@
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 									reportId={report.id}
 									newer={report.newerEdition}
+									newerId={report.newerEditionId}
 									current={report.editionCurrent}
 									readable={report.editionReadable}
 								/>
