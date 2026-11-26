@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { isUuid } from '../slug.ts';
 import { scenes, stories, tags, universes } from './db/schema.ts';
@@ -10,7 +10,8 @@ import {
 	NO_PREFERENCES,
 	type LiveWarning,
 	type PreferenceChanges,
-	type PreferenceSetting
+	type PreferenceSetting,
+	WARNING_PREFIX
 } from '../assistant-preferences.ts';
 
 // The Assistant preferences the prompts state for a piece of work, read the
@@ -164,28 +165,69 @@ export const OUTDATED_WARNINGS =
 
 // Saves the preferences form of a story or a universe the caller owns:
 // 'missing' when there is no such live row of theirs. Notes left undefined
-// (the post did not carry the field) are kept.
+// (the post did not carry the field) are kept. Content limits are checked
+// again against the live warnings, under a share lock on them, so a limit
+// saved while an admin renames or merges its warning is either moved by the
+// rename or left out ('outdated'), never stored under a slug that no longer
+// applies. Locking only the posted slugs' rows is enough: a rename updates
+// the row it renames.
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
 	target: { storyId: string } | { universeId: string },
 	input: { changes: PreferenceChanges; notes: string | null | undefined }
-): Promise<'saved' | 'missing'> {
+): Promise<'saved' | 'missing' | 'outdated'> {
 	const notes = input.notes === undefined ? {} : { assistantNotes: input.notes };
 	const table = 'storyId' in target ? stories : universes;
-	const saved = await db
-		.update(table)
-		.set({
-			assistantPreferences: mergedPreferences(table.assistantPreferences, input.changes),
-			...notes
-		})
-		.where(
-			and(
-				'storyId' in target ? eq(stories.id, target.storyId) : eq(universes.id, target.universeId),
-				eq(table.ownerId, ownerId),
-				isNull(table.deletedAt)
+	return db.transaction(async (tx) => {
+		let changes = input.changes;
+		let outdated = false;
+		const limitKeys = Object.keys(changes).filter((key) => key.startsWith(WARNING_PREFIX));
+		if (limitKeys.length > 0) {
+			// A warning merged into another still counts (its limits fold into
+			// the survivor); one renamed away or removed outright does not.
+			const live = new Set(
+				(
+					await tx
+						.select({ slug: tags.slug })
+						.from(tags)
+						.where(
+							and(
+								eq(tags.kind, 'warning'),
+								inArray(
+									tags.slug,
+									limitKeys.map((key) => key.slice(WARNING_PREFIX.length))
+								),
+								or(isNull(tags.removedAt), isNotNull(tags.mergedIntoId))
+							)
+						)
+						.for('share')
+				).map(({ slug }) => slug)
+			);
+			outdated = limitKeys.some((key) => !live.has(key.slice(WARNING_PREFIX.length)));
+			if (outdated) {
+				changes = Object.fromEntries(
+					Object.entries(changes).filter(([key]) => !key.startsWith(WARNING_PREFIX))
+				) as PreferenceChanges;
+			}
+		}
+		const saved = await tx
+			.update(table)
+			.set({
+				assistantPreferences: mergedPreferences(table.assistantPreferences, changes),
+				...notes
+			})
+			.where(
+				and(
+					'storyId' in target
+						? eq(stories.id, target.storyId)
+						: eq(universes.id, target.universeId),
+					eq(table.ownerId, ownerId),
+					isNull(table.deletedAt)
+				)
 			)
-		)
-		.returning({ id: table.id });
-	return saved.length > 0 ? 'saved' : 'missing';
+			.returning({ id: table.id });
+		if (saved.length === 0) return 'missing';
+		return outdated ? 'outdated' : 'saved';
+	});
 }

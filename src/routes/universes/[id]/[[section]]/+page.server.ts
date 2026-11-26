@@ -158,7 +158,7 @@ export const actions: Actions = {
 		const result = await savePreferences(db, locals.user!.id, { universeId: universe.id }, read);
 		if (result === 'missing') error(404, 'Not found');
 		// Saved, with a notice that the limits were left alone.
-		if (read.outdated) {
+		if (read.outdated || result === 'outdated') {
 			return { action: 'assistant-preferences', saved: true, notice: OUTDATED_WARNINGS };
 		}
 		return { action: 'assistant-preferences', saved: true };

@@ -600,6 +600,28 @@ describe('content limits across merges, renames and removals', () => {
 		expect(await limits()).toEqual([['Gore', 'avoid']]);
 	});
 
+	it('leaves out a limit posted for a warning renamed or removed since the form was read', async () => {
+		expect(await renameTag(db, 'warning', await tagId('gore'), 'Graphic gore')).toEqual({
+			ok: true
+		});
+		await setTagRemoved(db, 'warning', await tagId('blood'), true, user.id);
+		const result = await savePreferences(
+			db,
+			user.id,
+			{ storyId },
+			{
+				changes: { 'warning:gore': 'avoid', 'warning:blood': 'avoid', feedback: 'thorough' },
+				notes: undefined
+			}
+		);
+		expect(result).toBe('outdated');
+		const [row] = await db
+			.select({ preferences: stories.assistantPreferences })
+			.from(stories)
+			.where(eq(stories.id, storyId));
+		expect(row.preferences).toEqual({ feedback: 'thorough' });
+	});
+
 	it('follows a chain of merges, and drops the chain with a removed survivor', async () => {
 		await db.insert(tags).values({ kind: 'warning', name: 'Violence', slug: 'violence' });
 		// A chain two steps deep, as older data could hold.
