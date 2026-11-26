@@ -420,3 +420,99 @@ test('a limit left alone while the list changed is not sent again by a queued sa
 		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
 	}
 });
+
+// A limit picked while another save's refresh is landing starts its own save
+// at once, against the list the page showed. When that refresh brings a
+// changed list and the limit's save then fails, or fails before the refresh
+// lands, the pick is dropped with a note, so the next save cannot post it
+// against the new list.
+for (const failFirst of [false, true]) {
+	test(`a limit whose save fails during a refresh with a new list is not sent again${failFirst ? ' (save fails first)' : ''}`, async ({
+		page
+	}) => {
+		const stamp = Date.now();
+		const slug = `e2e-midrefresh-${stamp}`;
+		const name = `E2E midrefresh ${stamp}`;
+		const added = `e2e-midrefresh-added-${stamp}`;
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+		try {
+			await openUniversePreferences(page);
+			let releaseRefresh!: () => void;
+			const refreshGate = new Promise<void>((resolve) => (releaseRefresh = resolve));
+			let refreshHeld!: () => void;
+			const refreshHolding = new Promise<void>((resolve) => (refreshHeld = resolve));
+			// Held with a flag rather than a route that runs once: taking that
+			// route off once it has run lets the held save through as well.
+			let refreshing = true;
+			await page.route(
+				(url) => url.pathname.endsWith('__data.json'),
+				async (route) => {
+					if (refreshing) {
+						refreshing = false;
+						refreshHeld();
+						await refreshGate;
+					}
+					await route.continue();
+				}
+			);
+			await page.getByRole('combobox', { name: 'Tense' }).selectOption('present');
+			await refreshHolding;
+			await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+				`E2E midrefresh added ${stamp}`,
+				added
+			]);
+
+			let releaseSave!: () => void;
+			const saveGate = new Promise<void>((resolve) => (releaseSave = resolve));
+			let saveHeld!: () => void;
+			const saveHolding = new Promise<void>((resolve) => (saveHeld = resolve));
+			let failing = true;
+			await page.route(
+				(url) => url.search.includes('saveAssistantPreferences'),
+				async (route) => {
+					if (!failing) return route.continue();
+					failing = false;
+					saveHeld();
+					await saveGate;
+					await route.abort();
+				}
+			);
+			await page.getByRole('combobox', { name }).selectOption('avoid');
+			await saveHolding;
+			const newList = page.getByRole('combobox', { name: `E2E midrefresh added ${stamp}` });
+			if (failFirst) {
+				releaseSave();
+				await expect(page.getByRole('alert')).toBeVisible();
+				releaseRefresh();
+				await expect(newList).toBeVisible();
+			} else {
+				releaseRefresh();
+				await expect(newList).toBeVisible();
+				releaseSave();
+				await expect(page.getByRole('alert')).toBeVisible();
+			}
+			await expect(
+				page
+					.getByRole('status')
+					.filter({ hasText: 'the content limits you changed were not saved' })
+			).toBeVisible();
+			await expect(page.getByRole('combobox', { name })).toHaveValue('');
+
+			const next = page.waitForRequest(
+				(request) =>
+					request.url().includes('saveAssistantPreferences') &&
+					(request.postData() ?? '').includes('past')
+			);
+			await page.getByRole('combobox', { name: 'Tense' }).selectOption('past');
+			const sent = await next;
+			expect(sent.postData() ?? '').not.toContain('changedLimits');
+			await expect(page.getByRole('status').filter({ hasText: 'Saved.' }).first()).toBeVisible();
+			await page.unrouteAll({ behavior: 'wait' });
+			await page.reload();
+			await expect(page.getByRole('combobox', { name })).toHaveValue('');
+			await expect(page.getByRole('combobox', { name: 'Tense' })).toHaveValue('past');
+		} finally {
+			await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+		}
+	});
+}

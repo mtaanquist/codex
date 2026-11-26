@@ -146,14 +146,16 @@
 		}
 		autosubmitForm(event);
 	}
-	// A refresh that changes the warning list, other than one this form's own
-	// save made (whose handler deals with its limits), drops the limit changes
-	// not yet saved: they were picked against the old list, and a later save
-	// would otherwise post whatever the rebuilt select shows as the change.
-	// The selects go back to what is stored, and a note says so. A change the
-	// save in flight carries is left to that save, which knows whether it
-	// landed (listMoved tells it the list changed meanwhile).
-	let refreshing = 0;
+	// A refresh that changes the warning list drops the limit changes not yet
+	// saved: they were picked against the old list, and a later save would
+	// otherwise post whatever the rebuilt select shows as the change. The
+	// selects go back to what is stored, and a note says so. A change the save
+	// in flight carries is left to that save, which knows whether it landed
+	// (listMoved tells it the list changed meanwhile), and so are the changes
+	// of an outdated save whose own refresh this is (settling), which its
+	// handler puts back once the refresh lands. That save is no longer in
+	// flight, so a newer save started during its refresh is flagged too.
+	const settling: Map<string, number>[] = [];
 	let inFlight: Map<string, number> | null = null;
 	let listMoved = false;
 	let limitsDropped = $state(false);
@@ -163,10 +165,12 @@
 		const list = warningListFingerprint(warnings);
 		if (list === builtFrom) return;
 		builtFrom = list;
-		if (refreshing > 0) return;
 		if (inFlight) listMoved = true;
 		const dropped = [...changedLimits]
-			.filter(([slug, count]) => inFlight?.get(slug) !== count)
+			.filter(
+				([slug, count]) =>
+					inFlight?.get(slug) !== count && !settling.some((sent) => sent.get(slug) === count)
+			)
 			.map(([slug]) => slug);
 		if (dropped.length > 0) untrack(() => dropLimitChanges(dropped));
 	});
@@ -233,13 +237,13 @@
 				return;
 			}
 			const refreshedAt = pickCount;
-			refreshing += 1;
+			if (outdated) settling.push(sent);
 			try {
 				if (after) await after(opts);
 				else await opts.update();
 				await tick();
 			} finally {
-				refreshing -= 1;
+				if (outdated) settling.splice(settling.indexOf(sent), 1);
 			}
 			for (const [name, pick] of picks) {
 				const select = formElement.elements.namedItem(name);
