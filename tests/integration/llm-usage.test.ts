@@ -433,7 +433,8 @@ describe('recentAssistantUsage', () => {
 				cacheWriteTokens: 20,
 				cacheWrite1hTokens: 12,
 				webSearchRequests: 0,
-				price: null
+				price: null,
+				unreported: 0
 			},
 			{
 				provider: null,
@@ -444,7 +445,8 @@ describe('recentAssistantUsage', () => {
 				cacheWriteTokens: 0,
 				cacheWrite1hTokens: 0,
 				webSearchRequests: 0,
-				price: null
+				price: null,
+				unreported: 0
 			}
 		]);
 	});
@@ -500,8 +502,9 @@ describe('recentAssistantUsage', () => {
 		expect(usageRowCostUsd({}, silent)).toBeNull();
 		// A group with some counts sums the ones it has.
 		const counted = byModel.find((row) => row.model === 'counted')!;
-		expect(counted).toMatchObject({ promptTokens: 1000, completionTokens: 0 });
+		expect(counted).toMatchObject({ promptTokens: 1000, completionTokens: 0, unreported: 1 });
 		expect(usageRowCostUsd({}, counted)).toBeCloseTo(1, 10);
+		expect(silent.unreported).toBe(2);
 	});
 
 	it('pages fifty at a time, newest first', async () => {

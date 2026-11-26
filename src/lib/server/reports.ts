@@ -8,7 +8,8 @@ import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/r
 
 // Readers report a published edition; admins and moderators work the queue.
 
-// Returns false when the edition is gone or already taken down, so nothing
+// Returns false when readers can no longer open the edition (it is gone,
+// taken down, replaced, or its story is private or in the trash), so nothing
 // was filed.
 export async function createReport(
 	db: Database,
@@ -35,10 +36,14 @@ export async function createReport(
 			.from(stories)
 			.where(eq(stories.id, found.storyId))
 			.for('share');
+		// Re-checked under the lock: the writer may have made the story private,
+		// trashed it or published a newer edition since the reader's page loaded.
 		const [up] = await tx
 			.select({ id: publications.id })
 			.from(publications)
-			.where(and(eq(publications.id, publicationId), isNull(publications.removedAt)));
+			.innerJoin(stories, eq(stories.id, publications.storyId))
+			.innerJoin(users, eq(users.id, publications.ownerId))
+			.where(and(eq(publications.id, publicationId), readersCanOpen()));
 		if (!up) return null;
 		await tx.insert(publicationReports).values({ publicationId, reason, comment: trimmed || null });
 		return found;
@@ -89,6 +94,10 @@ export async function listOpenReports(db: Database, limit = 100) {
 			newerEdition: sql<
 				'up' | 'hidden' | 'closed' | null
 			>`(select case when c.removed_at is not null then 'hidden' when ${stories.visibility} <> 'private' and ${storyIsLive()} and ${stories.ownerId} = c.owner_id and exists (select 1 from ${users} o where o.id = c.owner_id and o.suspended_at is null) then 'up' else 'closed' end from ${publications} c where c.story_id = ${publications.storyId} and c.is_current and c.removed_reason is null and c.id <> ${publications.id} limit 1)`,
+			// Its id, which the takedown form posts back (see takedownPublication).
+			newerEditionId: sql<
+				string | null
+			>`(select c.id from ${publications} c where c.story_id = ${publications.storyId} and c.is_current and c.removed_reason is null and c.id <> ${publications.id} limit 1)`,
 			editionRemovedAt: publications.removedAt,
 			editionCurrent: publications.isCurrent,
 			// Whether readers can open the reported edition right now.

@@ -597,10 +597,11 @@ export async function takedownPublication(
 	// A takedown always has a reason. Account deletion hides editions by
 	// setting removed_at alone (see scheduleAccountDeletion).
 	reason: ReportReason,
-	// Whether the moderator's page showed a newer edition that the takedown
-	// also puts down. False refuses when one exists now, since the moderator
-	// was not told; left out, nothing is checked.
-	{ newerShown }: { newerShown?: boolean } = {}
+	// The newer edition the moderator's page showed the takedown also puts
+	// down, or null for none. Refused when the story's newer edition is not
+	// that one now, since the moderator was not told; left out, nothing is
+	// checked.
+	{ newerShown }: { newerShown?: string | null } = {}
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const [target] = await tx
@@ -626,7 +627,7 @@ export async function takedownPublication(
 			.innerJoin(stories, eq(stories.id, publications.storyId))
 			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
 		if (!readable) return false;
-		if (newerShown === false) {
+		if (newerShown !== undefined) {
 			const [newer] = await tx
 				.select({ id: publications.id })
 				.from(publications)
@@ -637,7 +638,7 @@ export async function takedownPublication(
 						currentNotTakenDown()
 					)
 				);
-			if (newer) return false;
+			if ((newer?.id ?? null) !== newerShown) return false;
 		}
 		const updated = await tx
 			.update(publications)
@@ -707,6 +708,14 @@ export async function restorePublication(
 			.where(eq(users.id, edition.ownerId))
 			.for('no key update');
 		if (!owner || owner.deletionScheduledAt) return false;
+		// The lock takedownPublication and publishStory take, in publish's
+		// order (account row, then story), so a takedown or publish running at
+		// the same moment finishes first and this restore then sees it.
+		await tx
+			.select({ id: stories.id })
+			.from(stories)
+			.where(eq(stories.id, edition.storyId))
+			.for('update');
 		const restored = await tx
 			.update(publications)
 			.set({
@@ -832,7 +841,13 @@ export async function listTakenDown(db: Database) {
 			removedByName: moderatorName(publications.removedBy),
 			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
 			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
-			viewable: moderatorMayRead()
+			viewable: moderatorMayRead(),
+			// Why the title does not link: the story is private or in the trash,
+			// and either no report opens it or the takedown is from before
+			// migration 0133, whose reports no longer open anything.
+			notViewableBecause: sql<
+				'withdrawn' | 'olderTakedown' | null
+			>`case when ${moderatorMayRead()} then null when ${publications.takenDownAt} is null then 'olderTakedown' else 'withdrawn' end`
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))

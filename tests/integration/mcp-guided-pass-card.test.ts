@@ -54,6 +54,7 @@ const {
 	MAX_CARD_EDITS,
 	PASS_CARD_MIME,
 	PASS_CARD_URI,
+	cardKeyState,
 	cardKeyValid
 } = await import('#lib/server/mcp/pass-card');
 const { addComment, ensureSuggestionThread } = await import('#lib/server/review');
@@ -544,6 +545,9 @@ describe('decide_suggestion', () => {
 		try {
 			vi.setSystemTime(Date.now() + 3 * 60 * 60 * 1000);
 			expect(cardKeyValid(keys[first.id], target)).toBe(false);
+			// Told apart, so the card does not call the edit out of date.
+			expect(cardKeyState(keys[first.id], target)).toBe('expired');
+			expect(cardKeyState(keys[first.id], { ...target, stamp: 'other' })).toBe('invalid');
 		} finally {
 			vi.useRealTimers();
 		}

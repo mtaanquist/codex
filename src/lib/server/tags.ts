@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { stories, storyTags, tags, universes } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
@@ -480,6 +480,7 @@ export async function mergeTag(
 			.where(and(eq(tags.id, sourceId), eq(tags.kind, kind)));
 		if (!source) return { ok: false, message: 'That entry does not exist.' };
 		if (source.removedAt) return removedSource(source.name);
+		if (source.mergedIntoId) return mergedSource(source.name);
 		const notFound = `There is no ${source.kind} called "${targetName.trim()}".`;
 		const [named] = await tx
 			.select()
@@ -515,7 +516,9 @@ export async function mergeTag(
 		}
 		// A merge that committed while this one waited can have moved the target,
 		// and a removal the source.
-		if (locked.find((row) => row.id === source.id)?.removedAt) return removedSource(source.name);
+		const lockedSource = locked.find((row) => row.id === source.id);
+		if (lockedSource?.removedAt) return removedSource(source.name);
+		if (lockedSource?.mergedIntoId) return mergedSource(source.name);
 		const target = locked.find((row) => row.id === survivorId);
 		if (!target || target.mergedIntoId) {
 			return { ok: false, message: 'That entry changed while you were working. Try again.' };
@@ -541,6 +544,15 @@ export async function mergeTag(
 // Restoring it first shows it again, and merging it then is the usual merge.
 function removedSource(name: string): ModResult {
 	return { ok: false, message: `"${name}" is removed. Restore it first, then merge it.` };
+}
+
+// An entry already merged into another is moved by undoing that merge first:
+// a second merge would point it elsewhere without the undo's care for limits.
+function mergedSource(name: string): ModResult {
+	return {
+		ok: false,
+		message: `"${name}" is merged into another entry. Undo its merge first, then merge it.`
+	};
 }
 
 // A writer's limit (Assistant preferences) on a renamed warning moves to its
@@ -594,11 +606,13 @@ async function survivorOf(tx: Database, id: string): Promise<{ id: string; ended
 	return row ?? { id, ended: true };
 }
 
-// Undoing a merge gives the warning its own limits back. A writer who set
-// "avoid" on the survivor while the two were merged had it cover this one as
-// well, so each row with that "avoid" and no limit of its own on this warning
-// gets "avoid" here too, so the unmerged warning is never wider than it was
-// while merged. The survivor's row is locked too, so a writer's save of the
+// Undoing a merge gives the warning its own limits back, but never wider than
+// while merged. In each row (a story read over its universe) where the
+// survivor's limit, folded with every warning merged into it, was "avoid",
+// the unmerged warning gets "avoid" too, over a "write" of that row's own. A
+// story that would inherit the "avoid" from its universe anyway (it has no
+// key of its own on the warning, and the universe's row gets "avoid" here) is
+// left alone. The survivor's row is locked too, so a writer's save of the
 // survivor's limit waits for the undo (see savePreferences).
 export async function unmergeTag(db: Database, kind: TagKind, id: string): Promise<boolean> {
 	return await db.transaction(async (tx) => {
@@ -633,27 +647,58 @@ export async function unmergeTag(db: Database, kind: TagKind, id: string): Promi
 			survivorSlug = locked.find((each) => each.id === found.id)?.slug ?? '';
 		}
 		if (!survivor || !tag) return false;
+		const merged =
+			tag.kind === 'warning' && survivor.ended
+				? await tx.select({ slug: tags.slug }).from(tags).where(eq(tags.mergedIntoId, survivor.id))
+				: [];
 		await tx.update(tags).set({ mergedIntoId: null }).where(eq(tags.id, id));
 		if (tag.kind !== 'warning' || !survivor.ended) return true;
-		const from = warningKey(survivorSlug);
 		const to = warningKey(tag.slug);
-		const keep = (
+		const folded = [survivorSlug, ...merged.map((each) => each.slug)].map((slug) =>
+			warningKey(slug)
+		);
+		const keys = sql`array[${sql.join(
+			folded.map((key) => sql`${key}`),
+			sql`, `
+		)}]::text[]`;
+		const avoidIn = (limit: (key: SQL) => SQL) =>
+			sql`exists (select 1 from unnest(${keys}) as fold(key) where ${limit(sql`fold.key`)} = 'avoid')`;
+		const universeAvoids = avoidIn((key) => sql`${universes.assistantPreferences} ->> ${key}`);
+		const setAvoid = (
 			column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
-		) => ({
-			set: sql`${column} || jsonb_build_object(${to}::text, 'avoid')`,
-			where: sql`${column} ->> ${from}::text = 'avoid' and not jsonb_exists(${column}, ${to}::text)`
-		});
-		// updated_at is kept as it was, as in moveContentLimits.
-		const story = keep(stories.assistantPreferences);
+		) => sql`${column} || jsonb_build_object(${to}::text, 'avoid')`;
+		// Stories first, against their universe's limits as they were while
+		// merged. updated_at is kept as it was, as in moveContentLimits.
 		await tx
 			.update(stories)
-			.set({ assistantPreferences: story.set, updatedAt: sql`${stories.updatedAt}` })
-			.where(story.where);
-		const universe = keep(universes.assistantPreferences);
+			.set({
+				assistantPreferences: setAvoid(stories.assistantPreferences),
+				updatedAt: sql`${stories.updatedAt}`
+			})
+			.from(universes)
+			.where(
+				and(
+					eq(universes.id, stories.universeId),
+					avoidIn(
+						(key) =>
+							sql`coalesce(${stories.assistantPreferences} ->> ${key}, ${universes.assistantPreferences} ->> ${key})`
+					),
+					sql`${stories.assistantPreferences} ->> ${to}::text is distinct from 'avoid'`,
+					sql`(jsonb_exists(${stories.assistantPreferences}, ${to}::text) or not ${universeAvoids})`
+				)
+			);
 		await tx
 			.update(universes)
-			.set({ assistantPreferences: universe.set, updatedAt: sql`${universes.updatedAt}` })
-			.where(universe.where);
+			.set({
+				assistantPreferences: setAvoid(universes.assistantPreferences),
+				updatedAt: sql`${universes.updatedAt}`
+			})
+			.where(
+				and(
+					universeAvoids,
+					sql`${universes.assistantPreferences} ->> ${to}::text is distinct from 'avoid'`
+				)
+			);
 		return true;
 	});
 }

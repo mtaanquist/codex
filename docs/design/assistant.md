@@ -825,11 +825,16 @@ These cut across the surfaces and the architecture.
   any resolves to `write`. Folding after resolving, rather than per row, means
   a universe's `avoid` on a merged warning is not undone by a story's `write`
   on the survivor, and a limit saved just before a merge still counts.
-  Undoing a merge gives each warning its own key back, and an `avoid` on the
-  survivor's own key is copied to the unmerged warning's key in each row that
-  has none (`unmergeTag`), so the unmerged warning never ends up wider than it
-  was while merged (the survivor itself goes back to its own keys, which can
-  be wider). The form shows each live warning's limit folded within its own
+  Undoing a merge gives each warning its own key back, and in each row where
+  the survivor's limit was `avoid` while merged (folded over every warning
+  merged into it, a story's keys read over its universe's), the unmerged
+  warning's key is set to `avoid`, over a `write` of that row's own
+  (`unmergeTag`). A story with no key of its own on the warning is left alone
+  when its universe's row gets that `avoid`, since it inherits it. So the
+  unmerged warning never ends up wider than it was while merged, in any row
+  (the survivor itself goes back to its own keys, which can be wider).
+  `updated_at` is kept, as for a rename. `mergeTag` refuses a source already
+  merged into another entry: its merge is undone first. The form shows each live warning's limit folded within its own
   row (`foldedPreferences`), with a note when the other level or a merged
   warning decides what applies; on a story whose own limit there is `write`
   only through a merged warning while the universe's `avoid` is on the

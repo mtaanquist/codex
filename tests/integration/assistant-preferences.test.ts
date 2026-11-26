@@ -741,7 +741,7 @@ describe('content limits across merges, renames and removals', () => {
 	it('keeps an avoid set on the survivor while merged when the merge is undone', async () => {
 		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
 		await saveStory({ 'warning:gore': 'avoid' });
-		// The universe's own write on Blood stays: it has a limit of its own.
+		// The universe's own write on Blood gives way: its Gore avoid covered it.
 		await db
 			.update(universes)
 			.set({ assistantPreferences: { 'warning:gore': 'avoid', 'warning:blood': 'write' } })
@@ -752,14 +752,70 @@ describe('content limits across merges, renames and removals', () => {
 		const before = await stamp();
 		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
 		expect(await allPreferences()).toEqual({
-			story: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' },
-			universe: { 'warning:gore': 'avoid', 'warning:blood': 'write' }
+			// The story inherits the universe's new avoid, so it gets no key.
+			story: { 'warning:gore': 'avoid' },
+			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
 		});
 		expect(await stamp()).toEqual(before);
 		expect(await limits()).toEqual([
 			['Blood', 'avoid'],
 			['Gore', 'avoid']
 		]);
+	});
+
+	it("keeps the universe's avoid on the survivor over a story's own write on an undone merge", async () => {
+		await saveUniverse({ 'warning:gore': 'avoid' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await limits()).toEqual([['Gore', 'avoid']]);
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual({
+			story: { 'warning:blood': 'avoid' },
+			universe: { 'warning:gore': 'avoid', 'warning:blood': 'avoid' }
+		});
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'avoid']
+		]);
+	});
+
+	it("counts the other warnings merged into the survivor, and leaves a story that inherits the universe's avoid alone", async () => {
+		await db.insert(tags).values({ kind: 'warning', name: 'Bruising', slug: 'bruising' });
+		await saveUniverse({ 'warning:bruising': 'avoid' });
+		const other = (await createStoryInUniverse(db, user.id, universeId, 'Second')).id;
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:gore': 'write' } })
+			.where(eq(stories.id, other));
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('bruising'), 'Gore')).toEqual({ ok: true });
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		const prefs = async (id: string) =>
+			(
+				await db
+					.select({ preferences: stories.assistantPreferences })
+					.from(stories)
+					.where(eq(stories.id, id))
+			)[0].preferences;
+		expect(await prefs(storyId)).toEqual({});
+		expect(await prefs(other)).toEqual({ 'warning:gore': 'write' });
+		expect((await allPreferences()).universe).toEqual({
+			'warning:bruising': 'avoid',
+			'warning:blood': 'avoid'
+		});
+		expect(await limits()).toEqual([
+			['Blood', 'avoid'],
+			['Gore', 'avoid']
+		]);
+	});
+
+	it('gives an unmerged warning no avoid the survivor did not have while merged', async () => {
+		await saveUniverse({ 'warning:gore': 'write' });
+		await saveStory({ 'warning:blood': 'write' });
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		const before = await allPreferences();
+		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
+		expect(await allPreferences()).toEqual(before);
 	});
 
 	it('leaves out a limit posted for a warning merged into one since removed', async () => {

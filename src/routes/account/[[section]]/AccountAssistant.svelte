@@ -174,17 +174,25 @@
 	const usageTotalCost = $derived.by(() => {
 		let total = 0;
 		let known = false;
-		// A model with no price, or no counts, is left out of the total.
+		// A model with no price, or requests with no counts, are left out of
+		// the total.
 		let partial = false;
 		for (const row of data.assistantUsage.byModel) {
 			const cost = usageCost(row);
 			if (cost !== null) {
 				total += cost;
 				known = true;
-			} else partial = true;
+			}
+			if (cost === null || row.unreported > 0) partial = true;
 		}
 		return known ? { total, partial } : null;
 	});
+
+	function partialPhrase(total: number): string {
+		return total >= 0.01
+			? 'at least $' + total.toFixed(2) + ', as some requests could not be priced'
+			: 'some requests could not be priced';
+	}
 
 	// The usage log pages through ?usage=N on the assistant section.
 	function usagePageHref(n: number): ResolvedPathname {
@@ -903,8 +911,9 @@
 								.webSearchRequests === 1
 								? ''
 								: 'es'}{/if}{#if usageTotalCost !== null},
-							{#if usageTotalCost.partial}at least ${usageTotalCost.total.toFixed(2)} (some requests used
-								a model with no price){:else}{spentPhrase(usageTotalCost.total)}{/if}{/if}.
+							{#if usageTotalCost.partial}{partialPhrase(usageTotalCost.total)}{:else}{spentPhrase(
+									usageTotalCost.total
+								)}{/if}{/if}.
 						{#if data.assistantUsage.totals.estimatedRequests > 0}
 							Includes {data.assistantUsage.totals.estimatedRequests} estimated request{pluralSuffix(
 								data.assistantUsage.totals.estimatedRequests

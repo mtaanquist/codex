@@ -222,9 +222,47 @@ describe('story tags', () => {
 			ok: true
 		});
 		await unchanged();
+		// An undo never leaves a warning wider than while merged: Blood's "avoid"
+		// covered Gore inside Graphic Violence, so Gore keeps it in the universe,
+		// and over the first story's own "write". updated_at stays as it was.
 		expect(await unmergeTag(db, 'warning', await tagId('gore'))).toBe(true);
 		expect(await unmergeTag(db, 'warning', await tagId('blood'))).toBe(true);
-		await unchanged();
+		const after = { story: await story(storyId), universe: await universeRow() };
+		expect(after.story.assistantPreferences).toEqual({ 'warning:gore': 'avoid', tense: 'past' });
+		expect(after.story.updatedAt).toEqual(before.story.updatedAt);
+		expect((await story(otherStoryId)).assistantPreferences).toEqual(otherPrefs);
+		expect(after.universe.assistantPreferences).toEqual({
+			'warning:blood': 'avoid',
+			'warning:gore': 'avoid'
+		});
+		expect(after.universe.updatedAt).toEqual(before.universe.updatedAt);
+	});
+
+	it('refuses to merge an entry already merged into another', async () => {
+		await db.insert(tags).values([
+			{ kind: 'tag', name: 'Fam', slug: 'fam' },
+			{ kind: 'tag', name: 'Found Family', slug: 'found-family' },
+			{ kind: 'tag', name: 'Kin', slug: 'kin' }
+		]);
+		expect(await mergeTag(db, 'tag', await tagId('fam'), 'Found Family')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'tag', await tagId('fam'), 'Kin')).toEqual({
+			ok: false,
+			message: expect.stringContaining('Undo its merge first')
+		});
+		const [fam] = await db.select().from(tags).where(eq(tags.slug, 'fam'));
+		expect(fam.mergedIntoId).toBe(await tagId('found-family'));
+
+		// Two merges of one entry at once: the second sees the first's once it
+		// has the lock.
+		expect(await unmergeTag(db, 'tag', fam.id)).toBe(true);
+		const results = await Promise.all([
+			mergeTag(db, 'tag', fam.id, 'Found Family'),
+			mergeTag(db, 'tag', fam.id, 'Kin')
+		]);
+		expect(results.filter((result) => result.ok)).toHaveLength(1);
+		expect(results.find((result) => !result.ok)).toMatchObject({
+			message: expect.stringContaining('Undo its merge first')
+		});
 	});
 
 	it('a save while merged or removed keeps the old entry, so undoing gives it back', async () => {

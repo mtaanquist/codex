@@ -211,22 +211,32 @@ function cardKey(target: KeyTarget): string {
 	);
 }
 
-export function cardKeyValid(key: unknown, target: KeyTarget): boolean {
-	if (typeof key !== 'string') return false;
+// 'valid', 'expired' (a key for this very edit whose time ran out), or
+// 'invalid'.
+export function cardKeyState(key: unknown, target: KeyTarget): 'valid' | 'expired' | 'invalid' {
+	if (typeof key !== 'string') return 'invalid';
 	const payload = verifyToken(key);
-	if (!payload) return false;
+	if (!payload) return 'invalid';
 	const [purpose, grant, note, suggestion, stamp, expires, extra] = payload.split('.');
-	return (
+	const matches =
 		extra === undefined &&
 		purpose === 'pass-card' &&
 		grant === target.grantId &&
 		note === target.noteId &&
 		suggestion === target.suggestionId &&
 		stamp === target.stamp &&
-		Number.isFinite(Number(expires)) &&
-		Date.now() <= Number(expires)
-	);
+		Number.isFinite(Number(expires));
+	if (!matches) return 'invalid';
+	return Date.now() <= Number(expires) ? 'valid' : 'expired';
 }
+
+export function cardKeyValid(key: unknown, target: KeyTarget): boolean {
+	return cardKeyState(key, target) === 'valid';
+}
+
+// The card shows this as it is, after it has fetched fresh keys.
+export const CARD_KEY_EXPIRED =
+	'This card was open for a long time, so it has been refreshed. Press Accept again.';
 
 // The note's story, when the note is one this app opened in a live, unmuted
 // story of the connected writer in this universe, on a scene not in the trash.
@@ -438,9 +448,14 @@ async function decide(call: CardCall): Promise<CardResult> {
 	const noteId = typeof args.noteId === 'string' ? args.noteId : '';
 	const suggestionId = typeof args.suggestionId === 'string' ? args.suggestionId : '';
 	const seen = typeof args.seen === 'string' ? args.seen : '';
-	if (
-		!cardKeyValid(args.cardKey, { grantId: identity.grantId, noteId, suggestionId, stamp: seen })
-	) {
+	const keyState = cardKeyState(args.cardKey, {
+		grantId: identity.grantId,
+		noteId,
+		suggestionId,
+		stamp: seen
+	});
+	if (keyState === 'expired') return { text: CARD_KEY_EXPIRED, isError: true };
+	if (keyState !== 'valid') {
 		return {
 			text: 'Only the guided pass card can accept an edit. Open the pass again.',
 			isError: true
