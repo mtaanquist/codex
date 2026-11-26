@@ -1031,6 +1031,35 @@ describe('anthropicProvider.respond over a stream', () => {
 		expect(billedUsage(err)).toMatchObject({ webSearchRequests: 1, estimated: true });
 	});
 
+	it('takes a reported count of 0 over the calls seen', async () => {
+		const http: HttpRequest = async () =>
+			sseResponse(
+				searchTurn({
+					input_tokens: 2500,
+					output_tokens: 5,
+					server_tool_use: { web_search_requests: 0 }
+				})
+			);
+		const result = await anthropicProvider.respond(req, conn, http);
+		expect(result.usage).toEqual({ promptTokens: 2500, completionTokens: 5 });
+	});
+
+	it('does not bill a search whose result came back as an error', async () => {
+		const failed = {
+			type: 'web_search_tool_result',
+			tool_use_id: 's1',
+			content: { type: 'web_search_tool_result_error', error_code: 'too_many_requests' }
+		};
+		const frames = searchTurn({ output_tokens: 5 }).slice(0, 3);
+		frames.push(
+			frame({ type: 'content_block_start', index: 1, content_block: failed }),
+			frame({ type: 'error', error: { type: 'overloaded_error', message: 'x' } })
+		);
+		const http: HttpRequest = async () => sseResponse(frames);
+		const err = await anthropicProvider.respond(req, conn, http).catch((e: unknown) => e);
+		expect(billedUsage(err)).not.toHaveProperty('webSearchRequests');
+	});
+
 	it('bills the searches seen when a finished stream reports none', async () => {
 		const http: HttpRequest = async () =>
 			sseResponse(searchTurn({ input_tokens: 2500, output_tokens: 5 }));

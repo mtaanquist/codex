@@ -313,17 +313,37 @@ function webSearches(usage: { server_tool_use?: unknown }): number {
 	return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
-// The searches to bill: the reported count, or, when no usage report counted
-// any (the stream dropped before message_delta), the web_search calls seen
-// in the stream, so a cut-off stream never bills fewer searches than it ran.
+// The searches to bill: the count a message_delta reported (a reported 0
+// stands), or, when none did, the web_search calls seen in the stream, so a
+// stream that dropped before message_delta never bills fewer searches than it
+// ran. message_start's count is not trusted: it comes before any search.
 // guessed is set when the count comes from the calls.
-function billedSearches(reported: number, calls: number): { count: number; guessed: boolean } {
-	return reported > 0 ? { count: reported, guessed: false } : { count: calls, guessed: calls > 0 };
+function billedSearches(
+	usage: Block,
+	reported: boolean,
+	calls: number
+): { count: number; guessed: boolean } {
+	if (reported) return { count: webSearches(usage), guessed: false };
+	const count = Math.max(0, calls);
+	return { count, guessed: count > 0 };
 }
 
-function isSearchCall(block: unknown): boolean {
-	const call = block as { type?: unknown; name?: unknown } | undefined;
-	return call?.type === 'server_tool_use' && call.name === 'web_search';
+// Whether a message_delta's usage reports the searches.
+function reportsSearches(usage: Block | undefined): boolean {
+	return usage?.server_tool_use != null;
+}
+
+// How a streamed content block changes the count of billable searches: a
+// web_search call adds one, and a result that came back as an error (not
+// billed) takes it off again. A call with no result yet counts.
+function searchCallDelta(block: unknown): number {
+	const b = block as { type?: unknown; name?: unknown; content?: unknown } | undefined;
+	if (b?.type === 'server_tool_use' && b.name === 'web_search') return 1;
+	const content = b?.content as { type?: unknown } | undefined;
+	if (b?.type === 'web_search_tool_result' && content?.type === 'web_search_tool_result_error') {
+		return -1;
+	}
+	return 0;
 }
 
 function parseUsage(raw: unknown): TokenUsage | undefined {
@@ -363,8 +383,10 @@ type StreamProgress = {
 	// message_delta has reported an input count; until then the results are
 	// estimated from their characters.
 	resultChars: number;
-	// web_search calls streamed, billed when no usage report counts them.
+	// Billable web_search calls streamed (see searchCallDelta), billed when no
+	// message_delta reported the count (searchesReported).
 	searchCalls: number;
+	searchesReported: boolean;
 	deltaInput: boolean;
 	sawDelta: boolean;
 	sawThinking: boolean;
@@ -407,7 +429,7 @@ function partialUsage(
 	const completion = progress.sawDelta
 		? counted
 		: Math.max(counted, estimatedOutput(progress, !cancelled));
-	const searches = billedSearches(webSearches(raw), progress.searchCalls);
+	const searches = billedSearches(raw, progress.searchesReported, progress.searchCalls);
 	return {
 		promptTokens: prompt,
 		completionTokens: completion,
@@ -506,8 +528,8 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 	// running totals laid over it.
 	const input: Block = {};
 	let completionTokens: number | undefined;
-	let searches = 0;
 	let searchCalls = 0;
+	let searchesReported = false;
 	let streamedChars = 0;
 	// Search results streamed, and whether message_delta has counted them (see
 	// unreportedResults).
@@ -519,7 +541,7 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 		const prompt = promptTotal(input) + guessed;
 		const promptTokens = Number.isFinite(prompt) ? prompt : undefined;
 		if (promptTokens === undefined && completionTokens === undefined) return undefined;
-		const billed = billedSearches(searches, searchCalls);
+		const billed = billedSearches(input, searchesReported, searchCalls);
 		return {
 			type: 'usage',
 			usage: {
@@ -551,14 +573,14 @@ async function* parseSse(body: AsyncIterable<Uint8Array>): AsyncGenerator<Stream
 				if (frame.content_block?.type === 'web_search_tool_result') {
 					resultChars += JSON.stringify(frame.content_block).length;
 				}
-				if (isSearchCall(frame.content_block)) searchCalls++;
+				searchCalls += searchCallDelta(frame.content_block);
 				continue;
 			}
 			if (frame.type === 'message_delta') {
 				if (Number(frame.usage?.input_tokens) > 0) deltaInput = true;
+				if (reportsSearches(frame.usage)) searchesReported = true;
 				const output = Number(frame.usage?.output_tokens);
 				if (Number.isFinite(output)) completionTokens = output;
-				if (frame.usage) searches = webSearches(frame.usage) || searches;
 				mergeDeltaUsage(input, frame.usage);
 				finishReason = parseStopReason(frame.delta?.stop_reason) ?? finishReason;
 				continue;
@@ -640,6 +662,7 @@ async function assembleMessage(
 		outputChars: 0,
 		resultChars: 0,
 		searchCalls: 0,
+		searchesReported: false,
 		deltaInput: false,
 		sawDelta: false,
 		sawThinking: false,
@@ -666,7 +689,7 @@ async function assembleMessage(
 			usage.input_tokens = count(usage.input_tokens) + guessed;
 			message.estimated = true;
 		}
-		const searches = billedSearches(webSearches(usage), progress.searchCalls);
+		const searches = billedSearches(usage, progress.searchesReported, progress.searchCalls);
 		if (searches.guessed) {
 			usage.server_tool_use = {
 				...(usage.server_tool_use as Block | undefined),
@@ -728,7 +751,7 @@ async function assembleFrames(
 					if (type === 'web_search_tool_result') {
 						progress.resultChars += JSON.stringify(frame.content_block).length;
 					}
-					if (isSearchCall(frame.content_block)) progress.searchCalls++;
+					progress.searchCalls += searchCallDelta(frame.content_block);
 				}
 				break;
 			case 'content_block_delta':
@@ -774,6 +797,7 @@ async function assembleFrames(
 					progress.sawDelta = true;
 				}
 				if (Number(frame.usage?.input_tokens) > 0) progress.deltaInput = true;
+				if (reportsSearches(frame.usage)) progress.searchesReported = true;
 				if (delta?.stop_reason) stopReason = delta.stop_reason;
 				mergeDeltaUsage(usage, frame.usage);
 				break;

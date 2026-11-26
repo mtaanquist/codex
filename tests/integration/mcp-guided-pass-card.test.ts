@@ -579,11 +579,14 @@ describe('decide_suggestion', () => {
 		const gate = new Promise<void>((resolve) => (release = resolve));
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		const grantId = (await resolveBearer(db, alice.token))!.grantId;
-		expect(await revokeGrant(db, alice.userId, grantId)).toBe(true);
-		release();
-		await ahead;
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			const grantId = (await resolveBearer(db, alice.token))!.grantId;
+			expect(await revokeGrant(db, alice.userId, grantId)).toBe(true);
+		} finally {
+			release();
+			await ahead;
+		}
 		expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 		expect(new Set(await statuses())).toEqual(new Set(['pending']));
@@ -595,10 +598,13 @@ describe('decide_suggestion', () => {
 		const gate = new Promise<void>((resolve) => (release = resolve));
 		const ahead = stagingGate.run(alice.userId, () => gate);
 		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		await saveMcpInstanceEnabled(db, false);
-		release();
-		await ahead;
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			await saveMcpInstanceEnabled(db, false);
+		} finally {
+			release();
+			await ahead;
+		}
 		expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 	});

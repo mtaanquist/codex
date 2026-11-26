@@ -485,12 +485,26 @@ describe('the visibility form', () => {
 		expect((await row(s.id)).listedInBrowse).toBe(false);
 	});
 
+	it('keeps the stored choice when the form did not show the box, even with Browse on', async () => {
+		// The page loaded while this process still had Browse off cached.
+		await saveBrowseEnabled(db, true);
+		const s = await story('Stale page');
+		await save(s.id, { visibility: 'public' });
+		expect((await row(s.id)).listedInBrowse).toBe(true);
+	});
+
+	it('ignores a ticked box when Browse is off now', async () => {
+		const s = await story('Turned off', { listed: false });
+		await save(s.id, { visibility: 'public', browseBox: '1', listedInBrowse: 'on' });
+		expect((await row(s.id)).listedInBrowse).toBe(false);
+	});
+
 	it('saves the Browse box while Browse is on, and refuses an unknown visibility', async () => {
 		await saveBrowseEnabled(db, true);
 		const s = await story('Toggled', { listed: false });
-		await save(s.id, { visibility: 'public', listedInBrowse: 'on' });
+		await save(s.id, { visibility: 'public', browseBox: '1', listedInBrowse: 'on' });
 		expect((await row(s.id)).listedInBrowse).toBe(true);
-		await save(s.id, { visibility: 'public' });
+		await save(s.id, { visibility: 'public', browseBox: '1' });
 		expect((await row(s.id)).listedInBrowse).toBe(false);
 		expect(await save(s.id, { visibility: 'everyone' })).toMatchObject({ status: 400 });
 		expect((await row(s.id)).visibility).toBe('public');
