@@ -7,12 +7,10 @@ import {
 	listBrowseBlocked,
 	listLiveEditions,
 	listTakenDown,
-	restorePublication,
-	takedownPublication
+	restorePublication
 } from '#lib/server/publish';
 import { formText } from '#lib/server/validation';
-import { isReportReason } from '#lib/report-reasons';
-import { browseModerationActions } from '#lib/server/browse-moderation-actions';
+import { moderationActions } from '#lib/server/moderation-actions';
 
 // The live list pages through ?page=N (zero-based) and searches ?q=.
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -28,23 +26,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
-	...browseModerationActions('published'),
-	takedown: async ({ request, locals }) => {
-		requireModerator(locals);
-		const data = await request.formData();
-		const publicationId = formText(data, 'publicationId');
-		const reason = formText(data, 'reason');
-		if (!isReportReason(reason)) {
-			return fail(400, { scope: 'published', message: 'Pick a reason for the takedown.' });
-		}
-		if (
-			!isUuid(publicationId) ||
-			!(await takedownPublication(db, publicationId, locals.user!.id, reason))
-		) {
-			return fail(400, { scope: 'published', message: 'That edition does not exist.' });
-		}
-		return { scope: 'published', done: true };
-	},
+	...moderationActions('published'),
 	restore: async ({ request, locals }) => {
 		requireModerator(locals);
 		const publicationId = formText(await request.formData(), 'publicationId');

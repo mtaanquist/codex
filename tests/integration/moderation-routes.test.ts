@@ -213,6 +213,14 @@ describe('Admin > Published actions', () => {
 		expect((await storyRow()).browseBlockedAt).toBeNull();
 	});
 
+	it('says an edition already down is down, as the report queue does', async () => {
+		await takedownPublication(db, publicationId, moderator.id, 'spam');
+		expect(await act(publishedPage, 'takedown', { publicationId, reason: 'spam' })).toMatchObject({
+			status: 400,
+			data: { message: 'That edition does not exist or is already down.' }
+		});
+	});
+
 	it('lists an edition hidden by account deletion, which can still be taken down', async () => {
 		await scheduleAccountDeletion(db, author.id);
 		const listed = (await loadPublished()).live.editions;
@@ -276,6 +284,24 @@ describe('Admin > Reports actions', () => {
 		expect((await storyRow()).browseAllowedBy).toBe(moderator.id);
 	});
 
+	it('marks a report about an edition the writer has since replaced', async () => {
+		await fileReport();
+		const load = reportsPage.load as (event: unknown) => Promise<{
+			reports: { newerEditionUp: boolean }[];
+		}>;
+		const locals = { user: moderator };
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: true }]);
+		// Once the newer one is down on its own, a takedown touches only this one.
+		await db
+			.update(publications)
+			.set({ removedAt: new Date(), removedReason: 'spam' })
+			.where(eq(publications.id, newer.publicationId));
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
+	});
+
 	it('is a 404 for writers', async () => {
 		const reportId = await fileReport();
 		await expect404(
@@ -319,6 +345,22 @@ describe("the moderator's view of an edition", () => {
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
 		expect((await loadEdition(publicationId)).edition).toMatchObject({ readable: false });
 		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: true }]);
+	});
+
+	it('opens a story in the trash only once it was reported', async () => {
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		await expect404(loadEdition(publicationId));
+		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: false }]);
+		await db.update(stories).set({ deletedAt: null }).where(eq(stories.id, storyId));
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		expect((await loadEdition(publicationId)).edition).toMatchObject({ readable: false });
+	});
+
+	it('does not offer the public page when the story has changed hands', async () => {
+		const other = await user('other@example.com', 'user');
+		await db.update(stories).set({ ownerId: other.id }).where(eq(stories.id, storyId));
+		expect((await loadEdition(publicationId)).edition.readable).toBe(false);
 	});
 
 	it('is a 404 for writers and signed-out visitors, and for an unknown edition', async () => {

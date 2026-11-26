@@ -32,6 +32,7 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
+import { currentNotTakenDown } from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
@@ -719,8 +720,7 @@ export async function listLiveEditions(
 	// Handles are stored without the '@' the pages show before them.
 	const handlePattern = likePattern(text.replace(/^@/, ''));
 	const where = and(
-		eq(publications.isCurrent, true),
-		isNull(publications.removedReason),
+		currentNotTakenDown(),
 		text
 			? or(ilike(publications.handle, handlePattern), ilike(publications.title, likePattern(text)))
 			: undefined
@@ -813,6 +813,25 @@ function moderatorMayRead() {
 	return sql<boolean>`((${stories.visibility} <> 'private' and ${storyIsLive()}) or ${publications.removedReason} is not null or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id}))`;
 }
 
+// Whether a moderator may load an uploaded image: one shown inline in an
+// edition whose text they may read on its own page, so the image of a
+// taken-down or hidden edition can be checked too. Only the edition owner's
+// own images, as for readers (isPublicAsset).
+export async function moderatorMayReadAsset(db: Database, assetId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ id: publications.id })
+		.from(publicationAssets)
+		.innerJoin(publications, eq(publicationAssets.publicationId, publications.id))
+		.innerJoin(stories, eq(publications.storyId, stories.id))
+		.innerJoin(
+			assets,
+			and(eq(assets.id, publicationAssets.assetId), eq(assets.ownerId, publications.ownerId))
+		)
+		.where(and(eq(publicationAssets.assetId, assetId), moderatorMayRead()))
+		.limit(1);
+	return Boolean(row);
+}
+
 // One edition as a moderator sees it: taken down, hidden by an account
 // deletion, superseded or live. For checking the text of a report before
 // acting on it, or again before a restore. An edition of a story the author
@@ -840,7 +859,8 @@ export async function moderatorEdition(db: Database, publicationId: string) {
 			restoredByName: moderatorName(publications.restoredBy),
 			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
 			// Whether readers can open it at its public address right now.
-			readable: sql<boolean>`(${shared} and ${publications.isCurrent} and ${publications.removedAt} is null and ${users.suspendedAt} is null)`
+			// The same checks as publicEdition, so the link it gates never 404s.
+			readable: sql<boolean>`(${shared} and ${stories.ownerId} = ${publications.ownerId} and ${publications.isCurrent} and ${publications.removedAt} is null and ${users.suspendedAt} is null)`
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
