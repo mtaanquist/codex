@@ -6,7 +6,10 @@ import { allowInBrowse, removeFromBrowse } from './browse';
 import { editionReplaced, editionWithdrawn, takedownPublication } from './publish';
 import { reportClosed } from './reports';
 import { isUuid } from '#lib/slug';
+import { isMicrosText } from './db-clock';
 import { isReportReason } from '#lib/report-reasons';
+
+const WITHDRAWN = 'The writer made this story private or moved it to the trash. Reload the page.';
 
 // "Take down", "Remove from Browse" and "Allow in Browse again", shared by the
 // Published and Reports pages. scope is the page's form scope for its messages.
@@ -49,10 +52,7 @@ export function moderationActions(scope: string) {
 					});
 				}
 				if (isUuid(publicationId) && (await editionWithdrawn(db, publicationId))) {
-					return fail(409, {
-						scope,
-						message: 'The writer made this story private or moved it to the trash. Reload the page.'
-					});
+					return fail(409, { scope, message: WITHDRAWN });
 				}
 				return fail(400, { scope, message: 'That edition does not exist or is already down.' });
 			}
@@ -71,12 +71,16 @@ export function moderationActions(scope: string) {
 			const outcome = isUuid(storyId)
 				? await removeFromBrowse(db, storyId, locals.user!.id, reason, reportId)
 				: false;
-			if (outcome === 'report-closed') {
+			if (
+				outcome === 'report-closed' ||
+				(outcome !== true && reportId && (await reportClosed(db, reportId)))
+			) {
 				return fail(409, {
 					scope,
 					message: 'This report is already closed. Reload the page to see what changed.'
 				});
 			}
+			if (outcome === 'withdrawn') return fail(409, { scope, message: WITHDRAWN });
 			if (!outcome) {
 				return fail(400, { scope, message: 'That story does not exist or is already off Browse.' });
 			}
@@ -84,8 +88,25 @@ export function moderationActions(scope: string) {
 		},
 		allowInBrowse: async ({ request, locals }: RequestEvent) => {
 			requireModerator(locals);
-			const storyId = formText(await request.formData(), 'storyId');
-			if (!isUuid(storyId) || !(await allowInBrowse(db, storyId, locals.user!.id))) {
+			const data = await request.formData();
+			const storyId = formText(data, 'storyId');
+			// When the page showed the story removed, so a later removal is not lifted.
+			const blockedShown = formText(data, 'browseBlockedAt');
+			if (!isUuid(storyId)) {
+				return fail(400, { scope, message: 'That story is not blocked from Browse.' });
+			}
+			if (!isMicrosText(blockedShown)) {
+				return fail(400, { scope, message: 'Reload the page and try again.' });
+			}
+			const outcome = await allowInBrowse(db, storyId, locals.user!.id, { blockedShown });
+			if (outcome === 'changed') {
+				return fail(409, {
+					scope,
+					message:
+						'This story was removed from Browse again since you loaded the page. Reload the page to see what changed.'
+				});
+			}
+			if (!outcome) {
 				return fail(400, { scope, message: 'That story is not blocked from Browse.' });
 			}
 			return { scope, done: true };

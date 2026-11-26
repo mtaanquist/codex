@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { sql, type SQLWrapper } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 
 // Stored timestamps that are later compared with each other (updated_at,
@@ -18,4 +18,15 @@ export async function dbNow(db: Pick<Database, 'execute'>): Promise<Date> {
 export async function dbNowText(db: Pick<Database, 'execute'>): Promise<string> {
 	const { rows } = await db.execute<{ now: string }>(sql`select clock_timestamp()::text as now`);
 	return rows[0].now;
+}
+
+/** A timestamp as whole microseconds since the epoch, as text: for a stamp a
+ * page shows and posts back, so the action can match it exactly in SQL. */
+export function microsText(stamp: SQLWrapper) {
+	return sql<string>`(extract(epoch from ${stamp}) * 1000000)::bigint::text`;
+}
+
+/** Whether a posted value is a stamp microsText could have written. */
+export function isMicrosText(value: string): boolean {
+	return /^-?\d{1,19}$/.test(value);
 }
