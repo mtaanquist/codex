@@ -897,6 +897,13 @@
 			"when": 1795613411049,
 			"tag": "0127_mark-legacy-deletion-hides",
 			"breakpoints": true
+		},
+		{
+			"idx": 128,
+			"version": "7",
+			"when": 1795674057953,
+			"tag": "0128_browse-index",
+			"breakpoints": true
 		}
 	]
 }

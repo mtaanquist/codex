@@ -1092,7 +1092,13 @@ export const publications = pgTable(
 		// would create a second hits this and rolls back.
 		uniqueIndex('publications_one_current_per_story')
 			.on(table.storyId)
-			.where(sql`${table.isCurrent}`)
+			.where(sql`${table.isCurrent}`),
+		// Browse: listed editions newest first, with the page cursor. Nulls first
+		// to match the plain DESC of its ORDER BY; the WHERE matches the start
+		// of the `listed` condition in #lib/server/browse.
+		index('publications_browse')
+			.on(table.publishedAt.desc().nullsFirst(), table.id.desc().nullsFirst())
+			.where(sql`${table.isCurrent} and ${table.removedAt} is null`)
 	]
 );
 
