@@ -10,6 +10,22 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 6 (2026-11-26, `staging/v4.0.0`, #1845,
+#1846). Every round had found another stale-page hole in content limits,
+because the preferences form autosaved every limit select with any other
+field. The form now posts only the limits the writer changed on the page,
+with a fingerprint of the warning list it was built from (each live warning
+and its merged slugs); the save recomputes it under the tag and row locks and
+leaves limits alone on a mismatch. Merging a removed entry is refused. A
+report's unlock is tied to the takedown that closed it by `taken_down_at`
+equal to the report's `resolved_at` (same transaction), so takedowns and
+restores from before 0130 and 0133 no longer unlock anything. 0131 now
+rebuilds whenever the recorded collation version differs from the server's,
+and keeps the old version when it had to skip a table. Playwright runs
+locally with the preinstalled Chromium through a config that sets
+`launchOptions.executablePath`; the export steps of the core flow need asset
+storage and fail without it.
+
 v4.0.0 staging review, round 5 (2026-11-26, `staging/v4.0.0`, #1840 to
 #1843). The preferences form now shows each warning's limit folded within its
 row, so a limit that came from a merged warning is visible and can be

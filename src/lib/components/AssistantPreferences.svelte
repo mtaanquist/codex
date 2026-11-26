@@ -10,8 +10,10 @@
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
+	import type { SubmitFunction } from '$app/forms';
 	import {
 		ASSISTANT_CHOICES,
+		CHANGED_LIMITS_FIELD,
 		CONTENT_LIMITS,
 		foldedLimit,
 		foldedPreferences,
@@ -23,8 +25,11 @@
 		MAX_ASSISTANT_NOTES,
 		normaliseNotes,
 		normalisePreferences,
+		shownPreferences,
 		USE_UNIVERSE_NOTES,
-		warningKey
+		WARNING_LIST_FIELD,
+		warningKey,
+		warningListFingerprint
 	} from '#lib/assistant-preferences';
 	import { MAX_DRAFT_WORDS, MIN_DRAFT_WORDS } from '#lib/scene-draft';
 
@@ -61,13 +66,16 @@
 	// A refused save shows what it sent over the stored values: it carries no
 	// value for a warning the form did not show. Each warning shows its limit
 	// folded with the ones merged into it, which is what applies at this level
-	// (the save compares against the same, see limitChanges).
+	// (the save compares against the same, see limitChanges), except where the
+	// universe's own limit on it applies instead (shownPreferences).
 	const own = $derived(normalisePreferences(stored));
+	const universeOwn = $derived(inherited ? normalisePreferences(inherited.preferences) : null);
 	const values: Record<string, string> = $derived({
 		...Object.fromEntries(
-			Object.entries({ ...foldedPreferences(own, warnings), assistantNotes: notes ?? '' }).map(
-				([key, value]) => [key, String(value)]
-			)
+			Object.entries({
+				...shownPreferences(own, universeOwn, warnings),
+				assistantNotes: notes ?? ''
+			}).map(([key, value]) => [key, String(value)])
 		),
 		...submitted
 	});
@@ -76,7 +84,6 @@
 	// defaultValue, and reading it once keeps a refresh from writing over newer
 	// typing.
 	const initialNotes = untrack(() => values.assistantNotes ?? '');
-	const universeOwn = $derived(inherited ? normalisePreferences(inherited.preferences) : null);
 	const fromUniverse = $derived(universeOwn ? foldedPreferences(universeOwn, warnings) : null);
 	const universeNotes = $derived(inherited ? normaliseNotes(inherited.notes) : null);
 	const id = (key: string) => `${level}-pref-${key}`;
@@ -100,6 +107,11 @@
 				? 'Kept off the page anyway, because the settings for all your standalone stories keep a warning merged into this one off the page. To write freely, change it there.'
 				: "Kept off the page anyway, because the universe's settings keep a warning merged into this one off the page. To write freely, change it in the universe's settings.";
 		}
+		if (note === 'survivor') {
+			return standalone
+				? 'Kept off the page, because the settings for all your standalone stories keep it off the page. To write freely in this story, choose "Write freely".'
+				: 'Kept off the page, because the universe\'s settings keep it off the page. To write freely in this story, choose "Write freely".';
+		}
 		if (note === 'merged') {
 			return foldedLimit(own, warning) === 'avoid'
 				? 'Kept off the page because of a warning that was merged into this one. Pick another choice to change it.'
@@ -107,6 +119,32 @@
 		}
 		return null;
 	}
+
+	// The warnings whose limit the writer changed on this page and has not yet
+	// saved. A save posts only those limits, with the warning list the page was
+	// built from, so a save of another field leaves every limit as it is, and a
+	// limit set against a list that has since changed is not stored (see
+	// readPreferencesForm and savePreferences). Each entry counts its changes,
+	// so a save only forgets a change made before it started.
+	// Not shown anywhere, so not reactive.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const changedLimits = new Map<string, number>();
+	const markChanged = (slug: string) => changedLimits.set(slug, (changedLimits.get(slug) ?? 0) + 1);
+	const submitPreferences: SubmitFunction = async (input) => {
+		const sent = new Map(changedLimits);
+		for (const slug of sent.keys()) input.formData.append(CHANGED_LIMITS_FIELD, slug);
+		input.formData.set(WARNING_LIST_FIELD, warningListFingerprint(warnings));
+		const after = await autosaveSubmit(input);
+		return async (opts) => {
+			if (opts.result.type === 'success') {
+				for (const [slug, count] of sent) {
+					if (changedLimits.get(slug) === count) changedLimits.delete(slug);
+				}
+			}
+			if (after) await after(opts);
+			else await opts.update();
+		};
+	};
 
 	// The draft length box is blank when not set; on a story it shows the
 	// universe's length, when it has one, as the placeholder.
@@ -152,7 +190,7 @@
 	<form
 		method="POST"
 		action={ownAction('saveAssistantPreferences')}
-		use:enhance={autosaveSubmit}
+		use:enhance={submitPreferences}
 		onchange={autosubmitForm}
 		novalidate
 	>
@@ -277,7 +315,14 @@
 					<!-- A slug may hold characters an element id cannot, so the id goes by position. -->
 					<div class="field">
 						<label for={id(`warning-${index}`)}>{warning.name}</label>
-						<select id={id(`warning-${index}`)} class="select" name={key} value={values[key] ?? ''}>
+						<!-- Marked before the form's own change handler saves it. -->
+						<select
+							id={id(`warning-${index}`)}
+							class="select"
+							name={key}
+							value={values[key] ?? ''}
+							onchange={() => markChanged(warning.slug)}
+						>
 							<option value="">{blankLabel(key, 'Not set')}</option>
 							{#each CONTENT_LIMITS as option (option.value)}
 								<option value={option.value}>{option.label}</option>

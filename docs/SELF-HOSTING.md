@@ -494,8 +494,16 @@ Switching the image back without the copy leaves the indexes out of order.
 Keep the `-trixie` tag of the database image pinned: a new Debian release can
 change the sort order again, and Postgres does not warn about it for a
 database first created by the old image. If you move to another Debian base,
-run `REINDEX DATABASE codex;` and then
-`ALTER DATABASE codex REFRESH COLLATION VERSION;` after the change.
+rebuild the indexes after the change:
+
+```bash
+docker compose exec db psql -U codex -d codex -c 'REINDEX DATABASE codex;'
+```
+
+For a database first created by the new image, also run
+`ALTER DATABASE codex REFRESH COLLATION VERSION;` the same way, so Postgres
+stops warning about the change. A database first created by the old image
+refuses that command; leave it out there.
 
 If you run your own PostgreSQL 18 server, install pgvector on it (the
 `postgresql-18-pgvector` package on Debian and Ubuntu) before updating. Only

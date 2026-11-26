@@ -7,6 +7,10 @@ import {
 	inheritedLabel,
 	limitChanges,
 	limitNote,
+	shownPreferences,
+	warningListFingerprint,
+	CHANGED_LIMITS_FIELD,
+	WARNING_LIST_FIELD,
 	MAX_ASSISTANT_NOTES,
 	NO_PREFERENCES,
 	normaliseNotes,
@@ -19,9 +23,11 @@ import {
 } from './assistant-preferences.ts';
 import { MAX_DRAFT_WORDS, MIN_DRAFT_WORDS } from './scene-draft.ts';
 
-function form(fields: Record<string, string>): FormData {
+function form(fields: Record<string, string>, changed: string[] = [], list = 'list'): FormData {
 	const data = new FormData();
 	for (const [key, value] of Object.entries(fields)) data.set(key, value);
+	for (const slug of changed) data.append(CHANGED_LIMITS_FIELD, slug);
+	if (changed.length > 0) data.set(WARNING_LIST_FIELD, list);
 	return data;
 }
 
@@ -255,15 +261,19 @@ describe('feedback, length and content limits', () => {
 		expect(limits({ 'warning:blood': 'avoid' }, {}, [])).toEqual([]);
 	});
 
-	it('reads the form, a warning only when the page listed it', () => {
+	it('reads the form, a warning only when the page listed it and the writer changed it', () => {
 		const read = readPreferencesForm(
-			form({
-				feedback: 'normal',
-				summaryLength: '',
-				draftWords: ' 1000 ',
-				'warning:gore': 'avoid',
-				'warning:romance': ''
-			}),
+			form(
+				{
+					feedback: 'normal',
+					summaryLength: '',
+					draftWords: ' 1000 ',
+					'warning:gore': 'avoid',
+					'warning:romance': '',
+					'warning:death': 'write'
+				},
+				['gore', 'romance']
+			),
 			['gore', 'romance', 'death']
 		);
 		expect(read).toEqual({
@@ -275,24 +285,32 @@ describe('feedback, length and content limits', () => {
 				'warning:gore': 'avoid',
 				'warning:romance': null
 			},
-			notes: undefined
+			notes: undefined,
+			warningList: 'list'
 		});
 		expect(readPreferencesForm(form({ draftWords: '' }))).toMatchObject({
 			ok: true,
 			changes: { draftWords: null }
 		});
+		// A save of another field reads no limit, whatever the selects show.
+		expect(readPreferencesForm(form({ tense: 'past', 'warning:gore': 'write' }), ['gore'])).toEqual(
+			{ ok: true, changes: { tense: 'past' }, notes: undefined }
+		);
 	});
 
-	it('marks a form that shows a warning no longer on the list as outdated, and reads no limits', () => {
+	it('marks a form that changed a warning no longer on the list as outdated, and reads no limits', () => {
 		// Blood was merged into Gore, or renamed, since the form opened.
 		const read = readPreferencesForm(
-			form({
-				'warning:gore': '',
-				'warning:blood': 'avoid',
-				'warning:death': 'write',
-				tense: 'past',
-				assistantNotes: 'Keep it short.'
-			}),
+			form(
+				{
+					'warning:gore': '',
+					'warning:blood': 'avoid',
+					'warning:death': 'write',
+					tense: 'past',
+					assistantNotes: 'Keep it short.'
+				},
+				['blood', 'death']
+			),
 			['gore', 'death']
 		);
 		expect(read).toEqual({
@@ -301,13 +319,21 @@ describe('feedback, length and content limits', () => {
 			notes: 'Keep it short.',
 			outdated: true
 		});
+		// So is one with no warning list.
+		const data = form({ 'warning:gore': 'avoid' });
+		data.append(CHANGED_LIMITS_FIELD, 'gore');
+		expect(readPreferencesForm(data, ['gore'])).toMatchObject({ outdated: true, changes: {} });
 		// A current form still reads its limits.
 		expect(
-			readPreferencesForm(form({ 'warning:gore': '', 'warning:death': 'avoid' }), ['gore', 'death'])
+			readPreferencesForm(
+				form({ 'warning:gore': '', 'warning:death': 'avoid' }, ['gore', 'death']),
+				['gore', 'death']
+			)
 		).toEqual({
 			ok: true,
 			changes: { 'warning:gore': null, 'warning:death': 'avoid' },
-			notes: undefined
+			notes: undefined,
+			warningList: 'list'
 		});
 	});
 
@@ -316,7 +342,9 @@ describe('feedback, length and content limits', () => {
 			expect(readPreferencesForm(form({ draftWords }))).toMatchObject({ ok: false });
 		}
 		expect(readPreferencesForm(form({ editReasons: 'often' }))).toMatchObject({ ok: false });
-		expect(readPreferencesForm(form({ 'warning:gore': 'sometimes' }), ['gore'])).toMatchObject({
+		expect(
+			readPreferencesForm(form({ 'warning:gore': 'sometimes' }, ['gore']), ['gore'])
+		).toMatchObject({
 			ok: false,
 			submitted: { 'warning:gore': 'sometimes' }
 		});
@@ -456,10 +484,9 @@ describe('content limits folded with the warnings merged in', () => {
 
 	it('changes nothing for the value the form showed, and replaces the merged keys for another', () => {
 		const stored = { 'warning:gore': 'avoid', 'warning:violence': 'write' } as const;
-		// An autosave of another field posts the folded value back.
 		expect(
 			limitChanges({ 'warning:violence': 'avoid', tense: 'past' }, stored, [violence])
-		).toEqual({ tense: 'past' });
+		).toEqual({ 'warning:violence': 'avoid', tense: 'past' });
 		expect(limitChanges({ 'warning:violence': 'write' }, stored, [violence])).toEqual({
 			'warning:violence': 'write',
 			'warning:gore': null
@@ -468,12 +495,59 @@ describe('content limits folded with the warnings merged in', () => {
 			'warning:violence': null,
 			'warning:gore': null
 		});
+		// The fold again, already on the warning's own key: no change.
+		expect(
+			limitChanges({ 'warning:violence': 'avoid' }, { 'warning:violence': 'avoid' }, [violence])
+		).toEqual({});
+		// The fold again from a merged key only: stored on the own key, nothing cleared.
+		expect(
+			limitChanges({ 'warning:violence': 'write' }, { 'warning:gore': 'write' }, [violence])
+		).toEqual({ 'warning:violence': 'write' });
 		// A warning with nothing merged works as before.
 		const plain = { ...violence, merged: [] };
 		expect(limitChanges({ 'warning:violence': 'write' }, stored, [plain])).toEqual({});
 		expect(limitChanges({ 'warning:violence': 'avoid' }, stored, [plain])).toEqual({
 			'warning:violence': 'avoid'
 		});
+	});
+
+	it('fingerprints the list by slug and merged slugs, in any order', () => {
+		const a = warningListFingerprint([
+			{ slug: 'violence', merged: ['gore', 'blood'] },
+			{ slug: 'death', merged: [] }
+		]);
+		expect(
+			warningListFingerprint([
+				{ slug: 'death', merged: [] },
+				{ slug: 'violence', merged: ['blood', 'gore'] }
+			])
+		).toBe(a);
+		expect(warningListFingerprint([{ slug: 'violence', merged: ['gore', 'blood'] }])).not.toBe(a);
+		expect(
+			warningListFingerprint([
+				{ slug: 'violence', merged: ['gore'] },
+				{ slug: 'death', merged: [] }
+			])
+		).not.toBe(a);
+	});
+
+	it("shows the universe's own limit where the story's comes only from a merged warning", () => {
+		const own = { 'warning:gore': 'write' } as const;
+		const universe = { 'warning:violence': 'avoid' } as const;
+		expect(limitNote(own, universe, violence)).toBe('survivor');
+		expect(shownPreferences(own, universe, [violence])).toEqual({ 'warning:gore': 'write' });
+		expect(shownPreferences(own, null, [violence])).toMatchObject({ 'warning:violence': 'write' });
+		// An avoid on a merged warning too is one the story cannot override here.
+		expect(
+			limitNote(
+				own,
+				{ 'warning:violence': 'avoid', 'warning:blood': 'avoid' },
+				{
+					...violence,
+					merged: ['gore', 'blood']
+				}
+			)
+		).toBe('universe');
 	});
 
 	it('notes a limit that comes from a merged warning or from the universe', () => {

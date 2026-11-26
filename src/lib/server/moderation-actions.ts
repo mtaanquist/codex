@@ -3,7 +3,7 @@ import { db } from './db';
 import { requireModerator } from './roles';
 import { formText } from './validation';
 import { allowInBrowse, removeFromBrowse } from './browse';
-import { editionReplaced, takedownPublication } from './publish';
+import { editionReplaced, editionWithdrawn, takedownPublication } from './publish';
 import { reportClosed } from './reports';
 import { isUuid } from '#lib/slug';
 import { isReportReason } from '#lib/report-reasons';
@@ -19,12 +19,14 @@ export function moderationActions(scope: string) {
 			const reason = formText(data, 'reason');
 			// Sent from the report queue: the report the moderator was looking at.
 			const reportId = formText(data, 'reportId');
+			// Whether the page showed a newer edition this takedown also puts down.
+			const newerShown = data.has('newer') ? formText(data, 'newer') === 'yes' : undefined;
 			if (!isReportReason(reason)) {
 				return fail(400, { scope, message: 'Pick a reason for the takedown.' });
 			}
 			if (
 				!isUuid(publicationId) ||
-				!(await takedownPublication(db, publicationId, locals.user!.id, reason))
+				!(await takedownPublication(db, publicationId, locals.user!.id, reason, { newerShown }))
 			) {
 				if (isUuid(reportId) && (await reportClosed(db, reportId))) {
 					return fail(409, {
@@ -36,6 +38,12 @@ export function moderationActions(scope: string) {
 					return fail(409, {
 						scope,
 						message: 'This story has a newer edition. Reload the page and try again.'
+					});
+				}
+				if (isUuid(publicationId) && (await editionWithdrawn(db, publicationId))) {
+					return fail(409, {
+						scope,
+						message: 'The writer made this story private or moved it to the trash. Reload the page.'
 					});
 				}
 				return fail(400, { scope, message: 'That edition does not exist or is already down.' });

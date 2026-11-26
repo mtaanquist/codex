@@ -28,7 +28,8 @@
 		reportId?: string | null;
 		// A takedown of a replaced edition takes the story's current one down
 		// too: 'up' when readers can open it, 'hidden' when the writer's account
-		// deletion hides it, 'closed' when readers cannot open it anyway.
+		// deletion hides it, 'closed' when readers cannot open it anyway. Posted
+		// too, so the takedown is refused if a publish added one since.
 		newer?: 'up' | 'hidden' | 'closed' | null;
 		// Whether the edition is the story's current one, and whether readers
 		// can open it right now, so the dialog says what the takedown changes.
@@ -71,6 +72,7 @@
 >
 	<input type="hidden" name={takedown ? 'publicationId' : 'storyId'} value={id} />
 	{#if reportId}<input type="hidden" name="reportId" value={reportId} />{/if}
+	{#if takedown}<input type="hidden" name="newer" value={newer ? 'yes' : 'no'} />{/if}
 	<select
 		class="select"
 		name="reason"

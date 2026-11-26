@@ -14,7 +14,8 @@ import {
 	type PreferenceChanges,
 	type PreferenceSetting,
 	type StoredPreferences,
-	WARNING_PREFIX
+	WARNING_PREFIX,
+	warningListFingerprint
 } from '../assistant-preferences.ts';
 
 // The Assistant preferences the prompts state for a piece of work, read the
@@ -234,23 +235,31 @@ export const OUTDATED_WARNINGS =
 
 // Saves the preferences form of a story or a universe the caller owns:
 // 'missing' when there is no such live row of theirs. Notes left undefined
-// (the post did not carry the field) are kept. Content limits are checked
-// again against the live warnings, after a share lock on the posted slugs'
-// rows, so a limit saved while an admin renames, merges or removes its
-// warning is either moved by that change or left out ('outdated'), never
-// stored under a slug that no longer applies. Locking only the posted rows is
-// enough: a rename, a merge or a removal updates the row it changes.
+// (the post did not carry the field) are kept. The form posts only the limits
+// the writer changed, with the warning list it was built from (warningList,
+// see warningListFingerprint). Those limits are checked against the live
+// warnings read after a share lock on the posted slugs' rows and the lock on
+// the row being saved: when the list differs from the form's, or a posted
+// slug is no longer live, no limit is changed ('outdated'), so a limit is
+// never stored against a list the writer did not see. The share lock holds
+// off a rename, removal or merge of a posted warning and a merge into or out
+// of one (mergeTag and unmergeTag lock the survivor too); a change to another
+// warning does not alter a posted warning's fold. The row lock comes first so
+// that a rename's move of the limits waits for this save or lands before the
+// list is read.
 //
 // The form shows each warning's limit folded with the ones merged into it, so
 // a limit is compared with that and, where the writer changed it, replaces
-// this row's limits on the merged warnings too (limitChanges). A slug merged
-// away between the page's check and this one still counts, through its
-// survivor, and is stored as posted.
+// this row's limits on the merged warnings too (limitChanges).
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
 	target: { storyId: string } | { universeId: string },
-	input: { changes: PreferenceChanges; notes: string | null | undefined }
+	input: {
+		changes: PreferenceChanges;
+		notes: string | null | undefined;
+		warningList?: string;
+	}
 ): Promise<'saved' | 'missing' | 'outdated'> {
 	const notes = input.notes === undefined ? {} : { assistantNotes: input.notes };
 	const table = 'storyId' in target ? stories : universes;
@@ -272,23 +281,22 @@ export async function savePreferences(
 				.where(and(eq(tags.kind, 'warning'), inArray(tags.slug, limitSlugs)))
 				.orderBy(asc(tags.id))
 				.for('share');
+			const [row] = await tx
+				.select({ preferences: table.assistantPreferences })
+				.from(table)
+				.where(owned)
+				.for('update');
+			if (!row) return 'missing';
 			const warnings = await liveWarnings(tx);
 			const live = new Set(warnings.map(({ slug }) => slug));
-			const merged = new Set(warnings.flatMap((warning) => warning.merged));
-			outdated = limitSlugs.some((slug) => !live.has(slug) && !merged.has(slug));
-			if (outdated) {
-				changes = Object.fromEntries(
-					Object.entries(changes).filter(([key]) => !key.startsWith(WARNING_PREFIX))
-				) as PreferenceChanges;
-			} else if (limitSlugs.every((slug) => live.has(slug))) {
-				const [row] = await tx
-					.select({ preferences: table.assistantPreferences })
-					.from(table)
-					.where(owned)
-					.for('update');
-				if (!row) return 'missing';
-				changes = limitChanges(changes, normalisePreferences(row.preferences), warnings);
-			}
+			outdated =
+				input.warningList !== warningListFingerprint(warnings) ||
+				limitSlugs.some((slug) => !live.has(slug));
+			changes = outdated
+				? (Object.fromEntries(
+						Object.entries(changes).filter(([key]) => !key.startsWith(WARNING_PREFIX))
+					) as PreferenceChanges)
+				: limitChanges(changes, normalisePreferences(row.preferences), warnings);
 		}
 		const saved = await tx
 			.update(table)

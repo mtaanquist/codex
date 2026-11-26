@@ -19,7 +19,7 @@ const MAX_MERGE_DEPTH = 8;
 // both columns are not null) because as a plain join equality the planner
 // takes it as independent of p.story_id = s.id, guesses a few dozen rows,
 // and sorts the whole set instead of reading publications_browse in order.
-const listed = sql`
+export const listedInBrowseCondition = sql`
 	p.is_current and p.removed_at is null
 	and coalesce(s.owner_id = p.owner_id, false)
 	and s.deleted_at is null
@@ -74,7 +74,7 @@ export async function resolveFilterTag(
 			where st.tag_id in (${sql.join(
 				ids.map((id) => sql`${id}::uuid`),
 				sql`, `
-			)}) and ${listed}
+			)}) and ${listedInBrowseCondition}
 			limit 1
 		`);
 		if (used.rows.length === 0) return null;
@@ -183,7 +183,7 @@ export async function browseStories(
 	const filtered = filterConditions(query, filters);
 	if (!filtered) return { books: [], next: null };
 
-	const conditions: SQL[] = [listed, ...filtered];
+	const conditions: SQL[] = [listedInBrowseCondition, ...filtered];
 	if (query.q) {
 		const like = pattern(query.q);
 		conditions.push(sql`(
@@ -287,7 +287,7 @@ export async function browseAuthors(db: Database, query: BrowseQuery, filters: B
 		join stories s on s.id = p.story_id
 		join users u on u.id = p.owner_id
 		join universes un on un.id = s.universe_id
-		where ${sql.join([listed, ...filtered, sql`${shownName} ilike ${like}`], sql` and `)}
+		where ${sql.join([listedInBrowseCondition, ...filtered, sql`${shownName} ilike ${like}`], sql` and `)}
 		group by p.handle, u.pen_name, u.display_name
 		order by count(distinct p.story_id) desc, p.handle
 		limit 6
@@ -315,7 +315,7 @@ export async function browseTagSuggestions(db: Database): Promise<string[]> {
 		from publications p
 		join stories s on s.id = p.story_id
 		join users u on u.id = p.owner_id
-		where ${listed}
+		where ${listedInBrowseCondition}
 		order by p.published_at desc
 		limit 500
 	`);

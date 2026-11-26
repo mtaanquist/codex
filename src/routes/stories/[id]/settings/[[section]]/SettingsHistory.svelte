@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { formatDateTime } from '#lib/format';
+	import { revisionNote, revisionTitle } from '#lib/revision-title';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -19,7 +20,7 @@
 				<li>
 					<span class="t-name">{row.entityName ?? 'Untitled'}</span>
 					<span class="t-what">
-						{row.label ?? (row.reason === 'checkpoint' ? 'checkpoint' : (row.reason ?? 'autosave'))}
+						{revisionTitle(row)}{#if revisionNote(row)}: {revisionNote(row)}{/if}
 					</span>
 					<span class="t-when">{formatDateTime(row.createdAt, page.data.timeZone)}</span>
 				</li>

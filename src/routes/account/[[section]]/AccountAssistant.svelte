@@ -174,14 +174,16 @@
 	const usageTotalCost = $derived.by(() => {
 		let total = 0;
 		let known = false;
+		// A model with no price, or no counts, is left out of the total.
+		let partial = false;
 		for (const row of data.assistantUsage.byModel) {
 			const cost = usageCost(row);
 			if (cost !== null) {
 				total += cost;
 				known = true;
-			}
+			} else partial = true;
 		}
-		return known ? total : null;
+		return known ? { total, partial } : null;
 	});
 
 	// The usage log pages through ?usage=N on the assistant section.
@@ -901,7 +903,8 @@
 								.webSearchRequests === 1
 								? ''
 								: 'es'}{/if}{#if usageTotalCost !== null},
-							{spentPhrase(usageTotalCost)}{/if}.
+							{#if usageTotalCost.partial}at least ${usageTotalCost.total.toFixed(2)} (some requests used
+								a model with no price){:else}{spentPhrase(usageTotalCost.total)}{/if}{/if}.
 						{#if data.assistantUsage.totals.estimatedRequests > 0}
 							Includes {data.assistantUsage.totals.estimatedRequests} estimated request{pluralSuffix(
 								data.assistantUsage.totals.estimatedRequests

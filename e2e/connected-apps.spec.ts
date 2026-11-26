@@ -130,7 +130,13 @@ test('a writer connects an app, disconnects it, then makes and revokes a token',
 
 	// Allow reading only.
 	await expect(page.getByLabel('Read your writing')).toBeDisabled();
+	// Accepting in the app works only with suggestions, so unticking those
+	// unticks it and turns it off.
+	const apply = page.getByLabel('Let you accept its suggestions in the app');
+	await apply.check();
 	await page.getByLabel('Leave suggestions and comments').uncheck();
+	await expect(apply).not.toBeChecked();
+	await expect(apply).toBeDisabled();
 	await page.route(`${CALLBACK}**`, (route) =>
 		route.fulfill({ contentType: 'text/html', body: '<p>Back in the app</p>' })
 	);
