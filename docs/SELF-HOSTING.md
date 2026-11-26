@@ -312,9 +312,9 @@ take a fresh dump first if there is anything live worth keeping.
    on the next start. The backup
    history on the admin page starts empty after a restore, and the next
    backup uploads in full. The database user in `DATABASE_URL` must own the
-   `public` schema (the bundled Postgres does); on a managed database where it
-   does not, the restore stops with "must be owner of schema public" and
-   changes nothing. A dump from 4.0.0 or later also needs the pgvector extension: when
+   tables in the `public` schema (the bundled Postgres does); on a managed
+   database where it does not, the restore stops with a "must be owner of"
+   error and changes nothing. A dump from 4.0.0 or later also needs the pgvector extension: when
    you restore into a new, empty database as a user that is not a superuser,
    connect to it as a superuser and run `CREATE EXTENSION vector;` first.
 
@@ -466,15 +466,16 @@ large database. Wait for the app's log to show that the migrations finished;
 if `docker compose up -d` reports the app as unhealthy while they run, run it
 again once they are done. To go back to an earlier version afterwards:
 
-1. Stop the app and worker, and set both the `db` image and the Codex image
-   tag back to what they were.
-2. Start the stack and restore the backup from step 1 with the earlier
-   Codex, naming its object key:
-   `docker compose run --rm app node scripts/restore-backup.ts <key>`.
+1. Stop the app and worker (`docker compose stop app worker`), and set both
+   the `db` image and the Codex image tag back to what they were.
+2. Start only the database: `docker compose up -d db`.
+3. Restore the backup from step 1 with the earlier Codex, naming its object
+   key: `docker compose run --rm app node scripts/restore-backup.ts <key>`.
    Everything written since the update is lost.
-3. In the database, run `DROP EXTENSION IF EXISTS vector;` and then
-   `REINDEX DATABASE codex;` (the restore leaves the job queue's tables alone,
-   so their indexes would stay out of order).
+4. Rebuild the indexes (the restore leaves the job queue's tables alone, so
+   their indexes would stay out of order):
+   `docker compose exec db psql -U codex -d codex -c 'DROP EXTENSION IF EXISTS vector;' -c 'REINDEX DATABASE codex;'`
+5. Start the rest: `docker compose up -d`.
 
 Switching the image back without these steps leaves the indexes out of order.
 Keep the `-trixie` tag of the database image pinned: a new Debian release can

@@ -278,7 +278,7 @@ Your words are sent only to the endpoint you set here.
   first scene; raise the cap or turn web search off if that happens. The
   estimate shown before a review leaves searches out, and says so when web
   search is on. Claude also charges a fee for each search on top of tokens
-  (10 dollars per 1,000 searches). The cost shown includes it, and the spend
+  (usually 10 dollars per 1,000 searches, unless your price list sets another). The cost shown includes it, and the spend
   cap sets aside the fee for the most searches a request can make. Part of
   the room it keeps is a set amount for each search's results, and a search
   can bring back more than that, so a run that searches can end over the
@@ -390,7 +390,8 @@ for each kind of event. Emails arrive batched, so a busy hour sends one message.
 ## Connected apps
 
 An AI app you already use can read your writing in Codex and leave suggestions
-for you. It can never change, delete or publish your text. Nothing can connect
+for you. It can never delete or publish your text, and it only changes your text
+when you accept one of its suggestions. Nothing can connect
 until you turn this on. For a walk through connecting an app for the first
 time, and what to do when it does not work, see
 [Connecting an app](/docs/connecting-apps).

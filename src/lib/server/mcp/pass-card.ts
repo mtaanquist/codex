@@ -161,6 +161,8 @@ export type PassCard = {
 	edits: CardEdit[];
 	// Edits still waiting that MAX_CARD_EDITS left out.
 	more: number;
+	// Every decided edit of the note, including those not sent.
+	decided: number;
 };
 
 export type CardResult = {
@@ -380,14 +382,14 @@ async function buildPass(
 		name: patternName(note.opening),
 		link: `${call.origin}/stories/${note.storyId}/review?scene=${note.sceneId}&pass=${noteId}`,
 		edits,
-		more: waiting.length - left
+		more: waiting.length - left,
+		decided: decided.length
 	};
 }
 
 function passSummary(pass: PassCard): string {
 	const waiting = pass.edits.filter((edit) => edit.status === 'pending').length;
-	const decided = pass.edits.length - waiting;
-	return `The guided pass on the note "${pass.name}" is open in a card: ${waiting} edits waiting, ${decided} decided. The writer accepts, rewords or skips each edit there; you cannot decide them. Use get_review_note to see what they decided. If no card shows, the writer can work through the note in Codex: ${pass.link}`;
+	return `The guided pass on the note "${pass.name}" is open in a card: ${waiting} edits waiting, ${pass.decided} decided. The writer accepts, rewords or skips each edit there; you cannot decide them. Use get_review_note to see what they decided. If no card shows, the writer can work through the note in Codex: ${pass.link}`;
 }
 
 function passResult(call: CardCall, pass: PassCard, text: string): CardResult {

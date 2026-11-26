@@ -28,7 +28,7 @@ export const PERMISSION_TEXT: Record<McpPermission, { label: string; description
 	apply: {
 		label: 'Let you accept its suggestions in the app',
 		description:
-			'Show a card in the app where you can accept, reword or skip the edits of its notes, without opening Codex. Accept is meant for you alone, but Codex cannot check that a person pressed it, so tick this only for an app you trust.'
+			'Show a card in the app where you can accept, reword or skip the edits of its notes, without opening Codex. Accept is meant for you alone, but Codex cannot check that a person pressed it, so tick this only for an app you trust. It works only with Leave suggestions and comments ticked too.'
 	}
 };
 

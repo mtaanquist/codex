@@ -340,7 +340,7 @@
 					var open = pass.edits.filter(function (edit) {
 						return edit.status === 'pending';
 					});
-					var done = pass.edits.length - open.length;
+					var done = pass.decided;
 					var step = current();
 					root.appendChild(el('h1', { text: pass.name || 'Guided pass' }));
 					root.appendChild(

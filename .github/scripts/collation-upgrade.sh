@@ -2,7 +2,7 @@
 # Migration 0131 rebuilds the indexes of a database created under the old
 # Alpine (musl) image once the Debian (glibc) pgvector image opens it. CI
 # otherwise only creates databases under glibc, so this runs that path: a
-# volume made and migrated to 0130 under the old image, seeded with text and
+# volume made and migrated under the old image (see LAST_BEFORE_REINDEX), seeded with text and
 # citext unique indexes, then opened by the new image and migrated to head.
 # Every btree index must then pass amcheck.
 # Run from the repository root after npm ci. Needs Docker.
@@ -13,8 +13,14 @@ OLD_IMAGE=postgres:18.6-alpine3.24
 NEW_IMAGE=pgvector/pgvector:0.8.7-pg18-trixie
 # The last migration of the previous release, so the migrations between it
 # and the reindex run under the new image on out-of-order indexes, as they do
-# for a real upgrade.
-LAST_BEFORE_REINDEX=$(node -p "require('./tests/integration/upgrade/previous-release.json').migrations - 1")
+# for a real upgrade from 3.x. Never past the one before 0131: the old image
+# has no pgvector, so it cannot run 0131 once the previous release has it.
+LAST_BEFORE_REINDEX=$(node -p "
+const release = require('./tests/integration/upgrade/previous-release.json').migrations - 1;
+const entries = require('./drizzle/meta/_journal.json').entries;
+const reindex = entries.find((entry) => entry.tag.startsWith('0131_')).idx - 1;
+Math.min(release, reindex)
+")
 PORT=55432
 URL="postgres://codex:codex@localhost:$PORT/codex"
 VOLUME=codex-collation-upgrade
