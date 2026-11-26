@@ -163,10 +163,10 @@
 		].filter(Boolean);
 		return parts.length > 0 ? `${id} (${parts.join(', ')})` : id;
 	}
-	// A row's cost at the same cache rates the spend cap uses, at the rates of
-	// the provider the row went to (the saved one for an older row that did not
-	// record it). The price itself comes from the current price list, so a row
-	// from before a provider switch seldom has a price left to show a cost with.
+	// A row's cost at the same cache rates the spend cap uses, at the price
+	// stored on the row and the rates of the provider it went to. A row from
+	// before those were stored falls back to the current price list and the
+	// saved provider.
 	const savedProvider = $derived(data.assistant.provider);
 	function usageCost(row: UsageCostRow) {
 		return usageRowCostUsd(modelPricing, row, savedProvider);
