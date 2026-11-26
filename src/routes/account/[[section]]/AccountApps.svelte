@@ -338,7 +338,7 @@
 				<p class="field-hint">
 					A token can always read your writing. With this ticked it can also add suggested edits,
 					comments, suggested entries, scene split proposals and scene drafts for you to accept or
-					turn down. It can never change your text.
+					turn down. On its own it can never change your text.
 				</p>
 			</div>
 			<div class="field">

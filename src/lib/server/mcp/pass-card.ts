@@ -59,9 +59,8 @@ export const MAX_CARD_EDITS = 50;
 export const MAX_CARD_CHARS = 100_000;
 // How much of the paragraph on each side of a change the card shows.
 const CONTEXT_CHARS = 600;
-// How much of a decided edit's words the card shows, and of one it cannot
-// place.
-const DECIDED_CHARS = 300;
+// How much of the words of an edit it cannot place the card shows.
+const UNPLACED_CHARS = 300;
 // The most characters of passage and wording together for an edit the writer
 // may accept on the card. A longer one is shown cut short and cannot be
 // accepted there: a cut wording must never be what an accept writes.
@@ -325,13 +324,26 @@ async function buildPass(
 			...base,
 			before: '',
 			after: '',
-			text: clipEnd(text, DECIDED_CHARS),
-			replacement: clipEnd(s.replacement, DECIDED_CHARS),
-			stamp: s.status === 'pending' ? (s.stamp ?? null) : null,
-			placed: s.status !== 'pending',
+			text: clipEnd(text, UNPLACED_CHARS),
+			replacement: clipEnd(s.replacement, UNPLACED_CHARS),
+			stamp: s.stamp ?? null,
+			placed: false,
 			...(tooLong ? { tooLong } : {})
 		});
-		if (s.status !== 'pending') return unplaced(s.original);
+		// The card shows only how many were decided, so a decided edit is sent
+		// bare and takes nothing from the size budget the waiting ones need.
+		if (s.status !== 'pending') {
+			return {
+				...base,
+				reason: null,
+				before: '',
+				after: '',
+				text: '',
+				replacement: '',
+				stamp: null,
+				placed: true
+			};
+		}
 		if (!s.anchor) return unplaced(s.original);
 		const body = scene.bodyMd;
 		const text = body.slice(s.anchor.start, s.anchor.end);

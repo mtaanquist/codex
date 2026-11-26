@@ -11,7 +11,10 @@ set -eu
 OLD_IMAGE=postgres:18.6-alpine3.24
 # Must match compose.yaml and the services in ci.yml.
 NEW_IMAGE=pgvector/pgvector:0.8.7-pg18-trixie
-LAST_BEFORE_REINDEX=130
+# The last migration of the previous release, so the migrations between it
+# and the reindex run under the new image on out-of-order indexes, as they do
+# for a real upgrade.
+LAST_BEFORE_REINDEX=$(node -p "require('./tests/integration/upgrade/previous-release.json').migrations - 1")
 PORT=55432
 URL="postgres://codex:codex@localhost:$PORT/codex"
 VOLUME=codex-collation-upgrade
