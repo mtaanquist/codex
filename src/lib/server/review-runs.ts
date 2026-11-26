@@ -6,6 +6,7 @@ import { parseCategories, type PatternScope, type ReviewCategory } from '../revi
 import type { PreferenceSetting } from '../assistant-preferences.ts';
 import type { LanguageSetting } from '../writing-languages.ts';
 import { hintedNative } from './llm/prompts/language.ts';
+import { readsNative, readsWording } from './llm/prompts/review.ts';
 
 // Progress storage for the background review job. The job writes its state as
 // it advances (one row per pg-boss job id), so the status endpoint can report
@@ -47,9 +48,9 @@ export function reviewScopeKey(input: ScopeInput): string {
 }
 
 // A short hash of the settings a review's prompts read: the story language,
-// for a pass that reads the wording the Assistant preferences and the story's
-// style notes (null for one that does not, so changing them does not restart a
-// lore-only review), and the native language only where the prompts hint at it
+// for a pass that reads the wording or runs a pattern pass the Assistant
+// preferences and the story's style notes (null for one that does neither, so
+// changing them does not restart a lore-only review; see storyReviewSettingsKey), and the native language only where the prompts hint at it
 // (see readsNative). Kept
 // on the run state rather than in the scope key, so the queue still holds one
 // job per scope, and compared when a capped run is adopted: a changed setting
@@ -79,10 +80,32 @@ export function reviewSettingsKey(
 		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {}),
 		// Each only when set, so a run made before these were keyed keeps its key.
 		...(choices?.feedback ? { feedback: choices.feedback } : {}),
-		...(choices?.editReasons ? { editReasons: choices.editReasons } : {}),
+		// "When not obvious" gives the same prompt as not set.
+		...(choices?.editReasons && choices.editReasons !== 'unobvious'
+			? { editReasons: choices.editReasons }
+			: {}),
 		...(limits.length ? { contentLimits: limits } : {})
 	});
 	return createHash('sha256').update(input).digest('hex').slice(0, 16);
+}
+
+// The settings key for a story review run. The preferences and style notes
+// count where the scene passes read the wording, and wherever a pattern pass
+// runs, since it always states the house style, habits and notes.
+export function storyReviewSettingsKey(
+	settings: ReviewSettings,
+	categories: ReviewCategory[] | undefined,
+	patterns: PatternScope | undefined
+): string {
+	const parsed = parseCategories(categories);
+	const reads = readsWording(parsed) || Boolean(patterns);
+	return reviewSettingsKey(
+		settings.language,
+		reads ? settings.preferences : null,
+		readsNative(parsed, patterns),
+		reads ? settings.styleNotes : null,
+		settings.preferences
+	);
 }
 
 // The settings a review run reads once when it opens: what it keys itself on

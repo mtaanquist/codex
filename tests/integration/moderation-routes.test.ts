@@ -294,6 +294,12 @@ describe('Admin > Reports actions', () => {
 		const newer = await publishStory(db, author.id, storyId);
 		if (!newer.ok) throw new Error(newer.reason);
 		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: true }]);
+		// Hidden by a pending account deletion (no reason), it is not up either.
+		await db
+			.update(publications)
+			.set({ removedAt: new Date() })
+			.where(eq(publications.id, newer.publicationId));
+		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
 		// Once the newer one is down on its own, a takedown touches only this one.
 		await db
 			.update(publications)

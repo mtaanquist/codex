@@ -21,8 +21,8 @@ import {
 	loadReviewRun,
 	ReviewRunLoadError,
 	reviewScopeKey,
-	reviewSettingsKey,
 	saveReviewRun,
+	storyReviewSettingsKey,
 	type ReviewSettings
 } from '../review-runs.ts';
 import { needsSummary, summariseStory } from './summaries.ts';
@@ -45,8 +45,6 @@ import {
 	buildReviewMessage,
 	buildSurveyMessage,
 	parseCandidates,
-	readsNative,
-	readsWording,
 	splitSurveyChunks,
 	SURVEY_RETRY_MESSAGE,
 	type ContinuityCandidate,
@@ -56,7 +54,6 @@ import {
 import {
 	runPatternScope,
 	isFullReview,
-	parseCategories,
 	type PatternScope,
 	type ReviewCategory
 } from '../../review-shape.ts';
@@ -1110,19 +1107,12 @@ export async function reviewStoryScenes(
 		categories: opts.categories,
 		patterns
 	};
-	const wording = readsWording(parseCategories(opts.categories));
 	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
 	const run = await openRun(db, {
 		userId: opts.userId,
 		jobId: opts.jobId,
 		scope: reviewScopeKey(scope),
-		settings: reviewSettingsKey(
-			settings.language,
-			wording ? settings.preferences : null,
-			readsNative(parseCategories(opts.categories), patterns),
-			wording ? settings.styleNotes : null,
-			settings.preferences
-		)
+		settings: storyReviewSettingsKey(settings, opts.categories, patterns)
 	});
 	const done = new Set(run.state.completed);
 	// Only the scene failures carry over from an earlier attempt, alongside the

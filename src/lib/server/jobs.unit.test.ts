@@ -19,7 +19,7 @@ vi.mock('pg-boss', () => ({
 const { queueAssistantReview, queueAssistantSummaries, reviewJobState, ASSISTANT_REVIEW_QUEUE } =
 	await import('./jobs');
 const { ASSISTANT_JOB_EXPIRY_SECONDS } = await import('./queues');
-const { reviewScopeKey, reviewSettingsKey } = await import('./review-runs');
+const { reviewScopeKey, reviewSettingsKey, storyReviewSettingsKey } = await import('./review-runs');
 const { NO_PREFERENCES, effectivePreferences } = await import('../assistant-preferences');
 const { NO_LANGUAGE } = await import('../writing-languages');
 
@@ -176,6 +176,39 @@ describe('reviewSettingsKey', () => {
 		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, two('Gore', 'War'))).toBe(
 			reviewSettingsKey(NO_LANGUAGE, null, false, null, two('War', 'Gore'))
 		);
+	});
+
+	it('treats reasons "when not obvious" like not set', () => {
+		expect(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, {
+				...NO_PREFERENCES,
+				editReasons: 'unobvious'
+			})
+		).toBe(reviewSettingsKey(NO_LANGUAGE, null, false, null, NO_PREFERENCES));
+	});
+
+	it('keys the house style, habits and notes for a lore review with a pattern pass', () => {
+		const settings = { language: NO_LANGUAGE, preferences: NO_PREFERENCES, styleNotes: null };
+		const changed = [
+			{ ...settings, preferences: notes },
+			{ ...settings, preferences: { ...NO_PREFERENCES, leaveAlone: ['epithets' as const] } },
+			{
+				...settings,
+				preferences: {
+					...NO_PREFERENCES,
+					houseStyle: { ...NO_PREFERENCES.houseStyle, tense: 'past' as const }
+				}
+			},
+			{ ...settings, styleNotes: 'Hardboiled noir.' }
+		];
+		const plain = storyReviewSettingsKey(settings, ['lore'], 'book');
+		for (const other of changed) {
+			expect(storyReviewSettingsKey(other, ['lore'], 'book')).not.toBe(plain);
+			// Without the pattern pass a lore review does not read them.
+			expect(storyReviewSettingsKey(other, ['lore'], undefined)).toBe(
+				storyReviewSettingsKey(settings, ['lore'], undefined)
+			);
+		}
 	});
 
 	it('changes with the style notes, which the prose is judged against', () => {

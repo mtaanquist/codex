@@ -31,7 +31,13 @@ import {
 	reviewLanguageText,
 	splitSurveyChunks
 } from './prompts/review.ts';
-import { contentLimitsLine, reviewPreferenceText } from './prompts/preferences.ts';
+import {
+	contentLimitsLine,
+	editReasonLine,
+	feedbackLine,
+	reviewPreferenceText
+} from './prompts/preferences.ts';
+import { IN_CONTEXT } from './prompts/format.ts';
 import { PERSONA_TOKENS } from './context/budgets.ts';
 import {
 	checkBookFit,
@@ -225,9 +231,21 @@ export async function estimateStoryReview(
 	// reads the wording, and the language lines always.
 	const settings = await readReviewSettings(db, opts.storyId, opts.userId);
 	const { language, preferences } = settings;
+	// The reasons and feedback lines only where a choice replaces the default
+	// line, which TASK_MESSAGE_TOKENS already covers.
+	const reasons =
+		preferences.editReasons === 'always' || preferences.editReasons === 'never'
+			? editReasonLine(preferences)
+			: '';
+	const feedback =
+		categories.length === 0 && preferences.feedback
+			? feedbackLine(preferences, IN_CONTEXT.where)
+			: '';
 	const preferenceText =
 		(readsWording(categories) ? reviewPreferenceText(preferences) : '') +
 		contentLimitsLine(preferences, 'check') +
+		reasons +
+		feedback +
 		reviewLanguageText(language, categories);
 	const preferenceTokens = estimateTokens(preferenceText);
 	const persona = personaMessage(resolved.config);

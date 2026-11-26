@@ -51,14 +51,16 @@
 		submitted?: Record<string, string> | null;
 	} = $props();
 
-	const values: Record<string, string> = $derived(
-		submitted ??
-			Object.fromEntries(
-				Object.entries({ ...normalisePreferences(stored), assistantNotes: notes ?? '' }).map(
-					([key, value]) => [key, String(value)]
-				)
+	// A refused save shows what it sent over the stored values: it carries no
+	// value for a warning the form did not show.
+	const values: Record<string, string> = $derived({
+		...Object.fromEntries(
+			Object.entries({ ...normalisePreferences(stored), assistantNotes: notes ?? '' }).map(
+				([key, value]) => [key, String(value)]
 			)
-	);
+		),
+		...submitted
+	});
 	// The notes box starts from the stored notes, read once (the page keys this
 	// component by story or universe): a value renders on the server, unlike
 	// defaultValue, and reading it once keeps a refresh from writing over newer

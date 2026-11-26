@@ -560,7 +560,8 @@ export function buildRereadMessage(input: {
 		...[
 			languageRule(input.language ?? NO_LANGUAGE),
 			// The follow-up it may stage is new text, so it keeps to the house style.
-			houseStyleLine(input.preferences ?? NO_PREFERENCES, 'write')
+			houseStyleLine(input.preferences ?? NO_PREFERENCES, 'write'),
+			contentLimitsLine(input.preferences ?? NO_PREFERENCES, 'write')
 		].filter(Boolean),
 		changed,
 		'The pattern note it came from:',
@@ -745,6 +746,7 @@ export function buildPatternBrief(options: {
 		languageRule(language),
 		// The brief stages fixes as well as notes, like the Assistant's apply stage.
 		houseStyleLine(preferences, 'write'),
+		contentLimitsLine(preferences, 'write'),
 		'Find the scenes with list_scenes and read each one in full with get_scene. Find the habits in the prose that recur across the chapter:',
 		...patternLooksFor(preferences),
 		nativePatternLine(language),
@@ -868,6 +870,8 @@ export function buildPatternApplyMessage(
 	if (rule) lines.push(rule);
 	const style = houseStyleLine(preferences, 'write');
 	if (style) lines.push(style);
+	const limits = contentLimitsLine(preferences, 'write');
+	if (limits) lines.push(limits);
 	if (pattern.examples.length) {
 		lines.push(`Instances it noted: ${pattern.examples.map((e) => `"${e}"`).join(', ')}.`);
 	}

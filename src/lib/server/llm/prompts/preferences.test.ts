@@ -420,6 +420,21 @@ describe('feedback, reasons and content limits', () => {
 			write
 		);
 		expect(buildCoauthorMessage('b', null, { preferences: p })).toContain(write);
+		// The pattern fixes and the re-read stage new prose too.
+		const pattern = { name: 'Epithets', description: 'd', sceneIds: ['s1'], examples: [] };
+		const patternScene = { id: 's1', title: 'One', bodyMd: 'Text.' };
+		expect(buildPatternApplyMessage(pattern, patternScene, 1000, NO_LANGUAGE, p)).toContain(write);
+		expect(buildPatternBrief({ storyId: 'st', cap: 5, preferences: p })).toContain(write);
+		expect(
+			buildRereadMessage({
+				sceneId: 's1',
+				sceneTitle: null,
+				passage: 'p',
+				changed: 'c',
+				note: 'n',
+				preferences: p
+			})
+		).toContain(write);
 		expect(
 			contentLimitsLine(prefs({ contentLimits: [{ name: 'Gore', limit: 'avoid' }] }), 'chat')
 		).not.toContain('comfortable');

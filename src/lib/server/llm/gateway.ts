@@ -209,8 +209,8 @@ export function searchingPromptTokens(promptTokens: number, maxTokens: number): 
 // How a searching request's reported input compares with the room the cap held
 // for it, so the per-search ceiling above can be tuned from real figures (see
 // #1560). Undefined unless the endpoint reported searches and real counts.
-// The allowance uses the turn's reply limit, so a round resent with a larger
-// one after a cut-off reply reads low.
+// maxTokens is the reply limit the round was sent at, which a round resent
+// after a cut-off reply raises.
 export function searchAllowanceFields(
 	promptTokens: number,
 	maxTokens: number,
@@ -333,7 +333,7 @@ async function respondWithRetry(
 		} catch (err) {
 			const billed = billedUsage(err);
 			if (billed) {
-				await recordUsage(db, p, req, request.messages, billed);
+				await recordUsage(db, p, req, request.messages, billed, request.maxTokens);
 				failedUsage = addUsage(failedUsage, billed);
 			}
 			if (attempt >= RETRY_DELAYS_MS.length || req.signal?.aborted || !isTransientFailure(err)) {
@@ -719,13 +719,18 @@ function recordUsage(
 	p: Prepared,
 	req: GatewayRequest,
 	messages: ChatMessage[],
-	usage?: TokenUsage
+	usage?: TokenUsage,
+	// The reply limit this round was sent at, for the search log.
+	maxTokens = p.maxTokens
 ): Promise<void> {
-	// Metered at the price the row stores, so the cap and the row agree.
+	// Metered at the price the row stores. A model whose price was removed
+	// during the run has none to store (the row's cost is unknown), and the
+	// meter then keeps to the price the run started with rather than count the
+	// request as free.
 	req.meter?.record(p.model, usage, p.price);
 	const search =
 		p.webSearch && usage?.webSearchRequests
-			? searchAllowanceFields(ceilingPromptTokens(messages, p.tools), p.maxTokens, usage)
+			? searchAllowanceFields(ceilingPromptTokens(messages, p.tools), maxTokens, usage)
 			: undefined;
 	if (search) {
 		logEvent(search.overAllowance ? 'warn' : 'info', 'assistant.usage.search', {
@@ -831,7 +836,7 @@ async function runAgent(db: Database, p: Prepared, req: GatewayRequest): Promise
 				webSearch: p.webSearch,
 				cacheTtl: p.cacheTtl
 			});
-			await recordUsage(db, p, req, messages, result.usage);
+			await recordUsage(db, p, req, messages, result.usage, maxTokens);
 			usage = addUsage(addUsage(usage, result.failedUsage), result.usage);
 			return result;
 		};

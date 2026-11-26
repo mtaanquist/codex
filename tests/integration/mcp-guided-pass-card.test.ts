@@ -463,6 +463,8 @@ describe('decide_suggestion', () => {
 		expect(result.text).toBe('Accepted.');
 		expect(await sceneBody(alice.sceneId)).toBe(BODY.replace('open door', 'shut door'));
 		expect(result.pass!.edits.map((edit) => edit.status)).toEqual(['accepted', 'pending']);
+		// A decided edit is sent bare: the card only counts them.
+		expect(result.pass!.edits[0]).toMatchObject({ text: '', replacement: '', reason: null });
 		// Keys for what is still waiting only.
 		expect(Object.keys(result.keys!)).toEqual([pass.edits[1].id]);
 	});

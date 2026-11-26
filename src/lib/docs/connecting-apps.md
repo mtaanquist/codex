@@ -31,7 +31,7 @@ You choose this on the page where you allow the app:
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
 - **Let you accept its suggestions in the app.** This is off unless you tick it. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
 
-No app can change your text on its own, delete anything, publish a story, or see another person's writing. An edit only changes your text when you accept it, in Codex or by pressing Accept on the app's card.
+No app can change your text on its own, delete anything, publish a story, or see another person's writing. An edit only changes your text when it is accepted, in Codex or with Accept on the app's card. If you tick "Let you accept its suggestions in the app", the app itself must keep that button for you alone, so tick it only for an app you trust (see below). The same goes for a token with it ticked.
 
 ## Ask the app to do something
 

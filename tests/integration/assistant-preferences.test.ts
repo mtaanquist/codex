@@ -178,11 +178,11 @@ describe('the assistant preferences', () => {
 				draftWords: '1500',
 				'warning:gore': 'avoid',
 				'warning:strong-language': 'write',
-				'warning:old': 'avoid',
-				// Not on the list, so not read.
-				'warning:made-up': 'avoid'
+				'warning:old': 'avoid'
 			})
 		).toMatchObject({ saved: true });
+		// Not on the list, so not read.
+		expect(await saveUniverse({ 'warning:made-up': 'avoid' })).toMatchObject({ saved: true });
 		expect(
 			await saveStory({ feedback: 'sparing', editReasons: 'never', 'warning:gore': 'write' })
 		).toMatchObject({ saved: true });
@@ -217,6 +217,90 @@ describe('the assistant preferences', () => {
 			feedback: 'normal',
 			editReasons: 'never',
 			'warning:strong-language': 'avoid'
+		});
+	});
+
+	it('refuses a form opened before a merge or a rename if it would drop a limit', async () => {
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'Gore', slug: 'gore' },
+			{ kind: 'warning', name: 'Blood', slug: 'blood' },
+			{ kind: 'warning', name: 'Death', slug: 'death' },
+			{ kind: 'warning', name: 'Language', slug: 'language' }
+		]);
+		const { mergeTag, renameTag } = await import('../../src/lib/server/tags');
+		const tagId = async (slug: string) =>
+			(await db.select().from(tags).where(eq(tags.slug, slug)))[0].id;
+		// The form as the page showed it: every warning not set but Blood and Death.
+		const opened = {
+			'warning:gore': '',
+			'warning:blood': 'avoid',
+			'warning:death': 'avoid',
+			'warning:language': ''
+		};
+		await saveStory(opened);
+		await saveUniverse(opened);
+		expect(await mergeTag(db, 'warning', await tagId('blood'), 'Gore')).toEqual({ ok: true });
+		expect(await renameTag(db, 'warning', await tagId('death'), 'Character death')).toEqual({
+			ok: true
+		});
+		const moved = { 'warning:gore': 'avoid', 'warning:character-death': 'avoid' };
+		const before = (await stored()).preferences;
+		expect(before).toMatchObject(moved);
+
+		// The old form would clear the "avoid" the merge put on Gore: refused,
+		// and nothing it sent is written.
+		const refused = {
+			status: 409,
+			data: {
+				action: 'assistant-preferences',
+				message:
+					'The list of content warnings has changed. Reload the page and set your limits again.'
+			}
+		};
+		expect(await saveStory({ ...opened, tense: 'past' })).toMatchObject(refused);
+		expect(await saveUniverse(opened)).toMatchObject(refused);
+		expect((await stored()).preferences).toEqual(before);
+		// Widening a limit is refused too.
+		expect(
+			await saveStory({ ...opened, 'warning:gore': 'avoid', 'warning:language': 'write' })
+		).toMatchObject(refused);
+
+		// With nothing to drop, it saves: "avoid" and the other fields.
+		expect(
+			await saveStory({
+				...opened,
+				'warning:gore': 'avoid',
+				'warning:language': 'avoid',
+				tense: 'past'
+			})
+		).toMatchObject({ saved: true });
+		expect((await stored()).preferences).toMatchObject({
+			...moved,
+			'warning:language': 'avoid',
+			tense: 'past'
+		});
+		const [universe] = await db
+			.select({ preferences: universes.assistantPreferences })
+			.from(universes)
+			.where(eq(universes.id, universeId));
+		expect(universe.preferences).toMatchObject(moved);
+		expect((await storyAssistantPreferences(db, storyId)).contentLimits).toEqual([
+			{ name: 'Character death', limit: 'avoid' },
+			{ name: 'Gore', limit: 'avoid' },
+			{ name: 'Language', limit: 'avoid' }
+		]);
+
+		// A form opened now can clear them.
+		await saveStory({
+			'warning:character-death': 'avoid',
+			'warning:gore': '',
+			'warning:language': ''
+		});
+		// Blood's own key stays, so undoing the merge gives it back.
+		expect((await stored()).preferences).toEqual({
+			'warning:blood': 'avoid',
+			'warning:character-death': 'avoid',
+			tense: 'past'
 		});
 	});
 

@@ -10,6 +10,18 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 2 (2026-11-26, `staging/v4.0.0`, #1823 to
+#1826). Content limits are keyed by warning slug, so a warning rename now
+moves them in the same transaction, never widening one. A preferences form
+opened before a merge or rename posts a warning key that is no longer live;
+such a save is refused with a reload message when it would clear or widen a
+limit, rather than answering Saved and dropping the choice. Rollback after
+4.0.0 restores the recorded backup key with the earlier Codex, then drops
+the vector extension and reindexes. Migration 0131 was left untouched (its
+comment about Postgres warning on a later collation change does not hold for
+databases first made under musl; SELF-HOSTING says to keep the image tag
+pinned instead).
+
 v4.0.0 staging review, round 1 (2026-11-26, `staging/v4.0.0`, #1817 to
 #1821 and the lane lows #1812, #1814, #1816). Five reviewers split by area
 (database, moderation, preferences, spend, MCP card). The review run's

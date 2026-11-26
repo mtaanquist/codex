@@ -23,12 +23,12 @@ export const PERMISSION_TEXT: Record<McpPermission, { label: string; description
 	suggest: {
 		label: 'Leave suggestions and comments',
 		description:
-			'Add suggested edits, comments, suggested entries, scene split proposals and scene drafts for you to accept or turn down. It cannot change your text.'
+			'Add suggested edits, comments, suggested entries, scene split proposals and scene drafts for you to accept or turn down. On its own it cannot change your text.'
 	},
 	apply: {
 		label: 'Let you accept its suggestions in the app',
 		description:
-			'Show a card in the app where you can accept, reword or skip the edits of its notes, without opening Codex. Only you can accept an edit there, by pressing a button on the card.'
+			'Show a card in the app where you can accept, reword or skip the edits of its notes, without opening Codex. Accept is meant for you alone, but Codex cannot check that a person pressed it, so tick this only for an app you trust.'
 	}
 };
 

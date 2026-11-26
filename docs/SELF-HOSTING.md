@@ -447,7 +447,9 @@ From 4.0.0, Codex needs the pgvector extension in its database. The bundled
 version of the app, or the app and worker stop with a message saying pgvector
 is missing (nothing is changed when that happens).
 
-1. Take a backup (or check that the scheduled backups are recent).
+1. Take a backup, and write down its object key (the admin page lists the
+   backups). You need that key, not `latest`, to go back: the scheduled
+   backups keep running after the update.
 2. Stop the app and worker: `docker compose stop app worker`.
 3. In your compose file, set the `db` service's image to
    `pgvector/pgvector:0.8.7-pg18-trixie` and, in the same edit, the Codex
@@ -462,12 +464,23 @@ data was created by the old image, because the new image sorts text slightly
 differently. This runs once, inside the migration, and takes a moment on a
 large database. Wait for the app's log to show that the migrations finished;
 if `docker compose up -d` reports the app as unhealthy while they run, run it
-again once they are done. To go back to an earlier version afterwards, switch
-the image back, restore the backup from step 1, and then rebuild the indexes
-by running `REINDEX DATABASE codex;` in the database (the restore leaves the
-job queue's tables alone, so their indexes would stay out of order).
-Switching the image back without these steps leaves the indexes out of
-order.
+again once they are done. To go back to an earlier version afterwards:
+
+1. Stop the app and worker, and set both the `db` image and the Codex image
+   tag back to what they were.
+2. Start the stack and restore the backup from step 1 with the earlier
+   Codex, naming its object key:
+   `docker compose run --rm app node scripts/restore-backup.ts <key>`.
+   Everything written since the update is lost.
+3. In the database, run `DROP EXTENSION IF EXISTS vector;` and then
+   `REINDEX DATABASE codex;` (the restore leaves the job queue's tables alone,
+   so their indexes would stay out of order).
+
+Switching the image back without these steps leaves the indexes out of order.
+Keep the `-trixie` tag of the database image pinned: a new Debian release can
+change the sort order again, and Postgres does not warn about it for a
+database first created by the old image. If you move to another Debian base,
+run `REINDEX DATABASE codex;` after the change.
 
 If you run your own PostgreSQL 18 server, install pgvector on it (the
 `postgresql-18-pgvector` package on Debian and Ubuntu) before updating. Only
