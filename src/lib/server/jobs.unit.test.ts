@@ -149,7 +149,7 @@ describe('reviewSettingsKey', () => {
 		expect(reviewSettingsKey(NO_LANGUAGE, null, false)).toBe(plain);
 		const limits = (limit: 'avoid' | 'write') => ({
 			...NO_PREFERENCES,
-			contentLimits: [{ name: 'Gore', limit }]
+			contentLimits: [{ slug: 'gore', name: 'Gore', limit }]
 		});
 		const keys = [
 			plain,
@@ -169,12 +169,23 @@ describe('reviewSettingsKey', () => {
 		const two = (a: string, b: string) => ({
 			...NO_PREFERENCES,
 			contentLimits: [
-				{ name: a, limit: 'avoid' as const },
-				{ name: b, limit: 'avoid' as const }
+				{ slug: a.toLowerCase(), name: a, limit: 'avoid' as const },
+				{ slug: b.toLowerCase(), name: b, limit: 'avoid' as const }
 			]
 		});
 		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, two('Gore', 'War'))).toBe(
 			reviewSettingsKey(NO_LANGUAGE, null, false, null, two('War', 'Gore'))
+		);
+		// Keyed by slug: renaming a warning keeps the key, another warning does not.
+		const named = (slug: string, name: string) => ({
+			...NO_PREFERENCES,
+			contentLimits: [{ slug, name, limit: 'avoid' as const }]
+		});
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('gore', 'Gore'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('gore', 'Graphic violence'))
+		);
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, named('gore', 'Gore'))).not.toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, named('war', 'Gore'))
 		);
 	});
 

@@ -817,8 +817,19 @@ These cut across the surfaces and the architecture.
   out. Merging a warning copies a writer's `avoid` on it (or on a warning
   merged into it earlier) to the survivor where the survivor has no limit
   set; a `write` is not carried, since it would widen what the Assistant
-  writes about the survivor. Undoing the merge leaves the copied `avoid`. The limits go to drafts, `/write`, the chat frame and every review,
-  and say they never change the model's own usage policies. The summary
+  writes about the survivor. Undoing the merge leaves the copied `avoid`.
+  Renaming a warning changes its slug, so the writer's limit moves to the new
+  key (`moveContentLimits` in `tags.ts`); a stray key already under the new
+  slug gives way, except that an `avoid` on either key is kept, and renaming
+  back moves the limit back. A preferences form opened before a merge, rename
+  or removal still posts the old warning keys: its save (`readPreferencesForm`
+  marks it outdated) writes every other field and the notes as usual, writes
+  no limit at all, so every stored limit stays as it is, and answers with a
+  notice that the limits were not changed and the page needs a reload to set
+  them. Review runs key the limits by slug, so a rename does not restart a
+  capped run. The limits go to drafts, `/write`, the chat frame and every
+  review (the continuity confirm stage and the MCP continuity brief
+  included), and say they never change the model's own usage policies. The summary
   length changes the request sent, not its fingerprint (the short request is
   hashed whatever the length), so changing it marks nothing out of date and
   causes no spend; a summary takes the new length when it is next written.

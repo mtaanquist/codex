@@ -154,7 +154,8 @@ export type PreferenceSetting = {
 	editReasons: ChoiceValue<'editReasons'> | null;
 	summaryLength: ChoiceValue<'summaryLength'> | null;
 	draftWords: number | null;
-	contentLimits: { name: string; limit: ContentLimit }[];
+	// slug keys a limit (see reviewSettingsKey); name is what prompts state.
+	contentLimits: { slug: string; name: string; limit: ContentLimit }[];
 };
 
 export const NO_PREFERENCES: PreferenceSetting = {
@@ -336,8 +337,14 @@ export function effectivePreferences(
 		(houseStyle as Record<string, string | null>)[key] = merged[key] ?? null;
 	}
 	const contentLimits = [...warnings]
-		.map(([slug, name]) => ({ name, limit: merged[warningKey(slug) as `warning:${string}`] }))
-		.filter((entry): entry is { name: string; limit: ContentLimit } => Boolean(entry.limit));
+		.map(([slug, name]) => ({
+			slug,
+			name,
+			limit: merged[warningKey(slug) as `warning:${string}`]
+		}))
+		.filter((entry): entry is { slug: string; name: string; limit: ContentLimit } =>
+			Boolean(entry.limit)
+		);
 	return {
 		houseStyle,
 		leaveAlone: HABIT_CHECKS.filter(({ key }) => merged[key] === 'leave').map(({ key }) => key),
@@ -357,7 +364,8 @@ export type PreferencesForm =
 			ok: true;
 			changes: PreferenceChanges;
 			notes: string | null | undefined;
-			// The form showed a warning no longer on the list (see readPreferencesForm).
+			// The form showed a warning no longer on the list, so no limits were
+			// read (see readPreferencesForm).
 			outdated?: true;
 	  }
 	| { ok: false; reason: string; submitted: SubmittedPreferences };
@@ -388,9 +396,9 @@ const FIELD_KEYS = [
 // The form posts a select for every warning it shows, and a warning is read
 // only when it is on the live list (liveSlugs). A form that posts a warning no
 // longer on the list was opened before that warning was renamed, merged away
-// or removed, and is marked outdated: a merge may have set "Keep it off the
-// page" on a warning it still shows as not set, so savePreferences refuses it
-// any change to a warning other than "Keep it off the page".
+// or removed, so its limits may not show what the list's changes moved there:
+// it is marked outdated and none of its limits are read, which leaves every
+// stored limit as it is. Its other fields save as usual.
 export function readPreferencesForm(
 	data: FormData,
 	liveSlugs: readonly string[] = []
@@ -398,7 +406,9 @@ export function readPreferencesForm(
 	const live = new Set(liveSlugs);
 	const posted = [...new Set(data.keys())].filter((key) => key.startsWith(WARNING_PREFIX));
 	const outdated = posted.some((key) => !live.has(key.slice(WARNING_PREFIX.length)));
-	const warningKeys = liveSlugs.map(warningKey).filter((key) => isWarningKey(key) && data.has(key));
+	const warningKeys = outdated
+		? []
+		: liveSlugs.map(warningKey).filter((key) => isWarningKey(key) && data.has(key));
 	const submitted: SubmittedPreferences = {};
 	for (const key of [...FIELD_KEYS, ...warningKeys]) {
 		const raw = data.get(key);

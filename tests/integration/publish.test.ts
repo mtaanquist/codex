@@ -9,6 +9,7 @@ import {
 	chapters,
 	exportArtifacts,
 	publicationAssets,
+	publicationReports,
 	publications,
 	scenes,
 	slugHistory,
@@ -278,7 +279,7 @@ describe('takedown and covers', () => {
 		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
 	});
 
-	it('lets a moderator see the images of a withdrawn story only once it was taken down', async () => {
+	it('lets a moderator see the images of a withdrawn story only once it was reported', async () => {
 		const [asset] = await db
 			.insert(assets)
 			.values({
@@ -302,7 +303,13 @@ describe('takedown and covers', () => {
 
 		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
 		expect(await moderatorMayReadAsset(db, asset.id)).toBe(false);
-		await takedownPublication(db, published.publicationId, null, 'other');
+		// A private edition is not public, so a takedown alone has nothing to act on.
+		expect(await takedownPublication(db, published.publicationId, null, 'other')).toBe(false);
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(false);
+		await db
+			.insert(publicationReports)
+			.values({ publicationId: published.publicationId, reason: 'spam' });
+		expect(await takedownPublication(db, published.publicationId, null, 'other')).toBe(true);
 		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
 		expect(await isPublicAsset(db, asset.id)).toBe(false);
 		expect(await moderatorMayReadAsset(db, '00000000-0000-4000-8000-000000000000')).toBe(false);

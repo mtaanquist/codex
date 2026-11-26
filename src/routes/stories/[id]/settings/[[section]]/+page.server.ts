@@ -299,13 +299,9 @@ export const actions: Actions = {
 		}
 		const result = await savePreferences(db, locals.user!.id, { storyId: story.id }, read);
 		if (result === 'missing') error(404, 'Not found');
-		if (result === 'outdated') {
-			// No submitted values: the form shows the stored ones once reloaded.
-			return fail(409, {
-				action: 'assistant-preferences',
-				message: OUTDATED_WARNINGS,
-				submitted: null
-			});
+		// Saved, with a notice that the limits were left alone.
+		if (read.outdated) {
+			return { action: 'assistant-preferences', saved: true, notice: OUTDATED_WARNINGS };
 		}
 		return { action: 'assistant-preferences', saved: true };
 	},
@@ -426,7 +422,9 @@ export const actions: Actions = {
 		// may have loaded on a process with a stale copy of the setting, or before
 		// an admin changed it, so a tick is saved only while Browse is on now; an
 		// untick always is, since taking a story off Browse is always safe.
-		// Otherwise the stored choice is kept.
+		// Otherwise the stored choice is kept while the story stays public; an
+		// unlisted or private story is always taken off Browse
+		// (saveStoryVisibility).
 		const boxShown = data.get('browseBox') === '1';
 		const ticked = data.get('listedInBrowse') === 'on';
 		const listed = !boxShown

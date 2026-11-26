@@ -80,7 +80,8 @@
 	<h1 class="admin-title">Connected apps</h1>
 	<p class="admin-lede">
 		Let an AI app you use read your writing in Codex and leave suggestions for you. An app can never
-		change, delete or publish your text.
+		delete or publish your text, and it only changes your text when you accept one of its
+		suggestions.
 	</p>
 </div>
 

@@ -33,6 +33,7 @@
 		standalone = false,
 		warnings = [],
 		saved = false,
+		notice = null,
 		error = null,
 		submitted = null
 	}: {
@@ -46,6 +47,8 @@
 		// The content warnings on the site's list, for the content limits.
 		warnings?: { slug: string; name: string }[];
 		saved?: boolean;
+		// Shown in place of "Saved." when a save left some settings alone.
+		notice?: string | null;
 		error?: string | null;
 		// What a refused save sent, shown again so nothing typed is lost.
 		submitted?: Record<string, string> | null;
@@ -300,7 +303,7 @@
 			</div>
 		{/if}
 		<div class="settings-actions">
-			<FormStatus {error} success={saved ? 'Saved.' : null} />
+			<FormStatus {error} success={saved ? (notice ?? 'Saved.') : null} />
 		</div>
 	</form>
 {/snippet}

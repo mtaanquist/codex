@@ -72,7 +72,7 @@
 									id={report.publicationId}
 									title={report.title}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
-									superseded={report.newerEditionUp}
+									newer={report.newerEdition}
 								/>
 							{/if}
 							{#if report.listedInBrowse && !report.browseBlockedAt}

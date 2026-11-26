@@ -139,8 +139,9 @@
 				{/each}
 			</fieldset>
 			<p class="auth-note">
-				The app can never change, delete or publish your writing. You can disconnect it at any time
-				under Account, Connected apps.
+				The app can never delete or publish your writing, and it only changes your text when you
+				accept one of its suggestions. You can disconnect it at any time under Account, Connected
+				apps.
 			</p>
 			<div class="auth-actions">
 				<button class="btn btn-primary" type="submit">Allow</button>

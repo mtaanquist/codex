@@ -10,6 +10,17 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 3 (2026-11-26, `staging/v4.0.0`, #1828 to
+#1833). A moderator now reads an edition only when it is the current edition
+of a shared story, has an open report, or has a report closed by a takedown
+that still holds; a takedown alone no longer unlocks a private edition, and
+takedown refuses an edition the moderator may not read. Restore lifts the
+whole takedown. Avoid wins on warning merges as on renames. An out-of-date
+preferences form saves everything but content limits and says so, rather
+than refusing (which lost typed notes). Review run keys record limits by
+slug. Editions published before 4.0.0 never recorded description images in
+`publication_assets`; no backfill, they load once the author republishes.
+
 v4.0.0 staging review, round 2 (2026-11-26, `staging/v4.0.0`, #1823 to
 #1826). Content limits are keyed by warning slug, so a warning rename now
 moves them in the same transaction, never widening one. A preferences form

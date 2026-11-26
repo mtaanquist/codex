@@ -919,6 +919,7 @@ describe('moderation pages', () => {
 	});
 
 	it('a moderator can take an edition down, and is recorded as the one who did', async () => {
+		await db.update(stories).set({ visibility: 'public' }).where(eq(stories.id, s.storyA.id));
 		const row = await edition();
 		const mod = await moderator();
 		const f = new FormData();
