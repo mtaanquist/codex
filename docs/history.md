@@ -11,7 +11,7 @@ version, date, branch or PR where it had one.
 ## Notes from the Open list
 
 Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
-and Allow in Browse now record the moderator and time (#1531, migration 0129):
+and Allow in Browse now record the moderator and time (#1531, migration 0130):
 plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
 only the latest restore or allow, rather than a moderation log table, since
 nothing yet needs the full history. The Published page lists current editions
@@ -24,6 +24,22 @@ image route serves only readable editions; widening it is #1791.
 Route-level tests cover the moderation actions and both orders of a publish
 racing a takedown (#1775), and design.md now names Remove from Browse in the
 report queue (#1777).
+
+Usage cost and spend (v4.0.0 lane 7, 2026-11-26, `staging/v4.0.0`). #1520:
+each usage row stores the model's price as jsonb (migration 0129) when it is
+recorded, and the account page prices from it, falling back to the current
+list only for older rows; the 30-day sums group by price as well as model and
+provider, so rows sent at different prices are priced apart. A price, not a
+computed cost, so the cache rates stay in one place. #1555: Anthropic's search
+fee ($10 per 1,000) is a constant in `assistant-cost.ts`, counted in every cost
+and pinned on the stored price of a row that searched; the cap reserves it for
+`WEB_SEARCH_MAX_USES` searches per searching request. #1560: the API has no
+per-search result size limit and reports usage only when a request ends, so
+the 10k allowance stays (Mads); each searching request logs
+`assistant.usage.search` with its reported input against the room held, to
+tune it from data. #1567: the over-cap note names the longest scene and says
+"or sooner", the legacy queue cleanup moved to `src/worker/legacy-queues.ts`
+with a test, and the continuity over-cap case has a test.
 
 Browse performance (v4.0.0, 2026-11-26, `staging/v4.0.0`). The Browse
 setting is cached in process for a minute like the asset storage settings, and

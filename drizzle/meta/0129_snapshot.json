@@ -1,5 +1,5 @@
 {
-	"id": "6edbe8da-8ea0-4a85-a1e6-8739f7cadf84",
+	"id": "31f29b12-19a8-4b63-93b3-784a1b9c605d",
 	"prevId": "1afcca0f-9bf8-45bc-8abe-975f249b0cfc",
 	"version": "7",
 	"dialect": "postgresql",
@@ -1259,6 +1259,12 @@
 				"web_search_requests": {
 					"name": "web_search_requests",
 					"type": "integer",
+					"primaryKey": false,
+					"notNull": false
+				},
+				"price": {
+					"name": "price",
+					"type": "jsonb",
 					"primaryKey": false,
 					"notNull": false
 				},
@@ -4730,18 +4736,6 @@
 					"notNull": true,
 					"default": false
 				},
-				"restored_at": {
-					"name": "restored_at",
-					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"restored_by": {
-					"name": "restored_by",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"published_at": {
 					"name": "published_at",
 					"type": "timestamp with time zone",
@@ -4823,15 +4817,6 @@
 					"tableFrom": "publications",
 					"tableTo": "users",
 					"columnsFrom": ["removed_by"],
-					"columnsTo": ["id"],
-					"onDelete": "set null",
-					"onUpdate": "no action"
-				},
-				"publications_restored_by_users_id_fk": {
-					"name": "publications_restored_by_users_id_fk",
-					"tableFrom": "publications",
-					"tableTo": "users",
-					"columnsFrom": ["restored_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"
@@ -6873,18 +6858,6 @@
 					"primaryKey": false,
 					"notNull": false
 				},
-				"browse_allowed_at": {
-					"name": "browse_allowed_at",
-					"type": "timestamp with time zone",
-					"primaryKey": false,
-					"notNull": false
-				},
-				"browse_allowed_by": {
-					"name": "browse_allowed_by",
-					"type": "uuid",
-					"primaryKey": false,
-					"notNull": false
-				},
 				"cover_asset_id": {
 					"name": "cover_asset_id",
 					"type": "uuid",
@@ -7014,15 +6987,6 @@
 					"tableFrom": "stories",
 					"tableTo": "users",
 					"columnsFrom": ["browse_blocked_by"],
-					"columnsTo": ["id"],
-					"onDelete": "set null",
-					"onUpdate": "no action"
-				},
-				"stories_browse_allowed_by_users_id_fk": {
-					"name": "stories_browse_allowed_by_users_id_fk",
-					"tableFrom": "stories",
-					"tableTo": "users",
-					"columnsFrom": ["browse_allowed_by"],
 					"columnsTo": ["id"],
 					"onDelete": "set null",
 					"onUpdate": "no action"
