@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { rm, stat } from 'node:fs/promises';
+import { rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -403,13 +403,74 @@ export async function listRecentBackupRuns(db: Database, limit = 10) {
 	return await db.select().from(backupRuns).orderBy(desc(backupRuns.startedAt)).limit(limit);
 }
 
+// Empties the public schema except for extensions; objects owned by another
+// object (an identity column's sequence) go with it. pgvector can only be
+// created by a superuser, so dropping the schema (which drops the extension
+// with it) would leave a restore by any other role unable to bring it back.
+const CLEAR_PUBLIC = `CREATE SCHEMA IF NOT EXISTS public;
+DO $$
+DECLARE
+	o record;
+BEGIN
+	FOR o IN
+		SELECT DISTINCT (pg_identify_object(d.classid, d.objid, 0)).*
+		FROM pg_depend d
+		WHERE d.refclassid = 'pg_namespace'::regclass
+			AND d.refobjid = 'public'::regnamespace
+			AND d.deptype = 'n'
+			AND d.classid <> 'pg_extension'::regclass
+			AND NOT EXISTS (
+				SELECT 1 FROM pg_depend e
+				WHERE e.classid = d.classid AND e.objid = d.objid AND e.deptype IN ('e', 'i')
+			)
+			-- Extended statistics have no DROP form under their type name and go
+			-- with their table anyway.
+			AND d.classid <> 'pg_statistic_ext'::regclass
+	LOOP
+		EXECUTE format('DROP %s IF EXISTS %s CASCADE', o.type, o.identity);
+	END LOOP;
+END $$;
+`;
+
+// The dump's table of contents, less the comments on extensions: only an
+// extension's owner (a superuser, for pgvector) may set them, and the
+// extensions themselves are kept by CLEAR_PUBLIC.
+async function restoreList(dumpFile: string, listFile: string): Promise<void> {
+	const child = spawn('pg_restore', ['--list', dumpFile], { stdio: ['ignore', 'pipe', 'pipe'] });
+	const exited = exitCode(child);
+	let stdout = '';
+	let stderr = '';
+	child.stdout!.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+	child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+	const code = await exited.catch(() => 1);
+	if (code !== 0) throw new Error(`pg_restore --list exited with ${code}: ${stderr.trim()}`);
+	const kept = stdout
+		.split('\n')
+		.filter((line) => !/^\d+; \d+ \d+ COMMENT - EXTENSION /.test(line));
+	await writeFile(listFile, kept.join('\n'));
+}
+
 // Replaces the application data in databaseUrl with a dump, all or nothing.
-// The public and drizzle schemas are dropped and rebuilt from the dump in one
-// transaction, so tables added by migrations newer than the dump do not
-// survive to clash with the restored migration ledger, and a failure part way
-// leaves the database as it was. The job-queue schema is not in the dump and
-// is left alone.
+// The drizzle schema and everything in public but its extensions are dropped
+// and rebuilt from the dump in one transaction, so tables added by migrations
+// newer than the dump do not survive to clash with the restored migration
+// ledger, and a failure part way leaves the database as it was. The job-queue
+// schema is not in the dump and is left alone.
 export async function restoreDumpFile(databaseUrl: string, dumpFile: string): Promise<void> {
+	const listFile = `${dumpFile}.list`;
+	try {
+		await restoreList(dumpFile, listFile);
+		await restoreWithList(databaseUrl, dumpFile, listFile);
+	} finally {
+		await rm(listFile, { force: true });
+	}
+}
+
+async function restoreWithList(
+	databaseUrl: string,
+	dumpFile: string,
+	listFile: string
+): Promise<void> {
 	const psql = spawn('psql', ['--no-psqlrc', '--quiet', '-v', 'ON_ERROR_STOP=1', databaseUrl], {
 		stdio: ['pipe', 'ignore', 'pipe']
 	});
@@ -417,13 +478,15 @@ export async function restoreDumpFile(databaseUrl: string, dumpFile: string): Pr
 	let psqlErr = '';
 	psql.stderr?.on('data', (chunk: Buffer) => (psqlErr += chunk.toString()));
 	psql.stdin!.on('error', () => {});
-	psql.stdin!.write(
-		'BEGIN;\nDROP SCHEMA IF EXISTS drizzle CASCADE;\nDROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n'
-	);
+	psql.stdin!.write(`BEGIN;\nDROP SCHEMA IF EXISTS drizzle CASCADE;\n${CLEAR_PUBLIC}`);
 
-	const script = spawn('pg_restore', ['--no-owner', '--file', '-', dumpFile], {
-		stdio: ['ignore', 'pipe', 'pipe']
-	});
+	const script = spawn(
+		'pg_restore',
+		['--no-owner', '--use-list', listFile, '--file', '-', dumpFile],
+		{
+			stdio: ['ignore', 'pipe', 'pipe']
+		}
+	);
 	const scriptExited = exitCode(script);
 	let scriptErr = '';
 	script.stderr?.on('data', (chunk: Buffer) => (scriptErr += chunk.toString()));
