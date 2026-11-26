@@ -63,11 +63,17 @@ Open the story's settings and select **Assistant preferences** in the list on th
 
 - **House style**: quote marks (double or single), the serial comma (yes or no), whether thoughts are in italics, the tense, and the narration. The Assistant writes drafts, `/write` passages, the edits it suggests in the chat, and changes to a suggested edit when you ask for one in a review thread in this style, and a review or copyedit checks the text against it. The tense and narration apply to the narration, not to dialogue or a character's quoted thoughts. A review does not check narration set to "Other". Leave a setting on "Not set" and the Assistant works it out from your prose.
 - **Habits to check**: filter verbs, point-of-view epithets, dangling modifiers, close repetition, comma splices, pet words and phrases, and repeated sentence shapes and gestures. All are checked unless you choose "Leave alone" for one you use on purpose. A habit left alone is skipped by reviews and copyedits, including **Look for habits that repeat in the prose** in the review window, and the chat in a story does not point it out or change it unless you ask about it.
+- **Feedback and length**:
+  - **How much a review points out**: only the most important notes, a balanced set, or everything worth a look. It applies to a review with nothing ticked; a copyedit, or a review with things ticked, always reports everything it finds.
+  - **Reasons on suggested edits**: always, only when the fix is not obvious (the default), or never.
+  - **Summaries, arcs and recaps**: short (the default) or detailed. It covers scene and chapter summaries, character arcs, and **Catch me up**. Detailed ones cost more to write and to send along with later requests. Summaries already written keep their length until they are written again, for example after you edit the scene.
+  - **Length of a drafted scene**: the number of words a new scene draft starts with, from 100 to 6,000. You can still change it in the draft form each time. Leave it blank to start from the usual length of the story's scenes.
+- **Content limits**: one choice for each content warning on your site's list (the same list you pick from when you publish). "Keep it off the page" asks the Assistant to imply or skip past it in what it drafts, and not to suggest adding it in reviews. "Write freely" tells it you are fine with it where the story calls for it, and that a review should not flag it just for being there. Leave a warning on "Not set" and the Assistant uses its own judgment. The Assistant's own rules still apply either way.
 - **Your own habits**: a short note, up to 1,000 characters, for anything the lists cannot know, such as "I overuse the word 'just'" or "Sentence fragments are on purpose, leave them". Reviews, including **Look for habits that repeat in the prose**, check these first, and the chat in a story keeps to them.
 
-A review with only "Entities and lore" ticked checks facts, not wording, so it does not use the house style, the habits left alone, or your own habits.
+A review with only "Entities and lore" ticked checks facts, not wording, so it does not use the house style, the habits left alone, or your own habits. It still keeps to your content limits and your choice on reasons.
 
-Each change saves on its own: a choice as soon as you make it, and your notes when you leave the box. An AI app you connect to your account (see [Connected apps](/docs/connecting-apps)) is given the same preferences.
+Each change saves on its own: a choice as soon as you make it, and the draft length and your notes when you leave the box. An AI app you connect to your account (see [Connected apps](/docs/connecting-apps)) is given the same preferences.
 
 ## Working through the feedback
 

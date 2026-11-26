@@ -426,6 +426,7 @@
 					<AssistantPreferences
 						level="universe"
 						standalone={data.universe.standalone}
+						warnings={data.contentWarnings}
 						stored={data.universe.assistantPreferences}
 						notes={data.universe.assistantNotes}
 						saved={form?.action === 'assistant-preferences' && form.saved === true}

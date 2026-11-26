@@ -38,6 +38,7 @@ import { GateBusyError, stagingGate, stagingKey } from '../../mcp/call-gate.ts';
 import { isUuid } from '#lib/slug';
 import { effectiveLanguage, normaliseLanguage, writingLanguageName } from '#lib/writing-languages';
 import { effectivePreferences, type PreferenceSetting } from '#lib/assistant-preferences';
+import { liveWarnings } from '../../assistant-preferences.ts';
 import { paragraphWindow } from '#lib/paragraphs';
 import { locateSplitBefore } from '#lib/scene-split-locate';
 import { locateQuote } from '#lib/quote-locate';
@@ -463,9 +464,20 @@ function languageFields(tag: string | null) {
 
 // The Assistant preferences as the list tools give them: each house-style
 // choice (null when not set: infer it from the text), the habit checks the
-// writer leaves alone, and their own notes (null when none).
+// writer leaves alone, their own notes (null when none), how much a review
+// points out, reasons on suggested edits, the summary length and the default
+// draft length (each null when not set), and the content limits by warning.
 function preferenceFields(setting: PreferenceSetting) {
-	return { ...setting.houseStyle, leaveAlone: setting.leaveAlone, notes: setting.notes };
+	return {
+		...setting.houseStyle,
+		leaveAlone: setting.leaveAlone,
+		notes: setting.notes,
+		feedback: setting.feedback,
+		editReasons: setting.editReasons,
+		summaryLength: setting.summaryLength,
+		draftWords: setting.draftWords,
+		contentLimits: setting.contentLimits
+	};
 }
 
 // The writer's live universes. The one tool that needs no universe: it is how
@@ -491,12 +503,17 @@ async function listUniverses(ctx: ToolContext): Promise<string> {
 		.where(and(eq(stories.ownerId, ctx.userId), isNull(stories.deletedAt), storyAssistantOn()))
 		.groupBy(stories.universeId);
 	const storyCount = new Map(counts.map((row) => [row.universeId, row.n]));
+	const warnings = await liveWarnings(ctx.db);
 	return JSON.stringify({
 		universes: rows.map(({ assistantPreferences, assistantNotes, ...row }) => ({
 			...row,
 			...languageFields(row.language),
 			preferences: preferenceFields(
-				effectivePreferences(null, { preferences: assistantPreferences, notes: assistantNotes })
+				effectivePreferences(
+					null,
+					{ preferences: assistantPreferences, notes: assistantNotes },
+					warnings
+				)
 			),
 			storyCount: storyCount.get(row.id) ?? 0
 		}))
@@ -546,6 +563,7 @@ async function listStories(ctx: ToolContext): Promise<string> {
 				.groupBy(scenes.storyId)
 		: [];
 	const sceneCount = new Map(counts.map((row) => [row.storyId, row.n]));
+	const warnings = await liveWarnings(ctx.db);
 	return JSON.stringify({
 		stories: rows.map(
 			({
@@ -562,7 +580,8 @@ async function listStories(ctx: ToolContext): Promise<string> {
 				preferences: preferenceFields(
 					effectivePreferences(
 						{ preferences: assistantPreferences, notes: assistantNotes },
-						{ preferences: universePreferences, notes: universeNotes }
+						{ preferences: universePreferences, notes: universeNotes },
+						warnings
 					)
 				),
 				sceneCount: sceneCount.get(row.id) ?? 0

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildSceneSummaryMessage, buildChapterSummaryMessage } from './summary';
+import { buildArcMessage } from './arc';
 
 describe('buildSceneSummaryMessage', () => {
 	it('names the scene and includes its prose, asking for only the summary', () => {
@@ -26,5 +27,16 @@ describe('buildChapterSummaryMessage', () => {
 		expect(message).toContain('They go under.');
 		expect(message).toContain('They find the bell.');
 		expect(message).toMatch(/only the summary/i);
+	});
+
+	it('asks for a short paragraph when the writer chose detailed summaries', () => {
+		expect(buildSceneSummaryMessage('A', 'Text.', undefined, 'detailed')).toContain(
+			'three to five sentences'
+		);
+		expect(buildChapterSummaryMessage('One', ['x'], 'detailed')).toContain(
+			'three to five sentences'
+		);
+		expect(buildArcMessage('Kara', [], 'detailed')).toContain('one or two short paragraphs');
+		expect(buildArcMessage('Kara', [])).toContain('at most five sentences');
 	});
 });

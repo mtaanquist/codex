@@ -4,6 +4,7 @@ import { isUuid } from '../slug.ts';
 import { scenes, stories, universes } from './db/schema.ts';
 import { storyAssistantOn, storyIsLive } from './universe-scope.ts';
 import { mcpAccountEnabled, mcpInstanceEnabled } from './mcp/settings.ts';
+import { listEntries } from './tags.ts';
 import {
 	effectivePreferences,
 	NO_PREFERENCES,
@@ -17,6 +18,14 @@ import {
 // A story or universe that is gone (or in a trashed universe), or not that
 // owner's, reads as nothing set, and so, with assistantOn, does a story the
 // Assistant is muted on.
+
+// The content warnings on the admin's list as they stand, slug to name: the
+// switches a writer sets content limits with. A warning removed or merged
+// away is not on it, so a limit set on it no longer applies.
+export async function liveWarnings(db: Database): Promise<Map<string, string>> {
+	const entries = await listEntries(db, 'warning');
+	return new Map(entries.map((entry) => [entry.slug, entry.name]));
+}
 
 export async function storyAssistantPreferences(
 	db: Database,
@@ -44,7 +53,8 @@ export async function storyAssistantPreferences(
 	if (!row) return NO_PREFERENCES;
 	return effectivePreferences(
 		{ preferences: row.story, notes: row.storyNotes },
-		{ preferences: row.universe, notes: row.universeNotes }
+		{ preferences: row.universe, notes: row.universeNotes },
+		await liveWarnings(db)
 	);
 }
 
@@ -63,7 +73,7 @@ export async function universePreferences(
 				isNull(universes.deletedAt)
 			)
 		);
-	return row ? effectivePreferences(null, row) : NO_PREFERENCES;
+	return row ? effectivePreferences(null, row, await liveWarnings(db)) : NO_PREFERENCES;
 }
 
 // The preferences of whatever an MCP prompt names, most specific first: a

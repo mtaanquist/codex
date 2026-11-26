@@ -1,6 +1,7 @@
 <script lang="ts">
 	// The "Assistant preferences" section of a story's or a universe's
-	// settings: the house style, the habit checks, and the writer's own notes. On a
+	// settings: the house style, the habit checks, feedback and length, content
+	// limits per content warning, and the writer's own notes. On a
 	// story, a blank choice uses its universe's; on a universe, the Assistant's
 	// default (infer from the text, check everything). Standalone stories share
 	// a hidden universe, whose settings the writer sees as the defaults for all
@@ -10,13 +11,18 @@
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
 	import {
+		ASSISTANT_CHOICES,
+		CONTENT_LIMITS,
 		HABIT_CHECKS,
 		HOUSE_STYLE,
 		inheritedChoiceLabel,
 		MAX_ASSISTANT_NOTES,
 		normaliseNotes,
-		normalisePreferences
+		normalisePreferences,
+		WARNING_PREFIX,
+		warningKey
 	} from '#lib/assistant-preferences';
+	import { MAX_DRAFT_WORDS, MIN_DRAFT_WORDS } from '#lib/scene-draft';
 
 	let {
 		level,
@@ -24,6 +30,7 @@
 		notes,
 		inherited = null,
 		standalone = false,
+		warnings = [],
 		saved = false,
 		error = null,
 		submitted = null
@@ -35,6 +42,8 @@
 		inherited?: { preferences: unknown; notes: string | null } | null;
 		// A standalone story, or the universe that holds them.
 		standalone?: boolean;
+		// The content warnings on the site's list, for the content limits.
+		warnings?: { slug: string; name: string }[];
 		saved?: boolean;
 		error?: string | null;
 		// What a refused save sent, shown again so nothing typed is lost.
@@ -42,7 +51,12 @@
 	} = $props();
 
 	const values: Record<string, string> = $derived(
-		submitted ?? { ...normalisePreferences(stored), assistantNotes: notes ?? '' }
+		submitted ??
+			Object.fromEntries(
+				Object.entries({ ...normalisePreferences(stored), assistantNotes: notes ?? '' }).map(
+					([key, value]) => [key, String(value)]
+				)
+			)
 	);
 	// The notes box starts from the stored notes, read once (the page keys this
 	// component by story or universe): a value renders on the server, unlike
@@ -60,15 +74,23 @@
 	// checked, so it says so.
 	function blankLabel(key: string, fallback: string): string {
 		if (!fromUniverse) return fallback;
-		const value = (fromUniverse as Record<string, string | undefined>)[key];
-		const house = HOUSE_STYLE.find((item) => item.key === key);
-		const label = house
-			? house.options.find((option) => option.value === value)?.label
-			: value === 'leave'
-				? 'Leave alone'
-				: 'Check';
-		return `${useInherited}: ${label ?? 'Not set'}`;
+		const value = (fromUniverse as Record<string, string | number | undefined>)[key];
+		const list =
+			HOUSE_STYLE.find((item) => item.key === key) ??
+			ASSISTANT_CHOICES.find((item) => item.key === key);
+		const label = list
+			? list.options.find((option) => option.value === value)?.label
+			: key.startsWith(WARNING_PREFIX)
+				? CONTENT_LIMITS.find((option) => option.value === value)?.label
+				: value === 'leave'
+					? 'Leave alone'
+					: 'Check';
+		return `${useInherited}: ${label ?? fallback}`;
 	}
+
+	// The draft length box is blank when not set; on a story it shows the
+	// universe's length, when it has one, as the placeholder.
+	const inheritedWords = $derived(fromUniverse?.draftWords ?? null);
 </script>
 
 {#snippet intro()}
@@ -112,7 +134,10 @@
 		action={ownAction('saveAssistantPreferences')}
 		use:enhance={autosaveSubmit}
 		onchange={autosubmitForm}
+		novalidate
 	>
+		<!-- novalidate: the browser's own check on the draft length would block
+		     every autosave until it was fixed, and never show the server's message. -->
 		<fieldset class="prefs-set">
 			<legend>House style</legend>
 			<p class="field-hint prefs-lead">
@@ -154,6 +179,91 @@
 				</div>
 			{/each}
 		</fieldset>
+		<fieldset class="prefs-set">
+			<legend>Feedback and length</legend>
+			<p class="field-hint prefs-lead">
+				How much a review points out, whether suggested edits say why, how long summaries are, and
+				how long a drafted scene is.
+			</p>
+			{#each ASSISTANT_CHOICES as item (item.key)}
+				<div class="field">
+					<label for={id(item.key)}>{item.label}</label>
+					<select id={id(item.key)} class="select" name={item.key} value={values[item.key] ?? ''}>
+						<option value="">{blankLabel(item.key, item.unset)}</option>
+						{#each item.options as option (option.value)}
+							{#if fromUniverse || option.label !== item.unset}
+								<option value={option.value}>{option.label}</option>
+							{/if}
+						{/each}
+					</select>
+					{#if item.key === 'feedback'}
+						<p class="field-hint">
+							For a review with no checks picked. A copyedit, or a review with checks picked, always
+							reports everything it finds.
+						</p>
+					{:else if item.key === 'summaryLength'}
+						<p class="field-hint">
+							Scene and chapter summaries, character arcs, and "Catch me up".{level === 'story'
+								? " Character arcs follow the universe's setting, since an arc spans its stories."
+								: ''} Detailed ones cost more. Summaries already written keep their length until they
+							are written again.
+						</p>
+					{/if}
+				</div>
+			{/each}
+			<div class="field">
+				<label for={id('draftWords')}>Length of a drafted scene, in words</label>
+				<input
+					id={id('draftWords')}
+					class="input"
+					type="number"
+					name="draftWords"
+					inputmode="numeric"
+					min={MIN_DRAFT_WORDS}
+					max={MAX_DRAFT_WORDS}
+					step="1"
+					placeholder={inheritedWords ? `${useInherited}: ${inheritedWords}` : ''}
+					value={values.draftWords ?? ''}
+				/>
+				<p class="field-hint">
+					The length a new draft starts with, from {MIN_DRAFT_WORDS} to {MAX_DRAFT_WORDS}. You can
+					still change it for each draft.
+					{#if inherited}
+						Leave it blank to use {standalone
+							? 'the length for all your standalone stories'
+							: "the universe's length"}{inheritedWords
+							? ` (${inheritedWords} words)`
+							: ", or, where that is blank too, the usual length of the story's scenes"}.
+					{:else}
+						Leave it blank to use the usual length of each story's scenes.
+					{/if}
+				</p>
+			</div>
+		</fieldset>
+		{#if warnings.length > 0}
+			<fieldset class="prefs-set">
+				<legend>Content limits</legend>
+				<p class="field-hint prefs-lead">
+					What you are comfortable having the Assistant draft or comment on, for each content
+					warning. "Keep it off the page" asks the Assistant to imply or skip past it. "Write
+					freely" tells it the subject is fine where the story calls for it. The Assistant's own
+					rules still apply either way.
+				</p>
+				{#each warnings as warning, index (warning.slug)}
+					{@const key = warningKey(warning.slug)}
+					<!-- A slug may hold characters an element id cannot, so the id goes by position. -->
+					<div class="field">
+						<label for={id(`warning-${index}`)}>{warning.name}</label>
+						<select id={id(`warning-${index}`)} class="select" name={key} value={values[key] ?? ''}>
+							<option value="">{blankLabel(key, 'Not set')}</option>
+							{#each CONTENT_LIMITS as option (option.value)}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+					</div>
+				{/each}
+			</fieldset>
+		{/if}
 		<div class="field">
 			<label for={id('notes')}>Your own habits</label>
 			<textarea

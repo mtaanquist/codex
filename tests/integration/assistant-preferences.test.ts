@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { eq } from 'drizzle-orm';
 import type pg from 'pg';
-import { scenes, stories, universes, users } from '../../src/lib/server/db/schema';
+import { scenes, stories, tags, universes, users } from '../../src/lib/server/db/schema';
 import type { Database } from '../../src/lib/server/auth';
 import {
+	ASSISTANT_CHOICES,
 	HABIT_CHECKS,
 	HOUSE_STYLE,
 	MAX_ASSISTANT_NOTES,
@@ -63,7 +64,13 @@ const saveStory = (fields: Record<string, string>) =>
 
 // Every field as the page posts it with nothing chosen.
 const blankForm = Object.fromEntries(
-	[...HOUSE_STYLE, ...HABIT_CHECKS, { key: 'assistantNotes' }].map(({ key }) => [key, ''])
+	[
+		...HOUSE_STYLE,
+		...HABIT_CHECKS,
+		...ASSISTANT_CHOICES,
+		{ key: 'draftWords' },
+		{ key: 'assistantNotes' }
+	].map(({ key }) => [key, ''])
 );
 
 async function stored() {
@@ -80,7 +87,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-	await pool.query('truncate table stories, universes, users cascade');
+	await pool.query('truncate table stories, universes, users, tags cascade');
 	[user] = await db
 		.insert(users)
 		.values({ email: 'prefs@example.com', displayName: 'P', passwordHash: 'x', role: 'user' })
@@ -138,6 +145,64 @@ describe('the assistant preferences', () => {
 		await saveStory(blankForm);
 		expect(await stored()).toEqual({ preferences: {}, notes: null });
 		expect((await storyAssistantPreferences(db, storyId)).houseStyle.tense).toBe('past');
+	});
+
+	it('saves feedback, length and content limits, naming each warning from the live list', async () => {
+		const [gore, language, gone] = await db
+			.insert(tags)
+			.values([
+				{ kind: 'warning', name: 'Gore', slug: 'gore' },
+				{ kind: 'warning', name: 'Strong language', slug: 'strong-language' },
+				{ kind: 'warning', name: 'Old', slug: 'old' }
+			])
+			.returning();
+		expect(
+			await saveUniverse({
+				feedback: 'thorough',
+				summaryLength: 'detailed',
+				draftWords: '1500',
+				'warning:gore': 'avoid',
+				'warning:strong-language': 'write',
+				'warning:old': 'avoid',
+				// Not on the list, so not read.
+				'warning:made-up': 'avoid'
+			})
+		).toMatchObject({ saved: true });
+		expect(
+			await saveStory({ feedback: 'sparing', editReasons: 'never', 'warning:gore': 'write' })
+		).toMatchObject({ saved: true });
+		await db.update(tags).set({ removedAt: new Date() }).where(eq(tags.id, gone.id));
+		const setting = await storyAssistantPreferences(db, storyId);
+		expect(setting).toMatchObject({
+			feedback: 'sparing',
+			editReasons: 'never',
+			summaryLength: 'detailed',
+			draftWords: 1500,
+			contentLimits: [
+				{ name: gore.name, limit: 'write' },
+				{ name: language.name, limit: 'write' }
+			]
+		});
+		const [row] = await db
+			.select({ preferences: universes.assistantPreferences })
+			.from(universes)
+			.where(eq(universes.id, universeId));
+		expect(row.preferences).not.toHaveProperty('warning:made-up');
+		expect((await universePreferences(db, universeId)).contentLimits).toEqual([
+			{ name: 'Gore', limit: 'avoid' },
+			{ name: 'Strong language', limit: 'write' }
+		]);
+		expect(await saveStory({ draftWords: '20000' })).toMatchObject({ status: 400 });
+		// A blank warning clears the story's own limit; one left out of the post is kept.
+		await saveStory({ 'warning:gore': '' });
+		expect((await stored()).preferences).toEqual({ feedback: 'sparing', editReasons: 'never' });
+		await saveStory({ 'warning:strong-language': 'avoid' });
+		await saveStory({ feedback: 'normal' });
+		expect((await stored()).preferences).toEqual({
+			feedback: 'normal',
+			editReasons: 'never',
+			'warning:strong-language': 'avoid'
+		});
 	});
 
 	it('gives a standalone story the standalone defaults, and shows them in Details', async () => {

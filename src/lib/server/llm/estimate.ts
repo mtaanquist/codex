@@ -33,7 +33,7 @@ import {
 	reviewLanguageText,
 	splitSurveyChunks
 } from './prompts/review.ts';
-import { reviewPreferenceText } from './prompts/preferences.ts';
+import { contentLimitsLine, reviewPreferenceText } from './prompts/preferences.ts';
 import { PERSONA_TOKENS } from './context/budgets.ts';
 import {
 	checkBookFit,
@@ -220,10 +220,11 @@ export async function estimateStoryReview(
 	const includeTiers = reviewTiers(categories);
 	// The preference lines ride on each scene's task message when the review
 	// reads the wording, and the language lines always.
+	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
 	const preferenceText =
-		(readsWording(categories)
-			? reviewPreferenceText(await storyAssistantPreferences(db, opts.storyId, opts.userId))
-			: '') + reviewLanguageText(await storyLanguage(db, opts.storyId, opts.userId), categories);
+		(readsWording(categories) ? reviewPreferenceText(preferences) : '') +
+		contentLimitsLine(preferences, 'check') +
+		reviewLanguageText(await storyLanguage(db, opts.storyId, opts.userId), categories);
 	const preferenceTokens = estimateTokens(preferenceText);
 	const persona = personaMessage(resolved.config);
 

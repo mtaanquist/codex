@@ -33,7 +33,13 @@ import type { MentionEntity } from '#lib/editor-mentions';
 import type { LanguageSetting } from '../../../writing-languages.ts';
 import type { PreferenceSetting } from '../../../assistant-preferences.ts';
 import { chatLanguageRule } from '../prompts/language.ts';
-import { habitNotesLine, houseStyleLine, leaveAloneLine } from '../prompts/preferences.ts';
+import {
+	chatEditReasonLine,
+	contentLimitsLine,
+	habitNotesLine,
+	houseStyleLine,
+	leaveAloneLine
+} from '../prompts/preferences.ts';
 
 // Assemble the world context for a request, in tiers, against a token budget.
 // The gathering (sources.ts) is settled design; the budget and the order tiers
@@ -642,6 +648,10 @@ export function renderFrame(
 		if (rule) lines.push(rule);
 		const style = houseStyleLine(preferences, 'chat');
 		if (style) lines.push(style);
+		const limits = contentLimitsLine(preferences, 'chat');
+		if (limits) lines.push(limits);
+		const reasons = chatEditReasonLine(preferences);
+		if (reasons) lines.push(reasons);
 		const leaveAlone = leaveAloneLine(preferences, 'chat');
 		if (leaveAlone) lines.push(leaveAlone);
 		const notes = habitNotesLine(preferences, 'chat');

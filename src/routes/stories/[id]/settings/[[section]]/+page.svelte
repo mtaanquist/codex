@@ -151,6 +151,7 @@
 						notes: data.universe.assistantNotes
 					}}
 					standalone={data.universe.standalone}
+					warnings={data.contentWarnings}
 					saved={form?.action === 'assistant-preferences' && form.saved === true}
 					error={form?.action === 'assistant-preferences' && form.message ? form.message : null}
 					submitted={form?.action === 'assistant-preferences' && 'submitted' in form

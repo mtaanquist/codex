@@ -28,6 +28,21 @@ Published share `currentNotTakenDown()` (its own module, so the admin script
 does not pull in publish.ts). #1800: `readable` checks the story owner as
 `publicEdition` does. Tests for #1796 and the trash case.
 
+Assistant preference choices (2026-11-26, v4.0.0 lane 5, `staging/v4.0.0`).
+#1778 to #1782, the rest of #1344, built as more keys in the existing
+`assistant_preferences` JSON, so no migration: how much a default review
+points out, reasons on suggested edits, one summary length for scene and
+chapter summaries, arcs and recaps (Mads chose one switch over one per kind),
+a default draft length, and a content limit per entry of the admin's content
+warning list (Mads chose that list over a fixed one, so Browse and the
+Assistant share it). Warning limits are stored by slug and named from the
+live list at read time, so a removed or merged-away warning drops out rather
+than being followed. The summary length is kept out of the fingerprint of
+chapter summaries and arcs, as the language already was, so changing it marks
+nothing out of date and starts no spend; summaries take the new length when
+next written. Export lines now split at the last colon, since a warning slug
+may contain one.
+
 pgvector required (v4.0.0, 2026-11-26, `staging/v4.0.0`, #1783). Mads
 chose to make pgvector required in the major release rather than optional, so
 the embeddings work in v4.1.0 (#1784 to #1788) can rely on it. The shipped

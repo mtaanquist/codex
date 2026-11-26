@@ -11,6 +11,7 @@ import { lockStoryScene, makeRoomAfter } from './scene-split-merge.ts';
 import { inLiveStory, storyIsLive } from './universe-scope.ts';
 import { MAX_APP_DRAFTS_WAITING } from './mcp/constants.ts';
 import { usableSceneSummary } from './summary-currency.ts';
+import { storyAssistantPreferences } from './assistant-preferences.ts';
 import {
 	DRAFT_STOPPED_NOTE,
 	estimateChapterDraft,
@@ -792,9 +793,13 @@ export async function chapterDraftDefaults(
 		.select({ wordCount: scenes.wordCount })
 		.from(scenes)
 		.where(and(eq(scenes.storyId, opts.storyId), isNull(scenes.deletedAt)));
+	const preferences = await storyAssistantPreferences(db, opts.storyId, opts.userId);
 	return {
 		chapterTitle: found.chapter.title,
-		targetWords: defaultDraftWords(counts.map((row) => row.wordCount)),
+		targetWords: defaultDraftWords(
+			counts.map((row) => row.wordCount),
+			preferences.draftWords
+		),
 		scenes: found.scenes.map((scene) => ({
 			sceneId: scene.id,
 			title: scene.title,

@@ -13,6 +13,7 @@ import {
 	preferencesFromLines,
 	readPreferencesForm
 } from './assistant-preferences.ts';
+import { MAX_DRAFT_WORDS, MIN_DRAFT_WORDS } from './scene-draft.ts';
 
 function form(fields: Record<string, string>): FormData {
 	const data = new FormData();
@@ -158,5 +159,137 @@ describe('preference lines', () => {
 			preferences: { tense: 'past' },
 			unread: 1
 		});
+	});
+});
+
+describe('feedback, length and content limits', () => {
+	it('keeps the choices, a draft length in range and warning limits', () => {
+		expect(
+			normalisePreferences({
+				feedback: 'thorough',
+				editReasons: 'sometimes',
+				summaryLength: 'detailed',
+				draftWords: 1200,
+				'warning:graphic-violence': 'avoid',
+				'warning:strong language': 'write',
+				'warning:gore': 'maybe',
+				'warning:': 'avoid'
+			})
+		).toEqual({
+			feedback: 'thorough',
+			summaryLength: 'detailed',
+			draftWords: 1200,
+			'warning:graphic-violence': 'avoid',
+			'warning:strong language': 'write'
+		});
+		expect(normalisePreferences({ draftWords: '900' })).toEqual({ draftWords: 900 });
+		for (const draftWords of [MIN_DRAFT_WORDS - 1, MAX_DRAFT_WORDS + 1, 12.5, 'lots', null]) {
+			expect(normalisePreferences({ draftWords })).toEqual({});
+		}
+	});
+
+	it('reads the new choices into the setting, the story winning key by key', () => {
+		const setting = effectivePreferences(
+			{ preferences: { feedback: 'sparing', 'warning:gore': 'write' }, notes: null },
+			{
+				preferences: {
+					feedback: 'thorough',
+					editReasons: 'never',
+					draftWords: 1500,
+					'warning:gore': 'avoid',
+					'warning:old-removed': 'avoid',
+					'warning:strong-language': 'avoid'
+				},
+				notes: null
+			},
+			new Map([
+				['gore', 'Gore'],
+				['strong-language', 'Strong language'],
+				['romance', 'Romance']
+			])
+		);
+		expect(setting).toMatchObject({
+			feedback: 'sparing',
+			editReasons: 'never',
+			summaryLength: null,
+			draftWords: 1500,
+			contentLimits: [
+				{ name: 'Gore', limit: 'write' },
+				{ name: 'Strong language', limit: 'avoid' }
+			]
+		});
+		// Without the live list there are no limits to state.
+		expect(
+			effectivePreferences({ preferences: { 'warning:gore': 'avoid' }, notes: null }, null)
+				.contentLimits
+		).toEqual([]);
+	});
+
+	it('reads the form, a warning only when the page listed it', () => {
+		const read = readPreferencesForm(
+			form({
+				feedback: 'normal',
+				summaryLength: '',
+				draftWords: ' 1000 ',
+				'warning:gore': 'avoid',
+				'warning:unlisted': 'avoid'
+			}),
+			['gore', 'romance']
+		);
+		expect(read).toEqual({
+			ok: true,
+			changes: {
+				feedback: 'normal',
+				summaryLength: null,
+				draftWords: 1000,
+				'warning:gore': 'avoid'
+			},
+			notes: undefined
+		});
+		expect(readPreferencesForm(form({ draftWords: '' }))).toMatchObject({
+			ok: true,
+			changes: { draftWords: null }
+		});
+	});
+
+	it('refuses a draft length out of range and a value off a list', () => {
+		for (const draftWords of ['50', '7000', '1e3', 'many']) {
+			expect(readPreferencesForm(form({ draftWords }))).toMatchObject({ ok: false });
+		}
+		expect(readPreferencesForm(form({ editReasons: 'often' }))).toMatchObject({ ok: false });
+		expect(readPreferencesForm(form({ 'warning:gore': 'sometimes' }), ['gore'])).toMatchObject({
+			ok: false,
+			submitted: { 'warning:gore': 'sometimes' }
+		});
+	});
+
+	it('writes the new keys as lines and reads them back, a colon in a slug included', () => {
+		const stored = {
+			editReasons: 'always',
+			draftWords: 1200,
+			'warning:sci-fi: violence': 'avoid'
+		};
+		const lines = preferenceLines(stored);
+		expect(lines).toEqual([
+			'editReasons: always',
+			'draftWords: 1200',
+			'warning:sci-fi: violence: avoid'
+		]);
+		expect(preferencesFromLines(lines)).toEqual({ preferences: stored, unread: 0 });
+	});
+
+	it('refuses odd warning keys, and caps the warnings an import brings in', () => {
+		expect(
+			normalisePreferences({
+				'warning:a\nb': 'avoid',
+				'warning:a\u0000b': 'avoid',
+				[`warning:${'x'.repeat(101)}`]: 'avoid',
+				'warning:  ': 'avoid'
+			})
+		).toEqual({});
+		const lines = Array.from({ length: 105 }, (_, i) => `warning:w${i}: avoid`);
+		const { preferences, unread } = preferencesFromLines(lines);
+		expect(Object.keys(preferences)).toHaveLength(100);
+		expect(unread).toBe(5);
 	});
 });

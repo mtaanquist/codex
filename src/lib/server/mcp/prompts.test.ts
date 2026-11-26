@@ -1,3 +1,4 @@
+import { NO_PREFERENCES } from '../../assistant-preferences.ts';
 import { describe, expect, it } from 'vitest';
 import { findAsk, SLASH_COMMANDS, whoAsk } from '../../assistant-slash.ts';
 import { REVIEW_CATEGORIES } from '../../review-shape.ts';
@@ -264,6 +265,7 @@ describe('assistant preferences', () => {
 	const withPreferences: PromptConnection = {
 		...SUGGEST,
 		preferences: {
+			...NO_PREFERENCES,
 			houseStyle: {
 				quoteMarks: 'single',
 				serialComma: null,
@@ -291,6 +293,20 @@ describe('assistant preferences', () => {
 			expect(text).toContain('I lean on "suddenly".');
 		}
 		expect(build('pattern-pass', {}, withPreferences)).not.toContain('- Filter verbs (saw');
+	});
+
+	it('drafts at the default length unless one is asked for, and recaps at the chosen length', () => {
+		const set: PromptConnection = {
+			...SUGGEST,
+			preferences: { ...NO_PREFERENCES, draftWords: 1500, summaryLength: 'detailed' }
+		};
+		expect(build('draft', { brief: 'b' }, set)).toContain('Aim for about 1500 words');
+		expect(build('draft-chapter', { brief: 'b', chapter: 'One' }, set)).toContain(
+			'Aim for about 1500 words'
+		);
+		expect(build('draft', { brief: 'b', words: '700' }, set)).toContain('Aim for about 700 words');
+		expect(build('catchup', {}, set)).toContain('Write a detailed recap');
+		expect(build('catchup')).not.toContain('detailed recap');
 	});
 
 	it('reads as before with no preferences', () => {

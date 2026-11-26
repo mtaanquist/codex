@@ -6,17 +6,21 @@
 
 import { NO_LANGUAGE, type LanguageSetting } from '../../../writing-languages.ts';
 import { writeInLine } from './language.ts';
+import type { SummaryLength } from './summary.ts';
 
 export function buildRecapMessage(
 	throughTitle: string | null,
-	language: LanguageSetting = NO_LANGUAGE
+	language: LanguageSetting = NO_LANGUAGE,
+	length: SummaryLength = 'short'
 ): string {
 	const through = throughTitle?.trim()
 		? `up to and including the scene "${throughTitle.trim()}"`
 		: 'so far';
 	return [
 		`Catch the writer up on their own story ${through}.`,
-		'Write a concise recap in a few short paragraphs: the key events in order, where the characters stand, and any open threads left hanging.',
+		length === 'detailed'
+			? 'Write a detailed recap: the key events in order and what led to them, where each main character stands, and every open thread left hanging, in as many paragraphs as that takes.'
+			: 'Write a concise recap in a few short paragraphs: the key events in order, where the characters stand, and any open threads left hanging.',
 		'Draw only on the material provided. Summarise what is there - do not continue the story, invent events, or add anything that is not in the text.',
 		writeInLine(language, 'Write in the same language as the story.')
 	].join('\n');

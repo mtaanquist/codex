@@ -10,6 +10,7 @@ import {
 } from '#lib/server/llm/assistant-route';
 import { RECAP_CHAT_TITLE } from '#lib/assistant-chat';
 import { assembleRecapContext } from '#lib/server/llm/context/assemble';
+import { storyAssistantPreferences } from '#lib/server/assistant-preferences';
 import { buildRecapMessage } from '#lib/server/llm/prompts/recap';
 import type { ChatMessage } from '#lib/server/llm/providers/types';
 import { storyLanguage } from '#lib/server/language';
@@ -46,7 +47,11 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		{ role: 'system', content: context },
 		{
 			role: 'user',
-			content: buildRecapMessage(throughTitle, await storyLanguage(db, story.id, userId))
+			content: buildRecapMessage(
+				throughTitle,
+				await storyLanguage(db, story.id, userId),
+				(await storyAssistantPreferences(db, story.id, userId)).summaryLength ?? 'short'
+			)
 		}
 	];
 
