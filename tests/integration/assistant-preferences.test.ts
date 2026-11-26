@@ -109,6 +109,21 @@ afterAll(async () => {
 });
 
 describe('the assistant preferences', () => {
+	it("lets a story turn off its universe's notes, and not a universe", async () => {
+		await saveUniverse({ assistantNotes: 'Universe habits.', useUniverseNotes: 'no' });
+		expect((await storyAssistantPreferences(db, storyId)).notes).toBe('Universe habits.');
+		expect(await saveStory({ useUniverseNotes: 'no' })).toMatchObject({ saved: true });
+		expect((await storyAssistantPreferences(db, storyId)).notes).toBeNull();
+		expect(await saveStory({ useUniverseNotes: '' })).toMatchObject({ saved: true });
+		expect((await storyAssistantPreferences(db, storyId)).notes).toBe('Universe habits.');
+		const [universe] = await db
+			.select({ preferences: universes.assistantPreferences })
+			.from(universes)
+			.innerJoin(stories, eq(stories.universeId, universes.id))
+			.where(eq(stories.id, storyId));
+		expect(universe.preferences).toEqual({});
+	});
+
 	it('starts unset, so nothing is stated', async () => {
 		expect(await storyAssistantPreferences(db, storyId)).toEqual(NO_PREFERENCES);
 		expect(await universePreferences(db, universeId)).toEqual(NO_PREFERENCES);

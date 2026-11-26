@@ -519,10 +519,11 @@ export async function mergeTag(
 			.set({ mergedIntoId: target.id })
 			.where(or(eq(tags.id, source.id), eq(tags.mergedIntoId, source.id)));
 		if (source.kind === 'warning') {
-			const moved = locked.filter((row) => row.id === source.id || row.mergedIntoId === source.id);
+			const children = locked.filter((row) => row.mergedIntoId === source.id);
 			await carryContentLimits(
 				tx,
-				moved.map((row) => row.slug),
+				source.slug,
+				children.map((row) => row.slug),
 				target.slug
 			);
 		}
@@ -530,22 +531,31 @@ export async function mergeTag(
 	});
 }
 
-// A writer's content limits (Assistant preferences) on warnings merged away
-// carry over to the surviving warning wherever none is set on it yet, the more
-// careful limit winning when the merged ones differ. The old keys stay, so an
-// undone merge keeps them.
-async function carryContentLimits(tx: Database, fromSlugs: string[], toSlug: string) {
-	if (fromSlugs.length === 0) return;
+// A writer's content limits (Assistant preferences) on a warning merged away
+// carry over to the surviving warning wherever none is set on it yet: the
+// merged warning's own limit, else, from the warnings merged into it earlier
+// (which the writer can no longer see), the more careful one. The old keys
+// stay, so an undone merge keeps them.
+async function carryContentLimits(
+	tx: Database,
+	sourceSlug: string,
+	childSlugs: string[],
+	toSlug: string
+) {
+	const own = warningKey(sourceSlug);
 	const from = sql`array[${sql.join(
-		fromSlugs.map((slug) => sql`${warningKey(slug)}`),
+		[sourceSlug, ...childSlugs].map((slug) => sql`${warningKey(slug)}`),
 		sql`, `
 	)}]::text[]`;
 	const to = warningKey(toSlug);
 	const carry = (
 		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
 	) => ({
-		set: sql`${column} || jsonb_build_object(${to}::text, case when exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid') then 'avoid' else 'write' end)`,
-		where: sql`not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k in ('avoid', 'write'))`
+		set: sql`${column} || jsonb_build_object(${to}::text, case
+			when ${column} ->> ${own}::text in ('avoid', 'write') then ${column} ->> ${own}::text
+			when exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid') then 'avoid'
+			else 'write' end)`,
+		where: sql`jsonb_exists_any(${column}, ${from}) and not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k in ('avoid', 'write'))`
 	});
 	// updated_at is kept as it was: this is the site's change, not the writer's.
 	const story = carry(stories.assistantPreferences);

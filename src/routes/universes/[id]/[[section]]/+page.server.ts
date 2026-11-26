@@ -21,7 +21,7 @@ import { decideEntityProposal, decideSplitProposal, listProposals } from '#lib/s
 import { queueSceneMentions, queueUniverseMentions } from '#lib/server/jobs';
 import { isUuid, slugAddress, withRef } from '#lib/slug';
 import { normaliseLanguage } from '#lib/writing-languages';
-import { readPreferencesForm } from '#lib/assistant-preferences';
+import { readPreferencesForm, USE_UNIVERSE_NOTES } from '#lib/assistant-preferences';
 import {
 	assistantPreferencesShown,
 	liveWarnings,
@@ -143,6 +143,9 @@ export const actions: Actions = {
 		const read = readPreferencesForm(await request.formData(), [
 			...(await liveWarnings(db)).keys()
 		]);
+		// The universe's own notes are always used, so the story-only choice is
+		// not stored here.
+		if (read.ok) delete read.changes[USE_UNIVERSE_NOTES];
 		if (!read.ok) {
 			return fail(400, {
 				action: 'assistant-preferences',

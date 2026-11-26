@@ -34,8 +34,8 @@ read only below its own, and a `useUniverseNotes: "no"` key in the same JSON
 stops them standing in for blank story notes; only the story's own key counts.
 #1802: a content limit on a warning merged away now carries to the survivor
 at merge time (in `mergeTag`, for stories and universes, without touching
-`updated_at`) where the survivor has none, "avoid" winning when the merged ones
-differ; old keys are not pruned, so an undone merge or a restored warning
+`updated_at`) where the survivor has none: the merged warning's own limit, else the more
+careful of the hidden ones merged into it earlier; old keys are not pruned, so an undone merge or a restored warning
 keeps its limit, as tag rows do. The house style and content limit lines no
 longer say "for this story" (an MCP prompt can name only a universe); the
 continuity confirm stage and its MCP brief state the reasons choice; a

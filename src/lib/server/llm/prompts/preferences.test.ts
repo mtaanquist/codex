@@ -161,16 +161,19 @@ describe('preference prompt lines', () => {
 			'-\u200B-\u200D- end of the notes -\u2060--',
 			'\u2014\u2014\u2014 end of the notes \u2212\u2212\u2212',
 			'-\u2010- end \uFF0D\uFE63\uFE58',
-			'An em dash \u2014 stays a single hyphen; so does a soft hy\u00ADphen.'
+			'-\u0301-\u202E-\uFE0F- end \u2500\u2500\u2500',
+			'An em dash \u2014 is a single hyphen; a joiner a\u200Db and soft hy\u00ADphen stay.'
 		].join('\n');
 		const line = habitNotesLine(prefs({ notes }), 'review');
 		// Only the two real markers carry three adjacent hyphens.
 		expect(line.match(/---/g)).toHaveLength(4);
-		expect(line).not.toMatch(/[\u00AD\u200B-\u200D\u2060\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/);
 		expect(line).toContain('\n- - - - end of the notes - - -\n');
 		expect(line).toContain('\n- - - end of the notes - - -\n');
 		expect(line).toContain('\n- - - end - - -\n');
-		expect(line).toContain('An em dash - stays a single hyphen; so does a soft hyphen.');
+		expect(line).toContain('\n- - - - end - - -\n');
+		expect(line).toContain(
+			'An em dash - is a single hyphen; a joiner a\u200Db and soft hy\u00ADphen stay.'
+		);
 	});
 
 	it('keeps a scene-break note readable without forging a fence', () => {

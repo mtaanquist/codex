@@ -240,7 +240,7 @@ describe('story tags', () => {
 		});
 	});
 
-	it('takes the more careful limit when merged warnings differ', async () => {
+	it("carries a merged warning's own limit over the hidden ones merged into it", async () => {
 		await db.insert(tags).values([
 			{ kind: 'warning', name: 'Gore', slug: 'gore' },
 			{ kind: 'warning', name: 'Blood', slug: 'blood' },
@@ -255,8 +255,32 @@ describe('story tags', () => {
 		// Gore had its own limit, so Blood's does not replace it.
 		expect(after.assistantPreferences).toMatchObject({ 'warning:gore': 'write' });
 		expect(await mergeTag(db, 'warning', await tagId('gore'), 'Violence')).toEqual({ ok: true });
+		// Gore's own limit, the one the writer sees, is what carries on.
 		const [last] = await db.select().from(stories).where(eq(stories.id, storyId));
-		expect(last.assistantPreferences).toMatchObject({ 'warning:violence': 'avoid' });
+		expect(last.assistantPreferences).toMatchObject({ 'warning:violence': 'write' });
+
+		// With no limit of its own, the more careful of the hidden ones carries.
+		await db.insert(tags).values([
+			{ kind: 'warning', name: 'A', slug: 'a' },
+			{ kind: 'warning', name: 'B', slug: 'b' },
+			{ kind: 'warning', name: 'C', slug: 'c' },
+			{ kind: 'warning', name: 'D', slug: 'd' }
+		]);
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:a': 'write', 'warning:b': 'avoid' } })
+			.where(eq(stories.id, otherStoryId));
+		expect(await mergeTag(db, 'warning', await tagId('a'), 'C')).toEqual({ ok: true });
+		expect(await mergeTag(db, 'warning', await tagId('b'), 'C')).toEqual({ ok: true });
+		const [mid] = await db.select().from(stories).where(eq(stories.id, otherStoryId));
+		expect(mid.assistantPreferences).toMatchObject({ 'warning:c': 'write' });
+		await db
+			.update(stories)
+			.set({ assistantPreferences: { 'warning:a': 'write', 'warning:b': 'avoid' } })
+			.where(eq(stories.id, otherStoryId));
+		expect(await mergeTag(db, 'warning', await tagId('c'), 'D')).toEqual({ ok: true });
+		const [end] = await db.select().from(stories).where(eq(stories.id, otherStoryId));
+		expect(end.assistantPreferences).toMatchObject({ 'warning:d': 'avoid' });
 	});
 
 	it('a save while merged or removed keeps the old entry, so undoing gives it back', async () => {

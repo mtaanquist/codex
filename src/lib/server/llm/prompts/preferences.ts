@@ -124,17 +124,18 @@ const NOTES_INTRO = {
 // out here ("---" becomes "- - -"), keeping its length so a note about scene
 // breaks still reads, while no two hyphens stay adjacent: the fence markers
 // need "---", so no part of the notes can forge one (in any case, spacing or
-// position) and end the fence early. Invisible characters that could sit
-// between the hyphens of a run (a soft hyphen, the zero-width ones) are dropped
-// first, and dash lookalikes count as hyphens, so neither can split a run or
-// pass for one. The stored notes keep what was typed.
-const INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u2060-\u2064\uFEFF]/g;
-const DASH_LOOKALIKES = /[\u2010-\u2015\u2212\u2E3A\u2E3B\uFE58\uFE63\uFF0D]/g;
+// position) and end the fence early. Dash lookalikes (any dash punctuation,
+// the minus sign, box-drawing lines) count as hyphens, and invisible format
+// characters or combining marks sitting between two hyphens are dropped, so
+// neither can split a run or pass for one. Elsewhere such characters stay (a
+// joiner in Persian, an emoji sequence). The stored notes keep what was typed.
+const DASH_LOOKALIKES = /[\p{Pd}\u2212\u23AF\u2500\u2501\u2796\u02D7\u207B\u208B]/gu;
+const SPLITTERS_BETWEEN_HYPHENS = /(?<=-)[\p{Cf}\p{Mn}\p{Me}]+(?=-)/gu;
 
 function fencedNotes(notes: string): string {
 	return notes
-		.replace(INVISIBLE, '')
 		.replace(DASH_LOOKALIKES, '-')
+		.replace(SPLITTERS_BETWEEN_HYPHENS, '')
 		.replace(/-{3,}/g, (run) => run.split('').join(' '));
 }
 

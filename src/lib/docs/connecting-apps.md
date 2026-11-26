@@ -41,7 +41,7 @@ Talk to the app the way you normally do, and mention Codex. For example:
 - "Copyedit the scene called The Quay in Codex and leave your edits there."
 - "Who is Old Marit? Check my Codex."
 
-Codex also gives the app a set of ready-made requests for the work the Assistant does: review, copyedit, continuity review, pattern pass, write, rewrite, draft, draft a chapter, catch me up, a character or place sheet, and search. Where they show up depends on the app; look for a list of prompts or commands from Codex. Pick one and fill in what it asks for. These requests follow the story's language and Assistant preferences, as the Assistant does in Codex. When the story is written in a language other than your native one (set on your account page), review, copyedit and pattern pass also name your native language, so the app can look for slips a speaker of that language tends to make.
+Codex also gives the app a set of ready-made requests for the work the Assistant does: review, copyedit, continuity review, pattern pass, write, rewrite, draft, draft a chapter, catch me up, a character or place sheet, and search. Where they show up depends on the app; look for a list of prompts or commands from Codex. Pick one and fill in what it asks for. These requests follow the story's language and Assistant preferences, as the Assistant does in Codex. When the story is written in a language other than your native one (set on your account page), copyedit, pattern pass, and a review that checks spelling and grammar or prose also name your native language, so the app can look for slips a speaker of that language tends to make.
 
 ## Find what the app left
 
