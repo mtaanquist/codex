@@ -75,10 +75,7 @@
 {/if}
 
 {#if data.assetMigrationPending}
-	<div
-		class="status-banner"
-		style="background:color-mix(in oklab, var(--status-draft) 12%, transparent);border:1px solid color-mix(in oklab, var(--status-draft) 32%, transparent);"
-	>
+	<div class="status-banner warn">
 		<span class="x">
 			Files uploaded before the storage change are still in the old location. Copy them to the new
 			storage, or dismiss this if you moved them yourself.
@@ -105,10 +102,7 @@
 {/if}
 
 {#if !data.secretsAvailable}
-	<div
-		class="status-banner"
-		style="background:color-mix(in oklab, var(--status-draft) 12%, transparent);border:1px solid color-mix(in oklab, var(--status-draft) 32%, transparent);"
-	>
+	<div class="status-banner warn">
 		<span class="x">
 			Set APP_SECRET on the server to store a secret key here. Without it you can still seed asset
 			storage from environment variables.
