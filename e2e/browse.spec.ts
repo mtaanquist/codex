@@ -1,37 +1,40 @@
-import { expect, test } from '@playwright/test';
-import pg from 'pg';
+import { expect, test, type Browser } from '@playwright/test';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
-import { e2eDatabaseUrl } from './database';
 import { violations } from './axe';
 
 // Browse: an author lists a public story, a signed-out reader finds it, and it
 // leaves Browse when the story stops being public. Turns Browse on for the run
 // and off again after, so the other specs see the default.
 
-async function setBrowse(enabled: boolean) {
-	const pool = new pg.Pool({ connectionString: e2eDatabaseUrl() });
+// Through the admin page rather than the database: the server caches the
+// setting, and only a save clears that cache.
+async function setBrowse(browser: Browser, enabled: boolean) {
+	const context = await browser.newContext({ storageState: 'e2e/.auth/admin.json' });
 	try {
-		await pool.query(
-			`insert into app_settings (key, value) values ('browse', $1)
-			 on conflict (key) do update set value = excluded.value`,
-			[JSON.stringify({ enabled })]
-		);
+		const page = await context.newPage();
+		await gotoReady(page, '/admin/instance');
+		const box = page.getByRole('checkbox', { name: 'Browse page' });
+		if ((await box.isChecked()) === enabled) return;
+		// The input hides behind the toggle-track skin, so click its label.
+		await page.locator('label.toggle', { has: box }).click();
+		await expect(box).toBeChecked({ checked: enabled });
+		await expect(page.getByText('Saved.')).toBeVisible();
 	} finally {
-		await pool.end();
+		await context.close();
 	}
 }
 
 test.describe.configure({ mode: 'serial' });
-test.afterAll(async () => {
-	await setBrowse(false);
+test.afterAll(async ({ browser }) => {
+	await setBrowse(browser, false);
 });
 
 test('a listed public story shows on Browse until it is made private', async ({
 	page,
 	browser
 }) => {
-	await setBrowse(true);
+	await setBrowse(browser, true);
 	const stamp = Date.now();
 	const title = `Browse story ${stamp}`;
 
@@ -112,7 +115,7 @@ test('a listed public story shows on Browse until it is made private', async ({
 });
 
 test('Browse includes adult work on load once a reader searched with it', async ({ browser }) => {
-	await setBrowse(true);
+	await setBrowse(browser, true);
 	const anonymous = await browser.newContext({ storageState: { cookies: [], origins: [] } });
 	const reader = await anonymous.newPage();
 	const adultBox = reader.getByLabel('Include adult content');
@@ -165,8 +168,8 @@ test('Browse includes adult work on load once a reader searched with it', async 
 	await anonymous.close();
 });
 
-test('Browse does not exist while it is off', async ({ page }) => {
-	await setBrowse(false);
+test('Browse does not exist while it is off', async ({ page, browser }) => {
+	await setBrowse(browser, false);
 	const response = await gotoReady(page, '/browse');
 	expect(response?.status()).toBe(404);
 });
