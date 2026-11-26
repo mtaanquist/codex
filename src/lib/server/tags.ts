@@ -375,7 +375,10 @@ const PAGE_SIZE = 50;
 
 // The tags or fandoms with how many stories carry each, for the moderation
 // pages. A fandom counts stories that get it from their universe too, each
-// story once. Removed ones are listed too, so they can be restored.
+// story once. Stories in the trash count until they are purged. A merge only
+// points the entry at its survivor, so a merged-away entry keeps its own count
+// and the survivor's count does not include it. Removed ones are listed too,
+// so they can be restored.
 export async function listTagsForModeration(
 	db: Database,
 	kind: TagKind,

@@ -239,7 +239,11 @@ export const universes = pgTable(
 			.where(sql`${table.deletedAt} is null`),
 		uniqueIndex('universes_one_standalone_idx')
 			.on(table.ownerId)
-			.where(sql`${table.standalone}`)
+			.where(sql`${table.standalone}`),
+		// The fandom moderation page counts each fandom's uses through it.
+		index('universes_fandom_idx')
+			.on(table.fandomId)
+			.where(sql`${table.fandomId} is not null`)
 	]
 );
 

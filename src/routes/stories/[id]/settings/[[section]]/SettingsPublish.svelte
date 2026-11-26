@@ -102,6 +102,8 @@
 		</div>
 		{#if page.data.browse}
 			<div class="field">
+				<!-- Tells the save the box was on the page, so a missing tick means unticked. -->
+				<input type="hidden" name="browseBox" value="1" />
 				<label class="check-row">
 					<input
 						type="checkbox"

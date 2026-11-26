@@ -1,0 +1,1 @@
+CREATE INDEX "universes_fandom_idx" ON "universes" USING btree ("fandom_id") WHERE "universes"."fandom_id" is not null;

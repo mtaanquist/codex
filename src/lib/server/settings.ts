@@ -188,7 +188,10 @@ export async function saveInstanceType(db: Database, type: InstanceType): Promis
 // Whether the public Browse page is on. Off unless an admin turns it on.
 // The root layout asks on every page, so it is cached in process for a
 // minute, like the asset storage settings. A save clears this process's copy
-// at once; another process picks the change up when its copy expires.
+// at once; another web process keeps its copy until it expires, so pages
+// there can show or hide Browse for up to a minute after a change. Code that
+// stores something based on the setting, or shows it to an admin, passes
+// `fresh` so it never acts on a stale copy.
 const BROWSE_CACHE_MS = 60_000;
 let cachedBrowse: { value: boolean; at: number } | null = null;
 
@@ -196,8 +199,13 @@ export function clearBrowseCache(): void {
 	cachedBrowse = null;
 }
 
-export async function browseEnabled(db: Database): Promise<boolean> {
-	if (cachedBrowse && Date.now() - cachedBrowse.at < BROWSE_CACHE_MS) return cachedBrowse.value;
+export async function browseEnabled(
+	db: Database,
+	options: { fresh?: boolean } = {}
+): Promise<boolean> {
+	if (!options.fresh && cachedBrowse && Date.now() - cachedBrowse.at < BROWSE_CACHE_MS) {
+		return cachedBrowse.value;
+	}
 	const value = (await readSetting<{ enabled?: unknown }>(db, BROWSE_KEY))?.enabled === true;
 	cachedBrowse = { value, at: Date.now() };
 	return value;

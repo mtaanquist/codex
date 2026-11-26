@@ -27,7 +27,9 @@ import type {
 	StreamEvent
 } from '../../src/lib/server/llm/providers/types';
 
-const { saveAccountLlmConfig, saveModelContext } = await import('../../src/lib/server/llm/config');
+const { saveAccountLlmConfig, saveModelContext, saveModelPricing } =
+	await import('../../src/lib/server/llm/config');
+const { WEB_SEARCH_FEE_USD } = await import('../../src/lib/assistant-cost');
 const { listSuggestions, decideSuggestion } = await import('../../src/lib/server/review');
 const { complete, completeDetailed, stream, AssistantDisabledError } =
 	await import('../../src/lib/server/llm/gateway');
@@ -474,6 +476,65 @@ describe('gateway gating', () => {
 		await saveAccountLlmConfig(db, userId, { ...config, webSearch: false });
 		await run().done;
 		expect(calls).toBe(1);
+	});
+
+	it('charges the web search fee to the spend meter and pins it on the usage row', async () => {
+		const [established] = await db
+			.insert(universes)
+			.values({ ownerId: userId, name: 'Faerun', establishedSetting: true })
+			.returning({ id: universes.id });
+		const [inCanon] = await db
+			.insert(stories)
+			.values({ universeId: established.id, ownerId: userId, title: 'S' })
+			.returning({ id: stories.id });
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: 'https://api.anthropic.com',
+			apiKey: 'sk-ant',
+			models: { reviewer: 'claude-opus-5' },
+			toolCallBudget: 8,
+			webSearch: true
+		});
+		const price = { prompt: 0.00001, completion: 0 };
+		await saveModelPricing(db, userId, { 'claude-opus-5': price });
+		let offered: boolean | undefined;
+		const searching: Provider = {
+			...stubProvider,
+			async respond(req) {
+				offered = req.webSearch;
+				return {
+					content: 'checked',
+					toolCalls: [],
+					usage: { promptTokens: 1000, completionTokens: 0, webSearchRequests: 3 }
+				};
+			}
+		};
+		const meter = new SpendMeter({
+			pricing: { 'claude-opus-5': price },
+			provider: 'anthropic',
+			capUsd: 100
+		});
+		await completeDetailed(
+			db,
+			{
+				userId,
+				storyId: inCanon.id,
+				role: 'reviewer',
+				messages: [{ role: 'user', content: 'Check this scene.' }],
+				maxTokens: 100,
+				meter
+			},
+			{ provider: searching, http: noHttp }
+		);
+		expect(offered).toBe(true);
+		const expected = 1000 * price.prompt + 3 * WEB_SEARCH_FEE_USD;
+		expect(meter.spentUsd).toBeCloseTo(expected, 10);
+		const [row] = await db.select().from(assistantUsage).where(eq(assistantUsage.userId, userId));
+		expect(row.webSearchRequests).toBe(3);
+		expect(row.price).toEqual({ ...price, webSearch: WEB_SEARCH_FEE_USD });
 	});
 
 	it('counts every round of the search loop over the prompt before a capped send', async () => {

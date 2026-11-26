@@ -414,13 +414,16 @@ export const actions: Actions = {
 			return fail(400, { action: 'publish', message: 'Pick a visibility.' });
 		}
 		const isAdult = data.get('isAdult') === 'on';
-		await saveStoryVisibility(
-			db,
-			story.id,
-			visibility,
-			isAdult,
-			(await browseEnabled(db)) ? data.get('listedInBrowse') === 'on' : null
-		);
+		// The Browse choice is saved only when the form showed the box and Browse
+		// is on now. Either can be out of step with the other: the page may have
+		// loaded on a process with a stale copy of the setting, or before an
+		// admin changed it. Otherwise the stored choice is kept.
+		const boxShown = data.get('browseBox') === '1';
+		const listed =
+			boxShown && (await browseEnabled(db, { fresh: true }))
+				? data.get('listedInBrowse') === 'on'
+				: null;
+		await saveStoryVisibility(db, story.id, visibility, isAdult, listed);
 		return { action: 'publish', saved: true };
 	},
 	saveTags: async ({ request, params, locals }) => {
