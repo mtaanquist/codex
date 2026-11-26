@@ -10,6 +10,18 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 10 (2026-11-26, `staging/v4.0.0`, #1857,
+#1858). The medium was the round 9 change meeting renames: a story's choice
+is written to the merged entries' keys, but the save locked only the posted
+warning, so a rename of a merged entry slipped between. The save now
+share-locks the merged entries too and rereads until the set is stable; a
+racing save comes back outdated. Removed merged entries are carried apart
+from the fold so a new choice still overwrites them, and a story save no
+longer reads the universe at all. Skipping the list-change effect while a
+save is in flight was rejected: a failed save could then resend an old pick
+against the new list, so the effect keeps only what the save carries. Mads
+chose to keep looping after ten rounds.
+
 v4.0.0 staging review, round 9 (2026-11-26, `staging/v4.0.0`, #1854,
 #1855). The medium was in renaming a warning: the slug was read outside the
 transaction, so a double submit moved limits a second time and erased
