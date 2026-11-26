@@ -16,7 +16,7 @@ import {
 } from './constants.ts';
 import { GateBusyError, readGate, stagingGate } from './call-gate.ts';
 import { CARD_TOOLS, callCardTool, cardTool, PASS_CARD_URI, type CardTool } from './pass-card.ts';
-import { credentialLive, type BearerIdentity } from './oauth.ts';
+import { credentialLive, grantPermits, type BearerIdentity } from './oauth.ts';
 import { mcpInstanceEnabled } from './settings.ts';
 
 // The shared toolbox as an outside app sees it. The catalogue and the handlers
@@ -266,6 +266,7 @@ export async function callMcpTool(
 				stillAllowed: async (tx) =>
 					(await mcpInstanceEnabled(tx)) &&
 					(await credentialLive(tx, identity)) &&
+					(await grantPermits(tx, identity.grantId, ['apply', 'suggest'])) &&
 					(await ownsUniverse(tx, identity.userId, universeId))
 			});
 			if (result.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);

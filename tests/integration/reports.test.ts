@@ -173,6 +173,38 @@ describe('createReport', () => {
 		expect(await db.select().from(publicationReports)).toHaveLength(0);
 	});
 
+	for (const [what, statement] of [
+		[
+			'trashes the universe',
+			`update universes set deleted_at = now() where id = (select universe_id from stories where id = (select story_id from publications where id = $1))`
+		],
+		[
+			'is suspended',
+			`update users set suspended_at = now() where id = (select owner_id from publications where id = $1)`
+		]
+	]) {
+		it(`a report filed while the writer ${what} waits and files nothing`, async () => {
+			const client = await pool.connect();
+			try {
+				await client.query('begin');
+				await client.query(statement, [publicationId]);
+				let settled = false;
+				const filing = createReport(db, publicationId, 'spam', '').then((value) => {
+					settled = true;
+					return value;
+				});
+				await new Promise((resolve) => setTimeout(resolve, 200));
+				expect(settled).toBe(false);
+				await client.query('commit');
+				expect(await filing).toBe(false);
+			} finally {
+				await client.query('rollback').catch(() => {});
+				client.release();
+			}
+			expect(await db.select().from(publicationReports)).toHaveLength(0);
+		});
+	}
+
 	it('a report filed while a takedown runs waits for it and files nothing', async () => {
 		await user('mod@example.com', 'moderator');
 		const client = await pool.connect();

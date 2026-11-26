@@ -193,8 +193,8 @@ sort text differently under `en_US.utf8`, and an existing volume opened by the
 new image had out-of-order text indexes (checked with amcheck on a database
 migrated to 0127 under the old image). Migration 0131 detects that case (the
 database records no collation version while the server reports one, which is
-what a musl-created database looks like under glibc) and reindexes every table
-the role owns before creating the extension; databases created under glibc
+what a musl-created database looks like under glibc) and, after creating the
+extension, reindexes every table the role owns; databases created under glibc
 skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
 version, so the version stays unrecorded; the migration runs once anyway. The
 migrator checks `pg_available_extensions` first so a server without pgvector

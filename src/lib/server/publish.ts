@@ -709,19 +709,30 @@ export async function restorePublication(
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const [edition] = await tx
-			.select({ ownerId: publications.ownerId, storyId: publications.storyId })
+			.select({ storyId: publications.storyId })
 			.from(publications)
 			.where(and(eq(publications.id, publicationId), isNotNull(publications.removedReason)));
 		if (!edition) return false;
-		// scheduleAccountDeletion updates this row first, so a deletion
+		// scheduleAccountDeletion updates these rows first, so a deletion
 		// scheduled at the same moment either commits before this read (and the
-		// restore is refused) or waits until the restore has committed.
-		const [owner] = await tx
+		// restore is refused) or waits until the restore has committed. Every
+		// owner of the story's editions, in id order as the takedown takes them,
+		// since the restore lifts all the editions it held.
+		const owners = await tx
 			.select({ deletionScheduledAt: users.deletionScheduledAt })
 			.from(users)
-			.where(eq(users.id, edition.ownerId))
+			.where(
+				inArray(
+					users.id,
+					tx
+						.selectDistinct({ id: publications.ownerId })
+						.from(publications)
+						.where(eq(publications.storyId, edition.storyId))
+				)
+			)
+			.orderBy(users.id)
 			.for('no key update');
-		if (!owner || owner.deletionScheduledAt) return false;
+		if (owners.length === 0 || owners.some((owner) => owner.deletionScheduledAt)) return false;
 		// The lock takedownPublication and publishStory take, in publish's
 		// order (account row, then story), so a takedown or publish running at
 		// the same moment finishes first and this restore then sees it.

@@ -4,6 +4,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { desc, eq } from 'drizzle-orm';
 import type pg from 'pg';
 import {
+	oauthGrants,
 	reviewSuggestions,
 	revisions,
 	scenes,
@@ -664,6 +665,35 @@ describe('decide_suggestion', () => {
 		expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 		expect(new Set(await statuses())).toEqual(new Set(['pending']));
+	});
+
+	it('changes nothing when accepting in the app is taken away while the accept waits its turn', async () => {
+		const { noteId, pass, keys } = await opened();
+		const grantId = (await resolveBearer(db, alice.token))!.grantId;
+		const [{ permissions }] = await db
+			.select({ permissions: oauthGrants.permissions })
+			.from(oauthGrants)
+			.where(eq(oauthGrants.id, grantId));
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => (release = resolve));
+		const ahead = stagingGate.run(alice.userId, () => gate);
+		const waiting = decide(alice.token, accepting(noteId, pass.edits[0], keys));
+		try {
+			await untilWaiting(stagingGate, alice.userId);
+			// What connecting the app again with the box unticked does to the grant.
+			await db
+				.update(oauthGrants)
+				.set({ permissions: permissions.filter((permission) => permission !== 'apply') })
+				.where(eq(oauthGrants.id, grantId));
+			release();
+			await ahead;
+			expect(await waiting).toMatchObject({ text: NO_UNIVERSE_RESULT, isError: true });
+			expect(await sceneBody(alice.sceneId)).toBe(BODY);
+		} finally {
+			release();
+			await ahead;
+			await db.update(oauthGrants).set({ permissions }).where(eq(oauthGrants.id, grantId));
+		}
 	});
 
 	it('changes nothing when access for apps is turned off while the accept waits its turn', async () => {

@@ -450,6 +450,18 @@ From 4.0.0, Codex needs the pgvector extension in its database. The bundled
 version of the app, or the app and worker stop with a message saying pgvector
 is missing (nothing is changed when that happens).
 
+Before you start, check which locale the database was created with:
+
+```bash
+docker compose exec db psql -U codex -d codex -tAc "SELECT datcollate FROM pg_database WHERE datname = 'codex';"
+```
+
+The new image has only the `en_US.utf8`, `C` and `C.UTF-8` locales. If the
+answer is anything else, the new image cannot open the database: build your
+own image from `pgvector/pgvector:0.8.7-pg18-trixie` that adds that locale
+(the image's documentation shows how, under "Locale Customization") and use
+it in step 3 instead.
+
 1. Stop Codex, including the database: `docker compose stop`.
 2. Copy the database volume to a file, so you can go back. With the bundled
    compose file the volume is `codex_db-data` (`docker volume ls` lists it):
