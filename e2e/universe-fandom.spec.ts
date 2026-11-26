@@ -36,7 +36,8 @@ test('a new universe can be set in a known setting from the list', async ({ page
 
 	// Unlinking saves on its own, though the picker changes a hidden field.
 	await page.getByRole('button', { name: 'Unlink' }).click();
-	await expect(page.getByRole('status')).toHaveText('Saved.');
+	// The fandom box keeps its own (empty) status region for its match count.
+	await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
 	await page.reload();
 	await expect(page.locator('.fandom-linked')).toHaveCount(0);
 });

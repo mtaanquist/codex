@@ -22,7 +22,16 @@
 	}: {
 		data: { list: { rows: Row[]; page: number; more: boolean }; query: string };
 		form:
-			{ scope: string; message?: string; added?: string[]; skipped?: string[] } | null | undefined;
+			| {
+					scope: string;
+					message?: string;
+					notice?: string;
+					added?: string[];
+					skipped?: string[];
+					removed?: string[];
+			  }
+			| null
+			| undefined;
 		kind: 'fandom' | 'genre' | 'warning';
 		title: string;
 		lede: string;
@@ -50,7 +59,8 @@
 			{:else if form?.scope === 'add' && form.added}
 				<p class="field-hint" role="status" style="color:var(--status-final-ink);margin-top:0;">
 					Added {form.added.length}.{#if form.skipped?.length}
-						Already on the list: {form.skipped.join(', ')}.{/if}
+						Already on the list: {form.skipped.join(', ')}.{/if}{#if form.removed?.length}
+						Removed earlier, restore them below to use them again: {form.removed.join(', ')}.{/if}
 				</p>
 			{/if}
 			<div class="field">
@@ -70,5 +80,6 @@
 		query={data.query}
 		{kind}
 		message={form?.scope === 'tags' ? (form.message ?? null) : null}
+		notice={form?.scope === 'tags' ? (form.notice ?? null) : null}
 	/>
 </div>

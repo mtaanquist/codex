@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { storyTags, tags, universes } from './db/schema.ts';
 import { isUniqueViolation } from './db-errors.ts';
@@ -432,10 +432,17 @@ export async function renameTag(
 	if (!tag) return { ok: false, message: 'That entry does not exist.' };
 	const clashMessage = 'Another entry already has that name. Merge them instead.';
 	const [clash] = await db
-		.select({ id: tags.id })
+		.select({ id: tags.id, name: tags.name, removedAt: tags.removedAt })
 		.from(tags)
 		.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
-	if (clash && clash.id !== id) return { ok: false, message: clashMessage };
+	if (clash && clash.id !== id) {
+		return {
+			ok: false,
+			message: clash.removedAt
+				? `The removed entry "${clash.name}" has that name. Restore it and merge into it, or pick another name.`
+				: clashMessage
+		};
+	}
 	try {
 		await db.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
 	} catch (err) {
@@ -467,7 +474,13 @@ export async function mergeTag(
 			.select()
 			.from(tags)
 			.where(and(eq(tags.kind, source.kind), eq(tags.slug, tagSlug(targetName))));
-		if (!named || named.removedAt) return { ok: false, message: notFound };
+		if (!named) return { ok: false, message: notFound };
+		if (named.removedAt) {
+			return {
+				ok: false,
+				message: `"${named.name}" is removed. Restore it first, then merge into it.`
+			};
+		}
 		if (named.id === source.id) return { ok: false, message: 'Pick a different entry.' };
 		const survivor = await survivorOf(tx, named.id);
 		if (!survivor.ended) {
@@ -494,7 +507,12 @@ export async function mergeTag(
 		if (!target || target.mergedIntoId) {
 			return { ok: false, message: 'That entry changed while you were working. Try again.' };
 		}
-		if (target.removedAt) return { ok: false, message: notFound };
+		if (target.removedAt) {
+			return {
+				ok: false,
+				message: `"${target.name}" is removed. Restore it first, then merge into it.`
+			};
+		}
 		await tx
 			.update(tags)
 			.set({ mergedIntoId: target.id })
@@ -545,13 +563,17 @@ export async function setTagRemoved(
 }
 
 // Adds entries to a curated list from a multi-line box, one name per line.
-// Names already on the list (by slug, removed ones included) are skipped and
-// reported.
+// Names already on the list (by slug) are skipped and reported: in skipped,
+// or in removed when the entry they match was removed, since only a restore
+// brings that one back.
 export async function addListEntries(
 	db: Database,
 	kind: ListKind,
 	text: string
-): Promise<{ ok: true; added: string[]; skipped: string[] } | { ok: false; message: string }> {
+): Promise<
+	| { ok: true; added: string[]; skipped: string[]; removed: string[] }
+	| { ok: false; message: string }
+> {
 	const wanted = new Map<string, string>();
 	for (const line of text.split('\n')) {
 		const cleaned = cleanTagName(line);
@@ -569,10 +591,31 @@ export async function addListEntries(
 		.onConflictDoNothing({ target: [tags.kind, tags.slug] })
 		.returning({ slug: tags.slug, name: tags.name });
 	const addedSlugs = new Set(inserted.map((row) => row.slug));
+	const existing = [...wanted].filter(([slug]) => !addedSlugs.has(slug));
+	const removedSlugs = new Set(
+		existing.length === 0
+			? []
+			: (
+					await db
+						.select({ slug: tags.slug })
+						.from(tags)
+						.where(
+							and(
+								eq(tags.kind, kind),
+								inArray(
+									tags.slug,
+									existing.map(([slug]) => slug)
+								),
+								isNotNull(tags.removedAt)
+							)
+						)
+				).map((row) => row.slug)
+	);
 	return {
 		ok: true,
 		added: inserted.map((row) => row.name),
-		skipped: [...wanted].filter(([slug]) => !addedSlugs.has(slug)).map(([, name]) => name)
+		skipped: existing.filter(([slug]) => !removedSlugs.has(slug)).map(([, name]) => name),
+		removed: existing.filter(([slug]) => removedSlugs.has(slug)).map(([, name]) => name)
 	};
 }
 

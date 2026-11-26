@@ -55,22 +55,19 @@
 </div>
 
 {#if form?.scope === 'storage' && form.message}
-	<div
-		class="status-banner"
-		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-	>
+	<div class="status-banner error" role="alert">
 		<span class="x">{form.message}</span>
 	</div>
 {:else if form?.scope === 'storage' && form.saved}
-	<div class="status-banner ok">
+	<div class="status-banner ok" role="status">
 		<span class="dot"></span><span class="v">Saved.</span>
 	</div>
 {:else if form?.scope === 'storage' && form.tested}
-	<div class="status-banner ok">
+	<div class="status-banner ok" role="status">
 		<span class="dot"></span><span class="v">The bucket is reachable and writable.</span>
 	</div>
 {:else if form?.scope === 'storage' && form.migrating}
-	<div class="status-banner ok">
+	<div class="status-banner ok" role="status">
 		<span class="dot"></span><span class="v">
 			Copy started. The worker copies every stored file; check back here for the result.
 		</span>
@@ -159,14 +156,11 @@
 	</div>
 
 	{#if form?.scope === 'usage' && form.message}
-		<div
-			class="status-banner"
-			style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-		>
+		<div class="status-banner error" role="alert">
 			<span class="x">{form.message}</span>
 		</div>
 	{:else if !recounting && recountResult && recountResult.next === null}
-		<div class="status-banner ok">
+		<div class="status-banner ok" role="status">
 			<span class="dot"></span><span class="v">
 				Image storage recounted from the stored files for {formatNumber(recountResult.done)}
 				account{recountResult.done === 1 ? '' : 's'}.

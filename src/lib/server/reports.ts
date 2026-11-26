@@ -78,6 +78,9 @@ export async function listOpenReports(db: Database, limit = 100) {
 			handle: publications.handle,
 			title: publications.title,
 			storyId: publications.storyId,
+			// A newer edition replaced this one and is still up, so a takedown
+			// takes that one down too.
+			newerEditionUp: sql<boolean>`exists (select 1 from ${publications} c where c.story_id = ${publications.storyId} and c.is_current and c.removed_reason is null and c.id <> ${publications.id})`,
 			editionRemovedAt: publications.removedAt,
 			// Set only by a moderator's takedown, not by account deletion.
 			editionRemovedReason: publications.removedReason,
