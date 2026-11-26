@@ -11,7 +11,7 @@ version, date, branch or PR where it had one.
 ## Notes from the Open list
 
 v4.0.0 lane follow-ups (2026-11-26, `staging/v4.0.0`, #1794, #1795, #1798,
-#1799, #1807). The Browse setting cache stays (the root layout reads it on
+#1799, #1806, #1807). The Browse setting cache stays (the root layout reads it on
 every page), but the two places that act on it, the story settings save and
 the admin page, now read it fresh, and the save only takes the box when the
 form showed it (a hidden `browseBox` field), so neither a stale process nor a
@@ -21,7 +21,11 @@ for that. A stream that dropped before `message_delta` now bills the
 `web_search` calls it saw, marked estimated. The fandom count's subquery got a
 partial index on `universes.fandom_id` (migration 0132). The card's lock-wait
 test uses the default two-second lock timeout, like the staging dispatch test,
-rather than threading test-only timeouts through `callMcpTool`.
+rather than threading test-only timeouts through `callMcpTool`. #1806 added
+the "Old database image upgrade" CI job (`.github/scripts/collation-upgrade.sh`):
+a volume migrated to 0130 under the old Alpine image is opened by the pgvector
+image, where amcheck must find broken text indexes before migration 0131 and
+none after. It checks the breakage first so the job cannot pass vacuously.
 
 pgvector required (v4.0.0, 2026-11-26, `staging/v4.0.0`, #1783). Mads
 chose to make pgvector required in the major release rather than optional, so
