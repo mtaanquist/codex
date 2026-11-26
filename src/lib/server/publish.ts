@@ -654,7 +654,12 @@ export async function takedownPublication(
 // edition is public again, unless the author's account deletion also hid it:
 // then it stays down, as cancelling the deletion leaves the author's other
 // editions. Never while the author's account is waiting to be deleted.
-export async function restorePublication(db: Database, publicationId: string): Promise<boolean> {
+// restoredBy is the moderator, recorded with the time.
+export async function restorePublication(
+	db: Database,
+	publicationId: string,
+	restoredBy: string | null
+): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const [edition] = await tx
 			.select({ ownerId: publications.ownerId })
@@ -675,7 +680,9 @@ export async function restorePublication(db: Database, publicationId: string): P
 			.set({
 				removedAt: sql`case when ${publications.hiddenByAccountDeletion} then ${publications.removedAt} end`,
 				removedBy: null,
-				removedReason: null
+				removedReason: null,
+				restoredAt: sql`now()`,
+				restoredBy
 			})
 			.where(
 				and(
@@ -691,8 +698,18 @@ export async function restorePublication(db: Database, publicationId: string): P
 
 export const LIVE_EDITIONS_PAGE_SIZE = 50;
 
-// The Published page: every story's current edition that is up, newest
-// first, one page at a time, optionally narrowed to a handle or title.
+// The display name of the moderator a column points at, for the moderation
+// pages' records. Null once that account is gone.
+function moderatorName(column: AnyColumn) {
+	return sql<
+		string | null
+	>`(select ${users.displayName} from ${users} where ${users.id} = ${column})`;
+}
+
+// The Published page: every story's current edition that is not taken down,
+// newest first, one page at a time, optionally narrowed to a handle or title.
+// That includes editions an account deletion hid (hiddenAt set), so a
+// moderator can still take them down.
 export async function listLiveEditions(
 	db: Database,
 	{ query = '', page = 0 }: { query?: string; page?: number } = {}
@@ -703,7 +720,7 @@ export async function listLiveEditions(
 	const handlePattern = likePattern(text.replace(/^@/, ''));
 	const where = and(
 		eq(publications.isCurrent, true),
-		isNull(publications.removedAt),
+		isNull(publications.removedReason),
 		text
 			? or(ilike(publications.handle, handlePattern), ilike(publications.title, likePattern(text)))
 			: undefined
@@ -719,10 +736,18 @@ export async function listLiveEditions(
 			publishedAt: publications.publishedAt,
 			storyId: publications.storyId,
 			listedInBrowse: stories.listedInBrowse,
-			browseBlockedAt: stories.browseBlockedAt
+			browseBlockedAt: stories.browseBlockedAt,
+			// Down with no takedown reason: the author's account deletion hid it.
+			hiddenAt: publications.removedAt,
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
+			restoredAt: publications.restoredAt,
+			restoredByName: moderatorName(publications.restoredBy),
+			browseAllowedAt: stories.browseAllowedAt,
+			browseAllowedByName: moderatorName(stories.browseAllowedBy)
 		})
 		.from(publications)
 		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(where)
 		.orderBy(desc(publications.publishedAt), asc(publications.id))
 		.limit(LIVE_EDITIONS_PAGE_SIZE + 1)
@@ -744,7 +769,8 @@ export async function listBrowseBlocked(db: Database) {
 			title: stories.title,
 			handle: users.handle,
 			browseBlockedAt: stories.browseBlockedAt,
-			browseBlockedReason: stories.browseBlockedReason
+			browseBlockedReason: stories.browseBlockedReason,
+			browseBlockedByName: moderatorName(stories.browseBlockedBy)
 		})
 		.from(stories)
 		.innerJoin(users, eq(users.id, stories.ownerId))
@@ -762,6 +788,7 @@ export async function listTakenDown(db: Database) {
 			title: publications.title,
 			removedAt: publications.removedAt,
 			removedReason: publications.removedReason,
+			removedByName: moderatorName(publications.removedBy),
 			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
 			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
 		})
@@ -775,4 +802,35 @@ export async function listTakenDown(db: Database) {
 			)
 		)
 		.orderBy(publications.removedAt);
+}
+
+// One edition as a moderator sees it, whatever its state: taken down, hidden
+// by an account deletion, superseded or live. For checking the text of a
+// report before acting on it, or again before a restore.
+export async function moderatorEdition(db: Database, publicationId: string) {
+	const [edition] = await db
+		.select({
+			id: publications.id,
+			storyId: publications.storyId,
+			handle: publications.handle,
+			title: publications.title,
+			author: publications.author,
+			descriptionMd: publications.descriptionMd,
+			isAdult: publications.isAdult,
+			contentWarnings: publications.contentWarnings,
+			content: publications.content,
+			versionLabel: publications.versionLabel,
+			publishedAt: publications.publishedAt,
+			isCurrent: publications.isCurrent,
+			removedAt: publications.removedAt,
+			removedReason: publications.removedReason,
+			removedByName: moderatorName(publications.removedBy),
+			restoredAt: publications.restoredAt,
+			restoredByName: moderatorName(publications.restoredBy),
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
+		})
+		.from(publications)
+		.innerJoin(users, eq(users.id, publications.ownerId))
+		.where(eq(publications.id, publicationId));
+	return edition ? { ...edition, content: edition.content as EditionContent } : null;
 }

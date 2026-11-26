@@ -31,7 +31,7 @@ export function browseModerationActions(scope: string) {
 		allowInBrowse: async ({ request, locals }: RequestEvent) => {
 			requireModerator(locals);
 			const storyId = formText(await request.formData(), 'storyId');
-			if (!isUuid(storyId) || !(await allowInBrowse(db, storyId))) {
+			if (!isUuid(storyId) || !(await allowInBrowse(db, storyId, locals.user!.id))) {
 				return fail(400, { scope, message: 'That story is not blocked from Browse.' });
 			}
 			return { scope, done: true };

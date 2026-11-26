@@ -397,10 +397,20 @@ export async function removeFromBrowse(
 }
 
 // Lets the author list the story again. It does not list it for them.
-export async function allowInBrowse(db: Database, storyId: string): Promise<boolean> {
+export async function allowInBrowse(
+	db: Database,
+	storyId: string,
+	allowedBy: string | null
+): Promise<boolean> {
 	const updated = await db
 		.update(stories)
-		.set({ browseBlockedAt: null, browseBlockedBy: null, browseBlockedReason: null })
+		.set({
+			browseBlockedAt: null,
+			browseBlockedBy: null,
+			browseBlockedReason: null,
+			browseAllowedAt: sql`now()`,
+			browseAllowedBy: allowedBy
+		})
 		.where(and(eq(stories.id, storyId), sql`${stories.browseBlockedAt} is not null`))
 		.returning({ id: stories.id });
 	return updated.length > 0;

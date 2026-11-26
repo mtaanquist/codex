@@ -46,11 +46,14 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
+								<!-- A down edition has no public page; moderators read it in Published. -->
 								<a
-									href={resolve('/@[handle]/[story=ref]', {
-										handle: report.handle,
-										story: report.storyId
-									})}
+									href={report.editionRemovedAt
+										? resolve('/admin/published/[id=uuid]', { id: report.publicationId })
+										: resolve('/@[handle]/[story=ref]', {
+												handle: report.handle,
+												story: report.storyId
+											})}
 								>
 									@{report.handle}/{report.title}
 								</a>

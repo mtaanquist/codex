@@ -13,6 +13,13 @@
 	function livePageHref(n: number) {
 		return withQuery(resolve('/admin/published'), { q: query, page: n > 0 ? n : null });
 	}
+	function editionHref(id: string) {
+		return resolve('/admin/published/[id=uuid]', { id });
+	}
+	// The moderator who acted, when their account still exists.
+	function byName(name: string | null) {
+		return name ? ` by ${name}` : '';
+	}
 </script>
 
 <div class="admin-head">
@@ -20,7 +27,8 @@
 	<h1 class="admin-title">Published editions</h1>
 	<p class="admin-lede">
 		Everything writers have made public. Take an edition down to remove it from the public pages.
-		Reports from readers are under Reports.
+		Open a title to read the edition, also after it is taken down. Reports from readers are under
+		Reports.
 	</p>
 </div>
 
@@ -36,7 +44,7 @@
 <div class="admin-block">
 	<div class="admin-block-head">
 		<h2 class="admin-block-title">
-			Live <span class="n">{formatNumber(data.live.total)}</span>
+			Current editions <span class="n">{formatNumber(data.live.total)}</span>
 		</h2>
 	</div>
 	<form method="GET" class="admin-search" role="search">
@@ -70,13 +78,27 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
-								@{edition.handle}/{edition.title}
+								<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+								{#if edition.hiddenAt}<span class="pill">
+										{edition.ownerDeletionPending
+											? 'hidden: account deletion pending'
+											: 'hidden after a cancelled account deletion'}
+									</span>{/if}
 								{#if edition.isAdult}<span class="pill">adult</span>{/if}
 								{#if edition.listedInBrowse}<span class="pill">listed in Browse</span>{/if}
 								{#if edition.browseBlockedAt}<span class="pill">removed from Browse</span>{/if}
 							</div>
 							<div class="list-sub">
-								published {formatDate(edition.publishedAt, page.data.timeZone)}
+								published {formatDate(
+									edition.publishedAt,
+									page.data.timeZone
+								)}{#if edition.restoredAt}, restored
+									{formatDate(edition.restoredAt, page.data.timeZone)}{byName(
+										edition.restoredByName
+									)}{/if}{#if edition.browseAllowedAt}, allowed in Browse again
+									{formatDate(edition.browseAllowedAt, page.data.timeZone)}{byName(
+										edition.browseAllowedByName
+									)}{/if}
 							</div>
 						</div>
 						<div class="list-actions">
@@ -119,9 +141,9 @@
 								{story.handle ? `@${story.handle}/` : ''}{story.title}
 							</div>
 							<div class="list-sub">
-								removed {formatDate(story.browseBlockedAt!, page.data.timeZone)}, reason: {reportReasonLabel(
-									story.browseBlockedReason
-								)}
+								removed {formatDate(story.browseBlockedAt!, page.data.timeZone)}{byName(
+									story.browseBlockedByName
+								)}, reason: {reportReasonLabel(story.browseBlockedReason)}
 							</div>
 						</div>
 						<div class="list-actions">
@@ -159,11 +181,13 @@
 				{#each data.takenDown as edition (edition.id)}
 					<div class="list-row">
 						<div class="list-main">
-							<div class="list-title">@{edition.handle}/{edition.title}</div>
+							<div class="list-title">
+								<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+							</div>
 							<div class="list-sub">
-								taken down {formatDate(edition.removedAt!, page.data.timeZone)}, reason: {reportReasonLabel(
-									edition.removedReason
-								)}
+								taken down {formatDate(edition.removedAt!, page.data.timeZone)}{byName(
+									edition.removedByName
+								)}, reason: {reportReasonLabel(edition.removedReason)}
 							</div>
 							{#if edition.ownerDeletionPending}
 								<div class="list-sub">

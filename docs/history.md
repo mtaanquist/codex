@@ -10,6 +10,20 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
+and Allow in Browse now record the moderator and time (#1531, migration 0128):
+plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
+only the latest restore or allow, rather than a moderation log table, since
+nothing yet needs the full history. The Published page lists current editions
+an account deletion hid, with a pill and the Take down button (#1529), and a
+moderator can read any edition at `/admin/published/<id>`, linked from
+Published and from the report queue once the edition is down (#1530). Inline
+images there do not load for a down edition, because the image route serves
+only readable editions; widening it for moderators was left as a follow-up.
+Route-level tests cover the moderation actions and both orders of a publish
+racing a takedown (#1775), and design.md now names Remove from Browse in the
+report queue (#1777).
+
 Bug round 5 (2026-11-25, `staging/bug-fixes-5`). The 17 open bug issues
 (#1523 to #1571, less #1550, which shipped with #1572) were fixed in five
 lanes, then reviewed by four fresh area reviewers per round (Browse and public

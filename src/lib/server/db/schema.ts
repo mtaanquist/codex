@@ -293,6 +293,12 @@ export const stories = pgTable(
 		browseBlockedBy: uuid('browse_blocked_by').references((): AnyPgColumn => users.id, {
 			onDelete: 'set null'
 		}),
+		// The last time a moderator allowed the story back into Browse, and who.
+		// Kept when it is removed again, so the latest allow stays on record.
+		browseAllowedAt: timestamp('browse_allowed_at', { withTimezone: true }),
+		browseAllowedBy: uuid('browse_allowed_by').references((): AnyPgColumn => users.id, {
+			onDelete: 'set null'
+		}),
 		// References assets(id); null renders a generated default cover on the
 		// public shelf.
 		coverAssetId: uuid('cover_asset_id'),
@@ -1085,6 +1091,10 @@ export const publications = pgTable(
 		// later restore of a takedown clears the reason but leaves the edition
 		// down, as cancelling the deletion leaves the others.
 		hiddenByAccountDeletion: boolean('hidden_by_account_deletion').notNull().default(false),
+		// The last time a moderator restored this edition after a takedown, and
+		// who. Kept through a later takedown, so the latest restore stays on record.
+		restoredAt: timestamp('restored_at', { withTimezone: true }),
+		restoredBy: uuid('restored_by').references(() => users.id, { onDelete: 'set null' }),
 		publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow()
 	},
 	(table) => [
