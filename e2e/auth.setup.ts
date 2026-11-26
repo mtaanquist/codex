@@ -6,7 +6,8 @@ import { expect, test as setup } from '@playwright/test';
 for (const [email, path] of [
 	['e2e@example.com', 'e2e/.auth/e2e.json'],
 	['assistant-e2e@example.com', 'e2e/.auth/assistant.json'],
-	['prices-e2e@example.com', 'e2e/.auth/prices.json']
+	['prices-e2e@example.com', 'e2e/.auth/prices.json'],
+	['admin-e2e@example.com', 'e2e/.auth/admin.json']
 ]) {
 	setup(`sign in as ${email}`, async ({ page }) => {
 		await page.goto('/login');

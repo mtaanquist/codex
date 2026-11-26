@@ -1,0 +1,1 @@
+CREATE INDEX "publications_browse" ON "publications" USING btree ("published_at" DESC NULLS FIRST,"id" DESC NULLS FIRST) WHERE "publications"."is_current" and "publications"."removed_at" is null;

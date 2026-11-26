@@ -586,6 +586,26 @@ describe('a universe linked to a fandom', () => {
 		expect(more).toMatchObject({ ok: false, message: expect.stringMatching(/universe/) });
 	});
 
+	it('counts stories that get the fandom from their universe in its uses, each once', async () => {
+		const universeId = await linked();
+		const discworld = await tagId('discworld');
+		const [elsewhere] = await db.insert(universes).values({ ownerId, name: 'V' }).returning();
+		const [third] = await db
+			.insert(stories)
+			.values({ universeId: elsewhere.id, ownerId, title: 'Three', slug: 'three' })
+			.returning();
+		await setUniverseFandom(db, universeId, discworld);
+		// One story has it both ways, one only from the universe, one only directly.
+		await setStoryList(db, storyId, 'fandom', [discworld]);
+		await setStoryList(db, third.id, 'fandom', [discworld]);
+		const uses = async (name: string) =>
+			(await listTagsForModeration(db, 'fandom')).rows.find((row) => row.name === name)?.uses;
+		expect(await uses('Discworld')).toBe(3);
+		expect(await uses('Forgotten Realms')).toBe(0);
+		await setUniverseFandom(db, universeId, null);
+		expect(await uses('Discworld')).toBe(2);
+	});
+
 	it('suggests close matches from the list as a writer types', async () => {
 		await linked();
 		expect((await suggestFandoms(db, 'forgoten realm')).map((row) => row.name)[0]).toBe(
