@@ -260,6 +260,10 @@ export async function callMcpTool(
 					(await ownsUniverse(tx, identity.userId, universeId))
 			});
 			if (result.refused) return refuse('no_universe', NO_UNIVERSE_RESULT);
+			if (result.busy) {
+				refund();
+				return refuse('busy', result.text);
+			}
 			log(result.isError ? 'refused' : staging ? 'accepted' : 'ok');
 			return { ...result, text: capped(result.text) };
 		}
@@ -310,17 +314,24 @@ export async function callMcpTool(
 			if (accepted.isError) return accepted;
 			// The pass as it now stands, built after the accept has given its
 			// place back, as a read.
-			const pass = await readGate.run(identity.userId, () =>
-				callCardTool('open_guided_pass', {
-					db,
-					identity,
-					universeId: args.universeId as string,
-					args: { noteId: args.noteId },
-					origin,
-					stillAllowed: async () => true
-				})
-			);
-			return pass.isError ? accepted : { ...pass, text: accepted.text };
+			// The accept is stored by now, so nothing here may report it as
+			// failed: without the pass, the card asks for it again.
+			try {
+				const pass = await readGate.run(identity.userId, async (waited) => {
+					if (waited && !(await credentialLive(db, identity))) return null;
+					return callCardTool('open_guided_pass', {
+						db,
+						identity,
+						universeId: args.universeId as string,
+						args: { noteId: args.noteId },
+						origin,
+						stillAllowed: async () => true
+					});
+				});
+				return pass && !pass.isError ? { ...pass, text: accepted.text } : accepted;
+			} catch {
+				return accepted;
+			}
 		}
 		return staging ? await run() : await readGate.run(identity.userId, run);
 	} catch (err) {

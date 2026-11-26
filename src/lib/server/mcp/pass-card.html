@@ -168,6 +168,7 @@
 				// The edit whose wording the writer is changing, and what they typed.
 				var editingId = null;
 				var draft = '';
+				var editingStamp = null;
 				var busy = false;
 				var message = null;
 				// Set once the client has answered the handshake.
@@ -404,6 +405,11 @@
 							text: 'This app cannot accept edits from the card. Open the note in Codex to decide on them.'
 						};
 					}
+					// A revision that landed while the writer typed: they read it first.
+					if (editingId === edit.id && editingStamp !== edit.stamp) {
+						editingId = null;
+						if (!message) message = { failure: true, text: 'This edit changed. Read it again.' };
+					}
 					if (editingId === edit.id) {
 						var box = el('textarea', { 'aria-label': 'Your wording' });
 						box.value = draft;
@@ -451,6 +457,7 @@
 									text: 'Edit',
 									onclick: function () {
 										editingId = edit.id;
+										editingStamp = edit.stamp;
 										draft = edit.replacement;
 										message = null;
 										render();

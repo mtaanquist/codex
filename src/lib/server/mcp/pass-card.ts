@@ -16,6 +16,7 @@ import {
 import { queueSceneMentions } from '../jobs.ts';
 import { decideSuggestion, isOwnNote, listSuggestions, type MachineAuthor } from '../review.ts';
 import { storyAssistantOn } from '../universe-scope.ts';
+import { logEvent } from '../log.ts';
 import {
 	APP_DIFF_BUDGET,
 	STAGING_LOCK_TIMEOUT_MS,
@@ -158,6 +159,8 @@ export type CardResult = {
 	isError: boolean;
 	// The connection or the universe went while the call waited.
 	refused?: boolean;
+	// Another call held the writer's lock; nothing was done.
+	busy?: boolean;
 	structured?: Record<string, unknown>;
 	meta?: Record<string, unknown>;
 };
@@ -469,11 +472,17 @@ async function decide(call: CardCall): Promise<CardResult> {
 			return { text: 'Accepted.', isError: false, structured: { sceneId: decided.sceneId } };
 		});
 		const sceneId = result.structured?.sceneId;
-		if (typeof sceneId === 'string') await queueSceneMentions(sceneId);
+		// The accept has been stored; a failure to queue the mention update
+		// must not report it as failed.
+		if (typeof sceneId === 'string') {
+			await queueSceneMentions(sceneId).catch(() =>
+				logEvent('warn', 'mcp.card_mentions_not_queued', { sceneId })
+			);
+		}
 		return result.isError ? result : { text: result.text, isError: false };
 	} catch (err) {
 		const code = (err as { cause?: { code?: unknown }; code?: unknown } | null)?.cause?.code;
-		if (code === LOCK_NOT_AVAILABLE) return { text: ACCEPT_BUSY, isError: true };
+		if (code === LOCK_NOT_AVAILABLE) return { text: ACCEPT_BUSY, isError: true, busy: true };
 		throw err;
 	}
 }
