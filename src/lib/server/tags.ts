@@ -373,8 +373,9 @@ export async function listEntries(
 
 const PAGE_SIZE = 50;
 
-// The tags or fandoms with how many stories carry each directly, for the
-// moderation pages. Removed ones are listed too, so they can be restored.
+// The tags or fandoms with how many stories carry each, for the moderation
+// pages. A fandom counts stories that get it from their universe too, each
+// story once. Removed ones are listed too, so they can be restored.
 export async function listTagsForModeration(
 	db: Database,
 	kind: TagKind,
@@ -391,7 +392,14 @@ export async function listTagsForModeration(
 			removedAt: tags.removedAt,
 			mergedIntoId: tags.mergedIntoId,
 			mergedIntoName: sql<string | null>`${target}`,
-			uses: sql<number>`(select count(*)::int from story_tags st where st.tag_id = ${tags.id})`
+			// Written out: drizzle leaves a column of the only table unqualified,
+			// which the subquery's own id columns would shadow.
+			uses: sql<number>`(select count(*)::int from (
+				select st.story_id from story_tags st where st.tag_id = tags.id
+				union
+				select s.id from stories s join universes u on u.id = s.universe_id
+				where u.fandom_id = tags.id
+			) used)`
 		})
 		.from(tags)
 		.where(and(eq(tags.kind, kind), query ? ilike(tags.name, pattern(query)) : undefined))

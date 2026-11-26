@@ -22,7 +22,7 @@ Each story has a visibility:
 
 ## Listing a story in Browse
 
-If the site has a Browse page (a link to it shows in the bar of the public pages), readers can find stories from every writer on the site there. A public story only shows on Browse if you choose to list it: in the Publish section of the story's settings, tick "List in Browse" and save. Untick it to take the story off Browse at once. Setting the story to private or unlisted takes it off too.
+If the site has a Browse page (a link to it shows in the bar of the public pages), readers can find stories from every writer on the site there. A public story only shows on Browse if you choose to list it: in the Publish section of the story's settings, tick "List in Browse" and save. Untick it to take the story off Browse at once. Setting the story to private or unlisted takes it off too, and clears the tick: when you make it public again, tick "List in Browse" again to put it back.
 
 To keep all your stories and your name off Browse, turn on "Stay off Browse" on your account page. Your own page and your stories stay reachable as before.
 
