@@ -177,4 +177,29 @@ describe('the image route', () => {
 		expect(await dismissReport(db, report.id, moderator.id)).toBe(true);
 		expect((await fetchAsset(asModerator)).status).toBe(404);
 	});
+
+	it("does not show an image only in a private story's newer edition that a takedown also put down", async () => {
+		const moderator = await user('moderator@example.com', 'moderator');
+		const asModerator = { id: moderator.id, role: 'moderator' as const };
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		// The newer edition has a second image the reported one does not.
+		const [first] = await db.select().from(assets);
+		const [extra] = await db
+			.insert(assets)
+			.values({
+				...first,
+				id: undefined,
+				filename: 'second.png',
+				storageKey: 'codex-assets/second'
+			})
+			.returning();
+		await pool.query(`update scenes set body_md = $1`, [`Another: ![second](/assets/${extra.id})`]);
+		const [story] = await db.select().from(stories);
+		const newer = await publishStory(db, authorId, story.id);
+		if (!newer.ok) throw new Error(newer.reason);
+		await pool.query(`update stories set visibility = 'private'`);
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		expect((await fetchAsset(asModerator)).status).toBe(200);
+		expect((await fetchAsset(asModerator, extra.id)).status).toBe(404);
+	});
 });

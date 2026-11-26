@@ -542,11 +542,12 @@ export async function mergeTag(
 
 // A writer's "Keep it off the page" limit (Assistant preferences) on a warning
 // merged away, or on one merged into it earlier (which the writer can no
-// longer see), is copied to the surviving warning wherever no limit is set on
-// it yet. A "Write freely" limit is not carried: it would widen what the
-// Assistant writes about the survivor, which the writer never chose. The old
-// keys stay, so an undone merge keeps them, and the copied "avoid" stays too,
-// which only keeps the Assistant more careful.
+// longer see), is copied to the surviving warning, also over a "Write
+// freely" set on it, as a rename does (moveContentLimits): avoid wins. A
+// "Write freely" limit is not carried: it would widen what the Assistant
+// writes about the survivor, which the writer never chose. The old keys stay,
+// so an undone merge keeps them, and the copied "avoid" stays too, which only
+// keeps the Assistant more careful.
 async function carryContentLimits(
 	tx: Database,
 	sourceSlug: string,
@@ -562,7 +563,7 @@ async function carryContentLimits(
 		column: typeof stories.assistantPreferences | typeof universes.assistantPreferences
 	) => ({
 		set: sql`${column} || jsonb_build_object(${to}::text, 'avoid')`,
-		where: sql`jsonb_exists_any(${column}, ${from}) and not jsonb_exists(${column}, ${to}::text) and exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid')`
+		where: sql`jsonb_exists_any(${column}, ${from}) and ${column} ->> ${to}::text is distinct from 'avoid' and exists (select 1 from unnest(${from}) as k where ${column} ->> k = 'avoid')`
 	});
 	// updated_at is kept as it was: this is the site's change, not the writer's.
 	const story = carry(stories.assistantPreferences);

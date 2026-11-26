@@ -14,7 +14,7 @@
 		reason = 'other',
 		mode = 'takedown',
 		reportId = null,
-		superseded = false
+		newer = null
 	}: {
 		id: string;
 		title: string;
@@ -22,12 +22,21 @@
 		mode?: 'takedown' | 'browse';
 		// From the report queue: the report a Browse removal answers, which closes.
 		reportId?: string | null;
-		// A takedown of a replaced edition takes the story's current one down too.
-		superseded?: boolean;
+		// A takedown of a replaced edition takes the story's current one down
+		// too: 'up' when readers can open it, 'hidden' when the writer's account
+		// deletion hides it.
+		newer?: 'up' | 'hidden' | null;
 	} = $props();
 
 	const takedown = $derived(mode === 'takedown');
 	const label = $derived(takedown ? 'Take down' : 'Remove from Browse');
+	const takedownEffect = $derived(
+		newer === 'up'
+			? 'Readers can no longer open this edition or the newer one that replaced it.'
+			: newer === 'hidden'
+				? "Readers can no longer open this edition. The newer edition that replaced it, which the writer's account deletion hid, is taken down too."
+				: 'Readers can no longer open this edition.'
+	);
 </script>
 
 <form
@@ -37,7 +46,7 @@
 	onsubmit={confirmSubmit({
 		title: takedown ? `Take down "${title}"?` : `Remove "${title}" from Browse?`,
 		body: takedown
-			? `Readers can no longer open ${superseded ? 'this edition or the newer one that replaced it' : 'this edition'}. The author sees the reason in the story settings.`
+			? `${takedownEffect} The author sees the reason in the story settings.`
 			: 'The story leaves Browse and the author cannot list it again until you allow it. Its pages stay up. The author sees the reason in the story settings.',
 		confirmLabel: label,
 		danger: true

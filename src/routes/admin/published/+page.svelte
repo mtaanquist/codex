@@ -107,7 +107,9 @@
 							</div>
 						</div>
 						<div class="list-actions">
-							<TakedownForm id={edition.id} title={edition.title} />
+							{#if edition.viewable}
+								<TakedownForm id={edition.id} title={edition.title} />
+							{/if}
 							{#if edition.listedInBrowse}
 								<TakedownForm mode="browse" id={edition.storyId} title={edition.title} />
 							{/if}
@@ -178,7 +180,8 @@
 		<div class="admin-block-head">
 			<h2 class="admin-block-title">Taken down</h2>
 			<p class="admin-block-sub">
-				The writer cannot publish these stories again until you restore the edition.
+				The writer cannot publish these stories again until you restore the edition. Restoring also
+				restores any older edition of the story taken down with it.
 			</p>
 		</div>
 		<div class="admin-card tight">
@@ -187,7 +190,13 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
-								<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+								{#if edition.viewable}
+									<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+								{:else}
+									<span title="The writer made this story private or moved it to the trash.">
+										@{edition.handle}/{edition.title}
+									</span>
+								{/if}
 							</div>
 							<div class="list-sub">
 								taken down {formatDate(edition.removedAt!, page.data.timeZone)}{byName(

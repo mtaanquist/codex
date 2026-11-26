@@ -287,25 +287,44 @@ describe('Admin > Reports actions', () => {
 	it('marks a report about an edition the writer has since replaced', async () => {
 		await fileReport();
 		const load = reportsPage.load as (event: unknown) => Promise<{
-			reports: { newerEditionUp: boolean }[];
+			reports: { newerEdition: 'up' | 'hidden' | null }[];
 		}>;
 		const locals = { user: moderator };
-		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: null }]);
 		const newer = await publishStory(db, author.id, storyId);
 		if (!newer.ok) throw new Error(newer.reason);
-		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: true }]);
-		// Hidden by a pending account deletion (no reason), it is not up either.
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'up' }]);
+		// Hidden by a pending account deletion (no reason): a takedown still
+		// covers it, but readers cannot open it.
 		await db
 			.update(publications)
 			.set({ removedAt: new Date() })
 			.where(eq(publications.id, newer.publicationId));
-		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: 'hidden' }]);
 		// Once the newer one is down on its own, a takedown touches only this one.
 		await db
 			.update(publications)
 			.set({ removedAt: new Date(), removedReason: 'spam' })
 			.where(eq(publications.id, newer.publicationId));
-		expect((await load({ locals })).reports).toMatchObject([{ newerEditionUp: false }]);
+		expect((await load({ locals })).reports).toMatchObject([{ newerEdition: null }]);
+	});
+
+	it('a takedown covers the newer edition an account deletion hid', async () => {
+		await fileReport();
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		await db
+			.update(publications)
+			.set({ removedAt: new Date() })
+			.where(eq(publications.id, newer.publicationId));
+		expect(await act(reportsPage, 'takedown', { publicationId, reason: 'spam' })).toMatchObject({
+			done: true
+		});
+		const [current] = await db
+			.select()
+			.from(publications)
+			.where(eq(publications.id, newer.publicationId));
+		expect(current).toMatchObject({ removedReason: 'spam', hiddenByAccountDeletion: true });
 	});
 
 	it('is a 404 for writers', async () => {
@@ -382,6 +401,54 @@ describe("the moderator's view of an edition", () => {
 			isCurrent: false,
 			readable: false
 		});
+	});
+
+	it('a takedown of a reported older edition does not open the newer one of a private story', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		// Both are down, but only the reported one opens.
+		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
+		await expect404(loadEdition(newer.publicationId));
+		expect((await loadPublished()).takenDown).toMatchObject([
+			{ id: newer.publicationId, viewable: false }
+		]);
+	});
+
+	it('offers no takedown of the current edition of a private story', async () => {
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect((await loadPublished()).live.editions).toMatchObject([{ viewable: false }]);
+		expect(await act(publishedPage, 'takedown', { publicationId, reason: 'spam' })).toMatchObject({
+			status: 400
+		});
+		expect((await edition()).removedReason).toBeNull();
+		await expect404(loadEdition(publicationId));
+	});
+
+	it('a restored takedown no longer opens the reported edition of a private story', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		// Still down: the moderator can read it before deciding on a restore.
+		expect((await loadEdition(publicationId)).edition).toMatchObject({ removedReason: 'spam' });
+		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		await expect404(loadEdition(publicationId));
+	});
+
+	it('restoring a reported older edition also restores the current one taken down with it', async () => {
+		expect(await createReport(db, publicationId, 'spam', '')).toBe(true);
+		const newer = await publishStory(db, author.id, storyId);
+		if (!newer.ok) throw new Error(newer.reason);
+		expect(await takedownPublication(db, publicationId, moderator.id, 'spam')).toBe(true);
+		expect(await act(publishedPage, 'restore', { publicationId })).toMatchObject({ done: true });
+		const rows = await db.select().from(publications).where(eq(publications.storyId, storyId));
+		expect(rows.map((row) => [row.removedAt, row.removedReason])).toEqual([
+			[null, null],
+			[null, null]
+		]);
+		expect((await publishStory(db, author.id, storyId)).ok).toBe(true);
 	});
 
 	it('does not offer the public page when the story has changed hands', async () => {

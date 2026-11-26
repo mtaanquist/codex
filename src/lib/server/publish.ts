@@ -597,10 +597,13 @@ export async function takedownPublication(
 	reason: ReportReason
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
+		// Only an edition the moderator may read: a current edition of a story
+		// the author made private is not public, so there is nothing to act on.
 		const [target] = await tx
 			.select({ storyId: publications.storyId })
 			.from(publications)
-			.where(eq(publications.id, publicationId));
+			.innerJoin(stories, eq(stories.id, publications.storyId))
+			.where(and(eq(publications.id, publicationId), moderatorMayRead()));
 		if (!target) return false;
 		// The same lock publishStory takes, so a publish running at the same
 		// moment either finishes first (and its edition is taken down here)
@@ -652,8 +655,8 @@ export async function takedownPublication(
 	});
 }
 
-// Lifts a moderator's takedown, so the author can publish new editions and the
-// edition is public again, unless the author's account deletion also hid it:
+// Lifts a moderator's takedown from every edition of the story it holds, so
+// the author can publish new editions and the current edition is public again, unless the author's account deletion also hid it:
 // then it stays down, as cancelling the deletion leaves the author's other
 // editions. Never while the author's account is waiting to be deleted.
 // restoredBy is the moderator, recorded with the time.
@@ -664,9 +667,9 @@ export async function restorePublication(
 ): Promise<boolean> {
 	return await db.transaction(async (tx) => {
 		const [edition] = await tx
-			.select({ ownerId: publications.ownerId })
+			.select({ ownerId: publications.ownerId, storyId: publications.storyId })
 			.from(publications)
-			.where(eq(publications.id, publicationId));
+			.where(and(eq(publications.id, publicationId), isNotNull(publications.removedReason)));
 		if (!edition) return false;
 		// scheduleAccountDeletion updates this row first, so a deletion
 		// scheduled at the same moment either commits before this read (and the
@@ -686,9 +689,12 @@ export async function restorePublication(
 				restoredAt: sql`now()`,
 				restoredBy
 			})
+			// Every edition of the story the takedown holds, so restoring either
+			// the reported edition or the current one it also put down lifts the
+			// whole takedown and the author can publish again.
 			.where(
 				and(
-					eq(publications.id, publicationId),
+					eq(publications.storyId, edition.storyId),
 					isNotNull(publications.removedAt),
 					isNotNull(publications.removedReason)
 				)
@@ -793,9 +799,11 @@ export async function listTakenDown(db: Database) {
 			removedReason: publications.removedReason,
 			removedByName: moderatorName(publications.removedBy),
 			hiddenByAccountDeletion: publications.hiddenByAccountDeletion,
-			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`
+			ownerDeletionPending: sql<boolean>`${users.deletionScheduledAt} is not null`,
+			viewable: moderatorMayRead()
 		})
 		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.innerJoin(users, eq(users.id, publications.ownerId))
 		.where(
 			and(
@@ -809,11 +817,13 @@ export async function listTakenDown(db: Database) {
 
 // Whether a moderator may read an edition's text on its own page: it is the
 // current edition of a story still shared (not private, not in the trash), or
-// the edition was taken down, or has a report that is open or was resolved by
-// a takedown. So work an author withdrew, or an edition they replaced, is not
-// read without cause, and a dismissed report does not unlock it for good.
+// it has a report that is open, or one closed by a takedown that still holds
+// on the story. A takedown alone does not unlock an edition, so one it put
+// down only because it was the story's current edition (of a story the author
+// made private) stays unread, and once the takedown is lifted (a mistake) its
+// reports unlock nothing. A dismissed report does not unlock it either.
 function moderatorMayRead() {
-	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or ${publications.removedReason} is not null or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or ${publicationReports.resolution} = 'taken_down')))`;
+	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or (${publicationReports.resolution} = 'taken_down' and exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null)))))`;
 }
 
 // Whether a moderator may load an uploaded image: one shown inline in an
@@ -839,7 +849,8 @@ export async function moderatorMayReadAsset(db: Database, assetId: string): Prom
 // deletion, superseded or live. For checking the text of a report before
 // acting on it, or again before a restore. An older edition, or one of a
 // story the author has since made private or put in the trash, opens only
-// when it was taken down or has an open or upheld report (moderatorMayRead).
+// when it has an open report, or one closed by a takedown that still holds
+// (moderatorMayRead).
 export async function moderatorEdition(db: Database, publicationId: string) {
 	const shared = sql`(${stories.visibility} <> 'private' and ${storyIsLive()})`;
 	const [edition] = await db
