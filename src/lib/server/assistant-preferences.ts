@@ -29,7 +29,8 @@ import {
 // switches a writer sets content limits with. Each carries the slugs of the
 // warnings merged into it, directly or along a chain, whose limits it folds in
 // (effectivePreferences). A warning removed drops out with its limits, and so
-// do the ones merged into it.
+// do the ones merged into it; one removed after it was merged drops out of its
+// survivor's fold.
 export async function liveWarnings(db: Database): Promise<LiveWarning[]> {
 	const rows = await db
 		.select({
@@ -50,6 +51,8 @@ export async function liveWarnings(db: Database): Promise<LiveWarning[]> {
 		}
 	}
 	for (const row of rows) {
+		// A removed warning's limits do not apply, merged or not.
+		if (row.removed) continue;
 		let at = row;
 		for (let depth = 0; at.mergedIntoId && depth < MAX_MERGE_DEPTH; depth++) {
 			const next = byId.get(at.mergedIntoId);
@@ -250,9 +253,10 @@ export const OUTDATED_WARNINGS =
 // posted warning has landed before this save reads the row and the list, or
 // waits for it.
 //
-// The form shows each warning's limit folded with the ones merged into it, so
-// a limit is compared with that and, where the writer changed it, replaces
-// this row's limits on the merged warnings too (limitChanges).
+// The form shows each warning's limit folded with the ones merged into it (on
+// a story, read over its universe's), so a limit is compared with that and,
+// where the writer changed it, replaces this row's limits on the merged
+// warnings too (limitChanges).
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
@@ -289,6 +293,19 @@ export async function savePreferences(
 				.where(owned)
 				.for('update');
 			if (!row) return 'missing';
+			// A story's form shows each limit read over its universe's (shownLimit).
+			const universe =
+				'storyId' in target
+					? normalisePreferences(
+							(
+								await tx
+									.select({ preferences: universes.assistantPreferences })
+									.from(stories)
+									.innerJoin(universes, eq(universes.id, stories.universeId))
+									.where(eq(stories.id, target.storyId))
+							)[0]?.preferences
+						)
+					: null;
 			const warnings = await liveWarnings(tx);
 			const live = new Set(warnings.map(({ slug }) => slug));
 			outdated =
@@ -298,7 +315,7 @@ export async function savePreferences(
 				? (Object.fromEntries(
 						Object.entries(changes).filter(([key]) => !key.startsWith(WARNING_PREFIX))
 					) as PreferenceChanges)
-				: limitChanges(changes, normalisePreferences(row.preferences), warnings);
+				: limitChanges(changes, normalisePreferences(row.preferences), warnings, universe);
 		}
 		const saved = await tx
 			.update(table)

@@ -815,9 +815,10 @@ These cut across the surfaces and the architecture.
   admin's content warning list (decided on #1782), named from the live list
   at read time (`liveWarnings`), so a warning removed drops out with its
   limits (the confirmation on Admin > Content warnings says so, and that
-  merging it instead keeps them; one already merged away still counts toward
-  its survivor, which its stories keep showing; a removed warning cannot be
-  merged until it is restored, so its limits never come back unseen). A merge copies nothing: `liveWarnings`
+  merging it instead keeps them; one merged away and removed afterwards drops
+  out of its survivor's fold too, and an undone merge leaves it out; a removed
+  warning cannot be merged until it is restored, so its limits never come
+  back unseen). A merge copies nothing: `liveWarnings`
   gives each live warning the slugs of the warnings merged into it (along
   the whole chain), and `effectivePreferences` folds them in at read time.
   Each of those keys resolves as the story's own, else the universe's, and
@@ -843,12 +844,13 @@ These cut across the surfaces and the architecture.
   rename's `moveContentLimits` lock the story and universe rows they change
   in id order before updating them, so the two cannot deadlock.
   `updated_at` is kept, as for a rename. `mergeTag` refuses a source already
-  merged into another entry: its merge is undone first. The form shows each live warning's limit folded within its own
-  row (`foldedPreferences`), with a note when the other level or a merged
-  warning decides what applies; on a story whose own limit there is `write`
-  only through a merged warning while the universe's `avoid` is on the
-  survivor's own key, the select shows the universe's choice instead
-  (`shownPreferences`, `limitNote` 'survivor'). The form posts a limit only
+  merged into another entry: its merge is undone first. The form shows each live warning's limit as `shownLimit` reads
+  it: on a universe, folded within its own row (`foldedPreferences`); on a
+  story, blank (following the universe) when the story has no key of its own
+  on the warning or one merged into it, else the limit that applies, each key
+  the story's own, else the universe's, folded (`shownPreferences`). A note
+  says when a merged warning or the universe decides what applies
+  (`limitNote`). The form posts a limit only
   for a select the writer changed on the page (`changedLimits`), so an
   autosave of another field never touches a limit, along with a fingerprint
   of the warning list it was built from (`warningListFingerprint`: each live
@@ -857,22 +859,30 @@ These cut across the surfaces and the architecture.
   list; when it differs from the form's, no limit is changed and the save
   answers with the outdated notice below. `mergeTag` and `unmergeTag` lock
   the survivor's row, so a merge into or out of a posted warning waits for
-  the save. A changed limit is compared with the folded value
-  (`limitChanges`): a different value is stored and clears that row's keys on
-  the warnings merged into it, so the writer's choice is the one that applies
-  at that level; the same value changes no limit but is stored on the
-  warning's own key when that key differs, which is how a story overrides the
-  universe's `avoid` on the survivor.
+  the save. A changed limit is compared with the shown value
+  (`limitChanges`), and the same value changes no limit. A different value is
+  the writer's choice for the warning they see, so it is made the one that
+  applies: on a universe it is stored on the warning's key and clears the
+  row's keys on the warnings merged into it; on a story it is stored on all of
+  those keys, so it wins over the universe's limit on any of them (a blank
+  clears them all, so the story follows the universe again).
   Renaming a warning changes its slug, so the writer's limit moves to the new
-  key (`moveContentLimits` in `tags.ts`); a stray key already under the new
-  slug gives way, except that an `avoid` on either key is kept, and renaming
-  back moves the limit back. A preferences form opened before the list
+  key (`moveContentLimits` in `tags.ts`). Only rows with a key under the old
+  slug change, so a key already under the new slug in a row without one stays;
+  where a row has both, an `avoid` on either is kept, else the old key's
+  value. Renaming back moves the limit back. `renameTag` locks the tag's row
+  and reads its slug inside its transaction, so a second rename at the same
+  time (a double submit, or two moderators) waits and moves the limits from
+  the slug the first one left. A preferences form opened before the list
   changed (a merge, an undone merge, a rename, a removal or a restore) that
   changes a limit is outdated (`readPreferencesForm` catches a posted slug no
   longer live, `savePreferences` a fingerprint that no longer matches): its
   save writes every other field and the notes as usual, writes no limit at
   all, so every stored limit stays as it is, and answers with a notice that
-  the limits were not changed and the page needs a reload to set them. Review runs key the limits by the warning's tag id, which a rename
+  the limits were not changed and the page needs a reload to set them. A refresh that brings a changed list to the open page some other way (another
+  section's save, or moving between sections after a refused save) drops the
+  limit changes not yet saved, puts their selects back to what is stored and
+  says so, so a later save cannot post the rebuilt select as the change. Review runs key the limits by the warning's tag id, which a rename
   keeps, so a rename does not restart a capped run. The limits go to drafts, `/write`, the chat frame and every
   review (the continuity confirm stage and the MCP continuity brief
   included), and say they never change the model's own usage policies. The summary

@@ -430,37 +430,41 @@ export async function renameTag(
 	const cleaned = cleanTagName(rawName);
 	if (!cleaned.ok) return { ok: false, message: cleaned.reason };
 	const slug = tagSlug(cleaned.name);
-	const [tag] = await db
-		.select()
-		.from(tags)
-		.where(and(eq(tags.id, id), eq(tags.kind, kind)));
-	if (!tag) return { ok: false, message: 'That entry does not exist.' };
 	const clashMessage = 'Another entry already has that name. Merge them instead.';
-	const [clash] = await db
-		.select({ id: tags.id, name: tags.name, removedAt: tags.removedAt })
-		.from(tags)
-		.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
-	if (clash && clash.id !== id) {
-		return {
-			ok: false,
-			message: clash.removedAt
-				? `The removed entry "${clash.name}" has that name. Restore it and merge into it, or pick another name.`
-				: clashMessage
-		};
-	}
 	try {
-		await db.transaction(async (tx) => {
+		return await db.transaction(async (tx): Promise<ModResult> => {
+			// Locked and read here, so a second rename (a double submit, or two
+			// moderators at once) waits for the first and moves the limits from
+			// the slug the first one left, not from the slug both started with.
+			const [tag] = await tx
+				.select()
+				.from(tags)
+				.where(and(eq(tags.id, id), eq(tags.kind, kind)))
+				.for('update');
+			if (!tag) return { ok: false, message: 'That entry does not exist.' };
+			const [clash] = await tx
+				.select({ id: tags.id, name: tags.name, removedAt: tags.removedAt })
+				.from(tags)
+				.where(and(eq(tags.kind, tag.kind), eq(tags.slug, slug)));
+			if (clash && clash.id !== id) {
+				return {
+					ok: false,
+					message: clash.removedAt
+						? `The removed entry "${clash.name}" has that name. Restore it and merge into it, or pick another name.`
+						: clashMessage
+				};
+			}
 			await tx.update(tags).set({ name: cleaned.name, slug }).where(eq(tags.id, id));
 			if (tag.kind === 'warning' && slug !== tag.slug) {
 				await moveContentLimits(tx, tag.slug, slug);
 			}
+			return { ok: true };
 		});
 	} catch (err) {
 		// Another rename, or a writer adding that tag, took the slug since the check.
 		if (isUniqueViolation(err)) return { ok: false, message: clashMessage };
 		throw err;
 	}
-	return { ok: true };
 }
 
 // Points a tag at another of the same kind. Reads follow it, so every story
@@ -556,13 +560,14 @@ function mergedSource(name: string): ModResult {
 }
 
 // A writer's limit (Assistant preferences) on a renamed warning moves to its
-// new slug. The new slug is free on the list, but a key under it can be left
-// from older data or an import; that key was never chosen for this warning, so
-// it gives way, except that an "avoid" on either key is kept, which only keeps
-// the Assistant more careful. Renaming back moves the limit back. In each row
-// an "avoid" stays, a "write" stays or becomes "avoid", and no limit stays
-// none or becomes "avoid", so with a story's key over its universe's the
-// limit read is never wider than before.
+// new slug. Only rows with a key under the old slug change. The new slug is
+// free on the list, but a key under it can be left from older data or an
+// import; where a row has both, that key was never chosen for this warning,
+// so it gives way, except that an "avoid" on either key is kept, which only
+// keeps the Assistant more careful. Renaming back moves the limit back. A row
+// with no key under the old slug is left as it is, so a key under the new
+// slug (one that a rename which committed first moved there) is never
+// cleared.
 async function moveContentLimits(tx: Database, fromSlug: string, toSlug: string) {
 	const from = warningKey(fromSlug);
 	const to = warningKey(toSlug);
@@ -574,7 +579,7 @@ async function moveContentLimits(tx: Database, fromSlug: string, toSlug: string)
 				then jsonb_build_object(${to}::text, 'avoid')
 			when ${column} ->> ${from}::text = 'write' then jsonb_build_object(${to}::text, 'write')
 			else '{}'::jsonb end`,
-		where: sql`jsonb_exists_any(${column}, array[${from}, ${to}]::text[])`
+		where: sql`jsonb_exists(${column}, ${from}::text)`
 	});
 	// updated_at is kept as it was: this is the site's change, not the writer's.
 	const story = move(stories.assistantPreferences);
@@ -661,7 +666,8 @@ export async function unmergeTag(db: Database, kind: TagKind, id: string): Promi
 			if (now.id !== found.id) continue;
 			const top = locked.find((each) => each.id === found.id);
 			survivor = { ...found, slug: top?.slug ?? '', removed: top?.removed ?? false };
-			merged = locked.filter((each) => each.mergedIntoId === found.id);
+			// A removed entry's limits did not apply while merged (liveWarnings).
+			merged = locked.filter((each) => each.mergedIntoId === found.id && !each.removed);
 		}
 		if (!survivor || !tag) return false;
 		await tx.update(tags).set({ mergedIntoId: null }).where(eq(tags.id, id));

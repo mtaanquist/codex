@@ -383,85 +383,91 @@ export function foldedLimit(
 }
 
 // The preferences with each live warning's key set to its folded limit, the
-// way the form shows them: one select per live warning, standing for it and
-// the warnings merged into it.
+// way a universe's form shows them: one select per live warning, standing for
+// it and the warnings merged into it.
 export function foldedPreferences(
 	preferences: StoredPreferences,
 	warnings: readonly Pick<LiveWarning, 'slug' | 'merged'>[]
 ): StoredPreferences {
-	const out: Record<string, unknown> = { ...preferences };
-	for (const warning of warnings) {
-		const key = warningKey(warning.slug);
-		const limit = foldedLimit(preferences, warning);
-		if (limit) out[key] = limit;
-		else delete out[key];
-	}
-	return out as StoredPreferences;
+	return shownPreferences(preferences, null, warnings);
 }
 
-// The content-limit changes a form makes to one row (a story or a universe),
-// given what it stores. The form posts only the limits the writer changed
-// (CHANGED_LIMITS_FIELD), and shows each live warning's folded limit
-// (foldedPreferences). A posted value different from that fold is the
-// writer's own choice for the warning at this level: it is stored, and this
-// row's keys on the warnings merged into it are cleared, so the choice is the
-// one that applies. A posted value equal to the fold changes no limit, but is
-// still stored on the warning's own key when that key differs: on a story,
-// that key is what overrides the universe's limit on the same warning.
+// What a warning's select shows, and what a save compares a posted limit
+// with. On a universe (no universe given): its limit folded within its row.
+// On a story: blank, which follows the universe, when the story has no limit
+// of its own on the warning or on one merged into it; else the limit that
+// applies, each key the story's own, else the universe's, folded.
+export function shownLimit(
+	own: StoredPreferences,
+	universe: StoredPreferences | null,
+	warning: Pick<LiveWarning, 'slug' | 'merged'>
+): ContentLimit | undefined {
+	if (!universe) return foldedLimit(own, warning);
+	const keys = [warning.slug, ...warning.merged].map((slug) => warningKey(slug));
+	if (!keys.some((key) => own[key as `warning:${string}`] !== undefined)) return undefined;
+	return foldedLimit({ ...universe, ...own }, warning);
+}
+
+// The content-limit changes a form makes to one row (a story, given its
+// universe's stored preferences, or a universe), given what it stores. The
+// form posts only the limits the writer changed (CHANGED_LIMITS_FIELD), and
+// shows each live warning as shownLimit does. A posted value equal to that
+// changes no limit. A different one is the writer's choice for the warning
+// they see, so it is made the one that applies at this level: on a universe
+// it is stored on the warning's key and the keys of the warnings merged into
+// it are cleared; on a story it is stored on all of those keys, so it wins
+// over the universe's limit on any of them (a blank clears them all, so the
+// story follows the universe again).
 export function limitChanges(
 	changes: PreferenceChanges,
 	stored: StoredPreferences,
-	warnings: readonly LiveWarning[]
+	warnings: readonly LiveWarning[],
+	universe: StoredPreferences | null = null
 ): PreferenceChanges {
 	const out: PreferenceChanges = { ...changes };
 	for (const warning of warnings) {
 		const key = warningKey(warning.slug);
 		if (!(key in changes)) continue;
 		const posted = changes[key] ?? undefined;
-		if (posted === foldedLimit(stored, warning)) {
-			if (stored[key as `warning:${string}`] === posted) delete out[key];
+		if (posted === shownLimit(stored, universe, warning)) {
+			delete out[key];
 			continue;
 		}
-		for (const slug of warning.merged) out[warningKey(slug)] = null;
+		for (const slug of warning.merged) {
+			out[warningKey(slug)] = universe ? (posted ?? null) : null;
+		}
 	}
 	return out;
 }
 
-// Why a warning's limit on the form is not simply its own key, or null. The
-// select shows the limit folded within its row (foldedPreferences), which can
-// come from a warning merged into this one ('merged'). On a story whose own
-// limit is "write" while the universe's settings keep the warning off the
-// page: 'universe' when that comes from a warning merged into this one, which
-// the story cannot override, else 'survivor' when it comes from the universe's
-// limit on this warning itself, which the story's own limit on it overrides.
-// The story's select then shows the universe's choice (see shownPreferences).
+// Why a warning's select (shownLimit) does not simply show its own key:
+// 'universe' on a story where the universe's limit on the warning or on one
+// merged into it keeps it off the page over the story's own "write";
+// 'merged' where the limit comes from a warning merged into this one.
 export function limitNote(
 	own: StoredPreferences,
 	universe: StoredPreferences | null,
 	warning: Pick<LiveWarning, 'slug' | 'merged'>
-): 'merged' | 'universe' | 'survivor' | null {
-	const shown = foldedLimit(own, warning);
-	if (universe && shown === 'write') {
-		const combined: Record<string, unknown> = { ...universe, ...own };
-		if (warning.merged.some((slug) => combined[warningKey(slug)] === 'avoid')) return 'universe';
-		if (combined[warningKey(warning.slug)] === 'avoid') return 'survivor';
-	}
-	return shown && own[warningKey(warning.slug) as `warning:${string}`] !== shown ? 'merged' : null;
+): 'merged' | 'universe' | null {
+	const shown = shownLimit(own, universe, warning);
+	if (!shown) return null;
+	if (shown !== foldedLimit(own, warning)) return 'universe';
+	return own[warningKey(warning.slug) as `warning:${string}`] !== shown ? 'merged' : null;
 }
 
 // The values a preferences form starts from: the row's own preferences with
-// each warning folded (foldedPreferences), except that a story's warning in
-// the 'survivor' case of limitNote shows as blank, which reads as the
-// universe's choice. Picking "Write freely" there then stores the story's own
-// limit on the warning (limitChanges).
+// each live warning's key set as shownLimit shows it.
 export function shownPreferences(
 	own: StoredPreferences,
 	universe: StoredPreferences | null,
 	warnings: readonly Pick<LiveWarning, 'slug' | 'merged'>[]
 ): StoredPreferences {
-	const out = foldedPreferences(own, warnings) as Record<string, unknown>;
+	const out: Record<string, unknown> = { ...own };
 	for (const warning of warnings) {
-		if (limitNote(own, universe, warning) === 'survivor') delete out[warningKey(warning.slug)];
+		const key = warningKey(warning.slug);
+		const limit = shownLimit(own, universe, warning);
+		if (limit) out[key] = limit;
+		else delete out[key];
 	}
 	return out as StoredPreferences;
 }

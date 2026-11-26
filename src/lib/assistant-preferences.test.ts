@@ -7,6 +7,7 @@ import {
 	inheritedLabel,
 	limitChanges,
 	limitNote,
+	shownLimit,
 	shownPreferences,
 	warningListFingerprint,
 	CHANGED_LIMITS_FIELD,
@@ -486,7 +487,7 @@ describe('content limits folded with the warnings merged in', () => {
 		const stored = { 'warning:gore': 'avoid', 'warning:violence': 'write' } as const;
 		expect(
 			limitChanges({ 'warning:violence': 'avoid', tense: 'past' }, stored, [violence])
-		).toEqual({ 'warning:violence': 'avoid', tense: 'past' });
+		).toEqual({ tense: 'past' });
 		expect(limitChanges({ 'warning:violence': 'write' }, stored, [violence])).toEqual({
 			'warning:violence': 'write',
 			'warning:gore': null
@@ -499,10 +500,10 @@ describe('content limits folded with the warnings merged in', () => {
 		expect(
 			limitChanges({ 'warning:violence': 'avoid' }, { 'warning:violence': 'avoid' }, [violence])
 		).toEqual({});
-		// The fold again from a merged key only: stored on the own key, nothing cleared.
+		// The fold again from a merged key only: no change either.
 		expect(
 			limitChanges({ 'warning:violence': 'write' }, { 'warning:gore': 'write' }, [violence])
-		).toEqual({ 'warning:violence': 'write' });
+		).toEqual({});
 		// A warning with nothing merged works as before.
 		const plain = { ...violence, merged: [] };
 		expect(limitChanges({ 'warning:violence': 'write' }, stored, [plain])).toEqual({});
@@ -531,23 +532,43 @@ describe('content limits folded with the warnings merged in', () => {
 		).not.toBe(a);
 	});
 
-	it("shows the universe's own limit where the story's comes only from a merged warning", () => {
+	it("shows on a story the limit that applies, the universe's keys included", () => {
 		const own = { 'warning:gore': 'write' } as const;
 		const universe = { 'warning:violence': 'avoid' } as const;
-		expect(limitNote(own, universe, violence)).toBe('survivor');
-		expect(shownPreferences(own, universe, [violence])).toEqual({ 'warning:gore': 'write' });
+		expect(shownLimit(own, universe, violence)).toBe('avoid');
+		expect(limitNote(own, universe, violence)).toBe('universe');
+		expect(shownPreferences(own, universe, [violence])).toEqual({
+			'warning:gore': 'write',
+			'warning:violence': 'avoid'
+		});
 		expect(shownPreferences(own, null, [violence])).toMatchObject({ 'warning:violence': 'write' });
-		// An avoid on a merged warning too is one the story cannot override here.
-		expect(
-			limitNote(
-				own,
-				{ 'warning:violence': 'avoid', 'warning:blood': 'avoid' },
-				{
-					...violence,
-					merged: ['gore', 'blood']
-				}
-			)
-		).toBe('universe');
+		// With no limit of its own the story follows the universe: blank.
+		expect(shownLimit({}, { 'warning:gore': 'avoid' }, violence)).toBeUndefined();
+		expect(shownPreferences({}, { 'warning:gore': 'avoid' }, [violence])).toEqual({});
+	});
+
+	it("stores a story's changed limit on the merged warnings too, so it wins over the universe", () => {
+		// The review's case: Gore merged into Violence, the universe keeps Gore
+		// off the page, the story writes Violence freely.
+		const own = { 'warning:violence': 'write' } as const;
+		const universe = { 'warning:gore': 'avoid' } as const;
+		expect(shownLimit(own, universe, violence)).toBe('avoid');
+		expect(limitChanges({ 'warning:violence': 'write' }, own, [violence], universe)).toEqual({
+			'warning:violence': 'write',
+			'warning:gore': 'write'
+		});
+		// Posting what the select showed changes nothing.
+		expect(limitChanges({ 'warning:violence': 'avoid' }, own, [violence], universe)).toEqual({});
+		// A blank clears the story's own keys, so it follows the universe.
+		expect(limitChanges({ 'warning:violence': null }, own, [violence], universe)).toEqual({
+			'warning:violence': null,
+			'warning:gore': null
+		});
+		expect(limitChanges({ 'warning:violence': null }, {}, [violence], universe)).toEqual({});
+		expect(limitChanges({ 'warning:violence': 'avoid' }, {}, [violence], universe)).toEqual({
+			'warning:violence': 'avoid',
+			'warning:gore': 'avoid'
+		});
 	});
 
 	it('notes a limit that comes from a merged warning or from the universe', () => {

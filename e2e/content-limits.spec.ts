@@ -169,3 +169,91 @@ test('a limit not stored with a change queued behind it still says why', async (
 		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
 	}
 });
+
+// A limit whose save was refused, with the warning list changed by the time
+// the page refreshes, is dropped with a note instead of being lost quietly
+// on the next save.
+test('a refused limit pick is not lost quietly when the list changes', async ({ page }) => {
+	const stamp = Date.now();
+	const slug = `e2e-refused-${stamp}`;
+	const name = `E2E refused ${stamp}`;
+	const added = `e2e-refused-added-${stamp}`;
+	await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+	try {
+		await openUniversePreferences(page);
+		const words = page.getByLabel('Length of a drafted scene, in words');
+		await words.fill('5');
+		await words.press('Tab');
+		await expect(page.getByRole('alert')).toBeVisible();
+		await page.getByRole('combobox', { name }).selectOption('avoid');
+		await expect(page.getByRole('alert')).toBeVisible();
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+			`E2E refused added ${stamp}`,
+			added
+		]);
+		const nav = page.getByRole('navigation', { name: 'Universe settings' });
+		await nav.getByRole('link', { name: 'Entity categories' }).click();
+		await nav.getByRole('link', { name: 'Assistant preferences' }).click();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await expect(
+			page.getByRole('status').filter({ hasText: 'the content limits you changed were not saved' })
+		).toBeVisible();
+		await page.getByLabel('Length of a drafted scene, in words').fill('500');
+		await page.getByLabel('Length of a drafted scene, in words').press('Tab');
+		await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+		await page.reload();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+	} finally {
+		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+	}
+});
+
+// A pick made while a slow refresh is landing, whose own save is refused
+// because the list changed, stays reset to what is stored once that slow
+// refresh lands.
+test('a refused pick is not put back by a slower refresh', async ({ page }) => {
+	const stamp = Date.now();
+	const slug = `e2e-putback-${stamp}`;
+	const name = `E2E putback ${stamp}`;
+	const added = `e2e-putback-added-${stamp}`;
+	await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [name, slug]);
+	try {
+		await openUniversePreferences(page);
+		await query(`insert into tags (kind, name, slug) values ('warning', $1, $2)`, [
+			`E2E putback added ${stamp}`,
+			added
+		]);
+		let first = true;
+		let landed!: () => void;
+		const slowLanded = new Promise<void>((resolve) => (landed = resolve));
+		await page.route(
+			(url) => url.pathname.endsWith('__data.json'),
+			async (route) => {
+				if (first) {
+					first = false;
+					await new Promise((resolve) => setTimeout(resolve, 1500));
+					await route.continue();
+					landed();
+					return;
+				}
+				await route.continue();
+			}
+		);
+		const refresh = page.waitForRequest((request) => request.url().includes('__data.json'));
+		await page.getByRole('combobox', { name: 'Tense' }).selectOption('present');
+		await refresh;
+		await page.getByRole('combobox', { name }).selectOption('avoid');
+		await expect(
+			page.getByRole('status').filter({ hasText: 'your content limits were not changed' })
+		).toBeVisible();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await slowLanded;
+		await page.waitForTimeout(300);
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+		await page.unrouteAll({ behavior: 'wait' });
+		await page.reload();
+		await expect(page.getByRole('combobox', { name })).toHaveValue('');
+	} finally {
+		await query(`delete from tags where slug = any($1) and kind = 'warning'`, [[slug, added]]);
+	}
+});
