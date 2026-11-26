@@ -330,7 +330,8 @@ function billedSearches(
 
 // Whether a message_delta's usage reports the searches.
 function reportsSearches(usage: Block | undefined): boolean {
-	return usage?.server_tool_use != null;
+	const tool = usage?.server_tool_use as { web_search_requests?: unknown } | null | undefined;
+	return tool?.web_search_requests != null;
 }
 
 // How a streamed content block changes the count of billable searches: a

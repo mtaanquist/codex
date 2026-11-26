@@ -339,6 +339,85 @@ describe('pg_dump round trip', () => {
 		expect(second).toMatchObject({ ok: true, skipped: true, key: null });
 		expect(objects.size).toBe(1);
 	}, 60_000);
+
+	it('restores as a role that is not a superuser, keeping pgvector', async (context) => {
+		const { execFile } = await import('node:child_process');
+		const { promisify } = await import('node:util');
+		try {
+			await promisify(execFile)('pg_restore', ['--version']);
+		} catch (error) {
+			if (process.env.CI) throw error;
+			context.skip();
+			return;
+		}
+		const { store, objects } = memoryStore();
+		const result = await runBackup(db, 'manual', {
+			config,
+			store,
+			databaseUrl: TEST_DATABASE_URL
+		});
+		if (!result.ok) {
+			if (process.env.CI) throw new Error(result.reason);
+			context.skip();
+			return;
+		}
+		const { writeFile, rm } = await import('node:fs/promises');
+		const dumpFile = `${process.env.TMPDIR ?? '/tmp'}/codex-backup-nonsuper.dump`;
+		await writeFile(dumpFile, objects.get(result.key!)!);
+
+		// pgvector is not a trusted extension: a superuser creates it once, and
+		// the restoring role, which owns the database, must not need to again.
+		const base = new URL(TEST_DATABASE_URL);
+		const name = `${base.pathname.slice(1)}_nonsuper`;
+		const role = `${name}_role`;
+		const adminUrl = new URL(TEST_DATABASE_URL);
+		adminUrl.pathname = '/postgres';
+		const admin = new pg.Client({ connectionString: adminUrl.toString() });
+		await admin.connect();
+		try {
+			await admin.query(`drop database if exists "${name}" with (force)`);
+			await admin.query(`drop role if exists "${role}"`);
+			await admin.query(`create role "${role}" login password 'restore'`);
+			await admin.query(`create database "${name}" owner "${role}"`);
+			const superUrl = new URL(TEST_DATABASE_URL);
+			superUrl.pathname = `/${name}`;
+			const superClient = new pg.Client({ connectionString: superUrl.toString() });
+			await superClient.connect();
+			await superClient.query('create extension vector');
+			await superClient.query(`alter schema public owner to "${role}"`);
+			await superClient.end();
+
+			const roleUrl = new URL(superUrl);
+			roleUrl.username = role;
+			roleUrl.password = 'restore';
+			// Twice: onto the empty database, then over the restored one.
+			await restoreDumpFile(roleUrl.toString(), dumpFile);
+			const added = new pg.Client({ connectionString: roleUrl.toString() });
+			await added.connect();
+			// A sequence owned by its column goes with the table, not on its own.
+			await added.query('create table added_later (id int generated always as identity)');
+			await added.end();
+			await restoreDumpFile(roleUrl.toString(), dumpFile);
+
+			const check = new pg.Client({ connectionString: roleUrl.toString() });
+			await check.connect();
+			try {
+				const { rows } = await check.query(
+					`select (select count(*)::int from pg_extension where extname = 'vector') as vector,
+						to_regclass('public.users') is not null as users,
+						to_regclass('public.added_later') is null as cleared`
+				);
+				expect(rows[0]).toEqual({ vector: 1, users: true, cleared: true });
+			} finally {
+				await check.end();
+			}
+		} finally {
+			await admin.query(`drop database if exists "${name}" with (force)`);
+			await admin.query(`drop role if exists "${role}"`);
+			await admin.end();
+			await rm(dumpFile, { force: true });
+		}
+	}, 60_000);
 });
 
 describe('latestBackupKey', () => {

@@ -13,14 +13,39 @@ version, date, branch or PR where it had one.
 v4.0.0 lane follow-ups (2026-11-26, `staging/v4.0.0`, #1794, #1795, #1798,
 #1799, #1807). The Browse setting cache stays (the root layout reads it on
 every page), but the two places that act on it, the story settings save and
-the admin page, now read it fresh, so a web process with a stale copy never
-drops an author's "List in Browse" tick. Pages elsewhere can still show or
+the admin page, now read it fresh, and the save only takes the box when the
+form showed it (a hidden `browseBox` field), so neither a stale process nor a
+stale page drops or clears an author's "List in Browse" choice. Pages elsewhere can still show or
 hide Browse for up to a minute after a change; LISTEN/NOTIFY was not worth it
 for that. A stream that dropped before `message_delta` now bills the
 `web_search` calls it saw, marked estimated. The fandom count's subquery got a
-partial index on `universes.fandom_id` (migration 0131). The card's lock-wait
+partial index on `universes.fandom_id` (migration 0132). The card's lock-wait
 test uses the default two-second lock timeout, like the staging dispatch test,
 rather than threading test-only timeouts through `callMcpTool`.
+
+pgvector required (v4.0.0, 2026-11-26, `staging/v4.0.0`, #1783). Mads
+chose to make pgvector required in the major release rather than optional, so
+the embeddings work in v4.1.0 (#1784 to #1788) can rely on it. The shipped
+database image moved from `postgres:18.6-alpine3.24` to
+`pgvector/pgvector:0.8.7-pg18-trixie`, since pgvector publishes no Alpine
+image. That switch is not just an image swap: Alpine's musl and Debian's glibc
+sort text differently under `en_US.utf8`, and an existing volume opened by the
+new image had out-of-order text indexes (checked with amcheck on a database
+migrated to 0127 under the old image). Migration 0131 detects that case (the
+database records no collation version while the server reports one, which is
+what a musl-created database looks like under glibc) and reindexes every table
+the role owns before creating the extension; databases created under glibc
+skip it. `ALTER DATABASE ... REFRESH COLLATION VERSION` cannot run from a NULL
+version, so the version stays unrecorded; the migration runs once anyway. The
+migrator checks `pg_available_extensions` first so a server without pgvector
+stops with directions instead of a bare Postgres error, and a refused
+`CREATE EXTENSION` (pgvector is not a trusted extension) is reworded the same
+way. Review found that a restore dropped `public` with the extension in it, so
+a role that is not a superuser could never restore again; the restore now
+empties `public` but keeps its extensions, and leaves out
+`COMMENT ON EXTENSION`, which only the extension's owner may run. Building pgvector into
+our own Alpine image was the alternative; it would have kept the sort order
+but meant publishing and maintaining a database image.
 
 Guided pass card in the AI client (v4.0.0, 2026-11-26, `staging/v4.0.0`,
 #1362). An app with the new `apply` permission can show the guided pass over

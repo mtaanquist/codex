@@ -124,6 +124,34 @@ export async function holdOffLongReads(client: pg.ClientBase): Promise<number> {
 	return cancelled.size;
 }
 
+export const PGVECTOR_MISSING_MESSAGE =
+	'The database has no pgvector extension, which Codex needs from version 4.0.0. ' +
+	'Switch the database image to pgvector/pgvector:0.8.7-pg18-trixie (or install pgvector ' +
+	'on your own PostgreSQL 18 server) and start Codex again. See "Updating" in docs/SELF-HOSTING.md.';
+
+/** Whether pgvector is installed in this database or can be installed. */
+export async function hasPgvector(client: pg.ClientBase): Promise<boolean> {
+	const { rows } = await client.query<{ ok: boolean }>(
+		`select exists (select 1 from pg_available_extensions where name = 'vector') as ok`
+	);
+	return rows[0].ok;
+}
+
+// pgvector is not a trusted extension, so a role that is not a superuser
+// passes the availability check yet fails to create it.
+export function explainPgvectorError(error: unknown): unknown {
+	const cause = (error as { cause?: unknown })?.cause ?? error;
+	const { code, message } = (cause ?? {}) as { code?: string; message?: string };
+	if (code === '42501' && message?.includes('"vector"')) {
+		return new Error(
+			'The database user may not create the pgvector extension. Connect to the Codex database as a ' +
+				'superuser, run CREATE EXTENSION vector; and start Codex again. See "Updating" in docs/SELF-HOSTING.md.',
+			{ cause: error }
+		);
+	}
+	return error;
+}
+
 // Applies pending migrations while holding a session advisory lock, so the app
 // and worker (or several replicas) starting together apply each migration once:
 // drizzle reads the last applied row outside its transaction and takes no lock.
@@ -140,12 +168,17 @@ export async function runMigrations(connectionString: string, migrationsFolder =
 	try {
 		await client.query(`select pg_advisory_lock(hashtext('codex:migrations'))`);
 		if (await hasPendingMigrations(client, entries)) {
+			// Checked first so a server without it stops with directions instead
+			// of postgres's bare "extension is not available".
+			if (!(await hasPgvector(client))) throw new Error(PGVECTOR_MISSING_MESSAGE);
 			const cancelled = await holdOffLongReads(client);
 			if (cancelled > 0) {
 				console.log(`Cancelled ${cancelled} long-running read(s) so the migrations can run.`);
 			}
 		}
-		await migrate(drizzle(client), { migrationsFolder });
+		await migrate(drizzle(client), { migrationsFolder }).catch((error: unknown) => {
+			throw explainPgvectorError(error);
+		});
 	} finally {
 		// Ending the session releases the lock, also when migrate threw.
 		await client.end();
