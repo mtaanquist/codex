@@ -60,7 +60,7 @@ describe('reviewSettingsText', () => {
 		editReasons: 'always' as const,
 		contentLimits: [{ id: 'gore', name: 'Gore', limit: 'avoid' as const }]
 	};
-	const language = { language: 'en-GB', native: 'da' };
+	const language = { language: 'en-GB' as const, native: 'da' as const };
 	const cases: ReviewCategory[][] = [[], ['prose'], ['mechanics'], ['lore']];
 	for (const categories of cases) {
 		it(`matches the task message for ${categories.join('+') || 'general notes'}`, () => {
