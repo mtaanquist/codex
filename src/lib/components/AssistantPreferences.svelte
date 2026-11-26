@@ -6,7 +6,7 @@
 	// default (infer from the text, check everything). Standalone stories share
 	// a hidden universe, whose settings the writer sees as the defaults for all
 	// standalone stories, so standalone words it that way.
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import { enhance } from '#lib/enhance';
 	import { autosaveSubmit, autosubmitForm, ownAction } from '#lib/autosave-form';
@@ -130,19 +130,55 @@
 	// eslint-disable-next-line svelte/prefer-svelte-reactivity
 	const changedLimits = new Map<string, number>();
 	const markChanged = (slug: string) => changedLimits.set(slug, (changedLimits.get(slug) ?? 0) + 1);
+	// Saves run one at a time, so two quick changes cannot land out of order and
+	// store the earlier one. A change made while a save is in flight is sent
+	// once that save lands, with whatever the form then holds; the save it
+	// follows skips its refresh, which would write that save's values back
+	// over the newer ones in the form.
+	let saving = false;
+	let queued = false;
 	const submitPreferences: SubmitFunction = async (input) => {
+		if (saving) {
+			queued = true;
+			input.cancel();
+			return;
+		}
+		saving = true;
 		const sent = new Map(changedLimits);
 		for (const slug of sent.keys()) input.formData.append(CHANGED_LIMITS_FIELD, slug);
 		input.formData.set(WARNING_LIST_FIELD, warningListFingerprint(warnings));
 		const after = await autosaveSubmit(input);
 		return async (opts) => {
-			if (opts.result.type === 'success') {
+			const { result, formElement } = opts;
+			if (result.type === 'success') {
 				for (const [slug, count] of sent) {
 					if (changedLimits.get(slug) === count) changedLimits.delete(slug);
 				}
 			}
+			saving = false;
+			if (queued) {
+				queued = false;
+				// Started before this save's own bookkeeping, so leaving the page
+				// still waits for it.
+				formElement.requestSubmit();
+				if (after) await after({ ...opts, update: async () => {} });
+				return;
+			}
 			if (after) await after(opts);
 			else await opts.update();
+			// A save that left the limits alone (the warning list changed) shows
+			// what is stored again. A select only takes its value when the stored
+			// one changes, so the writer's pick would otherwise stay on show.
+			if (result.type === 'success' && result.data?.notice && sent.size > 0) {
+				await tick();
+				for (const slug of sent.keys()) {
+					const key = warningKey(slug);
+					const select = formElement.elements.namedItem(key);
+					if (select instanceof HTMLSelectElement && !changedLimits.has(slug)) {
+						select.value = values[key] ?? '';
+					}
+				}
+			}
 		};
 	};
 
@@ -309,30 +345,33 @@
 					the page" wins, and the choice shown here already counts both. Pick a different choice to
 					replace both.
 				</p>
-				{#each warnings as warning, index (warning.slug)}
-					{@const key = warningKey(warning.slug)}
-					{@const hint = limitHint(warning)}
-					<!-- A slug may hold characters an element id cannot, so the id goes by position. -->
-					<div class="field">
-						<label for={id(`warning-${index}`)}>{warning.name}</label>
-						<!-- Marked before the form's own change handler saves it. -->
-						<select
-							id={id(`warning-${index}`)}
-							class="select"
-							name={key}
-							value={values[key] ?? ''}
-							onchange={() => markChanged(warning.slug)}
-						>
-							<option value="">{blankLabel(key, 'Not set')}</option>
-							{#each CONTENT_LIMITS as option (option.value)}
-								<option value={option.value}>{option.label}</option>
-							{/each}
-						</select>
-						{#if hint}
-							<p class="field-hint">{hint}</p>
-						{/if}
-					</div>
-				{/each}
+				<!-- Built again when the list changes, so each select shows what is stored. -->
+				{#key warningListFingerprint(warnings)}
+					{#each warnings as warning, index (warning.slug)}
+						{@const key = warningKey(warning.slug)}
+						{@const hint = limitHint(warning)}
+						<!-- A slug may hold characters an element id cannot, so the id goes by position. -->
+						<div class="field">
+							<label for={id(`warning-${index}`)}>{warning.name}</label>
+							<!-- Marked before the form's own change handler saves it. -->
+							<select
+								id={id(`warning-${index}`)}
+								class="select"
+								name={key}
+								value={values[key] ?? ''}
+								onchange={() => markChanged(warning.slug)}
+							>
+								<option value="">{blankLabel(key, 'Not set')}</option>
+								{#each CONTENT_LIMITS as option (option.value)}
+									<option value={option.value}>{option.label}</option>
+								{/each}
+							</select>
+							{#if hint}
+								<p class="field-hint">{hint}</p>
+							{/if}
+						</div>
+					{/each}
+				{/key}
 			</fieldset>
 		{/if}
 		<div class="field">
