@@ -476,7 +476,7 @@ function preferenceFields(setting: PreferenceSetting) {
 		editReasons: setting.editReasons,
 		summaryLength: setting.summaryLength,
 		draftWords: setting.draftWords,
-		contentLimits: setting.contentLimits
+		contentLimits: setting.contentLimits.map(({ name, limit }) => ({ name, limit }))
 	};
 }
 

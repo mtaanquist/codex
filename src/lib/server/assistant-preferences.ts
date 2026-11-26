@@ -7,9 +7,7 @@ import { mcpAccountEnabled, mcpInstanceEnabled } from './mcp/settings.ts';
 import { listEntries } from './tags.ts';
 import {
 	effectivePreferences,
-	isWarningKey,
 	NO_PREFERENCES,
-	normalisePreferences,
 	type PreferenceChanges,
 	type PreferenceSetting
 } from '../assistant-preferences.ts';
@@ -131,52 +129,34 @@ function mergedPreferences(
 	return sql`(${merged} - array[${keys}]::text[])`;
 }
 
+// The notice an outdated form's save answers with (see readPreferencesForm).
 export const OUTDATED_WARNINGS =
-	'The list of content warnings has changed. Reload the page and set your limits again.';
+	'Your other changes are saved. The list of content warnings has changed, so your content limits were not changed. Reload the page to set them.';
 
 // Saves the preferences form of a story or a universe the caller owns:
 // 'missing' when there is no such live row of theirs. Notes left undefined
-// (the post did not carry the field) are kept. An outdated form (see
-// readPreferencesForm) is refused, with nothing written, when it would clear
-// or change a warning's stored limit to anything but "Keep it off the page",
-// since it may not show what the list's changes moved there.
+// (the post did not carry the field) are kept.
 export async function savePreferences(
 	db: Database,
 	ownerId: string,
 	target: { storyId: string } | { universeId: string },
-	input: { changes: PreferenceChanges; notes: string | null | undefined; outdated?: true }
-): Promise<'saved' | 'missing' | 'outdated'> {
+	input: { changes: PreferenceChanges; notes: string | null | undefined }
+): Promise<'saved' | 'missing'> {
 	const notes = input.notes === undefined ? {} : { assistantNotes: input.notes };
 	const table = 'storyId' in target ? stories : universes;
-	const live = and(
-		'storyId' in target ? eq(stories.id, target.storyId) : eq(universes.id, target.universeId),
-		eq(table.ownerId, ownerId),
-		isNull(table.deletedAt)
-	);
-	return await db.transaction(async (tx) => {
-		const changes = { ...input.changes };
-		if (input.outdated) {
-			const [row] = await tx
-				.select({ preferences: table.assistantPreferences })
-				.from(table)
-				.where(live)
-				.for('update');
-			if (!row) return 'missing';
-			const stored = normalisePreferences(row.preferences) as Record<string, unknown>;
-			for (const key of Object.keys(changes).filter(isWarningKey)) {
-				if (changes[key] === 'avoid') continue;
-				if ((stored[key] ?? null) !== changes[key]) return 'outdated';
-				delete changes[key];
-			}
-		}
-		const saved = await tx
-			.update(table)
-			.set({
-				assistantPreferences: mergedPreferences(table.assistantPreferences, changes),
-				...notes
-			})
-			.where(live)
-			.returning({ id: table.id });
-		return saved.length > 0 ? 'saved' : 'missing';
-	});
+	const saved = await db
+		.update(table)
+		.set({
+			assistantPreferences: mergedPreferences(table.assistantPreferences, input.changes),
+			...notes
+		})
+		.where(
+			and(
+				'storyId' in target ? eq(stories.id, target.storyId) : eq(universes.id, target.universeId),
+				eq(table.ownerId, ownerId),
+				isNull(table.deletedAt)
+			)
+		)
+		.returning({ id: table.id });
+	return saved.length > 0 ? 'saved' : 'missing';
 }

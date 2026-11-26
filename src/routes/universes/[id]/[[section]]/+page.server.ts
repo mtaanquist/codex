@@ -156,13 +156,9 @@ export const actions: Actions = {
 		}
 		const result = await savePreferences(db, locals.user!.id, { universeId: universe.id }, read);
 		if (result === 'missing') error(404, 'Not found');
-		if (result === 'outdated') {
-			// No submitted values: the form shows the stored ones once reloaded.
-			return fail(409, {
-				action: 'assistant-preferences',
-				message: OUTDATED_WARNINGS,
-				submitted: null
-			});
+		// Saved, with a notice that the limits were left alone.
+		if (read.outdated) {
+			return { action: 'assistant-preferences', saved: true, notice: OUTDATED_WARNINGS };
 		}
 		return { action: 'assistant-preferences', saved: true };
 	},

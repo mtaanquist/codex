@@ -427,6 +427,7 @@ export function buildConfirmMessage(
 		`Suspected contradiction: ${claim.trim()}`,
 		CONFIRMED_NOTE,
 		chatEditReasonLine(preferences),
+		contentLimitsLine(preferences, 'check'),
 		`If the text does not bear it out, or the two passages can both be true, reply with the single word "discarded" and leave no notes. ${CONTINUITY_ONLY}`,
 		'The scenes involved:',
 		...scenes.map((scene) => confirmSceneBlock(scene, bodyChars))
@@ -457,6 +458,7 @@ export function buildContinuityBrief(options: {
 		'Stage 2, confirm. Take one suspected contradiction at a time and read the full text of the scenes involved with get_scene.',
 		CONFIRMED_NOTE,
 		chatEditReasonLine(options.preferences ?? NO_PREFERENCES),
+		contentLimitsLine(options.preferences ?? NO_PREFERENCES, 'check'),
 		`If the text does not bear it out, or the two passages can both be true, drop it and leave no note. ${CONTINUITY_ONLY}`
 	]
 		.filter(Boolean)

@@ -64,8 +64,9 @@ export function reviewSettingsKey(
 	// reasons on edits and the content limits.
 	choices: PreferenceSetting | null = null
 ): string {
+	// By slug, so an admin renaming a warning does not restart a capped run.
 	const limits = [...(choices?.contentLimits ?? [])]
-		.map(({ name, limit }) => `${name}:${limit}`)
+		.map(({ slug, limit }) => `${slug}:${limit}`)
 		.sort();
 	const input = JSON.stringify({
 		language: language.language,

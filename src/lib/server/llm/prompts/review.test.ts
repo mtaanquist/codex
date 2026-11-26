@@ -353,6 +353,21 @@ describe('buildConfirmMessage', () => {
 		expect(buildContinuityBrief({ scope: 'universe' })).not.toContain('When you suggest an edit');
 	});
 
+	it("states the writer's content limits, and nothing when none are set", () => {
+		const limited = {
+			...NO_PREFERENCES,
+			contentLimits: [{ slug: 'gore', name: 'Gore', limit: 'avoid' as const }]
+		};
+		for (const text of [
+			buildConfirmMessage('claim', [], 100, limited),
+			buildContinuityBrief({ scope: 'story', storyId: 'story-1', preferences: limited })
+		]) {
+			expect(text).toContain('They want these kept off the page: Gore.');
+		}
+		expect(buildConfirmMessage('claim', [], 100)).not.toContain('content limits');
+		expect(buildContinuityBrief({ scope: 'universe' })).not.toContain('content limits');
+	});
+
 	it('caps a long body and marks the cut', () => {
 		const message = buildConfirmMessage(
 			'claim',
