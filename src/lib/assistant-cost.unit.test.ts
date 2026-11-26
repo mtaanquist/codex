@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { cacheReadRate, cacheWriteRate, usageCostUsd, usageRowCostUsd } from './assistant-cost';
+import {
+	WEB_SEARCH_FEE_USD,
+	cacheReadRate,
+	cacheWriteRate,
+	usageCostUsd,
+	usageRowCostUsd
+} from './assistant-cost';
 
 const price = { prompt: 0.001, completion: 0.002 };
 
@@ -69,6 +75,13 @@ describe('usageCostUsd', () => {
 		expect(usageCostUsd(reported, usage, 'openai')).toBeCloseTo(cost, 10);
 		expect(usageCostUsd({ ...price, cacheRead: 0 }, usage)).toBeCloseTo(600 * 0.001, 10);
 	});
+
+	it('adds the fee for each web search on top of the tokens', () => {
+		const usage = { promptTokens: 100, completionTokens: 0, webSearchRequests: 3 };
+		expect(usageCostUsd(price, usage)).toBeCloseTo(0.1 + 3 * WEB_SEARCH_FEE_USD, 10);
+		expect(usageCostUsd({ ...price, webSearch: 0.02 }, usage)).toBeCloseTo(0.1 + 0.06, 10);
+		expect(usageCostUsd(price, { ...usage, webSearchRequests: null })).toBeCloseTo(0.1, 10);
+	});
 });
 
 describe('usageRowCostUsd', () => {
@@ -80,7 +93,9 @@ describe('usageRowCostUsd', () => {
 		completionTokens: 0,
 		cachedPromptTokens: 1000,
 		cacheWriteTokens: null,
-		cacheWrite1hTokens: null
+		cacheWrite1hTokens: null,
+		webSearchRequests: null,
+		price: null
 	};
 
 	it("prices a row at its own provider's cache rate, not the current one", () => {
@@ -93,6 +108,12 @@ describe('usageRowCostUsd', () => {
 	it('falls back to the current provider for a row with none recorded', () => {
 		expect(usageRowCostUsd(pricing, row, 'gemini')).toBeCloseTo(cacheReadRate('gemini'), 10);
 		expect(usageRowCostUsd(pricing, row)).toBeCloseTo(cacheReadRate(), 10);
+	});
+
+	it('prices a row at the price stored on it, not the current list', () => {
+		const stored = { prompt: 0.002, completion: 0 };
+		expect(usageRowCostUsd(pricing, { ...row, price: stored }, 'custom')).toBeCloseTo(2, 10);
+		expect(usageRowCostUsd({}, { ...row, price: stored }, 'custom')).toBeCloseTo(2, 10);
 	});
 
 	it('is null for an unpriced model or a row with no counts', () => {
