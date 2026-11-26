@@ -10,6 +10,15 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 12 (2026-11-26, `staging/v4.0.0`, #1865,
+#1866). The content limits form skipped its warning-list check while a save's
+own refresh ran, so a change made in that window could outlive a failed save
+and go out under the new list. The `refreshing` early return is gone: the
+check always runs, sparing only the save in flight and an outdated save whose
+refresh is landing. The draft copy now shares the save's savepoint relock
+(`lockUntilSettled`). Moderation, connected apps, usage help and self-hosting
+had lows only. Mads chose to hide titles a moderator may not open.
+
 v4.0.0 staging review, round 11 (2026-11-26, `staging/v4.0.0`, #1860 to
 #1863). Content limits again: an outdated answer that came back after the
 warning list moved left its change in place, so a queued save sent it with
