@@ -263,9 +263,11 @@ Your words are sent only to the endpoint you set here.
   Codex kept those counts are priced with every token sent at the plain price.
   Reused text in each request is counted at the rate of the provider it was
   sent to (requests made before Codex kept the provider use your current
-  provider's rate). The price per model comes from your current price list, so
-  after you switch provider, earlier requests may show no cost or a different
-  one.
+  provider's rate). Each request keeps the price its model had when it was
+  sent, so a later price change or provider switch does not change its cost.
+  Requests made before Codex kept the price, or sent while their model had
+  no price, use your current price list, so after you switch provider they
+  may show no cost or a different one.
   The estimate shown before a review counts each scene's first read, and the
   passes over the whole story, at the higher first-time rate.
 - **Web searches**: with the Claude provider, the list shows how many web
@@ -275,8 +277,12 @@ Your words are sent only to the endpoint you set here.
   request itself, so with a low cap a review can stop before it reads its
   first scene; raise the cap or turn web search off if that happens. The
   estimate shown before a review leaves searches out, and says so when web
-  search is on. Claude also charges a fee for each search on top of tokens;
-  that fee is not in the cost shown here or counted by the spend cap.
+  search is on. Claude also charges a fee for each search on top of tokens
+  (10 dollars per 1,000 searches). The cost shown includes it, and the spend
+  cap sets aside the fee for the most searches a request can make. Part of
+  the room it keeps is a set amount for each search's results, and a search
+  can bring back more than that, so a run that searches can end over the
+  cap.
 
 ### Which model to pick for each role
 

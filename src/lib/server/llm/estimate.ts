@@ -463,6 +463,11 @@ export async function estimateStoryReview(
 	// The first part, in run order (the habits survey runs before the scenes,
 	// the consistency survey after), whose largest request would be held: a
 	// held request stops the run there.
+	// Only each part's first request round is checked. The gateway checks every
+	// round of the agent loop, and later rounds resend tool results, so a run
+	// can be held sooner than this says (the note says so). The habits
+	// figure also leaves out the open and known pattern lists a chapter survey
+	// carries (see pattern-pass.ts).
 	const largestCeiling: [OverCapPart, number][] = [
 		['habits', largestPatternCeiling],
 		['scene', largestSceneCeiling],
