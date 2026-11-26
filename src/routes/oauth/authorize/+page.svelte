@@ -160,8 +160,8 @@
 			</fieldset>
 			<p class="auth-note">
 				The app can never delete or publish your writing. It only changes your text when you accept
-				one of its suggestions, or, if you allow it, when it accepts one for you. You can disconnect
-				it at any time under Account, Connected apps.
+				one of its suggestions, or, if you allow it, when you accept one on the app's own card. You
+				can disconnect it at any time under Account, Connected apps.
 			</p>
 			<div class="auth-actions">
 				<button class="btn btn-primary" type="submit">Allow</button>

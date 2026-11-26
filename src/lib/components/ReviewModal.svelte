@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { NO_PRICE_NOTE, capNotAppliedNote, money, overWarnNote } from '#lib/cost-notes';
+	import {
+		NO_PRICE_NOTE,
+		capNotAppliedNote,
+		estimateCostNote,
+		money,
+		overWarnNote
+	} from '#lib/cost-notes';
 	import { resolve } from '$app/paths';
 	import { modal } from '#lib/modal';
 	import { capContinueAdvice, capStopPhrase, formatNumber } from '#lib/format';
@@ -480,10 +486,7 @@
 						{/if}
 						{#if estimate.estCostUsd !== undefined}
 							<p class="rm-note">
-								That is about ${money(estimate.estCostUsd)} to send{estimate.estCompletionCostUsd !==
-								undefined
-									? `, plus about $${money(estimate.estCompletionCostUsd)} for the replies.`
-									: "; the model's replies cost extra."}
+								{estimateCostNote(estimate.estCostUsd, estimate.estCompletionCostUsd)}
 							</p>
 						{:else}
 							<p class="rm-note">{NO_PRICE_NOTE}</p>

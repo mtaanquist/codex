@@ -84,7 +84,7 @@
 	<p class="admin-lede">
 		Let an AI app you use read your writing in Codex and leave suggestions for you. An app can never
 		delete or publish your text. It only changes your text when you accept one of its suggestions,
-		or, if you allow it, when it accepts one for you.
+		or, if you allow it, when you accept one on the app's own card.
 	</p>
 </div>
 
