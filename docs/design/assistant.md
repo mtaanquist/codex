@@ -1282,7 +1282,7 @@ Exceptions to "one toolbox for both", each with its reason:
   the note, the edit, the stamp of its wording and an expiry (two hours),
   sent in the result's `_meta`. The reference client hands `_meta` to the
   card; the spec does not promise it stays away from the model, so the key
-  narrows the risk and the guarantee rests on the client. A revised edit
+  narrows the risk and the guarantee rests on the client. The residual risk is an arbitrary write, not only an accept: Edit sends the card's own `replacement`, so a client that leaked the key to its model would let the model write any wording into the scene (the help says to tick the permission only for a trusted app). A revised edit
   needs a new key. Skip stays in the card (the edit waits in Codex). Discuss
   sends the edit to the conversation as the writer's message (`ui/message`),
   and each accept is told to the model through `ui/update-model-context`;

@@ -1120,7 +1120,8 @@ export async function reviewStoryScenes(
 			settings.language,
 			wording ? settings.preferences : null,
 			readsNative(parseCategories(opts.categories), patterns),
-			wording ? settings.styleNotes : null
+			wording ? settings.styleNotes : null,
+			settings.preferences
 		)
 	});
 	const done = new Set(run.state.completed);

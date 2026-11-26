@@ -20,7 +20,7 @@ const { queueAssistantReview, queueAssistantSummaries, reviewJobState, ASSISTANT
 	await import('./jobs');
 const { ASSISTANT_JOB_EXPIRY_SECONDS } = await import('./queues');
 const { reviewScopeKey, reviewSettingsKey } = await import('./review-runs');
-const { NO_PREFERENCES } = await import('../assistant-preferences');
+const { NO_PREFERENCES, effectivePreferences } = await import('../assistant-preferences');
 const { NO_LANGUAGE } = await import('../writing-languages');
 
 beforeEach(() => {
@@ -130,6 +130,46 @@ describe('reviewSettingsKey', () => {
 				true
 			)
 		).not.toBe(plain);
+	});
+
+	it("changes when a story turns its universe's notes off", () => {
+		const universe = { preferences: {}, notes: 'Fragments are on purpose.' };
+		const using = effectivePreferences({ preferences: {}, notes: null }, universe);
+		const off = effectivePreferences(
+			{ preferences: { useUniverseNotes: 'no' }, notes: null },
+			universe
+		);
+		expect(reviewSettingsKey(NO_LANGUAGE, using, true)).not.toBe(
+			reviewSettingsKey(NO_LANGUAGE, off, true)
+		);
+	});
+
+	it('changes with the feedback, reasons and content limits, even for a pass that skips wording', () => {
+		const plain = reviewSettingsKey(NO_LANGUAGE, null, false, null, NO_PREFERENCES);
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false)).toBe(plain);
+		const limits = (limit: 'avoid' | 'write') => ({
+			...NO_PREFERENCES,
+			contentLimits: [{ name: 'Gore', limit }]
+		});
+		const keys = [
+			plain,
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, { ...NO_PREFERENCES, feedback: 'thorough' }),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, { ...NO_PREFERENCES, editReasons: 'never' }),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, limits('avoid')),
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, limits('write'))
+		];
+		expect(new Set(keys).size).toBe(keys.length);
+		// The order the limits were listed in does not count.
+		const two = (a: string, b: string) => ({
+			...NO_PREFERENCES,
+			contentLimits: [
+				{ name: a, limit: 'avoid' as const },
+				{ name: b, limit: 'avoid' as const }
+			]
+		});
+		expect(reviewSettingsKey(NO_LANGUAGE, null, false, null, two('Gore', 'War'))).toBe(
+			reviewSettingsKey(NO_LANGUAGE, null, false, null, two('War', 'Gore'))
+		);
 	});
 
 	it('changes with the style notes, which the prose is judged against', () => {

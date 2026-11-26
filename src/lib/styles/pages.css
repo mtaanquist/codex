@@ -308,6 +308,12 @@
 	background: var(--bg-active);
 	color: var(--text);
 }
+/* A quiet destructive action in a row of ghost buttons (Delete, Take down). */
+.btn-ghost.danger,
+.btn-ghost.danger:hover:not(:disabled),
+.btn-ghost.danger:active:not(:disabled) {
+	color: var(--danger-ink);
+}
 .btn-danger {
 	background: var(--danger-fill);
 	color: var(--danger-contrast);

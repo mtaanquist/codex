@@ -1,6 +1,6 @@
 # Connecting an app
 
-If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never change, delete or publish your writing. Everything it leaves waits for you to accept or turn down.
+If you already use an AI app, such as Claude, you can connect it to Codex. The app can then read your stories and your world, and leave suggestions and comments for you. You stay in charge: a connected app can never delete or publish your writing, and it only changes your text when you accept one of its suggestions. Everything it leaves waits for you to accept or turn down.
 
 Connecting an app is separate from the Assistant inside Codex. You do not need to set up the Assistant to connect an app, and connecting an app does not change how the Assistant works.
 
@@ -52,7 +52,7 @@ Nothing the app leaves changes your writing until you decide.
 - **Suggested characters, places and lore entries**, and **proposals to split a scene in two**, are in the universe's settings under Suggestions. See [Planning your world](/docs/planning).
 - **A draft the app wrote for a scene** waits on that scene. Open the scene and select the Assistant tab on the right to read it, change it, and keep or discard it. A universe holds up to 20 drafts from apps at a time; keep or discard some to make room for more. See [Writing in the editor](/docs/editor).
 
-Each of these shows the name of the app that left it.
+Each of these shows the name of the app that left it. When an app has left a suggested entry, a proposed split or a draft, your library shows how many are waiting beside the universe's name. Select it to see them under Suggestions.
 
 ## Work through a note in the app
 
@@ -64,7 +64,7 @@ If you ticked "Let you accept its suggestions in the app", you can go through a 
 - **Discuss** hands the edit back to the conversation, so you can talk it over with the app before you decide.
 - **Open in Codex** opens the same note in Codex.
 
-Only you can accept an edit, by pressing a button on the card. The app cannot accept one for you. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead. When an app has left a suggested entry, a proposed split or a draft, your library shows how many are waiting beside the universe's name. Select it to see them under Suggestions.
+Accept and Edit on the card are meant for you alone. Codex relies on the app to keep those buttons away from its AI, and it cannot check that a person pressed them, so tick this only for an app you trust. To turn this off, disconnect the app and connect it again without ticking it. Not every app can show cards; if yours cannot, it gives you a link to the note in Codex instead.
 
 ## Disconnect an app
 

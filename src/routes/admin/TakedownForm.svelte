@@ -57,8 +57,7 @@
 	</select>
 	<button
 		type="submit"
-		class="btn btn-ghost btn-sm"
-		style="color:var(--danger-ink);"
+		class="btn btn-ghost btn-sm danger"
 		aria-label="{label} {title}"
 	>
 		{label}

@@ -314,7 +314,9 @@ take a fresh dump first if there is anything live worth keeping.
    backup uploads in full. The database user in `DATABASE_URL` must own the
    `public` schema (the bundled Postgres does); on a managed database where it
    does not, the restore stops with "must be owner of schema public" and
-   changes nothing.
+   changes nothing. A dump from 4.0.0 or later also needs the pgvector extension: when
+   you restore into a new, empty database as a user that is not a superuser,
+   connect to it as a superuser and run `CREATE EXTENSION vector;` first.
 
 3. Bring the stack back:
 
@@ -452,14 +454,20 @@ is missing (nothing is changed when that happens).
    image tag to 4.0.0 or later. Keep the same volume; the data carries over.
    Do not run an older Codex against the new database image, even briefly:
    until 4.0.0 has rebuilt the indexes, it can write rows the indexes miss.
-4. Run `docker compose pull` and then `docker compose up -d`.
+4. Run `docker compose pull` and then `docker compose up -d`. If you build
+   Codex from source, run `docker compose up -d --build` instead.
 
 The first start of the new version rebuilds the database's indexes if the
 data was created by the old image, because the new image sorts text slightly
 differently. This runs once, inside the migration, and takes a moment on a
-large database. To go back to an earlier version afterwards, restore the
-backup from step 1 onto the old image; switching the image back without a
-restore leaves the indexes out of order again.
+large database. Wait for the app's log to show that the migrations finished;
+if `docker compose up -d` reports the app as unhealthy while they run, run it
+again once they are done. To go back to an earlier version afterwards, switch
+the image back, restore the backup from step 1, and then rebuild the indexes
+by running `REINDEX DATABASE codex;` in the database (the restore leaves the
+job queue's tables alone, so their indexes would stay out of order).
+Switching the image back without these steps leaves the indexes out of
+order.
 
 If you run your own PostgreSQL 18 server, install pgvector on it (the
 `postgresql-18-pgvector` package on Debian and Ubuntu) before updating. Only

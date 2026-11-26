@@ -58,8 +58,14 @@ export function reviewSettingsKey(
 	language: LanguageSetting,
 	preferences: PreferenceSetting | null,
 	readsNative: boolean,
-	styleNotes: string | null = null
+	styleNotes: string | null = null,
+	// The choices every pass states whatever it reads: how much feedback, the
+	// reasons on edits and the content limits.
+	choices: PreferenceSetting | null = null
 ): string {
+	const limits = [...(choices?.contentLimits ?? [])]
+		.map(({ name, limit }) => `${name}:${limit}`)
+		.sort();
 	const input = JSON.stringify({
 		language: language.language,
 		native: readsNative ? hintedNative(language) : null,
@@ -70,7 +76,11 @@ export function reviewSettingsKey(
 		},
 		// Only when set, so a run made before style notes were keyed, on a story
 		// without them, keeps its key.
-		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {})
+		...(styleNotes?.trim() ? { styleNotes: styleNotes.trim() } : {}),
+		// Each only when set, so a run made before these were keyed keeps its key.
+		...(choices?.feedback ? { feedback: choices.feedback } : {}),
+		...(choices?.editReasons ? { editReasons: choices.editReasons } : {}),
+		...(limits.length ? { contentLimits: limits } : {})
 	});
 	return createHash('sha256').update(input).digest('hex').slice(0, 16);
 }

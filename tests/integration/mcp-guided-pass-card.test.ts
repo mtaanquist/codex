@@ -513,6 +513,17 @@ describe('decide_suggestion', () => {
 		expect(await sceneBody(alice.sceneId)).toBe(BODY);
 	});
 
+	it('refuses an edit whose passage the writer changed since, and places one they did not', async () => {
+		const { noteId, pass, keys } = await opened();
+		const changed = 'Rain fell.\n\nThe red door creaked.\n\nA dark lantern swung in the open wind.';
+		await db.update(scenes).set({ bodyMd: changed }).where(eq(scenes.id, alice.sceneId));
+		expect((await decide(alice.token, accepting(noteId, pass.edits[0], keys))).isError).toBe(true);
+		expect(await sceneBody(alice.sceneId)).toBe(changed);
+		const result = await decide(alice.token, accepting(noteId, pass.edits[1], keys));
+		expect(result.isError).toBe(false);
+		expect(await sceneBody(alice.sceneId)).toBe(changed.replace('dark lantern', 'dim lantern'));
+	});
+
 	it('refuses an edit revised since the writer saw it', async () => {
 		const { noteId, pass, keys } = await opened();
 		const [first] = pass.edits;
