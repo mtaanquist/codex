@@ -78,6 +78,7 @@ export async function listOpenReports(db: Database, limit = 100) {
 			handle: publications.handle,
 			title: publications.title,
 			storyId: publications.storyId,
+			isCurrent: publications.isCurrent,
 			editionRemovedAt: publications.removedAt,
 			// Set only by a moderator's takedown, not by account deletion.
 			editionRemovedReason: publications.removedReason,

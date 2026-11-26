@@ -809,7 +809,10 @@ inline ad-hoc SVG in components.
   controls. There is no custom tooltip primitive; do not build one ad hoc.
 - Banners: `.revision-banner` for the past-revision state is the reference
   pattern for a centre-column banner. `SceneConflictBanner.svelte` is
-  built on it.
+  built on it. In the admin area a form result is a `.status-banner`:
+  `.error` with `role="alert"` for a refusal, `.ok` (with a `.dot` and a
+  `.v` line) with `role="status"` for a success. Do not inline the banner
+  colours.
 
 ### Assistant text
 

@@ -408,6 +408,12 @@
 							<span class="toggle-track"></span>
 						</label>
 					</div>
+					<!-- Without JavaScript the toggle cannot save itself. -->
+					<noscript>
+						<div class="settings-actions">
+							<button type="submit" class="btn btn-secondary btn-sm">Save</button>
+						</div>
+					</noscript>
 					<FormStatus
 						error={form?.scope === 'browse' && form.message ? form.message : null}
 						success={form?.scope === 'browse' && form.saved ? 'Saved.' : null}

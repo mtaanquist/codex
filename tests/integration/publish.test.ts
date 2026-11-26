@@ -22,6 +22,7 @@ import { instanceStats } from '../../src/lib/server/admin';
 import {
 	isPublicAsset,
 	isPublicAvatar,
+	moderatorMayReadAsset,
 	listBrowseBlocked,
 	listLiveEditions,
 	LIVE_EDITIONS_PAGE_SIZE,
@@ -240,6 +241,38 @@ describe('takedown and covers', () => {
 		);
 		await takedownPublication(db, current.id, null, 'other');
 		expect(await isPublicAsset(db, asset.id)).toBe(false);
+		// A moderator can still see it on the edition's moderation page.
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+	});
+
+	it('lets a moderator see the images of a withdrawn story only once it was taken down', async () => {
+		const [asset] = await db
+			.insert(assets)
+			.values({
+				ownerId: authorId,
+				universeId,
+				kind: 'inline',
+				filename: 'map.png',
+				contentType: 'image/png',
+				byteSize: 8,
+				storageKey: 'codex-assets/map'
+			})
+			.returning();
+		await db.insert(scenes).values({
+			storyId,
+			globalPosition: 2,
+			bodyMd: `![map](/assets/${asset.id})`
+		});
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(false);
+		await takedownPublication(db, published.publicationId, null, 'other');
+		expect(await moderatorMayReadAsset(db, asset.id)).toBe(true);
+		expect(await isPublicAsset(db, asset.id)).toBe(false);
+		expect(await moderatorMayReadAsset(db, '00000000-0000-4000-8000-000000000000')).toBe(false);
 	});
 });
 
@@ -309,6 +342,57 @@ describe('moderation lists', () => {
 		);
 		// LIKE wildcards in the search are taken literally.
 		expect((await listLiveEditions(db, { query: '%' })).total).toBe(0);
+	});
+
+	it('counts, searches and pages with editions an account deletion hid mixed in', async () => {
+		const ids = await publishMany(LIVE_EDITIONS_PAGE_SIZE + 2);
+		// Every third one hidden, as a cancelled account deletion leaves it.
+		const hidden = ids.filter((_, i) => i % 3 === 0);
+		for (const id of hidden) {
+			await db
+				.update(publications)
+				.set({ removedAt: new Date(), hiddenByAccountDeletion: true })
+				.where(eq(publications.id, id));
+		}
+		// One taken down drops out of the count.
+		await takedownPublication(db, ids[1], null, 'spam');
+		const total = LIVE_EDITIONS_PAGE_SIZE + 1;
+
+		const first = await listLiveEditions(db);
+		const second = await listLiveEditions(db, { page: 1 });
+		expect(first).toMatchObject({ total, hasMore: true });
+		expect(first.editions).toHaveLength(LIVE_EDITIONS_PAGE_SIZE);
+		expect(second.editions).toHaveLength(1);
+		const listed = [...first.editions, ...second.editions];
+		expect(new Set(listed.map((row) => row.id)).size).toBe(total);
+		expect(
+			listed
+				.filter((row) => row.hiddenAt)
+				.map((row) => row.id)
+				.sort()
+		).toEqual([...hidden].sort());
+		expect((await instanceStats(db)).publishedEditions).toBe(total);
+
+		const found = await listLiveEditions(db, { query: 'Story 51' });
+		expect(found.editions).toMatchObject([{ id: ids[51] }]);
+		expect(found.editions[0].hiddenAt).toBeInstanceOf(Date);
+	});
+
+	it('brings a hidden edition that was taken down and restored back with its pill', async () => {
+		const [id] = await publishMany(1);
+		await db
+			.update(publications)
+			.set({ removedAt: new Date(), hiddenByAccountDeletion: true })
+			.where(eq(publications.id, id));
+		await takedownPublication(db, id, null, 'spam');
+		expect((await listLiveEditions(db)).editions.some((row) => row.id === id)).toBe(false);
+
+		expect(await restorePublication(db, id, null)).toBe(true);
+		const live = await listLiveEditions(db);
+		const row = live.editions.find((edition) => edition.id === id);
+		expect(row?.hiddenAt).toBeInstanceOf(Date);
+		expect(row?.restoredAt).toBeInstanceOf(Date);
+		expect(live.total).toBe(1);
 	});
 
 	it('lists a story removed from Browse on its own until it is allowed again', async () => {
@@ -393,6 +477,8 @@ describe('inline images owned by someone else', () => {
 			.insert(publicationAssets)
 			.values({ publicationId: published.publicationId, assetId: foreign.id });
 		expect(await isPublicAsset(db, foreign.id)).toBe(false);
+		await takedownPublication(db, published.publicationId, null, 'other');
+		expect(await moderatorMayReadAsset(db, foreign.id)).toBe(false);
 	});
 });
 

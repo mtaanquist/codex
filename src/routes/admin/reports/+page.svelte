@@ -4,6 +4,7 @@
 	import type { PageData, ActionData } from './$types';
 	import { formatDate, formatDateTime } from '#lib/format';
 	import { isReportReason, reportReasonLabel } from '#lib/report-reasons';
+	import { confirmSubmit } from '#lib/confirm.svelte';
 	import TakedownForm from '../TakedownForm.svelte';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -26,10 +27,7 @@
 </div>
 
 {#if form?.scope === 'reports' && form.message}
-	<div
-		class="status-banner"
-		style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-	>
+	<div class="status-banner error" role="alert">
 		<span class="x">{form.message}</span>
 	</div>
 {/if}
@@ -74,6 +72,7 @@
 									id={report.publicationId}
 									title={report.title}
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
+									superseded={!report.isCurrent}
 								/>
 							{/if}
 							{#if report.listedInBrowse && !report.browseBlockedAt}
@@ -85,7 +84,15 @@
 									reason={isReportReason(report.reason) ? report.reason : 'other'}
 								/>
 							{/if}
-							<form method="POST" action="?/dismiss">
+							<form
+								method="POST"
+								action="?/dismiss"
+								onsubmit={confirmSubmit({
+									title: `Dismiss the report about "${report.title}"?`,
+									body: 'The report closes and the edition stays up.',
+									confirmLabel: 'Dismiss report'
+								})}
+							>
 								<input type="hidden" name="reportId" value={report.id} />
 								<button
 									type="submit"

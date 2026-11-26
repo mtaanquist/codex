@@ -10,6 +10,24 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Moderation polish (v4.0.0 lane 4, 2026-11-26, `staging/v4.0.0`). #1539: the
+admin form banners use `.status-banner.error` with `role="alert"` (and `.ok`
+with `role="status"`) instead of inline colours, across the whole admin area
+since the inline style was copied into every section; tag and list actions now
+say what they did. #1538: Take down moved into the shared moderation actions,
+so Published and Reports refuse an edition already down with the same words;
+the confirm for a replaced edition says the newer one comes down too; Dismiss
+asks first; removing a merged entry says its stories keep the survivor;
+renaming or merging into a removed entry names it and says to restore it, and
+the add box lists names that match removed entries apart; FandomSuggest reads
+out its result count, including none; "Stay off Browse" has a Save button
+without JavaScript. The `/admin?section=published` redirect was already gone.
+#1791: the image route serves a moderator the images of an edition they may
+read on its moderation page, with `no-store`. #1797: the overview count and
+Published share `currentNotTakenDown()` (its own module, so the admin script
+does not pull in publish.ts). #1800: `readable` checks the story owner as
+`publicEdition` does. Tests for #1796 and the trash case.
+
 Moderation actions (v4.0.0 lane 3, 2026-11-26, `staging/v4.0.0`). Restore
 and Allow in Browse now record the moderator and time (#1531, migration 0130):
 plain columns beside the existing `removed_by` and `browse_blocked_by`, keeping
@@ -19,8 +37,8 @@ an account deletion hid, with a pill and the Take down button (#1529), and a
 moderator can read an edition at `/admin/published/<id>`, linked from
 Published and the report queue (#1530); an edition of a story made private or
 trashed opens there only once taken down or reported, so withdrawn work stays
-unread. Inline images there load only while the edition is public, because the
-image route serves only readable editions; widening it is #1791.
+unread. Inline images there loaded only while the edition was public; lane 4 widened
+the image route for moderators (#1791).
 Route-level tests cover the moderation actions and both orders of a publish
 racing a takedown (#1775), and design.md now names Remove from Browse in the
 report queue (#1777).

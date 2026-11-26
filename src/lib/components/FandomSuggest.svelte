@@ -28,6 +28,8 @@
 	let results = $state<Fandom[]>([]);
 	let selected = $state(0);
 	let open = $state(false);
+	// Read out after each search, so a screen reader hears a miss as well as matches.
+	let announcement = $state('');
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let latest = 0;
 	const listId = $derived(`${inputId}-fandoms`);
@@ -38,6 +40,7 @@
 		if (query.length < 2) {
 			latest++;
 			results = [];
+			announcement = '';
 			return;
 		}
 		timer = setTimeout(async () => {
@@ -48,6 +51,10 @@
 				results = ((await response.json()) as { results: Fandom[] }).results;
 				selected = 0;
 				open = true;
+				announcement =
+					results.length === 0
+						? 'No known settings match.'
+						: `${results.length} known ${results.length === 1 ? 'setting matches' : 'settings match'}.`;
 			} catch {
 				// Suggestions are a convenience; the field still works without them.
 			}
@@ -58,6 +65,7 @@
 		onPick(fandom);
 		open = false;
 		results = [];
+		announcement = '';
 	}
 
 	function onKeydown(event: KeyboardEvent) {
@@ -104,6 +112,7 @@
 		onkeydown={onKeydown}
 		onblur={() => (open = false)}
 	/>
+	<span class="visually-hidden" role="status">{announcement}</span>
 	<div
 		class="fandom-suggest-list popover"
 		id={listId}

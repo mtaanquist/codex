@@ -21,14 +21,11 @@
 	<div class="admin-card">
 		<form method="POST" action="?/saveEgress">
 			{#if form?.scope === 'egress' && form.message}
-				<div
-					class="status-banner"
-					style="background:var(--danger-soft);border:1px solid color-mix(in oklab, var(--danger) 32%, transparent);"
-				>
+				<div class="status-banner error" role="alert">
 					<span class="x">{form.message}</span>
 				</div>
 			{:else if form?.scope === 'egress' && form.saved}
-				<div class="status-banner ok">
+				<div class="status-banner ok" role="status">
 					<span class="dot"></span><span class="v">Saved.</span>
 				</div>
 			{/if}
