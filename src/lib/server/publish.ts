@@ -33,7 +33,13 @@ import { findAssetReferences } from '#lib/markdown';
 import { storyCoverColor } from '#lib/entity-color';
 import { isForeignKeyViolation, isUniqueViolation } from './db-errors.ts';
 import { storyIsLive } from './universe-scope.ts';
-import { currentNotTakenDown, newerEditionId, readersCanOpen } from './publication-scope.ts';
+import {
+	currentNotTakenDown,
+	moderatorMayRead,
+	newerEditionId,
+	readersCanOpen,
+	titleModeratorMayRead
+} from './publication-scope.ts';
 import { likePattern } from './sql-like.ts';
 import { pageIndex } from './paging.ts';
 import { tagsForStories } from './tags.ts';
@@ -779,7 +785,8 @@ function moderatorName(column: AnyColumn) {
 // The Published page: every story's current edition that is not taken down,
 // newest first, one page at a time, optionally narrowed to a handle or title.
 // That includes editions an account deletion hid (hiddenAt set), so a
-// moderator can still take them down.
+// moderator can still take them down. The title is null, and a search does not
+// match it, when the moderator may not open the edition (titleModeratorMayRead).
 export async function listLiveEditions(
 	db: Database,
 	{ query = '', page = 0 }: { query?: string; page?: number } = {}
@@ -791,16 +798,23 @@ export async function listLiveEditions(
 	const where = and(
 		currentNotTakenDown(),
 		text
-			? or(ilike(publications.handle, handlePattern), ilike(publications.title, likePattern(text)))
+			? or(
+					ilike(publications.handle, handlePattern),
+					sql`${titleModeratorMayRead()} ilike ${likePattern(text)}`
+				)
 			: undefined
 	);
-	const [{ total }] = await db.select({ total: count() }).from(publications).where(where);
+	const [{ total }] = await db
+		.select({ total: count() })
+		.from(publications)
+		.innerJoin(stories, eq(stories.id, publications.storyId))
+		.where(where);
 	// One row past the page says whether a next page exists.
 	const rows = await db
 		.select({
 			id: publications.id,
 			handle: publications.handle,
-			title: publications.title,
+			title: titleModeratorMayRead(),
 			isAdult: publications.isAdult,
 			publishedAt: publications.publishedAt,
 			storyId: publications.storyId,
@@ -843,8 +857,8 @@ export async function listBrowseBlocked(db: Database) {
 			storyId: stories.id,
 			// The current edition's title, which readers saw, not the working
 			// title: the writer may have renamed the story since and made it
-			// private.
-			title: sql<string>`coalesce((select p.title from ${publications} p where p.story_id = ${stories.id} and p.is_current limit 1), '')`,
+			// private. Null when there is none or the moderator may not open it.
+			title: titleModeratorMayRead(),
 			handle: users.handle,
 			browseBlockedAt: stories.browseBlockedAt,
 			browseBlockedReason: stories.browseBlockedReason,
@@ -852,6 +866,10 @@ export async function listBrowseBlocked(db: Database) {
 		})
 		.from(stories)
 		.innerJoin(users, eq(users.id, stories.ownerId))
+		.leftJoin(
+			publications,
+			and(eq(publications.storyId, stories.id), eq(publications.isCurrent, true))
+		)
 		.where(isNotNull(stories.browseBlockedAt))
 		.orderBy(stories.browseBlockedAt);
 }
@@ -863,7 +881,7 @@ export async function listTakenDown(db: Database) {
 		.select({
 			id: publications.id,
 			handle: publications.handle,
-			title: publications.title,
+			title: titleModeratorMayRead(),
 			takenDownAt: takenDownAt(),
 			removedReason: publications.removedReason,
 			removedByName: moderatorName(publications.removedBy),
@@ -896,25 +914,6 @@ function takenDownAt() {
 	return sql<Date | null>`coalesce(${publications.takenDownAt}, ${publications.removedAt})`.mapWith(
 		publications.takenDownAt
 	);
-}
-
-// Whether a moderator may read an edition's text on its own page: it is the
-// current edition of a story still shared (not private, not in the trash), or
-// it has a report that is open, or one closed by a takedown that still holds
-// on the story. A takedown alone does not unlock an edition, so one it put
-// down only because it was the story's current edition (of a story the author
-// made private) stays unread, and once the takedown is lifted (a mistake) its
-// reports unlock nothing. A dismissed report does not unlock it either.
-function moderatorMayRead() {
-	// The takedown that closed a report set the report's resolved_at and the
-	// editions' taken_down_at to the same now() in one transaction, so it still
-	// holds while an edition of the story is down with that time. A restore
-	// clears taken_down_at, and a later takedown sets a later time. A takedown
-	// from before migration 0133 has no taken_down_at and does not hold here.
-	// A takedown sets taken_down_at and closes its reports at one now(), so
-	// each takedown and restore must run in its own top-level transaction.
-	const takedownHolds = sql`exists (select 1 from ${publications} d where d.story_id = ${publications.storyId} and d.removed_reason is not null and d.taken_down_at = ${publicationReports.resolvedAt})`;
-	return sql<boolean>`((${publications.isCurrent} and ${stories.visibility} <> 'private' and ${storyIsLive()}) or exists (select 1 from ${publicationReports} where ${publicationReports.publicationId} = ${publications.id} and (${publicationReports.resolvedAt} is null or (${publicationReports.resolution} = 'taken_down' and ${takedownHolds}))))`;
 }
 
 // Whether an edition is up but no longer the story's current one: the

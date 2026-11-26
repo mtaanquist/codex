@@ -26,6 +26,7 @@ import {
 	moderatorMayReadAsset,
 	listBrowseBlocked,
 	listLiveEditions,
+	listTakenDown,
 	LIVE_EDITIONS_PAGE_SIZE,
 	publicAuthorIdentity,
 	publicEdition,
@@ -449,11 +450,79 @@ describe('moderation lists', () => {
 	it('names a story removed from Browse by its published title, not a later private one', async () => {
 		await publishStory(db, authorId, storyId);
 		expect(await removeFromBrowse(db, storyId, authorId, 'spam')).toBe(true);
+		await db.update(stories).set({ title: 'Letters to my sister' }).where(eq(stories.id, storyId));
+		expect(await listBrowseBlocked(db)).toMatchObject([{ storyId, title: 'Book of Ash' }]);
+
+		// Made private and published again as a preview: neither title shows.
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await listBrowseBlocked(db)).toMatchObject([
+			{ storyId, title: null, handle: 'inkwright' }
+		]);
+		const republished = await publishStory(db, authorId, storyId);
+		if (!republished.ok) throw new Error(republished.reason);
+		const [current] = await db
+			.select({ title: publications.title })
+			.from(publications)
+			.where(eq(publications.id, republished.publicationId));
+		expect(current.title).toBe('Letters to my sister');
+		expect(await listBrowseBlocked(db)).toMatchObject([
+			{ storyId, title: null, handle: 'inkwright' }
+		]);
+	});
+
+	it('hides the title of a private preview edition and does not find it by title', async () => {
 		await db
 			.update(stories)
 			.set({ title: 'Letters to my sister', visibility: 'private' })
 			.where(eq(stories.id, storyId));
-		expect(await listBrowseBlocked(db)).toMatchObject([{ storyId, title: 'Book of Ash' }]);
+		const preview = await publishStory(db, authorId, storyId);
+		if (!preview.ok) throw new Error(preview.reason);
+
+		const live = await listLiveEditions(db);
+		expect(live.total).toBe(1);
+		expect(live.editions).toMatchObject([
+			{ id: preview.publicationId, handle: 'inkwright', title: null, viewable: false }
+		]);
+		expect(await listLiveEditions(db, { query: 'sister' })).toMatchObject({
+			editions: [],
+			total: 0
+		});
+		// The handle still finds it, so it can still be removed from Browse.
+		expect((await listLiveEditions(db, { query: '@inkwright' })).total).toBe(1);
+	});
+
+	it('hides the title of a trashed story and does not find it by title', async () => {
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		expect((await listLiveEditions(db, { query: 'ash' })).editions).toMatchObject([
+			{ id: published.publicationId, title: 'Book of Ash', viewable: true }
+		]);
+
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, storyId));
+		const live = await listLiveEditions(db);
+		expect(live).toMatchObject({ total: 1 });
+		expect(live.editions).toMatchObject([
+			{ id: published.publicationId, title: null, viewable: false }
+		]);
+		expect(await listLiveEditions(db, { query: 'ash' })).toMatchObject({
+			editions: [],
+			total: 0
+		});
+	});
+
+	it('lists a taken-down edition without its title once nothing lets the moderator open it', async () => {
+		const published = await publishStory(db, authorId, storyId);
+		if (!published.ok) throw new Error(published.reason);
+		expect(await takedownPublication(db, published.publicationId, null, 'spam')).toBe(true);
+		// A shared story's current edition opens, so its title shows.
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: published.publicationId, title: 'Book of Ash', viewable: true }
+		]);
+
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, storyId));
+		expect(await listTakenDown(db)).toMatchObject([
+			{ id: published.publicationId, handle: 'inkwright', title: null, viewable: false }
+		]);
 	});
 });
 

@@ -2,7 +2,12 @@ import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from './auth';
 import { publicationReports, publications, stories, universes, users } from './db/schema';
 import { notifyUsers } from './notify';
-import { newerEditionId, newerEditionState, readersCanOpen } from './publication-scope';
+import {
+	newerEditionId,
+	newerEditionState,
+	readersCanOpen,
+	titleModeratorMayRead
+} from './publication-scope';
 import { MAX_REPORT_COMMENT, reportReasonLabel, type ReportReason } from '#lib/report-reasons';
 
 // Readers report a published edition; admins and moderators work the queue.
@@ -147,9 +152,12 @@ export async function dismissReport(
 			.innerJoin(publications, eq(publications.id, publicationReports.publicationId))
 			.where(eq(publicationReports.id, reportId));
 		if (!report) return false;
-		// The lock takedownPublication takes before it checks the report is
-		// open, so a takedown and a dismissal of the same report run one after
-		// the other and the second sees what the first did.
+		// The story lock takedownPublication also takes, so a takedown and a
+		// dismissal on the same story run one after the other. A takedown does not
+		// check the report it was posted from, so one after a dismissal still
+		// goes ahead (when moderatorMayRead allows it) and leaves this report
+		// dismissed; a dismissal after a takedown finds the report closed and
+		// changes nothing.
 		await tx
 			.select({ id: stories.id })
 			.from(stories)
@@ -183,11 +191,13 @@ export async function listRecentlyResolved(db: Database, limit = 20) {
 			resolution: publicationReports.resolution,
 			resolvedAt: publicationReports.resolvedAt,
 			handle: publications.handle,
-			title: publications.title,
+			// Null when the moderator may no longer open the edition.
+			title: titleModeratorMayRead(),
 			resolvedByName: users.displayName
 		})
 		.from(publicationReports)
 		.innerJoin(publications, eq(publications.id, publicationReports.publicationId))
+		.innerJoin(stories, eq(stories.id, publications.storyId))
 		.leftJoin(users, eq(users.id, publicationReports.resolvedBy))
 		.where(sql`${publicationReports.resolvedAt} is not null`)
 		.orderBy(desc(publicationReports.resolvedAt))

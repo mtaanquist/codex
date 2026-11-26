@@ -5,7 +5,7 @@
 	import { actionKeepingQuery, withQuery } from '#lib/href';
 	import { formatDate, formatNumber } from '#lib/format';
 	import TakedownForm from '../TakedownForm.svelte';
-	import { reportReasonLabel } from '#lib/report-reasons';
+	import { moderationEditionName, moderationRowName, reportReasonLabel } from '#lib/report-reasons';
 
 	let { data, form }: { data: PageData; form: ActionData } = $props();
 
@@ -27,9 +27,9 @@
 	<h1 class="admin-title">Published editions</h1>
 	<p class="admin-lede">
 		The latest edition of every story writers have published, unless it is taken down. That includes
-		stories since made private or moved to the trash, and editions hidden by an account deletion.
-		Take an edition down to remove it from the public pages. Open a title to read the edition, also
-		after it is taken down. Reports from readers are under Reports.
+		editions hidden by an account deletion. A story the writer made private or moved to the trash
+		shows only the writer's handle. Take an edition down to remove it from the public pages. Open a
+		linked title to read the edition. Reports from readers are under Reports.
 	</p>
 </div>
 
@@ -77,10 +77,12 @@
 						<div class="list-main">
 							<div class="list-title">
 								{#if edition.viewable}
-									<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+									<a href={editionHref(edition.id)}>
+										{moderationRowName(edition.handle, edition.title)}
+									</a>
 								{:else}
 									<span title="The writer made this story private or moved it to the trash.">
-										@{edition.handle}/{edition.title}
+										{moderationRowName(edition.handle, edition.title)}
 									</span>
 								{/if}
 								{#if edition.hiddenAt}<span class="pill">
@@ -107,10 +109,20 @@
 						</div>
 						<div class="list-actions">
 							{#if edition.viewable}
-								<TakedownForm id={edition.id} title={edition.title} readable={edition.readable} />
+								<TakedownForm
+									id={edition.id}
+									title={edition.title}
+									handle={edition.handle}
+									readable={edition.readable}
+								/>
 							{/if}
 							{#if edition.listedInBrowse}
-								<TakedownForm mode="browse" id={edition.storyId} title={edition.title} />
+								<TakedownForm
+									mode="browse"
+									id={edition.storyId}
+									title={edition.title}
+									handle={edition.handle}
+								/>
 							{/if}
 						</div>
 					</div>
@@ -144,7 +156,13 @@
 					<div class="list-row">
 						<div class="list-main">
 							<div class="list-title">
-								{story.handle ? `@${story.handle}/` : ''}{story.title}
+								{#if story.title === null}
+									<span title="The writer made this story private or moved it to the trash.">
+										{moderationRowName(story.handle, story.title)}
+									</span>
+								{:else}
+									{moderationRowName(story.handle, story.title)}
+								{/if}
 							</div>
 							<div class="list-sub">
 								removed {formatDate(story.browseBlockedAt!, page.data.timeZone)}{byName(
@@ -161,7 +179,10 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Allow {story.title} in Browse again"
+									aria-label="Allow {moderationEditionName(
+										story.handle,
+										story.title
+									)} in Browse again"
 								>
 									Allow in Browse again
 								</button>
@@ -190,14 +211,16 @@
 						<div class="list-main">
 							<div class="list-title">
 								{#if edition.viewable}
-									<a href={editionHref(edition.id)}>@{edition.handle}/{edition.title}</a>
+									<a href={editionHref(edition.id)}>
+										{moderationRowName(edition.handle, edition.title)}
+									</a>
 								{:else}
 									<span
 										title={edition.notViewableBecause === 'olderTakedown'
 											? 'The story is private or in the trash, and older takedowns like this one cannot be opened here.'
 											: 'The writer made this story private or moved it to the trash.'}
 									>
-										@{edition.handle}/{edition.title}
+										{moderationRowName(edition.handle, edition.title)}
 									</span>
 								{/if}
 							</div>
@@ -224,7 +247,7 @@
 								<button
 									type="submit"
 									class="btn btn-ghost btn-sm"
-									aria-label="Restore {edition.title}"
+									aria-label="Restore {moderationEditionName(edition.handle, edition.title)}"
 								>
 									Restore
 								</button>
