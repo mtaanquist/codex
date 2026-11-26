@@ -8,6 +8,7 @@ import {
 	BASE_PERMISSION,
 	GRANTABLE_PERMISSIONS,
 	parsePermissions,
+	withUsableApply,
 	type McpPermission
 } from '../../mcp-access.ts';
 import {
@@ -596,12 +597,14 @@ export async function createPersonalToken(
 		return { ok: false, reason: 'Choose how long the token lasts.' };
 	}
 	// Only what a writer can hand out today, and always reading.
-	const permissions = parsePermissions([
-		BASE_PERMISSION,
-		...input.permissions.filter((permission) =>
-			(GRANTABLE_PERMISSIONS as readonly string[]).includes(permission)
-		)
-	]);
+	const permissions = withUsableApply(
+		parsePermissions([
+			BASE_PERMISSION,
+			...input.permissions.filter((permission) =>
+				(GRANTABLE_PERMISSIONS as readonly string[]).includes(permission)
+			)
+		])
+	);
 	return db.transaction(async (tx) => {
 		// The exclusive lock, not the issuers' shared one: the name and the
 		// count are checked before the insert, and two calls side by side would

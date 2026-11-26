@@ -47,11 +47,15 @@
 	const TITLE: Record<string, string> = {
 		checkpoint: 'Checkpoint',
 		restore: 'Restored',
+		suggestion: 'Suggestion accepted',
 		autosave: 'Autosave'
 	};
 
+	// A checkpoint's name is its title; any other label is a note under it
+	// (where a draft was kept from, which app accepted a suggestion).
 	function rowTitle(row: Row) {
-		return row.label || TITLE[row.reason ?? 'autosave'] || 'Autosave';
+		if (row.reason === 'checkpoint' && row.label) return row.label;
+		return TITLE[row.reason ?? 'autosave'] || 'Autosave';
 	}
 
 	async function checkpoint(event: SubmitEvent) {

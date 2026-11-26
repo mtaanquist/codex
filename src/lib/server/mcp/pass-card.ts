@@ -3,6 +3,7 @@ import { isUuid } from '../../slug.ts';
 import { paragraphWindow } from '../../paragraphs.ts';
 import { patternEdits, patternName } from '../../review-ui.ts';
 import { createAnchorMapper } from '../../review-anchor.ts';
+import { clientDisplayName } from '../../mcp-access.ts';
 import type { Database } from '../auth.ts';
 import { signToken, verifyToken } from '../crypto.ts';
 import {
@@ -388,7 +389,8 @@ async function buildPass(
 }
 
 function passSummary(pass: PassCard): string {
-	const waiting = pass.edits.filter((edit) => edit.status === 'pending').length;
+	// The card holds as many edits as fit; the rest wait in Codex.
+	const waiting = pass.edits.filter((edit) => edit.status === 'pending').length + pass.more;
 	return `The guided pass on the note "${pass.name}" is open in a card: ${waiting} edits waiting, ${pass.decided} decided. The writer accepts, rewords or skips each edit there; you cannot decide them. Use get_review_note to see what they decided. If no card shows, the writer can work through the note in Codex: ${pass.link}`;
 }
 
@@ -487,7 +489,8 @@ async function decide(call: CardCall): Promise<CardResult> {
 				true,
 				replacement,
 				seen,
-				createAnchorMapper(APP_DIFF_BUDGET)
+				createAnchorMapper(APP_DIFF_BUDGET),
+				`Accepted in ${clientDisplayName(identity.client)}`
 			);
 			if (!decided.ok) return { text: decided.reason, isError: true };
 			return { text: 'Accepted.', isError: false, structured: { sceneId: decided.sceneId } };
