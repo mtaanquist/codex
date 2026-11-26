@@ -10,6 +10,17 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.0.0 staging review, round 11 (2026-11-26, `staging/v4.0.0`, #1860 to
+#1863). Content limits again: an outdated answer that came back after the
+warning list moved left its change in place, so a queued save sent it with
+the new list's fingerprint and the server took it. The outdated case is now
+handled like a failure when the list moved. The total on the usage page no
+longer says "at least": cached tokens and provider-wide read rates mean the
+priced part is not a floor. Admin lists hide titles of editions a moderator
+may not open (preview-only and trashed stories), the option recommended to
+Mads; if he keeps the old behaviour this is a revert of one commit. The CI
+upgrade check gained the duplicate-row case for 0131.
+
 v4.0.0 staging review, round 10 (2026-11-26, `staging/v4.0.0`, #1857,
 #1858). The medium was the round 9 change meeting renames: a story's choice
 is written to the merged entries' keys, but the save locked only the posted
