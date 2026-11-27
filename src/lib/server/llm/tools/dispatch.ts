@@ -45,6 +45,9 @@ import { locateQuote } from '#lib/quote-locate';
 import { universeSkeleton, type SceneSummary } from '../context/sources.ts';
 import { sceneSummaryToSend } from '../../summary-currency.ts';
 import type { ProviderToolCall, SplitProposal } from '../providers/types.ts';
+import type { EmbedDeps } from '../embeddings/embed.ts';
+import type { SpendMeter } from '../spend.ts';
+import { searchPassages } from './passages.ts';
 import { findTool } from './registry.ts';
 
 // Executes one tool call within an owner-scoped universe context. Read tools
@@ -101,6 +104,12 @@ export type ToolContext = {
 	// The turn's model context window in tokens, when known; it bounds how much
 	// of a scene get_scene may return (see sceneBodyCap).
 	contextWindow?: number;
+	// A background run's spend meter, for a tool that sends a request of its
+	// own (search_passages embeds its query); the gateway passes the run's.
+	meter?: SpendMeter;
+	signal?: AbortSignal;
+	// Test seam for the embeddings request: production passes none.
+	embedDeps?: EmbedDeps;
 	// Set when the call comes from an outside app through the MCP endpoint,
 	// which is the only surface the external tools run on.
 	external?: {
@@ -345,6 +354,8 @@ async function runTool(
 			return { result: await findAppearances(ctx, asString(args.entityId)), staged: false };
 		case 'search_text':
 			return { result: await searchText(ctx, asString(args.query)), staged: false };
+		case 'search_passages':
+			return { result: await passageSearch(ctx, asString(args.query), args.limit), staged: false };
 		case 'list_review_notes':
 			return { result: await listReviewNotes(ctx, asString(args.storyId)), staged: false };
 		case 'get_review_note':
@@ -683,6 +694,27 @@ async function findAppearances(ctx: ToolContext, entityId: string): Promise<stri
 			position: a.position,
 			snippet: a.snippet
 		}))
+	);
+}
+
+// Confined to the focus story where the scene reads are (see ToolScope).
+async function passageSearch(ctx: ToolContext, query: string, limit: unknown): Promise<string> {
+	if (ctx.scope?.storyOnly && !ctx.storyId) return JSON.stringify({ passages: [] });
+	return await searchPassages(
+		{
+			db: ctx.db,
+			userId: ctx.userId,
+			universeId: ctx.universeId,
+			scope:
+				ctx.scope?.storyOnly && ctx.storyId
+					? { storyId: ctx.storyId }
+					: { universeId: ctx.universeId },
+			meter: ctx.meter,
+			signal: ctx.signal,
+			deps: ctx.embedDeps
+		},
+		query,
+		limit
 	);
 }
 

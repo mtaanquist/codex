@@ -5,7 +5,8 @@ import { EmbeddingsDisabledError } from '#lib/server/llm/embeddings';
 import { SpendCapError } from '#lib/server/llm/spend';
 import { errorFields, logEvent } from '#lib/server/log';
 import { rateLimit } from '#lib/server/rate-limit';
-import { MEANING_QUERY_MAX, meaningSearchReady, searchByMeaning } from '#lib/server/search-meaning';
+import { passageSearchReady } from '#lib/server/llm/tools/passages';
+import { MEANING_QUERY_MAX, searchByMeaning } from '#lib/server/search-meaning';
 import { ownedStory } from '#lib/server/story-access';
 import { ownedUniverse } from '#lib/server/universe-access';
 import { isUuid } from '#lib/slug';
@@ -27,7 +28,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	if (storyRef) universeId = (await ownedStory(storyRef, userId)).universe.id;
 	else if (universeRef) universeId = (await ownedUniverse(universeRef, userId)).id;
 	else error(400, 'story or universe is required.');
-	const ready = await meaningSearchReady(db, userId, universeId);
+	const ready = await passageSearchReady(db, userId, universeId);
 	return Response.json({ universeId: ready ? universeId : null });
 };
 
@@ -44,7 +45,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 	if (query.length > MEANING_QUERY_MAX) {
 		error(400, `Keep the description under ${MEANING_QUERY_MAX} characters.`);
 	}
-	if (!(await meaningSearchReady(db, userId, universeId))) {
+	if (!(await passageSearchReady(db, userId, universeId))) {
 		error(404, 'This universe has no search index. Index it from your account Assistant page.');
 	}
 	try {

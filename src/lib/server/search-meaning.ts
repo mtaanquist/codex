@@ -2,8 +2,8 @@ import { and, eq, inArray } from 'drizzle-orm';
 import type { MeaningResult } from '#lib/wire-types';
 import type { Database } from './auth.ts';
 import { stories } from './db/schema.ts';
-import { embed, resolveEmbeddings, type EmbedDeps } from './llm/embeddings/index.ts';
-import { embeddingIndexFor, nearestChunks } from './llm/embeddings/scene-index.ts';
+import { embed, type EmbedDeps } from './llm/embeddings/index.ts';
+import { nearestChunks } from './llm/embeddings/scene-index.ts';
 
 // Search by meaning: the writer describes a moment, it is embedded with their
 // own embeddings model, and the nearest passages in their indexed stories in
@@ -19,20 +19,6 @@ const SCENES = 10;
 const PASSAGES = 40;
 const PASSAGE_CHARS = 320;
 
-// Whether the writer can search this universe by meaning: embeddings are
-// ready and the universe has a finished index on their current model. A
-// partial index, or one made with another model, does not count.
-export async function meaningSearchReady(
-	db: Database,
-	userId: string,
-	universeId: string
-): Promise<boolean> {
-	const config = await resolveEmbeddings(db, userId);
-	if (!config.ready) return false;
-	const index = await embeddingIndexFor(db, userId, universeId);
-	return !!index?.completedAt && index.model === config.model;
-}
-
 // The passage as a result line: white space folded, cut at a word near
 // PASSAGE_CHARS.
 export function passageSnippet(content: string): string {
@@ -43,7 +29,7 @@ export function passageSnippet(content: string): string {
 	return `${(space > PASSAGE_CHARS / 2 ? cut.slice(0, space) : cut).trimEnd()}...`;
 }
 
-// The caller checks meaningSearchReady first. Throws what embed throws:
+// The caller checks passageSearchReady first. Throws what embed throws:
 // EmbeddingsDisabledError, SpendCapError, or the endpoint's own error.
 export async function searchByMeaning(
 	db: Database,

@@ -32,6 +32,8 @@ import {
 	type ToolOutcome
 } from './tools/dispatch.ts';
 import { MINIMAL_TOOL_NAMES, toolSpecs } from './tools/registry.ts';
+import { PASSAGE_SEARCH_TOOL, passageSearchReady } from './tools/passages.ts';
+import type { EmbedDeps } from './embeddings/embed.ts';
 import {
 	type ChatMessage,
 	type CompletionRequest,
@@ -277,6 +279,8 @@ export type GatewayDeps = {
 	// Waits out the backoff between request retries; tests pass a no-op so the
 	// suite does not sleep.
 	sleep?: (ms: number) => Promise<void>;
+	// The embeddings request a tool sends (search_passages).
+	embeddings?: EmbedDeps;
 };
 
 // The retry rule is shared with the embeddings requests (see ./retry).
@@ -617,10 +621,15 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 		if (universeId) {
 			// A surface that names its own tools (the scoped review-reply turn) is
 			// left alone; the profile only shapes the default set.
-			tools = toolSpecs(
+			const names =
 				req.toolNames ??
-					(resolved.config.toolProfile === 'minimal' ? MINIMAL_TOOL_NAMES : undefined)
-			);
+				(resolved.config.toolProfile === 'minimal' ? MINIMAL_TOOL_NAMES : undefined);
+			// Passage search only where the search index can answer; asked only
+			// when the tool could be offered at all.
+			const passageSearch =
+				(!names || names.includes(PASSAGE_SEARCH_TOOL)) &&
+				(await passageSearchReady(db, req.userId, universeId));
+			tools = toolSpecs(names, { passageSearch });
 			toolContext = {
 				db,
 				userId: req.userId,
@@ -628,7 +637,10 @@ async function prepare(db: Database, req: GatewayRequest, deps: GatewayDeps): Pr
 				storyId: req.storyId,
 				scope: req.toolScope,
 				allowedTools: tools.map((tool) => tool.name),
-				contextWindow
+				contextWindow,
+				meter: req.meter,
+				signal: req.signal,
+				embedDeps: deps.embeddings
 			};
 		}
 	}
