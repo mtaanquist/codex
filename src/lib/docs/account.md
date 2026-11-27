@@ -411,8 +411,13 @@ early, at your spend cap for background work or because the endpoint failed,
 the list shows how many scenes are done; select Continue to carry on from
 there. The same happens when a change would send as much as a large first
 index, such as a long story pasted or imported into the universe, so you see
-the estimate first. If you change your embeddings model, select Index again:
-passages made with the old model cannot be searched with the new one. Stop
+the estimate first. A universe that reads "Up to date" also stops this way
+when your embeddings endpoint refuses a change, for example after your key was
+revoked: check your embeddings settings and select Test embeddings, then
+select Continue. If your server is only busy or unreachable for a while, the
+change is tried again a few minutes later. If you change your embeddings
+model, select Index again: passages made with the old model cannot be
+searched with the new one. Stop
 indexing deletes what was indexed for that universe; it stays in the list
 after you turn embeddings off. Indexing never changes your writing, and the
 index is not part of an export: deleting a scene, story, universe or your

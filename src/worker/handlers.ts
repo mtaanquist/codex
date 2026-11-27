@@ -684,8 +684,10 @@ export function createHandlers(deps: WorkerDeps) {
 		// universe's full index only while the writer has it turned on. A full
 		// index that reaches the end is recorded, so upkeep starts. One that
 		// stops early (spend cap, embeddings off, a failing endpoint) settles as
-		// failed and the writer starts it again from the account page; a capped
-		// or very large upkeep run hands the universe back to the writer too.
+		// failed and the writer starts it again from the account page. Upkeep
+		// that is very large, reaches the cap, or fails in a way a later try
+		// would repeat (a refused key, a rejected request) hands the universe
+		// back to the writer too; one a busy server failed waits for the sweep.
 		async embeddingsIndex(jobs: JobWithMetadata<EmbeddingsIndexData>[]) {
 			for (const job of jobs) {
 				const { userId, universeId, storyId } = job.data;
@@ -703,7 +705,10 @@ export function createHandlers(deps: WorkerDeps) {
 					result = await withJobRunSignal(boss, job, (signal) =>
 						services.indexScenes(db, { userId, scope: { storyId }, jobId: job.id, signal })
 					);
-					if (result.capped) await reopenEmbeddingIndex(db, userId, storyId);
+					if (result.capped || (result.error && !result.retryable)) {
+						await reopenEmbeddingIndex(db, userId, storyId);
+						logEvent('info', 'embeddings.upkeep_handed_back', { userId, storyId });
+					}
 				} else if (universeId && (await embeddingIndexFor(db, userId, universeId))) {
 					result = await withJobRunSignal(boss, job, (signal) =>
 						services.indexScenes(db, { userId, scope: { universeId }, jobId: job.id, signal })

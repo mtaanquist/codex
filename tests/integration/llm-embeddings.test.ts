@@ -264,6 +264,23 @@ describe('embed', () => {
 		expect(requests).toHaveLength(2);
 	});
 
+	it('never sends a request again once it succeeded, even when recording it fails (#1888)', async () => {
+		await assistantOn();
+		await setUp({ pricePerToken: 0.001 });
+		class FailingMeter extends SpendMeter {
+			override record(...args: Parameters<InstanceType<typeof SpendMeter>['record']>) {
+				super.record(...args);
+				throw new Error('could not record');
+			}
+		}
+		const meter = new FailingMeter({ capUsd: 1 });
+		await expect(embed(db, userId, ['a'], { meter }, { http, sleep: noSleep })).rejects.toThrow(
+			'could not record'
+		);
+		expect(requests).toHaveLength(1);
+		expect(meter.spentUsd).toBeCloseTo(0.01);
+	});
+
 	it('counts against a spend meter, and holds back a request that could pass the cap', async () => {
 		await assistantOn();
 		await setUp({ pricePerToken: 0.001 });

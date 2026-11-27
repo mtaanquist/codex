@@ -160,9 +160,33 @@ test('the embeddings form saves on its own and leaves the Assistant endpoint alo
 	await seed();
 	await gotoReady(page, '/account/assistant');
 	const section = page.locator('#assistant-embeddings');
-	// Each change autosaves; wait for that save itself, since a "Saved." left
-	// by the one before would satisfy a status check at once.
-	const saving = () => page.waitForResponse((r) => r.url().includes('saveEmbeddings') && r.ok());
+	// Each change autosaves, and the save's response comes before the page
+	// applies it: kit reloads the page data, then moves focus to the page and
+	// back. A field filled meanwhile can lose its text or its blur, so each
+	// step waits until the save's "Saved." is drawn again, the last thing the
+	// update does.
+	const saveApplied = async () => {
+		await section.locator('form').evaluate((form) => {
+			const win = window as unknown as { saveApplied?: Promise<void> };
+			win.saveApplied = new Promise<void>((resolve) => {
+				const observer = new MutationObserver((records) => {
+					const drawn = records.some((record) =>
+						[...record.addedNodes].some(
+							(node) =>
+								node instanceof Element &&
+								(node.matches('.fs-ok') || !!node.querySelector('.fs-ok'))
+						)
+					);
+					if (!drawn) return;
+					observer.disconnect();
+					resolve();
+				});
+				observer.observe(form, { childList: true, subtree: true });
+			});
+		});
+		return () =>
+			page.evaluate(() => (window as unknown as { saveApplied?: Promise<void> }).saveApplied);
+	};
 	const url = section.getByLabel('Embeddings base URL', { exact: true });
 	const model = section.getByLabel('Embeddings model', { exact: true });
 	const price = section.getByLabel('Embeddings price per million tokens (USD)', { exact: true });
@@ -172,14 +196,14 @@ test('the embeddings form saves on its own and leaves the Assistant endpoint alo
 		[model, 'nomic-embed-text'],
 		[price, '0']
 	] as const) {
-		const saved = saving();
+		const applied = await saveApplied();
 		await field.fill(value);
 		await field.blur();
-		await saved;
+		await applied();
 	}
-	const saved = saving();
+	const applied = await saveApplied();
 	await enabled.check();
-	await saved;
+	await applied();
 
 	await page.reload();
 	await expect(enabled).toBeChecked();
@@ -187,4 +211,80 @@ test('the embeddings form saves on its own and leaves the Assistant endpoint alo
 	await expect(model).toHaveValue('nomic-embed-text');
 	await expect(price).toHaveValue('0');
 	await expect(page.getByLabel('Base URL', { exact: true })).toHaveValue(ENDPOINT);
+});
+
+test('the search index list reloads when indexing found running after a reload ends', async ({
+	page
+}) => {
+	const universeId = await withDb(async (pool) => {
+		const { rows } = await pool.query<{ id: string }>(
+			`update users set llm_config = $2 where email = $1 returning id`,
+			[
+				EMAIL,
+				JSON.stringify({
+					enabled: true,
+					provider: 'custom',
+					endpoint: ENDPOINT,
+					embeddings: {
+						enabled: true,
+						provider: 'custom',
+						endpoint: 'http://localhost:11434/v1',
+						model: 'nomic-embed-text'
+					}
+				})
+			]
+		);
+		const ownerId = rows[0].id;
+		const name = `Index ${Date.now()}`;
+		const universe = await pool.query<{ id: string }>(
+			`insert into universes (owner_id, name, slug) values ($1, $2, $3) returning id`,
+			[ownerId, name, name.toLowerCase().replace(/\s+/g, '-')]
+		);
+		const id = universe.rows[0].id;
+		const story = await pool.query<{ id: string }>(
+			`insert into stories (universe_id, owner_id, title, slug) values ($1, $2, 'Tides', 'tides') returning id`,
+			[id, ownerId]
+		);
+		await pool.query(
+			`insert into scenes (story_id, global_position, body_md) values ($1, 0, 'The sea came in.')`,
+			[story.rows[0].id]
+		);
+		// Turned on, its first full index not finished yet.
+		await pool.query(`insert into embedding_indexes (user_id, universe_id) values ($1, $2)`, [
+			ownerId,
+			id
+		]);
+		return id;
+	});
+
+	// The page finds the index running, as after a reload, and it then ends.
+	let finished = false;
+	await page.route('**/api/assistant/jobs', (route) =>
+		route.fulfill({
+			json: {
+				jobs: finished
+					? []
+					: [{ id: 'index-job', kind: 'embeddings', mode: 'full', title: 'Index', universeId }]
+			}
+		})
+	);
+	await page.route('**/api/assistant/job-status**', (route) =>
+		route.fulfill({ json: { state: finished ? 'done' : 'running' } })
+	);
+
+	await gotoReady(page, '/account/assistant');
+	const row = page
+		.locator('#assistant-embeddings-index .list-row')
+		.filter({ has: page.locator('.list-title', { hasText: /^Index \d+$/ }) });
+	await expect(row.locator('.list-sub')).toContainText('Indexing:');
+
+	await withDb((pool) =>
+		pool.query(
+			`update embedding_indexes set model = 'nomic-embed-text', completed_at = now() where universe_id = $1`,
+			[universeId]
+		)
+	);
+	finished = true;
+	await expect(row.locator('.list-sub')).toContainText('Catching up');
+	await expect(row.locator('.list-sub')).not.toContainText('Indexing stopped');
 });

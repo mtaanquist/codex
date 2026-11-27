@@ -774,7 +774,7 @@ scene_chunks (
 )
 ```
 
-A row in `embedding_indexes` is the writer turning the index on for a universe. A scene is current when its passages carry the current model and its present `updated_at`. While `completed_at` is set and `model` is the writer's current model, a save queues the story's upkeep and a five-minute sweep catches anything missed; a different model waits for the writer to index again. There is no vector index: every search runs inside one writer's universe or story, which is small enough to compare exactly, and pgvector's approximate indexes need one fixed vector size where writers' models differ. The rows go with the scene through the foreign key, so scene, story, universe and account deletion need no extra step.
+A row in `embedding_indexes` is the writer turning the index on for a universe. A scene is current when its passages carry the current model and its present `updated_at`. While `completed_at` is set and `model` is the writer's current model, a save queues the story's upkeep and a five-minute sweep catches anything missed, taking each writer's longest-waiting story before anyone's second. Upkeep that would be large, reaches the spend cap, or fails in a way a retry would repeat (a refused key, a rejected request) clears `completed_at`, handing the universe back to the writer; a different model waits for the writer to index again. There is no vector index: every search runs inside one writer's universe or story, which is small enough to compare exactly, and pgvector's approximate indexes need one fixed vector size where writers' models differ. The rows go with the scene through the foreign key, so scene, story, universe and account deletion need no extra step.
 
 ---
 

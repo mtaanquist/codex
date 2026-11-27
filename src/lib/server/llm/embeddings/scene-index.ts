@@ -6,7 +6,8 @@ import { tokensForChars } from '../context/budgets.ts';
 import { jobSpendMeter } from '../job-spend.ts';
 import { SpendCapError, spentFields } from '../spend.ts';
 import { chunkHash, chunkScene, WHITE_SPACE_CLASS } from './chunks.ts';
-import { resolveEmbeddings } from './config.ts';
+import { embeddingsSettings, EmbeddingsKeyError } from './config.ts';
+import { isTransientFailure } from '../retry.ts';
 import {
 	embed,
 	EmbeddingsDisabledError,
@@ -175,8 +176,11 @@ export type IndexResult = {
 	disabled?: true;
 	capped?: true;
 	aborted?: true;
-	// The endpoint's error, when it failed.
+	// The endpoint's error, when it failed, and whether the same request might
+	// work later (a busy or unreachable server) rather than fail the same way
+	// again (a refused key, a rejected request).
 	error?: string;
+	retryable?: true;
 	spentUsd?: number;
 };
 
@@ -197,7 +201,7 @@ export async function indexScenes(
 	}
 ): Promise<IndexResult> {
 	const { userId, scope } = opts;
-	const config = await resolveEmbeddings(db, userId);
+	const config = await embeddingsSettings(db, userId);
 	const result: IndexResult = {
 		model: config.model,
 		scenes: 0,
@@ -317,6 +321,7 @@ export async function indexScenes(
 		} else if (opts.signal?.aborted) result.aborted = true;
 		else {
 			result.error = err instanceof Error ? err.message : 'The embeddings request failed.';
+			if (isTransientFailure(err) && !(err instanceof EmbeddingsKeyError)) result.retryable = true;
 			logEvent('warn', 'embeddings.index_failed', { userId, ...errorFields(err) });
 		}
 	} finally {
@@ -427,28 +432,34 @@ export async function storyIndexOwner(db: Database, storyId: string): Promise<st
 }
 
 // Stories whose finished index has fallen behind (a save whose job was
-// dropped, a scene restored or trashed), for the worker's sweep.
+// dropped, a scene restored or trashed), for the worker's sweep. Each writer's
+// longest-waiting story comes before anyone's second, and among those the
+// oldest change first, so one writer with many stories cannot fill a sweep.
 export async function storiesBehindIndex(
 	db: Database,
 	limit = 100
 ): Promise<{ userId: string; storyId: string }[]> {
 	const { rows } = await db.execute<{ owner_id: string; story_id: string }>(sql`
-		select st.owner_id, st.id as story_id
-		from embedding_indexes ei
-		join users usr on usr.id = ei.user_id
-		join stories st on st.owner_id = ei.user_id and st.universe_id = ei.universe_id
-		where ei.completed_at is not null
-			and ei.model = usr.llm_config -> 'embeddings' ->> 'model'
-			and ${EMBEDDINGS_ON}
-			and st.deleted_at is null
-			and exists (select 1 from universes u where u.id = st.universe_id and u.deleted_at is null)
-			and coalesce(st.llm_config ->> 'enabled', '') <> 'false'
-			and exists (
-				select 1 from scenes s where s.story_id = st.id and (
+		with behind as (
+			select st.owner_id, st.id as story_id, (
+				select min(s.updated_at) from scenes s where s.story_id = st.id and (
 					(s.deleted_at is null and ${sceneStale(sql.raw('ei.model'))})
 					or (s.deleted_at is not null and exists (select 1 from scene_chunks c where c.scene_id = s.id))
 				)
-			)
+			) as since
+			from embedding_indexes ei
+			join users usr on usr.id = ei.user_id
+			join stories st on st.owner_id = ei.user_id and st.universe_id = ei.universe_id
+			where ei.completed_at is not null
+				and ei.model = usr.llm_config -> 'embeddings' ->> 'model'
+				and ${EMBEDDINGS_ON}
+				and st.deleted_at is null
+				and exists (select 1 from universes u where u.id = st.universe_id and u.deleted_at is null)
+				and coalesce(st.llm_config ->> 'enabled', '') <> 'false'
+		)
+		select owner_id, story_id from behind
+		where since is not null
+		order by row_number() over (partition by owner_id order by since, story_id), since, story_id
 		limit ${limit}
 	`);
 	return rows.map((r) => ({ userId: r.owner_id, storyId: r.story_id }));
@@ -473,7 +484,7 @@ export async function estimateEmbeddingIndex(
 	userId: string,
 	scope: IndexScope
 ): Promise<IndexEstimate> {
-	const config = await resolveEmbeddings(db, userId);
+	const config = await embeddingsSettings(db, userId);
 	const { rows } = await db.execute<{ scenes: number; chars: number }>(sql`
 		select count(*)::int as scenes, coalesce(sum(length(s.body_md)), 0)::bigint as chars
 		from scenes s join stories st on st.id = s.story_id
@@ -508,7 +519,7 @@ export type IndexStatus = {
 
 // Every universe the writer has a live story in, with how far its index is.
 export async function embeddingIndexStatus(db: Database, userId: string): Promise<IndexStatus[]> {
-	const config = await resolveEmbeddings(db, userId);
+	const config = await embeddingsSettings(db, userId);
 	const { rows } = await db.execute<{
 		universe_id: string;
 		name: string;

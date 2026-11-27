@@ -3,7 +3,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { db } from '#lib/server/db';
 import { stories, universes } from '#lib/server/db/schema';
 import { readAssistantPayload } from '#lib/server/llm/assistant-route';
-import { resolveEmbeddings } from '#lib/server/llm/embeddings';
+import { embeddingsSettings } from '#lib/server/llm/embeddings';
 import {
 	enableEmbeddingIndex,
 	estimateEmbeddingIndex,
@@ -44,7 +44,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		estimate?: unknown;
 	}>(request, locals);
 	const universeId = await universeOf(userId, payload.universeId);
-	if (!(await resolveEmbeddings(db, userId)).ready) {
+	if (!(await embeddingsSettings(db, userId)).ready) {
 		error(403, 'Turn on embeddings on the Assistant page first.');
 	}
 	if (payload.estimate === true) {
