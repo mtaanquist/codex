@@ -401,6 +401,10 @@ Once a universe is up to date, you can search it by meaning: press Ctrl+K in
 that universe or one of its stories and select **Meaning** next to the search
 box. See [jumping around](/docs/getting-started#jumping-around).
 
+Once a universe is up to date, "Suggest details with the Assistant" on an
+entry there also reads passages that describe the entry without naming it.
+See Planning for how that works.
+
 The index covers your own stories in the universe. Scenes in the trash, and
 stories you turned the Assistant off for, are left out. If indexing stops
 early, at your spend cap for background work or because the endpoint failed,

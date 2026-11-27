@@ -23,6 +23,23 @@ even when weak, because distances differ too much between models for a fixed
 threshold. The link opens the scene without selecting the passage, which may
 have changed since it was indexed.
 
+Unnamed passages in Suggest details (v4.1.0, 2026-11-27,
+`feat/embeddings-enrich`, #1786). The passages found by meaning are modelled
+as `ExcerptScene` rows flagged `related` and appended after the scenes, so the
+existing part splitter places them (the last part when they fit, otherwise
+one more) and the existing per-part mute check covers them; no second
+budgeting path. They are capped at a quarter of one part and 12 passages, so
+a passage never displaces a scene that names the entity. They never count as
+read scenes for the /enrich pass fingerprint, which stays the snippets
+request: a passage is only part of a scene. The query is the entity's name,
+aliases, summary and details; the entry body was left out to keep the query
+about who the entity is. No distance cutoff: distances are not comparable
+across models, so the nearest passages are taken and the prompt says they
+may be about something else. An entity no scene names still reads nothing,
+as before, rather than a read made only of guesses. Any failure of the query
+(other than the spend cap, which stops the read as capped) leaves the
+passages out instead of failing the read.
+
 Search index for embeddings (v4.1.0, 2026-11-27, `feat/embeddings-index`,
 #1785). Two tables, migration 0135: `embedding_indexes` (the writer's choice
 to index a universe, and the model its last full index finished with) and

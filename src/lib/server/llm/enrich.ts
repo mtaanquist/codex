@@ -20,6 +20,9 @@ import {
 	excerptsWithheld,
 	estimateEnrich,
 	formatExcerpts,
+	relatedBudgetTokens,
+	relatedPassages,
+	relatedQuery,
 	splitExcerptParts,
 	type EnrichEstimate,
 	type ExcerptScene,
@@ -43,6 +46,7 @@ import {
 	type ProposedSuggestion
 } from '../entity-suggestions.ts';
 import type { ChatMessage } from './providers/types.ts';
+import type { EmbedDeps } from './embeddings/index.ts';
 import { requestHash, unusableReplyMark } from './request-hash.ts';
 import { resolveLlmConfig, roleReplySettings } from './config.ts';
 
@@ -183,6 +187,8 @@ export type EnrichTextResult = {
 	// Scenes read and requests made.
 	scenes: number;
 	requests: number;
+	// Passages found by meaning that were sent with the scenes.
+	related?: number;
 	// Set when a later part failed or the request was stopped: the suggestions
 	// are from the parts read before it. partialNote says what to do about it
 	// when there is something the writer can do.
@@ -257,13 +263,16 @@ async function stillReadable(
 // told what the earlier ones found. Each part's finds are staged as it is
 // read, so a later part that fails, or a job that is stopped, keeps what the
 // earlier parts found. With a job id the spend cap applies between parts.
+// A read of the scenes that mention the entity, in a universe with an
+// embeddings index, also sends the passages closest in meaning to what is
+// known about it from scenes it would not read otherwise, after them.
 // A read that ran to the end and read every scene the /enrich pass would
 // stores that pass's fingerprint, so the pass does not read the entity again
 // until its input changes.
 export async function enrichEntityFromText(
 	db: Database,
 	opts: EnrichOptions & { mode: EnrichTextMode; jobId?: string },
-	deps: GatewayDeps = {}
+	deps: GatewayDeps & { embeddings?: EmbedDeps } = {}
 ): Promise<EnrichTextResult> {
 	const none = { suggestions: [], scenes: 0, requests: 0 };
 	const missing = { ...none, missing: true };
@@ -293,7 +302,6 @@ export async function enrichEntityFromText(
 		return withheld ? { ...none, skipped: 'all' } : none;
 	}
 	const budget = await enrichTextBudget(db, opts.userId, opts.scope);
-	const parts = splitExcerptParts(excerpts, budget.partTokens);
 	// Keyed by the job, so a retry carries on from what it already spent.
 	const meter =
 		opts.meter ??
@@ -302,7 +310,32 @@ export async function enrichEntityFromText(
 			storyId: 'storyId' in opts.scope ? opts.scope.storyId : undefined,
 			jobId: opts.jobId
 		}));
-	const withStory = new Set(excerpts.map((scene) => scene.storyId)).size > 1;
+	// The whole book has every scene already.
+	const related =
+		opts.mode === 'scenes'
+			? await relatedPassages(
+					db,
+					{
+						userId: opts.userId,
+						scope: opts.scope,
+						universeId: entity.universeId,
+						query: relatedQuery({
+							name: entity.name,
+							aliases: entity.aliases ?? [],
+							summaryMd: entity.summaryMd,
+							details: entity.details ?? []
+						}),
+						exclude: new Set(excerpts.map((scene) => scene.id)),
+						budgetTokens: relatedBudgetTokens(budget.partTokens),
+						meter,
+						signal: opts.signal
+					},
+					deps.embeddings
+				)
+			: [];
+	// After the scenes, so they fill the last part or take one of their own.
+	const parts = splitExcerptParts([...excerpts, ...related], budget.partTokens);
+	const withStory = new Set([...excerpts, ...related].map((scene) => scene.storyId)).size > 1;
 	const summaryClosed = await summarySuggestionClosed(db, {
 		ownerId: opts.userId,
 		kind,
@@ -325,7 +358,8 @@ export async function enrichEntityFromText(
 	let summaryAsked = false;
 	// Pieces in a part whose reply came back whole. A long scene is split into
 	// pieces that share its id (stillReadable keeps the same objects), so a
-	// scene counts as read only when every piece of it is here.
+	// scene counts as read only when every piece of it is here. A passage found
+	// by meaning is part of a scene, so it never counts.
 	const readPieces = new Set<ExcerptScene>();
 	for (const index of parts.keys()) {
 		if (opts.signal?.aborted) {
@@ -378,7 +412,7 @@ export async function enrichEntityFromText(
 			if (result.cutOff) {
 				throw new ReplyCutOffError(CUT_OFF_ADVICE);
 			}
-			for (const piece of part) readPieces.add(piece);
+			for (const piece of part) if (!piece.related) readPieces.add(piece);
 			// A summary offered against the instruction (an earlier part, or one
 			// the writer already has or turned down) is dropped.
 			const proposals = parseEnrichResponse(result.content).filter(
@@ -432,7 +466,7 @@ export async function enrichEntityFromText(
 	const notRead = new Set(
 		parts
 			.flat()
-			.filter((piece) => !readPieces.has(piece))
+			.filter((piece) => !piece.related && !readPieces.has(piece))
 			.map((piece) => piece.id)
 	);
 	const readScenes = new Set([...readPieces].map((piece) => piece.id));
@@ -465,6 +499,7 @@ export async function enrichEntityFromText(
 		suggestions,
 		scenes: new Set(excerpts.map((scene) => scene.id)).size,
 		requests,
+		...(related.length ? { related: related.length } : {}),
 		...(skipped ? { skipped } : {}),
 		...(failure ? { partial: true } : {}),
 		// A cut-off reply is something the writer can fix in the settings.
@@ -502,7 +537,12 @@ export async function estimateEntityEnrich(
 		},
 		''
 	);
-	return await estimateEnrich(db, { ...opts, kind, taskTokens: estimateTokens(task) });
+	return await estimateEnrich(db, {
+		...opts,
+		kind,
+		universeId: entity.universeId,
+		taskTokens: estimateTokens(task)
+	});
 }
 
 // The request an enrich read of this entity would send as things stand, with
