@@ -83,6 +83,8 @@ Both pages name you the way you asked to be named: your pen name if you set one 
 
 Under the title, the reading page lists the story's genres, fandoms, tags and content warnings. When the site has a Browse page, each genre, fandom and tag links to the other stories there that share it.
 
+When the site has a Browse page, the end of a reading page can show up to six similar stories from Browse: stories that share its tags, and its genres. A shared tag that few stories use counts for more, and a shared genre alone is not enough. Content warnings and fandoms do not count. Adult stories show there only on an adult story's page once the reader has chosen to go on, or when the reader included adult content on Browse on this device. A story you keep off Browse never shows among them, but its own page can still show similar stories that are listed.
+
 A reader gets two controls in the bar: the theme, which starts in whichever of light or dark their device asks for and remembers a choice they make from its menu (Light, Warm, Dark, or System), and the question mark, which opens these pages. At the end of both pages a footer says the work was written in Codex, who published it, and offers a link for a reader who wants to write something of their own. A story's reading page also has a "Report this story" link.
 
 ## Taking something down

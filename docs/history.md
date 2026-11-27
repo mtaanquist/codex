@@ -30,6 +30,22 @@ from the gateway to `retry.ts` so `embed()` can share it without importing
 the gateway, whose tool registry a later passage search tool would import
 `embed()` from.
 
+Similar stories (v4.1.0, 2026-11-27, `feat/similar-stories`, #1444). One
+query in `similarStories` (`src/lib/server/browse.ts`) over `story_tags`, since
+there is no `publication_tags`: tags and genres are live on the story, which is
+what the reading page already shows. Candidates reuse
+`listedInBrowseCondition`, so moderation, opt-outs and the listing rules stay in
+one place, and the book mapping moved into a shared `toBooks` used by Browse
+too. The issue's log weight falls to zero for a tag on every listed story and is
+small on a tiny instance, so the minimum is 0.5 with genres at 0.15 each (three
+genres alone stay under it). The remembered adult choice lives in localStorage,
+so the server renders without adult work and the page refetches from a small
+endpoint with `adult=show`; a confirmed adult story's page includes adult work
+from the server. Browse's only cache is the on/off setting, so nothing here
+needed invalidating. No per-edition cache: besides one count of listed stories, the query
+reads only the stories that share a label, through the `story_tags_tag`
+index.
+
 v4.0.0 staging review, round 14 (2026-11-26, `staging/v4.0.0`, #1871).
 The loop's last round: every area found only lows, after content limits had
 turned up a medium in each of rounds 4 to 12. The lows were fixed before the
