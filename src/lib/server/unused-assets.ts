@@ -111,8 +111,8 @@ type Column = { table: string; column: string; uuid: boolean };
 
 // Every column that could hold an asset id, from pg_catalog rather than
 // information_schema (which leaves out columns the role has no privilege
-// on). Numbers, booleans, dates, network and bit types, bytes and search
-// vectors cannot hold one; anything else is read as text.
+// on). Numbers, booleans, dates, network and bit types, bytes, search
+// vectors and embedding vectors cannot hold one; anything else is read as text.
 export async function referenceColumns(db: Database): Promise<Column[]> {
 	const result = await db.execute(sql`
 		select c.relname as "table", a.attname as "column", t.typname = 'uuid' as uuid
@@ -127,7 +127,7 @@ export async function referenceColumns(db: Database): Promise<Column[]> {
 			and a.attnum > 0
 			and not a.attisdropped
 			and t.typcategory not in ('N', 'B', 'D', 'T', 'G', 'I', 'V')
-			and t.typname not in ('bytea', 'tsvector', 'tsquery')
+			and t.typname not in ('bytea', 'tsvector', 'tsquery', 'vector')
 		order by c.relname, a.attname
 	`);
 	const columns = result.rows as Column[];

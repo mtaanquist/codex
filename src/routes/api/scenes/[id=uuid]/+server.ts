@@ -2,7 +2,7 @@ import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '#lib/server/db';
 import { ownedScene } from '#lib/server/scene-access';
-import { queueSceneMentions } from '#lib/server/jobs';
+import { queueSceneMentions, queueStoryEmbeddings } from '#lib/server/jobs';
 import { rateLimitWrites } from '#lib/server/write-guard';
 import { checkNoNull, checkProseLength, readJson } from '#lib/server/validation';
 import { saveSceneBody } from '#lib/server/scene-save';
@@ -76,7 +76,10 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
 		// editor offers to load that version or keep its own.
 		return Response.json({ conflict: true, ...result.conflict }, { status: 409 });
 	}
-	if (result.bodyChanged) await queueSceneMentions(row.id);
+	if (result.bodyChanged) {
+		await queueSceneMentions(row.id);
+		await queueStoryEmbeddings(row.storyId);
+	}
 
 	return Response.json({
 		savedAt: new Date().toISOString(),

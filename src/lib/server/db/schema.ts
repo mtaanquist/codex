@@ -35,6 +35,21 @@ const citext = customType<{ data: string }>({
 	}
 });
 
+// A pgvector column with no fixed size: embeddings models differ in how many
+// numbers a vector holds, and each row records its own (see sceneChunks).
+// Vectors go to the driver in pgvector's text form, '[1,2,3]'.
+const vector = customType<{ data: number[]; driverData: string }>({
+	dataType() {
+		return 'vector';
+	},
+	toDriver(value) {
+		return JSON.stringify(value);
+	},
+	fromDriver(value) {
+		return JSON.parse(value) as number[];
+	}
+});
+
 export const users = pgTable('users', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	email: text('email').unique().notNull(),
@@ -2269,4 +2284,58 @@ export const sceneSplitProposals = pgTable(
 		index('scene_split_proposals_scene_idx').on(table.sceneId),
 		index('scene_split_proposals_client_idx').on(table.clientId)
 	]
+);
+
+// A universe the writer asked to index for search by meaning, with their own
+// embeddings model. The index covers the writer's own stories in it. The first
+// full index runs when the writer starts it; completedAt and model record the
+// last one that finished, and while model matches the writer's current
+// embeddings model the worker keeps the index current as scenes change. A
+// different model needs a full index again, which the writer starts.
+export const embeddingIndexes = pgTable(
+	'embedding_indexes',
+	{
+		userId: uuid('user_id')
+			.references(() => users.id, { onDelete: 'cascade' })
+			.notNull(),
+		universeId: uuid('universe_id')
+			.references(() => universes.id, { onDelete: 'cascade' })
+			.notNull(),
+		model: text('model'),
+		completedAt: timestamp('completed_at', { withTimezone: true }),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [
+		primaryKey({ columns: [table.userId, table.universeId] }),
+		// Every universe delete checks this foreign key.
+		index('embedding_indexes_universe_idx').on(table.universeId)
+	]
+);
+
+// The embedded passages of a scene (see llm/embeddings/chunks.ts). Derived
+// data only: the scene's markdown stays the source, nothing here is exported,
+// and the rows go with the scene. content is the passage as it was embedded;
+// sceneUpdatedAt is the scene's updated_at when it was read, so a scene saved
+// since is known to need indexing again. Searches are exact (no vector index):
+// they always run inside one writer's universe or story, and vectors of
+// different sizes cannot share one approximate index.
+export const sceneChunks = pgTable(
+	'scene_chunks',
+	{
+		sceneId: uuid('scene_id')
+			.references(() => scenes.id, { onDelete: 'cascade' })
+			.notNull(),
+		chunkIndex: integer('chunk_index').notNull(),
+		content: text('content').notNull(),
+		// sha256 of content, hex.
+		contentHash: text('content_hash').notNull(),
+		// The model that made the vector and its size. Only vectors of the same
+		// model and size can be compared.
+		model: text('model').notNull(),
+		dimensions: integer('dimensions').notNull(),
+		embedding: vector('embedding').notNull(),
+		sceneUpdatedAt: timestamp('scene_updated_at', { withTimezone: true }).notNull(),
+		createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
+	},
+	(table) => [primaryKey({ columns: [table.sceneId, table.chunkIndex] })]
 );

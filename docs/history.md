@@ -10,6 +10,27 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Search index for embeddings (v4.1.0, 2026-11-27, `feat/embeddings-index`,
+#1785). Two tables, migration 0134: `embedding_indexes` (the writer's choice
+to index a universe, and the model its last full index finished with) and
+`scene_chunks` (the passages, hashed, with an unsized `vector` column through
+a Drizzle `customType`). No vector index: HNSW and IVFFlat need a fixed size,
+writers' models differ, and every query is scoped to one writer's universe, so
+exact cosine distance is fast enough; a per-size partial index can come later
+if a search over a whole instance is ever wanted. The passage text is stored
+so the search features can show and send it without re-cutting a scene that
+may have changed. Staleness compares each scene's `updated_at` (read as text,
+so no microseconds are lost) with the one stored on its rows. The first full
+index is the writer's to start, per universe, with an estimate; automatic
+upkeep starts only once one finishes on the current model, so neither a
+capped run nor a model change re-embeds a large universe unasked. Upkeep is
+not shown in Background jobs, which would otherwise flicker while the writer
+types. `vector` columns are left out of the unused-image sweep, since they
+cannot hold an id. Deferred: notifying the writer when an index finishes
+(the activity card and the account list say so), and indexing on the other
+prose paths (split, merge, review accepts, replace) beyond the editor save,
+which the sweep covers within five minutes.
+
 Embeddings model setting and adapter (v4.1.0, 2026-11-27,
 `feat/embeddings-setting`, #1784). The embeddings model lives under an
 `embeddings` key in `users.llm_config` rather than in new columns, so no

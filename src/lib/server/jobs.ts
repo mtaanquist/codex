@@ -45,8 +45,12 @@ import {
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_QUEUE_OPTIONS,
 	ASSISTANT_JOB_EXPIRY_SECONDS,
+	EMBEDDINGS_INDEX_QUEUE,
+	EMBEDDINGS_SAVE_DELAY_SECONDS,
+	embeddingsSendOptions,
 	JOB_HEARTBEAT_SECONDS
 } from './queues.ts';
+import { storyIndexOwner } from './llm/embeddings/scene-index.ts';
 import { reviewScopeKey } from './review-runs.ts';
 import {
 	findRunningAssistantJobs,
@@ -77,6 +81,7 @@ function getBoss(): Promise<PgBoss> {
 		await boss.createQueue(ASSISTANT_SUMMARIES_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 		await boss.createQueue(ASSISTANT_ENRICH_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 		await boss.createQueue(ASSISTANT_DRAFT_QUEUE, ASSISTANT_QUEUE_OPTIONS);
+		await boss.createQueue(EMBEDDINGS_INDEX_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 		return boss;
 	})();
 	return starting;
@@ -468,6 +473,56 @@ export async function queueAssistantChapterDraft(input: {
 	}
 }
 
+// Queues a full index of the writer's stories in a universe, the one the
+// writer starts. The singleton key holds one unfinished index per universe.
+export async function queueEmbeddingsIndex(input: {
+	userId: string;
+	universeId: string;
+}): Promise<string | 'coalesced' | null> {
+	try {
+		const boss = await getBoss();
+		const jobId = await boss.send(EMBEDDINGS_INDEX_QUEUE, input, {
+			singletonKey: `universe:${input.userId}:${input.universeId}`,
+			...embeddingsSendOptions(input.userId)
+		});
+		return jobId ?? 'coalesced';
+	} catch (error) {
+		logEvent('error', 'job.queue_failed', {
+			queue: EMBEDDINGS_INDEX_QUEUE,
+			universeId: input.universeId,
+			...errorFields(error)
+		});
+		return null;
+	}
+}
+
+// Call after a save that changed a scene's text. When the story's universe is
+// indexed and kept current, queues the story's upkeep a minute later; a save
+// while one is waiting joins it. A save that lands while one runs is left to
+// the next save or the worker's sweep.
+export async function queueStoryEmbeddings(storyId: string): Promise<void> {
+	try {
+		const userId = await storyIndexOwner(db, storyId);
+		if (!userId) return;
+		const boss = await getBoss();
+		await boss.send(
+			EMBEDDINGS_INDEX_QUEUE,
+			{ userId, storyId },
+			{
+				singletonKey: `story:${storyId}`,
+				startAfter: EMBEDDINGS_SAVE_DELAY_SECONDS,
+				...embeddingsSendOptions(userId)
+			}
+		);
+	} catch (error) {
+		logEvent('error', 'job.queue_failed', {
+			queue: EMBEDDINGS_INDEX_QUEUE,
+			storyId,
+			...errorFields(error)
+		});
+	}
+}
+
 // What the queue says about a scene draft's job, for settling a draft whose
 // job ended without settling it (see scene-drafts.ts). 'stopped' is the
 // writer's Stop; 'missing' is a job the queue does not have (never queued, or
@@ -521,7 +576,8 @@ const JOB_QUEUES = {
 	enrich: ASSISTANT_ENRICH_QUEUE,
 	arc: ASSISTANT_ENRICH_QUEUE,
 	details: ASSISTANT_ENRICH_QUEUE,
-	draft: ASSISTANT_DRAFT_QUEUE
+	draft: ASSISTANT_DRAFT_QUEUE,
+	embeddings: EMBEDDINGS_INDEX_QUEUE
 } as const;
 
 export async function getAssistantJobState(

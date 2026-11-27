@@ -4,6 +4,7 @@ import {
 	PURGE_REVIEW_RUNS_QUEUE,
 	PURGE_SESSIONS_QUEUE,
 	PURGE_UNIVERSES_QUEUE,
+	RECONCILE_EMBEDDINGS_QUEUE,
 	RECONCILE_MENTIONS_QUEUE,
 	REMAP_MARKERS_QUEUE,
 	SWEEP_DELETED_OBJECTS_QUEUE,
@@ -28,6 +29,9 @@ export const WORKER_SCHEDULES: readonly { queue: string; cron: string }[] = [
 	// Stale mention indexes are swept every five minutes, so a dropped rebuild
 	// self-heals within minutes instead of waiting for the next save.
 	{ queue: RECONCILE_MENTIONS_QUEUE, cron: '*/5 * * * *' },
+	// Kept-current search indexes that fell behind are caught up the same way,
+	// offset from the mention sweep.
+	{ queue: RECONCILE_EMBEDDINGS_QUEUE, cron: '2-59/5 * * * *' },
 	// Markers a save detached past its comparison budget are placed again
 	// within a minute.
 	{ queue: REMAP_MARKERS_QUEUE, cron: '* * * * *' }

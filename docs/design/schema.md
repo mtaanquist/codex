@@ -25,7 +25,7 @@ universe
 - **Database**: Postgres
 - **Content format**: Markdown in `text` columns (rendered on display/export)
 - **Search**: `tsvector` for full-text, `pg_trgm` for fuzzy name matching
-- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; nothing uses it yet. It is required now so the database image change, and the index rebuild that comes with it, happen once at a major version rather than in the release that first stores vectors
+- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; the search index (`scene_chunks`, migration 0134) stores its vectors in it. It was required at v4.0.0 so the database image change, and the index rebuild that comes with it, happen once at a major version rather than in the release that first stores vectors
 - **Case-insensitive handles**: `citext` for the public profile handle (requires the `citext` extension)
 - **Squishy fields**: `jsonb` with GIN indexes where queried
 
@@ -743,6 +743,36 @@ entity_mentions (
 ```
 
 When a scene's `body_md` changes: delete existing rows for that source, then insert fresh ones based on name, alias, and keyword matching. Combined with full-text search on `body_md` columns, this gives both exact-entity and fuzzy in-text search.
+
+## Search index (embeddings)
+
+The writer's own stories in a universe, embedded with their embeddings model for search by meaning (#1785, `src/lib/server/llm/embeddings/scene-index.ts`). Derived data only: the scene's markdown stays the source and nothing here is exported.
+
+```sql
+embedding_indexes (
+  user_id       uuid references users on delete cascade,
+  universe_id   uuid references universes on delete cascade,
+  model         text,          -- the model the last full index finished with
+  completed_at  timestamptz,   -- null until a full index reaches the end
+  created_at    timestamptz,
+  primary key (user_id, universe_id)
+)
+
+scene_chunks (
+  scene_id          uuid references scenes on delete cascade,
+  chunk_index       int,
+  content           text,        -- the passage as embedded
+  content_hash      text,        -- sha256 of content
+  model             text,
+  dimensions        int,
+  embedding         vector,      -- no fixed size; models differ
+  scene_updated_at  timestamptz, -- the scene's updated_at when it was read
+  created_at        timestamptz,
+  primary key (scene_id, chunk_index)
+)
+```
+
+A row in `embedding_indexes` is the writer turning the index on for a universe. A scene is current when its passages carry the current model and its present `updated_at`. While `completed_at` is set and `model` is the writer's current model, a save queues the story's upkeep and a five-minute sweep catches anything missed; a different model waits for the writer to index again. There is no vector index: every search runs inside one writer's universe or story, which is small enough to compare exactly, and pgvector's approximate indexes need one fixed vector size where writers' models differ. The rows go with the scene through the foreign key, so scene, story, universe and account deletion need no extra step.
 
 ---
 

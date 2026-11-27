@@ -24,7 +24,9 @@ import {
 	ASSISTANT_SUMMARIES_QUEUE,
 	ASSISTANT_ENRICH_QUEUE,
 	ASSISTANT_DRAFT_QUEUE,
-	ASSISTANT_QUEUE_OPTIONS
+	ASSISTANT_QUEUE_OPTIONS,
+	EMBEDDINGS_INDEX_QUEUE,
+	RECONCILE_EMBEDDINGS_QUEUE
 } from '../lib/server/queues.ts';
 import { createPool } from '../lib/server/db/pool.ts';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -83,6 +85,8 @@ await boss.createQueue(ASSISTANT_REVIEW_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 await boss.createQueue(ASSISTANT_SUMMARIES_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 await boss.createQueue(ASSISTANT_ENRICH_QUEUE, ASSISTANT_QUEUE_OPTIONS);
 await boss.createQueue(ASSISTANT_DRAFT_QUEUE, ASSISTANT_QUEUE_OPTIONS);
+await boss.createQueue(EMBEDDINGS_INDEX_QUEUE, ASSISTANT_QUEUE_OPTIONS);
+await boss.createQueue(RECONCILE_EMBEDDINGS_QUEUE);
 // The review and summaries queues used before #986, and drained until #1041.
 await deleteLegacyQueues(boss);
 
@@ -107,6 +111,8 @@ await boss.work(ASSISTANT_REVIEW_QUEUE, ASSISTANT_WORK_OPTIONS, handlers.assista
 await boss.work(ASSISTANT_SUMMARIES_QUEUE, ASSISTANT_WORK_OPTIONS, handlers.assistantSummaries);
 await boss.work(ASSISTANT_ENRICH_QUEUE, ASSISTANT_WORK_OPTIONS, handlers.assistantEnrich);
 await boss.work(ASSISTANT_DRAFT_QUEUE, ASSISTANT_WORK_OPTIONS, handlers.assistantDraft);
+await boss.work(EMBEDDINGS_INDEX_QUEUE, ASSISTANT_WORK_OPTIONS, handlers.embeddingsIndex);
+await boss.work(RECONCILE_EMBEDDINGS_QUEUE, handlers.reconcileEmbeddings);
 await boss.work(BACKUP_QUEUE, handlers.backup);
 await boss.work(EMAIL_QUEUE, handlers.email);
 await boss.work(EMAIL_DEAD_LETTER_QUEUE, handlers.emailDeadLetter);

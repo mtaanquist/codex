@@ -256,6 +256,40 @@ records a passed `SpendMeter` the way the gateway does, so a background job
 counts against the account's spend cap. It returns `{ model, dimensions,
 vectors }`; vectors from another model or size are not comparable.
 
+### Search index (#1785)
+
+The writer turns the index on per universe from the Search index list under
+Embeddings on the account page (`POST /api/assistant/embeddings-index`, which
+first answers `estimate: true` with the scenes, tokens and, given a price, the
+cost; the page asks before indexing above `EMBED_CONFIRM_TOKENS`, 50,000).
+`indexScenes` in `#lib/server/llm/embeddings/scene-index.ts` cuts each scene
+into passages of up to 1,500 characters at paragraph and then sentence
+breaks (`chunks.ts`), keeps the vector of any passage whose sha256 and model
+are unchanged, embeds the rest about 64 at a time across one story's scenes,
+and replaces the scene's rows in one transaction that refuses to overwrite
+rows read from a later save. It only reads scenes. Trashed scenes lose their
+rows; muted stories and other writers' stories are never read.
+
+Jobs run on `embeddings-index` (exclusive, one per writer at a time, the
+Assistant's expiry and heartbeat). The universe job the writer starts shows
+in Background jobs (kind `embeddings`) and, when it reaches the end, records
+the model in `embedding_indexes`. From then on a scene save queues the story's
+upkeep a minute later (`queueStoryEmbeddings`), and `reconcile-embeddings`
+every five minutes queues any story that has fallen behind. A model change
+stops the upkeep until the writer indexes the universe again, since a full
+re-embed is a cost they should see first. A run stops at the job's spend cap
+(through `jobSpendMeter`), when embeddings or the Assistant go off, or on an
+endpoint that keeps failing; the job then settles as failed and the list says
+how far it got. Upkeep jobs show nowhere and notify nobody.
+
+`nearestChunks(db, userId, { universeId } | { storyId }, { model, vector },
+limit)` is the query the search features build on: exact cosine distance
+over the writer's own live, unmuted stories in a universe they indexed,
+comparing only passages of the query's model and vector size. It returns the
+passage text with its scene, story, titles and distance. The query vector
+comes from `embed(db, userId, [text])` with no `storyId`, since a query is
+not story text.
+
 ### Admin egress policy (the SSRF question)
 
 Because the key is held server-side, the browser cannot call the writer's
@@ -2165,7 +2199,9 @@ calls the gateway, which proxies through the egress guard.
   `testEndpointConnection`, `probeAccountEndpoint`, `probeEndpoint`.
 - `egress.ts`: `egressPolicy`, `saveEgressPolicy`.
 - `embeddings/`: `embed`, `testEmbeddings`, `embeddingsView`,
-  `saveEmbeddingsConfig`, `resolveEmbeddings`, `EmbeddingsDisabledError`.
+  `saveEmbeddingsConfig`, `resolveEmbeddings`, `EmbeddingsDisabledError`;
+  `scene-index.ts`: `indexScenes`, `nearestChunks`, `estimateEmbeddingIndex`,
+  `embeddingIndexStatus`; `chunks.ts`: `chunkScene`.
 - `retry.ts`: `isTransientFailure`, shared by the gateway and `embed`.
 - `context/assemble.ts`: `assembleContext`, `assembleStoryFrame`,
   `assembleSceneDelta`, `buildSystemMessage`.

@@ -256,6 +256,30 @@ export async function startDetailsJob(opts: {
 	});
 }
 
+// Where a search index's progress shows: the Embeddings part of the account
+// page.
+export const EMBEDDINGS_INDEX_PATH = `${resolve('/account/[[section]]', { section: 'assistant' })}#assistant-embeddings-index`;
+
+// Queues the full search index of the writer's stories in a universe and
+// tracks it in the activity center. Resolves when the job settles.
+export async function startEmbeddingsIndex(opts: {
+	universeId: string;
+	name: string;
+}): Promise<void> {
+	await launchJob({
+		url: '/api/assistant/embeddings-index',
+		payload: { universeId: opts.universeId },
+		kind: 'embeddings',
+		failLabel: `Could not index ${opts.name}`,
+		startFallback: 'Could not start indexing.',
+		track: {
+			...jobLabels('embeddings', 'full', opts.name),
+			scope: { universeId: opts.universeId },
+			href: EMBEDDINGS_INDEX_PATH
+		}
+	});
+}
+
 // Where a scene's draft shows: the scene in Write, with the draft open in the
 // Assistant panel.
 export function sceneDraftPath(storyId: string, sceneId: string): ResolvedPathname {
@@ -379,7 +403,7 @@ export function followChapterDraft(opts: {
 // ("your story", or a quoted title for a job picked up after a reload); a
 // summary pass started from the panel needs none.
 function jobLabels(
-	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft',
+	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft' | 'embeddings',
 	mode: 'full' | 'continuity',
 	label?: string
 ): { runningLabel: string; doneLabel: string; failedLabel: string } {
@@ -388,6 +412,13 @@ function jobLabels(
 			runningLabel: `Drafting ${label}...`,
 			doneLabel: `Draft of ${label} ready`,
 			failedLabel: `Could not draft ${label}`
+		};
+	}
+	if (kind === 'embeddings') {
+		return {
+			runningLabel: `Indexing ${label} for search...`,
+			doneLabel: `Finished indexing ${label}`,
+			failedLabel: `Could not finish indexing ${label}`
 		};
 	}
 	if (kind === 'details') {
@@ -440,7 +471,7 @@ function jobLabels(
 // A job the server still has queued or running (GET /api/assistant/jobs).
 export type RunningJob = JobScope & {
 	id: string;
-	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft';
+	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft' | 'embeddings';
 	mode: 'full' | 'continuity';
 	title: string;
 	startedAt?: string;
@@ -475,7 +506,9 @@ export async function resumeRunningJobs(): Promise<void> {
 						? sceneDraftPath(storyId, sceneId)
 						: kind === 'draft' && storyId && chapterId
 							? chapterDraftPath(storyId, chapterId)
-							: undefined
+							: kind === 'embeddings'
+								? EMBEDDINGS_INDEX_PATH
+								: undefined
 		});
 		// One this tab started itself gets its title in the background jobs list.
 		labelJob(id, labels.runningLabel);
