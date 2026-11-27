@@ -4,6 +4,7 @@
 	import { goto, refreshAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import { deserialize } from '$app/forms';
 	import { closePalette, openPalette, palette } from '#lib/palette.svelte';
 	import { modal } from '#lib/modal';
@@ -490,7 +491,9 @@
 			meaningError = '';
 			meaningQuery = '';
 			inputEl?.focus();
-			void checkMeaning();
+			// Untracked: it reads the page address, and re-running this reset on a
+			// navigation would undo what a jump from the palette just did.
+			void untrack(checkMeaning);
 		}
 	});
 
