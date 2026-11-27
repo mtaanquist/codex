@@ -15,7 +15,7 @@ import { SpendCapError, type SpendMeter } from './spend.ts';
 import {
 	embed,
 	EmbeddingsDisabledError,
-	resolveEmbeddings,
+	embeddingsSettings,
 	type EmbedDeps
 } from './embeddings/index.ts';
 import { embeddingIndexFor, nearestChunks } from './embeddings/scene-index.ts';
@@ -396,7 +396,7 @@ export function pickRelated(
 // Whether the universe has a finished index on the writer's current
 // embeddings model. Without one a read sends what it always has.
 async function relatedIndexReady(db: Database, userId: string, universeId: string) {
-	const config = await resolveEmbeddings(db, userId);
+	const config = await embeddingsSettings(db, userId);
 	if (!config.ready) return false;
 	const index = await embeddingIndexFor(db, userId, universeId);
 	return !!index?.completedAt && index.model === config.model;

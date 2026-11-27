@@ -35,6 +35,7 @@ const { saveEmbeddingsConfig } = await import('../../src/lib/server/llm/embeddin
 const { enableEmbeddingIndex, completeEmbeddingIndex, indexScenes } =
 	await import('../../src/lib/server/llm/embeddings/scene-index');
 const { SpendMeter } = await import('../../src/lib/server/llm/spend');
+const { encryptSecret } = await import('../../src/lib/server/crypto');
 
 let prompts: string[] = [];
 const stubProvider: Provider = {
@@ -354,7 +355,26 @@ describe('Suggest details without an index', () => {
 		});
 		expect(await baseline()).toBe(plain);
 
+		// A stored key sealed with an APP_SECRET since rotated (#1887).
 		await embeddingsOn();
+		const secret = process.env.APP_SECRET;
+		process.env.APP_SECRET = 'a-secret-since-rotated';
+		const sealed = encryptSecret('sk-embed');
+		process.env.APP_SECRET = secret;
+		await pool.query(
+			`update users set llm_config = jsonb_set(llm_config, '{embeddings,apiKeyEnc}', to_jsonb($1::text)) where id = $2`,
+			[sealed, ownerId]
+		);
+		expect(await baseline()).toBe(plain);
+		expect(
+			await estimateEntityEnrich(db, { userId: ownerId, scope: { storyId }, entityId: bram })
+		).toBeTruthy();
+		expect(embedded).toEqual([]);
+
+		await pool.query(
+			`update users set llm_config = llm_config #- '{embeddings,apiKeyEnc}' where id = $1`,
+			[ownerId]
+		);
 		embedFails = new Error('the endpoint is down');
 		const result = await read();
 		expect(prompts[0]).toBe(plain);

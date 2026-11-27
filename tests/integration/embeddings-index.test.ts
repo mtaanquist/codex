@@ -24,6 +24,7 @@ process.env.APP_SECRET = process.env.APP_SECRET || 'embeddings-index-test-secret
 const { saveAccountLlmConfig, saveStoryLlmOverride } =
 	await import('../../src/lib/server/llm/config');
 const { saveEmbeddingsConfig } = await import('../../src/lib/server/llm/embeddings/config');
+const { encryptSecret } = await import('../../src/lib/server/crypto');
 const {
 	indexScenes,
 	enableEmbeddingIndex,
@@ -135,6 +136,19 @@ async function chunksOf(sceneId: string) {
 
 async function allChunks() {
 	return await db.select().from(sceneChunks);
+}
+
+// Stores an embeddings key sealed with another APP_SECRET, as a secret
+// rotated since the key was saved leaves it.
+async function storeUnreadableKey(id: string) {
+	const secret = process.env.APP_SECRET;
+	process.env.APP_SECRET = 'a-secret-since-rotated';
+	const sealed = encryptSecret('sk-embed');
+	process.env.APP_SECRET = secret;
+	await pool.query(
+		`update users set llm_config = jsonb_set(llm_config, '{embeddings,apiKeyEnc}', to_jsonb($1::text)) where id = $2`,
+		[sealed, id]
+	);
 }
 
 const run = (scope: { storyId: string } | { universeId: string } = { universeId }) =>
@@ -322,6 +336,25 @@ describe('indexing a universe', () => {
 		expect(inputs).toEqual([]);
 	});
 
+	it('reports a key that no longer decrypts as a failure that will not pass, and sends nothing', async () => {
+		await makeScene(storyId, 'The sea.');
+		await enableEmbeddingIndex(db, userId, universeId);
+		await storeUnreadableKey(userId);
+		const result = await run();
+		expect(result).toMatchObject({ complete: false, error: expect.stringContaining('API key') });
+		expect(result.retryable).toBeUndefined();
+		expect(inputs).toEqual([]);
+	});
+
+	it('says whether a failure might pass on its own', async () => {
+		await makeScene(storyId, 'The sea.');
+		await enableEmbeddingIndex(db, userId, universeId);
+		failWith = new Error('Endpoint returned 503: busy');
+		expect(await run()).toMatchObject({ complete: false, retryable: true });
+		failWith = new Error('Endpoint returned 401: bad key');
+		expect((await run()).retryable).toBeUndefined();
+	});
+
 	it('reports a failing endpoint without throwing', async () => {
 		await makeScene(storyId, 'The sea.');
 		await enableEmbeddingIndex(db, userId, universeId);
@@ -455,6 +488,69 @@ describe('keeping the index current', () => {
 			state: 'model-changed',
 			indexed: 0
 		});
+	});
+});
+
+describe('a stored key that no longer decrypts', () => {
+	it('still reports where each universe stands and what indexing would send', async () => {
+		await makeScene(storyId, 'The sea.');
+		await enableEmbeddingIndex(db, userId, universeId);
+		await run();
+		await completeEmbeddingIndex(db, userId, universeId, 'fake-embed');
+		await storeUnreadableKey(userId);
+		expect(await embeddingIndexStatus(db, userId)).toEqual([
+			{ universeId, name: 'Saltmarsh', state: 'current', scenes: 1, indexed: 1 }
+		]);
+		expect(await estimateEmbeddingIndex(db, userId, { universeId })).toMatchObject({
+			model: 'fake-embed',
+			scenes: 0
+		});
+	});
+});
+
+describe('the sweep', () => {
+	it('takes the oldest change first, and every writer before a second story of one', async () => {
+		const other = await makeUser('o@example.com');
+		const [otherUniverse] = await db
+			.insert(universes)
+			.values({ ownerId: other, name: 'Fenland' })
+			.returning({ id: universes.id });
+		const busyA = await makeStory(userId, universeId, 'A');
+		const busyB = await makeStory(userId, universeId, 'B');
+		const quiet = await makeStory(other, otherUniverse.id, 'C');
+		const sceneA = await makeScene(busyA, 'The sea.');
+		const sceneB = await makeScene(busyB, 'The sea.');
+		const sceneC = await makeScene(quiet, 'The sea.');
+		for (const [owner, universe] of [
+			[userId, universeId],
+			[other, otherUniverse.id]
+		]) {
+			await enableEmbeddingIndex(db, owner, universe);
+			await indexScenes(db, { userId: owner, scope: { universeId: universe }, deps });
+			await completeEmbeddingIndex(db, owner, universe, 'fake-embed');
+		}
+		const at = (minutes: number) => new Date(Date.UTC(2026, 0, 1, 0, minutes));
+		await db
+			.update(scenes)
+			.set({ bodyMd: 'B', updatedAt: at(1) })
+			.where(eq(scenes.id, sceneB));
+		await db
+			.update(scenes)
+			.set({ bodyMd: 'A', updatedAt: at(2) })
+			.where(eq(scenes.id, sceneA));
+		await db
+			.update(scenes)
+			.set({ bodyMd: 'C', updatedAt: at(3) })
+			.where(eq(scenes.id, sceneC));
+		expect(await storiesBehindIndex(db)).toEqual([
+			{ userId, storyId: busyB },
+			{ userId: other, storyId: quiet },
+			{ userId, storyId: busyA }
+		]);
+		expect(await storiesBehindIndex(db, 2)).toEqual([
+			{ userId, storyId: busyB },
+			{ userId: other, storyId: quiet }
+		]);
 	});
 });
 
@@ -595,6 +691,27 @@ describe('the worker job', () => {
 		await db.update(scenes).set({ bodyMd: 'The fire.' }).where(eq(scenes.id, id));
 		await handlers.embeddingsIndex([job({ userId, storyId })]);
 		expect(await storyIndexOwner(db, storyId)).toBeNull();
+	});
+
+	it('hands upkeep back when the endpoint refuses it, and keeps it on a passing failure', async () => {
+		const id = await makeScene(storyId, 'The sea.');
+		await enableEmbeddingIndex(db, userId, universeId);
+		const { handlers, completed } = harness();
+		await handlers.embeddingsIndex([job({ userId, universeId })]);
+		expect(await storyIndexOwner(db, storyId)).toBe(userId);
+
+		await db.update(scenes).set({ bodyMd: 'The fire.' }).where(eq(scenes.id, id));
+		failWith = new Error('Endpoint returned 503: busy');
+		const busy = job({ userId, storyId });
+		await handlers.embeddingsIndex([busy]);
+		expect(completed).toEqual([{ id: busy.id, data: { failed: true } }]);
+		expect(await storyIndexOwner(db, storyId)).toBe(userId);
+
+		failWith = new Error('Endpoint returned 401: the key was revoked');
+		await handlers.embeddingsIndex([job({ userId, storyId })]);
+		expect(await storyIndexOwner(db, storyId)).toBeNull();
+		expect((await embeddingIndexStatus(db, userId))[0].state).toBe('partial');
+		expect(await storiesBehindIndex(db)).toEqual([]);
 	});
 
 	it('runs no upkeep for a story whose universe index has not finished', async () => {

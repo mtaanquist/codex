@@ -5,14 +5,15 @@ import { egressHttpRequest, egressPolicy } from '../egress.ts';
 import { isTransientFailure, RETRY_DELAYS_MS } from '../retry.ts';
 import { SpendCapError, type SpendMeter } from '../spend.ts';
 import { recordAssistantUsage } from '../usage.ts';
-import type { HttpRequest, TokenUsage } from '../providers/types.ts';
+import { EndpointReplyError, type HttpRequest, type TokenUsage } from '../providers/types.ts';
 import {
+	embeddingsSettings,
 	resolveEmbeddings,
 	saveEmbeddingsDimensions,
 	storyMuted,
 	type ResolvedEmbeddings
 } from './config.ts';
-import { openaiEmbeddings, type EmbeddingsProvider } from './openai.ts';
+import { openaiEmbeddings, type EmbeddingResponse, type EmbeddingsProvider } from './openai.ts';
 
 // The one entry point for turning text into vectors with the writer's own
 // embeddings model. Every request goes through the egress guard, logs a usage
@@ -82,29 +83,22 @@ async function embedBatch(
 		promptTokens: input.reduce((sum, text) => sum + ceilingTokens(text), 0),
 		completionTokens: 0
 	};
+	// Only the request is retried: once it succeeded it is never sent again,
+	// whatever happens to the bookkeeping after it.
+	let reply: EmbeddingResponse;
 	for (let attempt = 0; ; attempt += 1) {
 		if (meter?.wouldPassCap(config.model, ceiling, config.price)) {
 			meter.hold(meter.exceedsCap(config.model, ceiling, config.price));
 			throw new SpendCapError();
 		}
 		try {
-			const reply = await provider.embed(
+			reply = await provider.embed(
 				{ model: config.model, input },
 				connection(config),
 				http,
 				opts.signal
 			);
-			meter?.record(config.model, reply.usage, config.price);
-			await recordAssistantUsage(db, {
-				userId,
-				storyId: opts.storyId,
-				role: 'embeddings',
-				provider: config.provider,
-				model: config.model,
-				usage: reply.usage,
-				price: config.price
-			});
-			return reply.vectors;
+			break;
 		} catch (err) {
 			if (attempt >= RETRY_DELAYS_MS.length || opts.signal?.aborted || !isTransientFailure(err)) {
 				throw err;
@@ -118,6 +112,17 @@ async function embedBatch(
 			await sleep(RETRY_DELAYS_MS[attempt]);
 		}
 	}
+	meter?.record(config.model, reply.usage, config.price);
+	await recordAssistantUsage(db, {
+		userId,
+		storyId: opts.storyId,
+		role: 'embeddings',
+		provider: config.provider,
+		model: config.model,
+		usage: reply.usage,
+		price: config.price
+	});
+	return reply.vectors;
 }
 
 // Embed texts with the writer's embeddings model. Throws EmbeddingsDisabledError
@@ -132,9 +137,9 @@ export async function embed(
 	opts: EmbedOptions = {},
 	deps: EmbedDeps = {}
 ): Promise<EmbedResult> {
-	const config = await resolveEmbeddings(db, userId);
-	if (!config.ready) throw new EmbeddingsDisabledError();
+	if (!(await embeddingsSettings(db, userId)).ready) throw new EmbeddingsDisabledError();
 	if (opts.storyId && (await storyMuted(db, opts.storyId))) throw new EmbeddingsDisabledError();
+	const config = await resolveEmbeddings(db, userId);
 	if (texts.some((text) => !text.trim())) throw new Error('Cannot embed an empty text.');
 	const provider = deps.provider ?? openaiEmbeddings;
 	const http = deps.http ?? egressHttpRequest(await egressPolicy(db));
@@ -147,7 +152,7 @@ export async function embed(
 	}
 	const dimensions = vectors[0]?.length ?? config.dimensions ?? 0;
 	if (vectors.some((vector) => vector.length !== dimensions)) {
-		throw new Error('The endpoint returned embeddings of different sizes.');
+		throw new EndpointReplyError('The endpoint returned embeddings of different sizes.');
 	}
 	return { model: config.model, dimensions, vectors };
 }

@@ -24,6 +24,24 @@ nav document, or importing a Codex EPUB would bring the contents page in as a
 chapter. Left open: editions number chapters after dropping empty ones, while
 the outline and live exports count them, which needs a product decision.
 
+Embeddings review round 1 (v4.1.0, 2026-11-27, `fix/v4.1-review-1-embeddings`,
+#1886 #1887 #1888 #1890 #1891). Readiness, status and estimates now read a
+key-free `embeddingsSettings`; only `embed()` and `testEmbeddings()` decrypt,
+and an unreadable key becomes `EmbeddingsKeyError`, a failure a retry would
+repeat. `embed()` retries only the request and records the meter and usage
+once after it. Upkeep that fails in a way a retry would repeat (a 4xx other
+than 429, a malformed reply, an unreadable key) hands the universe back like a
+capped run, so the writer sees "Indexing stopped" with Continue; a busy or
+unreachable server is left for the next sweep. Storing the failure's reason
+for the account page was left out: it needs a column, and Test embeddings
+already says what the endpoint answers. The sweep takes each writer's
+longest-waiting story before anyone's second, oldest change first. The search
+index list reloads whenever an embeddings job for a listed universe stops
+being tracked, not only one started from the page. The flaky autosave e2e
+filled the next field while the previous save's page update was still being
+applied (kit reloads the data, then moves focus to the page and back); it now
+waits for the save's "Saved." to be drawn again, the last step of the update.
+
 Search by meaning (v4.1.0, 2026-11-27, `feat/embeddings-search`, #1787). There
 is no separate universe search page: search is the command palette, so the
 meaning search is a Words / Meaning switch there, shown only on a story or

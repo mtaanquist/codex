@@ -12,9 +12,12 @@ export {
 } from './embed.ts';
 export {
 	embeddingsReady,
+	embeddingsSettings,
 	embeddingsView,
 	resolveEmbeddings,
+	EmbeddingsKeyError,
 	saveEmbeddingsConfig,
+	type EmbeddingsSettings,
 	type EmbeddingsView,
 	type ResolvedEmbeddings,
 	type SaveEmbeddingsInput
