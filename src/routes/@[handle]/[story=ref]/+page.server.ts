@@ -14,6 +14,8 @@ import { wordCount } from '#lib/word-count';
 import { isUuid } from '#lib/slug';
 import { OLD_SLUG_REDIRECT_HEADERS } from '#lib/server/slugs';
 import { storyTagView } from '#lib/server/tags';
+import { browseEnabled } from '#lib/server/settings';
+import { similarStories } from '#lib/server/browse';
 
 // The reader view of one frozen edition, at /@handle/<story slug> or, for
 // links made before slugs, /@handle/<story id>. Adult work sits behind a
@@ -86,6 +88,14 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 	// universe the reader could not already reach.
 	const universe = await publicUniverseLink(db, handle, edition.universeId);
 
+	// Listed stories like this one while Browse is on (null when it is off).
+	// Adult work only on a confirmed adult story; a reader who chose to include
+	// it in Browse gets it from the similar endpoint once the page has loaded.
+	const similarAdult = edition.isAdult;
+	const similar = (await browseEnabled(db))
+		? await similarStories(db, edition.storyId, { adult: similarAdult })
+		: null;
+
 	return {
 		handle,
 		story,
@@ -102,6 +112,8 @@ export const load: PageServerLoad = async ({ params, url, setHeaders }) => {
 		publishedAt: edition.publishedAt,
 		coverAssetId: edition.coverAssetId,
 		downloads,
+		similar,
+		similarAdult,
 		content
 	};
 };

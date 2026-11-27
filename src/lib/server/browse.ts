@@ -177,6 +177,68 @@ function filterConditions(query: BrowseQuery, filters: BrowseFilters): SQL[] | n
 	return conditions;
 }
 
+// The columns and joins a shelf card needs, shared by Browse and the similar
+// stories on a reading page. Expects the listedInBrowseCondition aliases.
+const BOOK_COLUMNS = sql`p.id as publication_id, p.story_id, s.slug, p.title, p.description_md, p.is_adult,
+	p.published_at, s.cover_asset_id, s.cover_color, p.handle, p.author,
+	u.pen_name, u.display_name, un.id as universe_id, un.name as universe_name, un.slug as universe_slug,
+	un.standalone`;
+const BOOK_FROM = sql`from publications p
+	join stories s on s.id = p.story_id
+	join users u on u.id = p.owner_id
+	join universes un on un.id = s.universe_id`;
+
+type BookRow = {
+	publication_id: string;
+	story_id: string;
+	slug: string;
+	title: string;
+	description_md: string | null;
+	is_adult: boolean;
+	published_at: string | Date;
+	cover_asset_id: string | null;
+	cover_color: string | null;
+	handle: string;
+	author: string | null;
+	pen_name: string | null;
+	display_name: string | null;
+	universe_id: string;
+	universe_name: string;
+	universe_slug: string;
+	standalone: boolean;
+};
+
+async function toBooks(db: Database, rows: BookRow[]): Promise<BrowseBook[]> {
+	const labels = await tagsForStories(
+		db,
+		rows.map((row) => row.story_id)
+	);
+	return rows.map((row) => ({
+		storyId: row.story_id,
+		slug: row.slug,
+		title: row.title,
+		descriptionMd: row.description_md,
+		isAdult: row.is_adult,
+		publishedAt: new Date(row.published_at),
+		coverAssetId: row.cover_asset_id,
+		coverColor: storyCoverColor({ id: row.story_id, coverColor: row.cover_color }),
+		genres: (labels.get(row.story_id) ?? [])
+			.filter((tag) => tag.kind === 'genre')
+			.map((tag) => tag.name),
+		handle: row.handle,
+		byline:
+			row.author?.trim() ||
+			authorName({ penName: row.pen_name, displayName: row.display_name }) ||
+			`@${row.handle}`,
+		universe: row.standalone
+			? null
+			: {
+					name: row.universe_name,
+					slug: slugAddress({ id: row.universe_id, slug: row.universe_slug })
+				}
+	}));
+}
+
 export async function browseStories(
 	db: Database,
 	query: BrowseQuery,
@@ -203,68 +265,15 @@ export async function browseStories(
 	}
 
 	const result = await db.execute(sql`
-		select p.id as publication_id, p.story_id, s.slug, p.title, p.description_md, p.is_adult,
-			p.published_at, ${MICROS}::text as published_micros, s.cover_asset_id, s.cover_color, p.handle, p.author,
-			u.pen_name, u.display_name, un.id as universe_id, un.name as universe_name, un.slug as universe_slug,
-			un.standalone
-		from publications p
-		join stories s on s.id = p.story_id
-		join users u on u.id = p.owner_id
-		join universes un on un.id = s.universe_id
+		select ${BOOK_COLUMNS}, ${MICROS}::text as published_micros
+		${BOOK_FROM}
 		where ${sql.join(conditions, sql` and `)}
 		order by p.published_at desc, p.id desc
 		limit ${BROWSE_PAGE_SIZE + 1}
 	`);
-	type Row = {
-		publication_id: string;
-		story_id: string;
-		slug: string;
-		title: string;
-		description_md: string | null;
-		is_adult: boolean;
-		published_at: string | Date;
-		published_micros: string;
-		cover_asset_id: string | null;
-		cover_color: string | null;
-		handle: string;
-		author: string | null;
-		pen_name: string | null;
-		display_name: string | null;
-		universe_id: string;
-		universe_name: string;
-		universe_slug: string;
-		standalone: boolean;
-	};
-	const rows = result.rows as Row[];
+	const rows = result.rows as (BookRow & { published_micros: string })[];
 	const page = rows.slice(0, BROWSE_PAGE_SIZE);
-	const labels = await tagsForStories(
-		db,
-		page.map((row) => row.story_id)
-	);
-	const books = page.map((row) => ({
-		storyId: row.story_id,
-		slug: row.slug,
-		title: row.title,
-		descriptionMd: row.description_md,
-		isAdult: row.is_adult,
-		publishedAt: new Date(row.published_at),
-		coverAssetId: row.cover_asset_id,
-		coverColor: storyCoverColor({ id: row.story_id, coverColor: row.cover_color }),
-		genres: (labels.get(row.story_id) ?? [])
-			.filter((tag) => tag.kind === 'genre')
-			.map((tag) => tag.name),
-		handle: row.handle,
-		byline:
-			row.author?.trim() ||
-			authorName({ penName: row.pen_name, displayName: row.display_name }) ||
-			`@${row.handle}`,
-		universe: row.standalone
-			? null
-			: {
-					name: row.universe_name,
-					slug: slugAddress({ id: row.universe_id, slug: row.universe_slug })
-				}
-	}));
+	const books = await toBooks(db, page);
 	const last = page[page.length - 1];
 	return {
 		books,
@@ -273,6 +282,68 @@ export async function browseStories(
 				? encodeCursor(last.published_micros, last.publication_id)
 				: null
 	};
+}
+
+export const SIMILAR_LIMIT = 6;
+// A shared free-form tag weighs ln(listed stories / listed stories with the
+// tag), so a rare tag counts for more. A shared genre adds a small fixed
+// weight; a story has at most MAX_GENRES of them, and those alone stay under
+// the minimum, so a match needs at least one tag that is not on most stories.
+// Fandoms and content warnings do not count.
+const GENRE_WEIGHT = 0.15;
+const MIN_SIMILAR_SCORE = 0.5;
+
+// Listed stories that share the story's genres and free-form tags, best match
+// first. Adult work only when the reader confirmed they may see it. The story
+// itself may be unlisted; only the matches have to be in Browse.
+export async function similarStories(
+	db: Database,
+	storyId: string,
+	{ adult }: { adult: boolean }
+): Promise<BrowseBook[]> {
+	const result = await db.execute(sql`
+		with source as (
+			-- The story's labels, each followed through a merge to its survivor
+			-- (a merge keeps chains one step deep).
+			select distinct t.id, t.kind
+			from story_tags st
+			join tags start on start.id = st.tag_id
+			join tags t on t.id = coalesce(start.merged_into_id, start.id)
+			where st.story_id = ${storyId}::uuid and t.kind in ('tag', 'genre')
+				and t.removed_at is null and t.merged_into_id is null
+		), listed as (
+			select p.story_id
+			from publications p
+			join stories s on s.id = p.story_id
+			join users u on u.id = p.owner_id
+			where ${listedInBrowseCondition}
+		), hits as (
+			-- The listed stories carrying each of those labels, by any entry
+			-- merged into it too.
+			select distinct l.story_id, src.id, src.kind
+			from source src
+			join tags t on t.id = src.id or t.merged_into_id = src.id
+			join story_tags st on st.tag_id = t.id
+			join listed l on l.story_id = st.story_id
+		), weights as (
+			select id, case when kind = 'genre' then ${GENRE_WEIGHT}::float8
+				else ln((select count(*) from listed)::float8 / count(*)) end as weight
+			from hits group by id, kind
+		), scored as (
+			select h.story_id, sum(w.weight) as score
+			from hits h join weights w on w.id = h.id
+			where h.story_id <> ${storyId}::uuid
+			group by h.story_id
+		)
+		select ${BOOK_COLUMNS}
+		${BOOK_FROM}
+		join scored on scored.story_id = p.story_id
+		where ${listedInBrowseCondition} and scored.score > ${MIN_SIMILAR_SCORE}
+			${adult ? sql`` : sql`and not p.is_adult`}
+		order by scored.score desc, p.published_at desc, p.id desc
+		limit ${SIMILAR_LIMIT}
+	`);
+	return toBooks(db, result.rows as BookRow[]);
 }
 
 // Authors whose name matches a search, with at least one listed story that

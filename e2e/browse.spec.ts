@@ -1,4 +1,4 @@
-import { expect, test, type Browser } from '@playwright/test';
+import { expect, test, type Browser, type Page } from '@playwright/test';
 import { gotoReady } from './navigate';
 import { pickFromLibraryMenu, startStoryInUniverse } from './library';
 import { violations } from './axe';
@@ -165,6 +165,87 @@ test('Browse includes adult work on load once a reader searched with it', async 
 	await gotoReady(reader, '/browse');
 	await expect(reader).toHaveURL('/browse');
 	await expect(adultBox).not.toBeChecked();
+	await anonymous.close();
+});
+
+// Publishes a public story listed in Browse, with one free-form tag and the
+// Fantasy genre, and returns its reading page's address.
+async function publishListed(
+	page: Page,
+	universe: string,
+	title: string,
+	tag: string,
+	adult = false
+): Promise<string> {
+	await gotoReady(page, '/');
+	await startStoryInUniverse(page, universe);
+	await page.getByLabel('New story').fill(title);
+	await page.getByRole('button', { name: 'Create story' }).click();
+	await expect(page.locator('.story-title')).toHaveText(title);
+	await gotoReady(page, page.url());
+	await page.getByRole('button', { name: 'New chapter' }).click();
+	await page.getByRole('button', { name: 'New scene' }).click();
+	await expect(page).toHaveURL(/scene=/);
+	await page.locator('.cm-content').click();
+	await page.keyboard.type('The bell rang twice.');
+	await expect(page.locator('.saved')).toHaveText(/Saved just now/);
+	const storyPath = new URL(page.url()).pathname;
+	await gotoReady(page, `${storyPath}/settings/publish`);
+	await page.getByLabel('Visibility').selectOption('public');
+	await page.getByLabel('List in Browse').check();
+	if (adult) await page.getByLabel('Adult content').check();
+	await page.getByRole('button', { name: 'Save visibility' }).click();
+	await expect(page.getByRole('status')).toHaveText('Saved.');
+	await page.getByRole('checkbox', { name: 'Fantasy' }).check();
+	await page.getByRole('button', { name: 'Tags', exact: true }).click();
+	await page.getByLabel('Add tag').fill(tag);
+	await page.getByLabel('Add tag').press('Enter');
+	await page.getByRole('button', { name: 'Save tags' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Saved.' })).toBeVisible();
+	await page.getByRole('button', { name: 'Publish edition' }).click();
+	const penPrompt = page.getByRole('dialog', { name: 'Choose your author name' });
+	const published = page.getByRole('status').filter({ hasText: 'Edition published.' });
+	await expect(published.or(penPrompt)).toBeVisible();
+	if (await penPrompt.isVisible()) {
+		await penPrompt.getByRole('button', { name: 'Continue' }).click();
+	}
+	return (await published.getByRole('link').getAttribute('href'))!;
+}
+
+test('a reading page shows similar stories, with adult work once the reader chose it', async ({
+	page,
+	browser
+}) => {
+	await setBrowse(browser, true);
+	const stamp = Date.now();
+	const universe = `Similar world ${stamp}`;
+	await gotoReady(page, '/');
+	await pickFromLibraryMenu(page, 'New universe');
+	await page.getByLabel('New universe').fill(universe);
+	await page.getByRole('button', { name: 'Create universe' }).click();
+	const plainPath = await publishListed(page, universe, `Plain ${stamp}`, `bells ${stamp}`);
+	const adultPath = await publishListed(page, universe, `Grown ${stamp}`, `bells ${stamp}`, true);
+	// A third listed story, so the shared tag is not on every listed story.
+	await publishListed(page, universe, `Other ${stamp}`, `ships ${stamp}`);
+
+	const anonymous = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+	const reader = await anonymous.newPage();
+	const similar = reader.getByRole('region', { name: 'Similar stories' });
+
+	// The only match is adult work, so a reader who has not chosen it sees none.
+	await gotoReady(reader, plainPath);
+	await expect(reader.getByRole('heading', { name: `Plain ${stamp}` })).toBeVisible();
+	await expect(similar).toHaveCount(0);
+
+	// On the confirmed adult story, the plain one shows.
+	await gotoReady(reader, `${adultPath}?adult=ok`);
+	await expect(similar.locator('.shelf-item-title')).toHaveText([`Plain ${stamp}`]);
+
+	// Once Browse remembers the adult choice, the plain story's page shows it too.
+	await reader.evaluate(() => localStorage.setItem('codex:browse-adult', 'show'));
+	await gotoReady(reader, plainPath);
+	await expect(similar.locator('.shelf-item-title')).toHaveText([`Grown ${stamp}`]);
+	expect(await violations(reader)).toEqual([]);
 	await anonymous.close();
 });
 
