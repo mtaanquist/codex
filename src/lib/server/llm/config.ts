@@ -749,7 +749,7 @@ function carried(sent: unknown, stored: unknown): boolean {
 	return JSON.stringify(sent) === JSON.stringify(stored);
 }
 
-function originOf(endpoint: string): string {
+export function originOf(endpoint: string): string {
 	try {
 		return new URL(endpoint).origin;
 	} catch {
@@ -757,7 +757,7 @@ function originOf(endpoint: string): string {
 	}
 }
 
-function hostOf(endpoint: string): string {
+export function hostOf(endpoint: string): string {
 	try {
 		return new URL(endpoint).hostname;
 	} catch {

@@ -160,22 +160,29 @@ test('the embeddings form saves on its own and leaves the Assistant endpoint alo
 	await seed();
 	await gotoReady(page, '/account/assistant');
 	const section = page.locator('#assistant-embeddings');
+	// Each change autosaves; wait for that save itself, since a "Saved." left
+	// by the one before would satisfy a status check at once.
+	const saving = () => page.waitForResponse((r) => r.url().includes('saveEmbeddings') && r.ok());
 	const url = section.getByLabel('Embeddings base URL', { exact: true });
-	await url.fill('http://localhost:11434/v1');
-	await url.blur();
-	await expect(section.getByRole('status')).toContainText('Saved');
 	const model = section.getByLabel('Embeddings model', { exact: true });
-	await model.fill('nomic-embed-text');
-	await model.blur();
 	const price = section.getByLabel('Embeddings price per million tokens (USD)', { exact: true });
-	await price.fill('0');
-	await price.blur();
-	await expect(section.getByRole('status')).toContainText('Saved');
-	await section.getByLabel('Use embeddings').check();
-	await expect(section.getByRole('status')).toContainText('Saved');
+	const enabled = section.getByLabel('Use embeddings');
+	for (const [field, value] of [
+		[url, 'http://localhost:11434/v1'],
+		[model, 'nomic-embed-text'],
+		[price, '0']
+	] as const) {
+		const saved = saving();
+		await field.fill(value);
+		await field.blur();
+		await saved;
+	}
+	const saved = saving();
+	await enabled.check();
+	await saved;
 
 	await page.reload();
-	await expect(section.getByLabel('Use embeddings')).toBeChecked();
+	await expect(enabled).toBeChecked();
 	await expect(url).toHaveValue('http://localhost:11434/v1');
 	await expect(model).toHaveValue('nomic-embed-text');
 	await expect(price).toHaveValue('0');

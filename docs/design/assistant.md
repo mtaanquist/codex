@@ -249,7 +249,7 @@ LocalAI all serve. It sends only `model` and `input`, and reads usage from
 `prompt_tokens`, or `total_tokens` where that is all the server reports
 (Voyage). `embed(db, userId, texts, { meter, storyId, signal })` in
 `#lib/server/llm/embeddings` is the one entry point: it refuses with
-`EmbeddingsDisabledError` unless ready, batches 64 texts a request through
+`EmbeddingsDisabledError` unless ready or when `storyId` names a muted story, batches 64 texts a request through
 the egress guard, retries with the gateway's rule (`retry.ts`), logs one
 usage row per request (role `embeddings`, price stored), and checks and
 records a passed `SpendMeter` the way the gateway does, so a background job

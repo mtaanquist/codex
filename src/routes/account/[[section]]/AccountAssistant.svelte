@@ -305,12 +305,21 @@
 			return;
 		}
 		if (embeddingKeyField) embeddingKeyField.value = '';
-		if (ask) select.form?.requestSubmit();
+		if (ask) {
+			select.form?.requestSubmit();
+			return;
+		}
+		// The old preset's URL is still in the box when the autosave reads the
+		// form; a custom endpoint starts empty. After a prompt the box has already
+		// re-rendered for the new provider.
+		const endpointField = select.form?.elements.namedItem('embeddingsEndpoint');
+		if (endpointField instanceof HTMLInputElement) endpointField.value = '';
 	}
 	$effect(() => {
 		if (form?.scope === 'embeddings' || form?.scope === 'embeddings-test') {
 			if (embeddingKeyField) embeddingKeyField.value = '';
-			if (!('saved' in form || 'dimensions' in form)) embeddingProvider = data.embeddings.provider;
+			// A refused save leaves the stored provider in place; show it again.
+			embeddingProvider = data.embeddings.provider;
 		}
 	});
 	// Why embeddings are not running yet, once the writer has switched them on.

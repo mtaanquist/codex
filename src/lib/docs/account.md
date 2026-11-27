@@ -350,9 +350,10 @@ since they name the old provider's models.
 An embeddings model turns a passage of your writing into a list of numbers
 that stands for what it means, so passages about the same thing end up close
 together even when they use different words. It is a separate model from the
-one that writes replies, with its own provider and key, because some providers
-(Claude among them) offer no embeddings model. Embeddings are off until you
-turn them on, and they stay off while the Assistant's kill switch is on.
+one that writes replies, with its own provider and key, so you can use it with
+any Assistant provider, Claude included. Embeddings are off until you turn
+them on. They stay off while the Assistant's kill switch is on, and a story you
+turned the Assistant off for is never sent.
 
 1. Under Embeddings on the Assistant page, pick a provider. For OpenAI or Voyage
    AI, paste an API key from that provider; the link under the picker takes you
@@ -369,8 +370,7 @@ turn them on, and they stay off while the Assistant's kill switch is on.
 Models that work well, as a place to start:
 
 - **OpenAI**: `text-embedding-3-small`, cheap and good enough for most books.
-- **Voyage AI**: `voyage-3.5`. Anthropic points Claude users to Voyage for
-  embeddings.
+- **Voyage AI**: `voyage-3.5`.
 - **Ollama** (`http://localhost:11434/v1`): run `ollama pull nomic-embed-text`
   first, then use `nomic-embed-text`.
 - **LM Studio** (`http://localhost:1234/v1`): download an embeddings model such

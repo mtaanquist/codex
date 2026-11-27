@@ -6,7 +6,12 @@ import { isTransientFailure, RETRY_DELAYS_MS } from '../retry.ts';
 import { SpendCapError, type SpendMeter } from '../spend.ts';
 import { recordAssistantUsage } from '../usage.ts';
 import type { HttpRequest, TokenUsage } from '../providers/types.ts';
-import { resolveEmbeddings, saveEmbeddingsDimensions, type ResolvedEmbeddings } from './config.ts';
+import {
+	resolveEmbeddings,
+	saveEmbeddingsDimensions,
+	storyMuted,
+	type ResolvedEmbeddings
+} from './config.ts';
 import { openaiEmbeddings, type EmbeddingsProvider } from './openai.ts';
 
 // The one entry point for turning text into vectors with the writer's own
@@ -35,7 +40,9 @@ export type EmbedOptions = {
 	// A background run's spend meter (see jobSpendMeter). Each request is
 	// recorded on it, and one that could pass the cap is not sent.
 	meter?: SpendMeter;
-	// The story the texts come from, for the usage log.
+	// The story the texts come from: required for a story's text, since a
+	// story the writer muted for the Assistant is refused. Also logged with
+	// the usage row.
 	storyId?: string;
 	signal?: AbortSignal;
 };
@@ -114,7 +121,7 @@ async function embedBatch(
 }
 
 // Embed texts with the writer's embeddings model. Throws EmbeddingsDisabledError
-// when embeddings may not run, SpendCapError when the next request could pass
+// when embeddings may not run (or opts.storyId is muted), SpendCapError when the next request could pass
 // the meter's cap (requests already made stay recorded), and the endpoint's or
 // the egress guard's own error otherwise. Empty texts are refused: every
 // server rejects them.
@@ -127,6 +134,7 @@ export async function embed(
 ): Promise<EmbedResult> {
 	const config = await resolveEmbeddings(db, userId);
 	if (!config.ready) throw new EmbeddingsDisabledError();
+	if (opts.storyId && (await storyMuted(db, opts.storyId))) throw new EmbeddingsDisabledError();
 	if (texts.some((text) => !text.trim())) throw new Error('Cannot embed an empty text.');
 	const provider = deps.provider ?? openaiEmbeddings;
 	const http = deps.http ?? egressHttpRequest(await egressPolicy(db));
@@ -154,12 +162,13 @@ export async function testEmbeddings(
 	userId: string,
 	deps: EmbedDeps = {}
 ): Promise<TestEmbeddingsResult> {
-	const config = await resolveEmbeddings(db, userId);
-	if (!config.endpoint) return { ok: false, reason: 'Enter a base URL first.' };
-	if (!config.model) return { ok: false, reason: 'Enter a model name first.' };
-	const provider = deps.provider ?? openaiEmbeddings;
-	const http = deps.http ?? egressHttpRequest(await egressPolicy(db));
 	try {
+		// Inside the try: a key saved under another APP_SECRET fails to decrypt.
+		const config = await resolveEmbeddings(db, userId);
+		if (!config.endpoint) return { ok: false, reason: 'Enter a base URL first.' };
+		if (!config.model) return { ok: false, reason: 'Enter a model name first.' };
+		const provider = deps.provider ?? openaiEmbeddings;
+		const http = deps.http ?? egressHttpRequest(await egressPolicy(db));
 		const reply = await provider.embed(
 			{ model: config.model, input: ['This is a connection test.'] },
 			connection(config),

@@ -215,6 +215,23 @@ describe('embed', () => {
 		expect(requests).toHaveLength(0);
 	});
 
+	it('is refused for a story muted for the Assistant', async () => {
+		await assistantOn();
+		await setUp();
+		const story = await pool.query<{ id: string }>(
+			`with u as (
+				insert into universes (owner_id, name, slug) values ($1, 'U', 'u') returning id
+			)
+			insert into stories (universe_id, owner_id, title, slug, llm_config)
+			select u.id, $1, 'S', 's', '{"enabled": false}'::jsonb from u returning id`,
+			[userId]
+		);
+		await expect(
+			embed(db, userId, ['a'], { storyId: story.rows[0].id }, { http })
+		).rejects.toBeInstanceOf(EmbeddingsDisabledError);
+		expect(requests).toHaveLength(0);
+	});
+
 	it('returns one vector per text in order, in batches, with a priced usage row per request', async () => {
 		await assistantOn();
 		await setUp();

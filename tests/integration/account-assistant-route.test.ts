@@ -482,11 +482,11 @@ describe('saveEmbeddings', () => {
 		const result = (await saveEmbeddings(
 			{ embeddingsEndpoint: 'http://127.0.0.1:9/v1' },
 			'testEmbeddings'
-		)) as { status: number; data: { scope: string; message: string } };
+		)) as { scope: string; message: string };
 		expect((await embeddingsView(db, userId)).endpoint).toBe('http://127.0.0.1:9/v1');
-		expect(result.status).toBe(400);
-		// The default egress policy refuses a loopback address before connecting.
-		expect(result.data.scope).toBe('embeddings-test');
-		expect(result.data.message).toMatch(/Blocked egress/);
+		// Not a fail(): the save landed, so the page must reload its data. The
+		// default egress policy refuses a loopback address before connecting.
+		expect(result.scope).toBe('embeddings-test');
+		expect(result.message).toMatch(/Blocked egress/);
 	});
 });

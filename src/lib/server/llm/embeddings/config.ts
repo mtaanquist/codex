@@ -1,8 +1,9 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { Database } from '../../auth.ts';
-import { users } from '../../db/schema.ts';
+import { stories, users } from '../../db/schema.ts';
 import { decryptSecret, encryptSecret, secretsAvailable } from '../../crypto.ts';
 import type { TokenPrice } from '../../../assistant-cost.ts';
+import { hostOf, originOf } from '../config.ts';
 import {
 	embeddingPreset,
 	normaliseEmbeddingProviderId,
@@ -72,6 +73,16 @@ async function readRow(
 	return { assistantEnabled: raw.enabled === true, config: normaliseEmbeddings(raw.embeddings) };
 }
 
+// A story muted for the Assistant (stories.llm_config.enabled false) keeps
+// its text from every model, embeddings included, whoever owns it.
+export async function storyMuted(db: Database, storyId: string): Promise<boolean> {
+	const [row] = await db
+		.select({ llmConfig: stories.llmConfig })
+		.from(stories)
+		.where(eq(stories.id, storyId));
+	return (row?.llmConfig as { enabled?: unknown } | undefined)?.enabled === false;
+}
+
 // A key-free view for the account page.
 export type EmbeddingsView = Omit<StoredEmbeddingsConfig, 'apiKeyEnc'> & {
 	hasKey: boolean;
@@ -131,14 +142,6 @@ export type SaveEmbeddingsInput = {
 export type SaveEmbeddingsResult =
 	{ ok: true; priceCleared?: true } | { ok: false; reason: string };
 
-function urlPart(endpoint: string, part: 'origin' | 'hostname'): string {
-	try {
-		return new URL(endpoint)[part];
-	} catch {
-		return endpoint;
-	}
-}
-
 export async function saveEmbeddingsConfig(
 	db: Database,
 	userId: string,
@@ -168,11 +171,9 @@ export async function saveEmbeddingsConfig(
 	const providerChanged = provider !== existing.provider;
 	const hadEndpoint = !preset && !!existing.endpoint;
 	const connectionChanged =
-		providerChanged ||
-		(hadEndpoint && urlPart(endpoint, 'origin') !== urlPart(existing.endpoint, 'origin'));
+		providerChanged || (hadEndpoint && originOf(endpoint) !== originOf(existing.endpoint));
 	const serverChanged =
-		providerChanged ||
-		(hadEndpoint && urlPart(endpoint, 'hostname') !== urlPart(existing.endpoint, 'hostname'));
+		providerChanged || (hadEndpoint && hostOf(endpoint) !== hostOf(existing.endpoint));
 	const modelChanged = !!existing.model && model !== existing.model;
 
 	let apiKeyEnc = connectionChanged ? null : existing.apiKeyEnc;

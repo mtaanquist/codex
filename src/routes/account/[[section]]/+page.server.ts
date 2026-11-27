@@ -805,11 +805,12 @@ export const actions: Actions = {
 		const saved = await saveEmbeddingsForm(locals.user!.id, await request.formData());
 		if (!('notice' in saved)) return saved;
 		const result = await testEmbeddings(db, locals.user!.id);
+		// Not a fail(): the save landed, and only a success reloads the page data.
 		if (!result.ok) {
-			return fail(400, {
+			return {
 				scope: 'embeddings-test',
 				message: saved.notice ? `${result.reason} ${saved.notice}` : result.reason
-			});
+			};
 		}
 		return {
 			scope: 'embeddings-test',
