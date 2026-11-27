@@ -6,6 +6,7 @@ import { buildMcpPrompt, mcpPrompts, type McpPrompt } from './prompts.ts';
 import { workLanguage } from '../language.ts';
 import { workPreferences } from '../assistant-preferences.ts';
 import { callMcpTool, mcpTools } from './tools.ts';
+import { passageSearchReady } from '../llm/tools/passages.ts';
 import { PASS_CARD_HTML, PASS_CARD_MIME, PASS_CARD_URI } from './pass-card.ts';
 
 // The MCP protocol side of the endpoint, on the official SDK. Stateless: a
@@ -16,6 +17,9 @@ const INSTRUCTIONS =
 	"Codex holds a writer's fiction: universes, the stories in them, their chapters and scenes, and entries for characters, places and lore. Start with list_universes, then pass a universe id to the other tools. You cannot change, delete or publish anything. If you were allowed to suggest, your edits and comments wait in the writer's review, and the writer accepts or rejects each one there, or on the card that open_guided_pass shows when it is offered. list_review_notes and get_review_note show what the writer decided and what they answered; reply_in_thread answers them. The prompts carry the instructions for the writer's usual work, such as a review, a copyedit, a continuity review, a pattern pass, a draft or a recap.";
 
 type Connection = { db: Database; identity: BearerIdentity; origin: string };
+// What the route hands the server: the connection, and whether the writer has
+// a search index passage search can use, asked once per request.
+type ServedConnection = Connection & { passageSearch: boolean };
 
 // A tool's argument schema is the same for every request, and compiling its
 // validator is the costly part of building a server, so it is done once.
@@ -43,9 +47,11 @@ function promptSchema(prompt: McpPrompt) {
 	});
 }
 
-function buildServer(connection: Connection): McpServer {
+function buildServer(connection: ServedConnection): McpServer {
 	const server = new McpServer({ name: 'codex', version: '1' }, { instructions: INSTRUCTIONS });
-	const tools = mcpTools(connection.identity.permissions);
+	const tools = mcpTools(connection.identity.permissions, {
+		passageSearch: connection.passageSearch
+	});
 	for (const tool of tools) {
 		server.registerTool(
 			tool.name,
@@ -125,7 +131,7 @@ function buildServer(connection: Connection): McpServer {
 // each request; the SDK hands it to the factory untouched and never reads a
 // credential itself.
 const handler = createMcpHandler(
-	(context) => buildServer(context.authInfo!.extra!.connection as Connection),
+	(context) => buildServer(context.authInfo!.extra!.connection as ServedConnection),
 	{
 		onerror: (error) => logEvent('warn', 'mcp.protocol_error', { message: error.message }),
 		// Nothing here publishes change events, so a stream that waits for them
@@ -134,14 +140,20 @@ const handler = createMcpHandler(
 	}
 );
 
-export function serveMcp(request: Request, connection: Connection): Promise<Response> {
+export async function serveMcp(request: Request, connection: Connection): Promise<Response> {
+	const served: ServedConnection = {
+		...connection,
+		passageSearch:
+			connection.identity.permissions.includes('read') &&
+			(await passageSearchReady(connection.db, connection.identity.userId))
+	};
 	return handler.fetch(request, {
 		authInfo: {
 			// The SDK's shape wants these; the tools use the connection only.
 			token: '',
 			clientId: connection.identity.client.id,
 			scopes: connection.identity.permissions,
-			extra: { connection }
+			extra: { connection: served }
 		}
 	});
 }

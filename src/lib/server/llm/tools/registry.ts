@@ -19,7 +19,15 @@ export type ToolKind = 'read' | 'write';
 // The guided pass card's tools (open_guided_pass, decide_suggestion) are not
 // here at all: they live in #lib/server/mcp/pass-card, so an accept can never
 // be offered to a model run inside Codex.
-export type ToolDef = ToolSpec & { kind: ToolKind; scoped?: boolean; external?: boolean };
+//
+// A tool that needs the search index (needsIndex) is offered only where the
+// index can answer (see ./passages): on both surfaces, never by default.
+export type ToolDef = ToolSpec & {
+	kind: ToolKind;
+	scoped?: boolean;
+	external?: boolean;
+	needsIndex?: boolean;
+};
 
 function obj(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
 	return { type: 'object', properties, required, additionalProperties: false };
@@ -78,6 +86,25 @@ export const TOOLS: ToolDef[] = [
 		description:
 			'Search the stories, scenes, entities, and prose in this universe by substring (prose is searched only for queries of three or more characters). Returns labelled results with links.',
 		parameters: obj({ query: str('The text to search for.') }, ['query'])
+	},
+	{
+		kind: 'read',
+		needsIndex: true,
+		name: 'search_passages',
+		description:
+			'Find the passages in this universe\'s stories closest in meaning to what you describe, such as "someone lies to protect a friend" or "the first time they see the sea", even where the words differ. Returns the passages nearest first, each with its scene and story and a similarity from 0 to 1. A passage is the text as it was last indexed: read the scene with get_scene before you quote it or suggest an edit. Use search_text for exact words or names.',
+		parameters: obj(
+			{
+				query: str('What to look for, in a few words or a sentence.'),
+				limit: {
+					type: 'integer',
+					minimum: 1,
+					maximum: 20,
+					description: 'Optional: how many passages to return, 1 to 20. The default is 8.'
+				}
+			},
+			['query']
+		)
 	},
 	{
 		kind: 'read',
@@ -249,16 +276,19 @@ export const MINIMAL_TOOL_NAMES = ['get_scene', 'suggest_edit', 'leave_comment']
 
 // The specs offered to the in-app model: the default set leaves the scoped
 // tools out; a surface that needs them names them explicitly. The external
-// tools are never offered here, even by name.
-export function toolSpecs(names?: string[]): ToolSpec[] {
-	const inApp = TOOLS.filter((tool) => !tool.external);
+// tools are never offered here, even by name. The tools that need the search
+// index come only with passageSearch, which the caller sets when the index
+// can answer for the universe.
+export function toolSpecs(names?: string[], opts: { passageSearch?: boolean } = {}): ToolSpec[] {
+	const inApp = TOOLS.filter((tool) => !tool.external && (opts.passageSearch || !tool.needsIndex));
 	const picked = names
 		? inApp.filter((tool) => names.includes(tool.name))
 		: inApp.filter((tool) => !tool.scoped);
-	return picked.map(({ kind, scoped, external, ...spec }) => {
+	return picked.map(({ kind, scoped, external, needsIndex, ...spec }) => {
 		void kind;
 		void scoped;
 		void external;
+		void needsIndex;
 		return spec;
 	});
 }

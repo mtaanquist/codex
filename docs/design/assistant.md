@@ -295,6 +295,27 @@ passage text with its scene, story, titles and distance. The query vector
 comes from `embed(db, userId, [text])` with no `storyId`, since a query is
 not story text.
 
+### Passage search tool (#1788)
+
+`search_passages` (`llm/tools/passages.ts`) is a read tool in the shared
+toolbox: it embeds the query with `embed` (no `storyId`) and returns
+`nearestChunks` for the call's universe, or the focus story under
+`toolScope.storyOnly`. Its registry entry carries `needsIndex`, so it is
+offered only where `passageSearchReady` holds: embeddings ready and a
+completed index on the current model in that universe (the gateway asks for
+the turn's universe; the MCP endpoint asks once per request for any of the
+writer's universes, since an app names its universe per call). The handler
+checks the call's universe again and answers with a plain refusal when there
+is no index, so a stale tool list cannot reach a universe without one. The
+embedding request is logged as usage (role `embeddings`) and, on a background
+run, recorded on the run's `SpendMeter` (the gateway hands `req.meter` to the
+tool context); `EmbeddingsDisabledError` and `SpendCapError` come back as the
+tool's answer, and a cap hold stops the run at its next request as any cap
+does. Output is bounded: `limit` 1 to 20 (default 8), each passage at most
+1,500 characters, the query at most 1,000. Passages are the text as last
+indexed, so the description tells the model to read the scene before quoting
+or editing. The `minimal` tool profile leaves it out.
+
 ### Admin egress policy (the SSRF question)
 
 Because the key is held server-side, the browser cannot call the writer's
@@ -2167,6 +2188,10 @@ calls the gateway, which proxies through the egress guard.
   call past the limit, so using exactly the limit and then answering is not
   flagged as cut short. The frontend only renders the staged results (the
   `isAssistant` suggestions/comments).
+- [built] `search_passages` (#1788) finds passages by meaning from the search
+  index, offered only where the universe has a current index (see "Passage
+  search tool" above); under `toolScope.storyOnly` it searches the thread's
+  own story only.
 - [built] The account `toolProfile` shapes the default set: `minimal` offers only
   `get_scene`, `suggest_edit`, and `leave_comment` and halves the budget, for
   endpoints running a smaller local model. A surface that names its own tools
@@ -2207,6 +2232,8 @@ calls the gateway, which proxies through the egress guard.
   `saveEmbeddingsConfig`, `resolveEmbeddings`, `EmbeddingsDisabledError`;
   `scene-index.ts`: `indexScenes`, `nearestChunks`, `estimateEmbeddingIndex`,
   `embeddingIndexStatus`; `chunks.ts`: `chunkScene`.
+- `tools/passages.ts`: `searchPassages`, `passageSearchReady` (the
+  `search_passages` tool).
 - `retry.ts`: `isTransientFailure`, shared by the gateway and `embed`.
 - `context/assemble.ts`: `assembleContext`, `assembleStoryFrame`,
   `assembleSceneDelta`, `buildSystemMessage`.
