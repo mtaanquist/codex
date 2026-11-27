@@ -53,6 +53,13 @@ import {
 } from '#lib/server/llm/config';
 import { discoverModels, testAccountConnection } from '#lib/server/llm/models';
 import {
+	EMBEDDING_PRESETS,
+	embeddingsView,
+	saveEmbeddingsConfig,
+	testEmbeddings
+} from '#lib/server/llm/embeddings';
+import { normaliseEmbeddingProviderId } from '#lib/server/llm/embeddings/presets';
+import {
 	normaliseProviderId,
 	PROVIDER_PRESETS,
 	type ProviderId
@@ -224,6 +231,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 			keyHint: p.keyHint,
 			docsUrl: p.docsUrl
 		})),
+		embeddings: await embeddingsView(db, user.id),
+		embeddingProviders: EMBEDDING_PRESETS,
 		// Which model to suggest for each role, on every provider.
 		modelGuide: { tiers: ROLE_TIER, providers: MODEL_GUIDE },
 		personas: PERSONAS.map((p) => ({ id: p.id, label: p.label, description: p.description })),
@@ -418,6 +427,33 @@ async function saveEndpointForm(userId: string, data: FormData) {
 			cleared.length > 0
 				? `The prices you typed for ${cleared.join(', ')} were cleared because the endpoint changed. Enter them again under Models, or your spend cap cannot be applied.`
 				: undefined
+	};
+}
+
+// Save the Embeddings form. Its Test connection submits the same form, so the
+// test runs against what is on screen.
+async function saveEmbeddingsForm(userId: string, data: FormData) {
+	const priceRaw = formText(data, 'embeddingsPrice').trim();
+	const price = priceRaw ? Number(priceRaw) : null;
+	if (price !== null && (!Number.isFinite(price) || price < 0)) {
+		return fail(400, {
+			scope: 'embeddings',
+			message: 'Enter the price in dollars per million tokens, or leave it blank.'
+		});
+	}
+	const result = await saveEmbeddingsConfig(db, userId, {
+		enabled: data.get('embeddingsEnabled') === 'on',
+		provider: normaliseEmbeddingProviderId(data.get('embeddingsProvider')),
+		endpoint: formText(data, 'embeddingsEndpoint'),
+		apiKey: formText(data, 'embeddingsApiKey'),
+		model: formText(data, 'embeddingsModel'),
+		pricePerToken: price === null ? null : price / TOKENS_PER_MILLION
+	});
+	if (!result.ok) return fail(400, { scope: 'embeddings', message: result.reason });
+	return {
+		notice: result.priceCleared
+			? 'The price you typed was cleared because the model or the server changed. Enter the new price, or the spend cap cannot be applied.'
+			: undefined
 	};
 }
 
@@ -757,6 +793,27 @@ export const actions: Actions = {
 		return {
 			scope: 'assistant-test',
 			reply: result.reply,
+			...(saved.notice ? { message: saved.notice } : {})
+		};
+	},
+	saveEmbeddings: async ({ request, locals }) => {
+		const saved = await saveEmbeddingsForm(locals.user!.id, await request.formData());
+		if (!('notice' in saved)) return saved;
+		return { scope: 'embeddings', saved: true, ...(saved.notice ? { message: saved.notice } : {}) };
+	},
+	testEmbeddings: async ({ request, locals }) => {
+		const saved = await saveEmbeddingsForm(locals.user!.id, await request.formData());
+		if (!('notice' in saved)) return saved;
+		const result = await testEmbeddings(db, locals.user!.id);
+		if (!result.ok) {
+			return fail(400, {
+				scope: 'embeddings-test',
+				message: saved.notice ? `${result.reason} ${saved.notice}` : result.reason
+			});
+		}
+		return {
+			scope: 'embeddings-test',
+			dimensions: result.dimensions,
 			...(saved.notice ? { message: saved.notice } : {})
 		};
 	},

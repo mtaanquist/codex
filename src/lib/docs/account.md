@@ -345,6 +345,44 @@ can fill them in when your endpoint does not report them. If you switch provider
 the choices on your universes and stories are cleared along with your account's,
 since they name the old provider's models.
 
+### Embeddings
+
+An embeddings model turns a passage of your writing into a list of numbers
+that stands for what it means, so passages about the same thing end up close
+together even when they use different words. It is a separate model from the
+one that writes replies, with its own provider and key, because some providers
+(Claude among them) offer no embeddings model. Embeddings are off until you
+turn them on, and they stay off while the Assistant's kill switch is on.
+
+1. Under Embeddings on the Assistant page, pick a provider. For OpenAI or Voyage
+   AI, paste an API key from that provider; the link under the picker takes you
+   to the right page. For a model on your own machine, pick Custom endpoint and
+   enter the server's base URL.
+2. Type the model's name exactly as your provider lists it.
+3. Enter its price in dollars per million tokens, from your provider's pricing
+   page, or 0 for a model on your own machine. The spend cap needs a price to
+   count these requests.
+4. Select Test embeddings. It saves what you typed, sends one short sentence,
+   and tells you how many numbers each passage becomes.
+5. Turn on "Use embeddings".
+
+Models that work well, as a place to start:
+
+- **OpenAI**: `text-embedding-3-small`, cheap and good enough for most books.
+- **Voyage AI**: `voyage-3.5`. Anthropic points Claude users to Voyage for
+  embeddings.
+- **Ollama** (`http://localhost:11434/v1`): run `ollama pull nomic-embed-text`
+  first, then use `nomic-embed-text`.
+- **LM Studio** (`http://localhost:1234/v1`): download an embeddings model such
+  as Nomic Embed Text v1.5 in LM Studio, load it, and use the name LM Studio
+  shows for it.
+
+Providers rename and replace their models, so check their own lists for a
+newer one of the same kind. Each request shows in the Usage list below with
+the role "embeddings". Changing the provider, or moving a custom endpoint to
+another server, clears the saved key. Changing the model or the server clears
+the price you typed unless you enter a new one in the same change.
+
 ## Display
 
 Choose a light, warm, or dark theme, or follow your system, and pick an accent

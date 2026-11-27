@@ -229,6 +229,33 @@ overrides. A "test connection" probe mirrors the SMTP relay's
 test-email button: send a trivial completion and report success or the
 error.
 
+### Embeddings model (#1784)
+
+Semantic search (#1176) needs an embeddings model, set per writer under the
+`embeddings` key of `users.llm_config`, bring-your-own like the chat model:
+`enabled` (off by default), a provider (`openai`, `voyage`, or `custom`),
+endpoint, encrypted key, model, a per-token price the writer types, and the
+vector size the last Test connection found. It has its own endpoint and key
+because the Assistant's provider may have none (Claude does not); a writer on
+Claude picks a second provider here. It runs only while the Assistant's kill
+switch is off, since the switch promises nothing reaches a model. The key and
+price follow the Assistant's switch rules (a key never follows a switch of
+provider or custom server; a typed price is dropped on a new model or server
+unless retyped in the same save).
+
+One adapter (`#lib/server/llm/embeddings/openai.ts`) speaks the OpenAI
+`/v1/embeddings` shape, which OpenAI, Voyage AI, Ollama, LM Studio and
+LocalAI all serve. It sends only `model` and `input`, and reads usage from
+`prompt_tokens`, or `total_tokens` where that is all the server reports
+(Voyage). `embed(db, userId, texts, { meter, storyId, signal })` in
+`#lib/server/llm/embeddings` is the one entry point: it refuses with
+`EmbeddingsDisabledError` unless ready, batches 64 texts a request through
+the egress guard, retries with the gateway's rule (`retry.ts`), logs one
+usage row per request (role `embeddings`, price stored), and checks and
+records a passed `SpendMeter` the way the gateway does, so a background job
+counts against the account's spend cap. It returns `{ model, dimensions,
+vectors }`; vectors from another model or size are not comparable.
+
 ### Admin egress policy (the SSRF question)
 
 Because the key is held server-side, the browser cannot call the writer's
@@ -2137,6 +2164,9 @@ calls the gateway, which proxies through the egress guard.
 - `models.ts`: `discoverModels`, `listEndpointModels`, `testAccountConnection`,
   `testEndpointConnection`, `probeAccountEndpoint`, `probeEndpoint`.
 - `egress.ts`: `egressPolicy`, `saveEgressPolicy`.
+- `embeddings/`: `embed`, `testEmbeddings`, `embeddingsView`,
+  `saveEmbeddingsConfig`, `resolveEmbeddings`, `EmbeddingsDisabledError`.
+- `retry.ts`: `isTransientFailure`, shared by the gateway and `embed`.
 - `context/assemble.ts`: `assembleContext`, `assembleStoryFrame`,
   `assembleSceneDelta`, `buildSystemMessage`.
 - `gateway.ts`: `stream`, `complete`, `completeDetailed` (the only entries the

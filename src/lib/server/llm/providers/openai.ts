@@ -19,7 +19,7 @@ import type {
 // Resolve the versioned base from whatever the writer entered: a bare host, a
 // base ending in /v1 (or Gemini's /openai compatibility path), or a full
 // completions URL.
-function baseV1(endpoint: string): string {
+export function baseV1(endpoint: string): string {
 	const trimmed = endpoint.replace(/\/+$/, '');
 	if (trimmed.endsWith('/chat/completions')) {
 		return trimmed.slice(0, trimmed.length - '/chat/completions'.length);

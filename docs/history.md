@@ -10,6 +10,26 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Embeddings model setting and adapter (v4.1.0, 2026-11-27,
+`feat/embeddings-setting`, #1784). The embeddings model lives under an
+`embeddings` key in `users.llm_config` rather than in new columns, so no
+migration: the Assistant's saves merge at the top level and leave it alone,
+and its own save replaces only that key. It has its own provider, endpoint
+and key, since a writer on Claude has no embeddings endpoint to share, and
+it obeys the Assistant's kill switch, which promises nothing reaches a model.
+Presets are OpenAI and Voyage AI plus a custom endpoint; Voyage's
+`/v1/embeddings` takes the OpenAI request body and answers in the same shape,
+except that its usage has only `total_tokens`, which the adapter reads when
+`prompt_tokens` is missing. That is from Voyage's API reference as known
+when this was built; neither its docs nor a live call could be reached from
+the build environment, so the first real Voyage key should confirm it. The adapter sends no `encoding_format` or
+`dimensions`, which not every server accepts. Model discovery was left out:
+`/v1/models` lists chat models too, so the writer types the name. A Test
+connection is not logged, like the Assistant's. `isTransientFailure` moved
+from the gateway to `retry.ts` so `embed()` can share it without importing
+the gateway, whose tool registry a later passage search tool would import
+`embed()` from.
+
 v4.0.0 staging review, round 14 (2026-11-26, `staging/v4.0.0`, #1871).
 The loop's last round: every area found only lows, after content limits had
 turned up a medium in each of rounds 4 to 12. The lows were fixed before the

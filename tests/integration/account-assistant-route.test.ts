@@ -39,6 +39,7 @@ const { db, pool } = (await import('#lib/server/db')) as unknown as {
 	pool: pg.Pool;
 };
 const { accountLlmView } = await import('#lib/server/llm/config');
+const { embeddingsView } = await import('#lib/server/llm/embeddings');
 const { actions } = await import('../../src/routes/account/[[section]]/+page.server');
 
 let userId: string;
@@ -440,5 +441,52 @@ describe('testAssistant', () => {
 		const result = (await call('testAssistant', form)) as { status?: number };
 		expect(result.status).toBe(400);
 		expect(testedWith).toEqual([]);
+	});
+});
+
+describe('saveEmbeddings', () => {
+	function saveEmbeddings(
+		fields: Record<string, string>,
+		action: keyof typeof actions = 'saveEmbeddings'
+	) {
+		const form = new FormData();
+		form.set('embeddingsProvider', 'custom');
+		form.set('embeddingsEndpoint', 'http://localhost:11434/v1');
+		form.set('embeddingsModel', 'nomic-embed-text');
+		for (const [key, value] of Object.entries(fields)) form.set(key, value);
+		return call(action, form);
+	}
+
+	it('stores the price per token from dollars per million, and leaves the Assistant alone', async () => {
+		const result = await saveEmbeddings({ embeddingsEnabled: 'on', embeddingsPrice: '0.02' });
+		expect(result).toEqual({ scope: 'embeddings', saved: true });
+		const view = await embeddingsView(db, userId);
+		expect(view).toMatchObject({ enabled: true, model: 'nomic-embed-text' });
+		expect(view.pricePerToken).toBeCloseTo(0.00000002, 12);
+		expect((await stored()).endpoint).toBe('http://local/v1');
+		// An emptied box clears the price.
+		await saveEmbeddings({ embeddingsPrice: '' });
+		expect((await embeddingsView(db, userId)).pricePerToken).toBeUndefined();
+	});
+
+	it('refuses a price that is not an amount', async () => {
+		const result = (await saveEmbeddings({ embeddingsPrice: '-1' })) as {
+			status: number;
+			data: { scope: string };
+		};
+		expect(result.status).toBe(400);
+		expect(result.data.scope).toBe('embeddings');
+	});
+
+	it('saves before it tests, and reports a failed test under its own scope', async () => {
+		const result = (await saveEmbeddings(
+			{ embeddingsEndpoint: 'http://127.0.0.1:9/v1' },
+			'testEmbeddings'
+		)) as { status: number; data: { scope: string; message: string } };
+		expect((await embeddingsView(db, userId)).endpoint).toBe('http://127.0.0.1:9/v1');
+		expect(result.status).toBe(400);
+		// The default egress policy refuses a loopback address before connecting.
+		expect(result.data.scope).toBe('embeddings-test');
+		expect(result.data.message).toMatch(/Blocked egress/);
 	});
 });

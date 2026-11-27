@@ -278,6 +278,49 @@
 	function paramsText(params: Record<string, unknown> | undefined): string {
 		return params && Object.keys(params).length > 0 ? JSON.stringify(params) : '';
 	}
+
+	// The embeddings form: its own provider, URL and key, the way the Endpoint
+	// form works. The initial value is a snapshot; the select owns it after.
+	// svelte-ignore state_referenced_locally
+	let embeddingProvider = $state(data.embeddings.provider);
+	const embeddingPreset = $derived(data.embeddingProviders.find((p) => p.id === embeddingProvider));
+	let embeddingKeyField = $state<HTMLInputElement>();
+	// A switch clears the saved key and a typed price on the server, so it asks
+	// first when there is something to lose, and empties the key box so a key
+	// typed for the old provider is not saved for the new one.
+	async function switchEmbeddingProvider(event: Event & { currentTarget: HTMLSelectElement }) {
+		const select = event.currentTarget;
+		if (select.value === data.embeddings.provider) return;
+		const ask = data.embeddings.hasKey || data.embeddings.pricePerToken !== undefined;
+		if (ask) event.stopPropagation();
+		const go =
+			!ask ||
+			(await askConfirm({
+				title: 'Switch embeddings provider?',
+				body: 'Your saved embeddings API key and the price you typed are cleared.',
+				confirmLabel: 'Switch provider'
+			}));
+		if (!go) {
+			embeddingProvider = data.embeddings.provider;
+			return;
+		}
+		if (embeddingKeyField) embeddingKeyField.value = '';
+		if (ask) select.form?.requestSubmit();
+	}
+	$effect(() => {
+		if (form?.scope === 'embeddings' || form?.scope === 'embeddings-test') {
+			if (embeddingKeyField) embeddingKeyField.value = '';
+			if (!('saved' in form || 'dimensions' in form)) embeddingProvider = data.embeddings.provider;
+		}
+	});
+	// Why embeddings are not running yet, once the writer has switched them on.
+	const embeddingsWaiting = $derived.by(() => {
+		const e = data.embeddings;
+		if (!e.enabled || e.ready) return null;
+		if (!data.assistant.enabled) return 'Embeddings stay off while the Assistant is off.';
+		if (!e.endpoint) return 'Enter a base URL to start using embeddings.';
+		return 'Enter a model name to start using embeddings.';
+	});
 </script>
 
 <div class="admin-head">
@@ -867,6 +910,172 @@
 						formaction={ownAction('discoverAssistantModels')}
 					>
 						Discover models
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+
+	<div class="admin-block" id="assistant-embeddings">
+		<div class="settings-group">
+			<header class="settings-group-header">
+				<h2 class="settings-group-title">
+					Embeddings <HelpLink topic="account" label="embeddings" />
+				</h2>
+				<p class="settings-group-subtitle">
+					A second model that turns passages of your writing into numbers, so Codex can find text by
+					what it means and not only by the words in it. It needs its own provider, and is off until
+					you turn it on.
+				</p>
+			</header>
+			<form
+				method="POST"
+				action={ownAction('saveEmbeddings')}
+				use:enhance={autosaveSubmit}
+				onchange={autosubmitForm}
+			>
+				<div class="field">
+					<label class="check-row">
+						<input type="checkbox" name="embeddingsEnabled" checked={data.embeddings.enabled} />
+						Use embeddings
+					</label>
+					{#if embeddingsWaiting}
+						<p class="field-hint">{embeddingsWaiting}</p>
+					{/if}
+				</div>
+				<div class="field">
+					<label for="embeddings_provider">Embeddings provider</label>
+					<select
+						id="embeddings_provider"
+						name="embeddingsProvider"
+						class="select"
+						bind:value={embeddingProvider}
+						onchange={switchEmbeddingProvider}
+					>
+						{#each data.embeddingProviders as preset (preset.id)}
+							<option value={preset.id}>{preset.label}</option>
+						{/each}
+						<option value="custom">Custom endpoint</option>
+					</select>
+					{#if embeddingPreset}
+						<p class="field-hint">
+							<a href={embeddingPreset.docsUrl} target="_blank" rel="external noopener noreferrer">
+								Get an API key
+							</a>
+							from {embeddingPreset.label}.
+						</p>
+					{:else}
+						<p class="field-hint">
+							Any server with an OpenAI-compatible embeddings endpoint, such as Ollama or LM Studio
+							on your own machine.
+						</p>
+					{/if}
+				</div>
+				<div class="field">
+					<label for="embeddings_endpoint">Embeddings base URL</label>
+					{#if embeddingPreset}
+						<input
+							id="embeddings_endpoint"
+							name="embeddingsEndpoint"
+							type="url"
+							class="input"
+							value={embeddingPreset.baseUrl}
+							readonly
+						/>
+						<p class="field-hint">Set by the provider you picked.</p>
+					{:else}
+						<input
+							id="embeddings_endpoint"
+							name="embeddingsEndpoint"
+							type="url"
+							class="input"
+							value={data.embeddings.provider === 'custom' ? data.embeddings.endpoint : ''}
+							placeholder="http://localhost:11434/v1"
+						/>
+						<p class="field-hint">
+							Example: <code style="font-family: var(--font-mono); font-size: 12px;">
+								http://localhost:11434/v1
+							</code>
+							for Ollama, or
+							<code style="font-family: var(--font-mono); font-size: 12px;">
+								http://localhost:1234/v1
+							</code> for LM Studio.
+						</p>
+					{/if}
+				</div>
+				<div class="field">
+					<label for="embeddings_api_key">Embeddings API key</label>
+					<input
+						bind:this={embeddingKeyField}
+						id="embeddings_api_key"
+						name="embeddingsApiKey"
+						type="password"
+						class="input"
+						autocomplete="off"
+						placeholder={data.embeddings.hasKey
+							? 'Saved. Leave blank to keep it.'
+							: (embeddingPreset?.keyHint ?? '')}
+					/>
+					<p class="field-hint">
+						Leave blank to keep your saved key. A server on your own machine usually needs none.
+					</p>
+				</div>
+				<div class="field">
+					<label for="embeddings_model">Embeddings model</label>
+					<input
+						id="embeddings_model"
+						name="embeddingsModel"
+						type="text"
+						class="input"
+						spellcheck="false"
+						autocomplete="off"
+						value={data.embeddings.model}
+						placeholder={embeddingPreset?.suggestedModel ?? 'nomic-embed-text'}
+					/>
+					<p class="field-hint">
+						The embeddings model's name exactly as your provider lists it.
+						{#if data.embeddings.dimensions}
+							The last test found {formatNumber(data.embeddings.dimensions)} numbers per passage.
+						{/if}
+					</p>
+				</div>
+				<div class="field">
+					<label for="embeddings_price">Embeddings price per million tokens (USD)</label>
+					<input
+						id="embeddings_price"
+						name="embeddingsPrice"
+						type="number"
+						class="input"
+						min="0"
+						step="any"
+						value={perMillionValue(data.embeddings.pricePerToken)}
+						placeholder="No price"
+					/>
+					<p class="field-hint">
+						Look it up on your provider's pricing page. Enter 0 for a model on your own machine. The
+						spend cap above needs a price to count these requests.
+					</p>
+				</div>
+				<div class="settings-actions">
+					{#if form?.scope === 'embeddings-test' && 'dimensions' in form && form.dimensions}
+						<FormStatus
+							success={`Connected. Each passage becomes ${formatNumber(form.dimensions)} numbers.`}
+						/>
+						<FormStatus error={form.message ?? null} />
+					{:else}
+						<FormStatus
+							error={(form?.scope === 'embeddings' || form?.scope === 'embeddings-test') &&
+							form.message &&
+							!('saved' in form)
+								? form.message
+								: null}
+							success={form?.scope === 'embeddings' && 'saved' in form && form.saved
+								? (form.message ?? 'Saved.')
+								: null}
+						/>
+					{/if}
+					<button type="submit" class="btn btn-ghost" formaction={ownAction('testEmbeddings')}>
+						Test embeddings
 					</button>
 				</div>
 			</form>

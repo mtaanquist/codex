@@ -65,6 +65,7 @@
 			{ id: 'assistant-identity', label: 'Identity' },
 			{ id: 'assistant-endpoint', label: 'Endpoint' },
 			{ id: 'assistant-models', label: 'Models per role' },
+			{ id: 'assistant-embeddings', label: 'Embeddings' },
 			{ id: 'assistant-usage', label: 'Usage' }
 		]
 	};
