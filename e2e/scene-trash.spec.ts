@@ -37,13 +37,13 @@ test('scene trash and chapter tools', async ({ page }) => {
 	await page.getByRole('button', { name: 'New chapter' }).click();
 	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Chapter 2');
 	const roleMenu = await openRowMenu(page, page.locator('.chapter-row').nth(1));
-	await roleMenu.getByRole('menuitem', { name: 'Chapter type' }).click();
+	await roleMenu.getByRole('menuitem', { name: 'Chapter type' }).hover();
 	await roleMenu.getByRole('menuitemradio', { name: 'Prologue' }).click();
 	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Prologue');
 	await page.reload();
 	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Prologue');
 	const clearMenu = await openRowMenu(page, page.locator('.chapter-row').nth(1));
-	await clearMenu.getByRole('menuitem', { name: 'Chapter type' }).click();
+	await clearMenu.getByRole('menuitem', { name: 'Chapter type' }).hover();
 	await expect(clearMenu.getByRole('menuitemradio', { name: 'Prologue' })).toHaveAttribute(
 		'aria-checked',
 		'true'
