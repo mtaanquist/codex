@@ -349,6 +349,22 @@
 	let indexNote = $state<{ universeId: string; text: string } | null>(null);
 	const indexing = (universeId: string) =>
 		trackedJobs.list.some((job) => job.kind === 'embeddings' && job.universeId === universeId);
+	// Reload the list when indexing a listed universe ends, however it was
+	// picked up (started here, or found running after a reload or in another
+	// tab), so the row shows where it stopped rather than the load's state.
+	let indexingBefore = new Set<string>();
+	$effect(() => {
+		const now = new Set(
+			trackedJobs.list.flatMap((job) =>
+				job.kind === 'embeddings' && job.universeId ? [job.universeId] : []
+			)
+		);
+		const ended = [...indexingBefore].some(
+			(id) => !now.has(id) && data.embeddingIndexes.some((index) => index.universeId === id)
+		);
+		indexingBefore = now;
+		if (ended) void invalidateAll();
+	});
 
 	function indexStatusText(index: IndexStatus): string {
 		const of = `${formatNumber(index.indexed)} of ${formatNumber(index.scenes)} scene${pluralSuffix(index.scenes)} indexed`;
@@ -414,6 +430,8 @@
 		} finally {
 			indexBusy = null;
 		}
+		// Also for a job that never started: the universe was turned on before
+		// it was queued.
 		await invalidateAll();
 	}
 

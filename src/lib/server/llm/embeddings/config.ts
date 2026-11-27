@@ -95,13 +95,14 @@ export async function embeddingsView(db: Database, userId: string): Promise<Embe
 	return { ...rest, hasKey: apiKeyEnc !== null, ready: embeddingsReady(assistantEnabled, config) };
 }
 
-// What a request runs with. The key is plaintext here and must not leave the
-// server.
-export type ResolvedEmbeddings = {
+// The settings without the key: enough to tell whether embeddings may run,
+// with which model and at what price. Status, estimates and readiness checks
+// read this, so a key that no longer decrypts fails only the request that
+// would send it.
+export type EmbeddingsSettings = {
 	ready: boolean;
 	provider: EmbeddingProviderId;
 	endpoint: string;
-	apiKey: string;
 	model: string;
 	// The price as the usage log and the spend meter take it; undefined when
 	// the writer has entered none.
@@ -109,13 +110,27 @@ export type ResolvedEmbeddings = {
 	dimensions?: number;
 };
 
-export async function resolveEmbeddings(db: Database, userId: string): Promise<ResolvedEmbeddings> {
-	const { assistantEnabled, config } = await readRow(db, userId);
+// What a request runs with. The key is plaintext here and must not leave the
+// server.
+export type ResolvedEmbeddings = EmbeddingsSettings & { apiKey: string };
+
+// A stored key that cannot be read back: APP_SECRET changed since it was
+// saved, or the value is damaged. Trying again does not help; the writer
+// enters the key again.
+export class EmbeddingsKeyError extends Error {
+	constructor() {
+		super(
+			'The saved embeddings API key can no longer be read. Enter it again on the Assistant page.'
+		);
+		this.name = 'EmbeddingsKeyError';
+	}
+}
+
+function settingsOf(assistantEnabled: boolean, config: StoredEmbeddingsConfig): EmbeddingsSettings {
 	return {
 		ready: embeddingsReady(assistantEnabled, config),
 		provider: config.provider,
 		endpoint: config.endpoint,
-		apiKey: config.apiKeyEnc ? decryptSecret(config.apiKeyEnc) : '',
 		model: config.model,
 		price:
 			config.pricePerToken === undefined
@@ -123,6 +138,28 @@ export async function resolveEmbeddings(db: Database, userId: string): Promise<R
 				: { prompt: config.pricePerToken, completion: 0 },
 		dimensions: config.dimensions
 	};
+}
+
+export async function embeddingsSettings(
+	db: Database,
+	userId: string
+): Promise<EmbeddingsSettings> {
+	const { assistantEnabled, config } = await readRow(db, userId);
+	return settingsOf(assistantEnabled, config);
+}
+
+// Throws EmbeddingsKeyError when the stored key cannot be decrypted.
+export async function resolveEmbeddings(db: Database, userId: string): Promise<ResolvedEmbeddings> {
+	const { assistantEnabled, config } = await readRow(db, userId);
+	let apiKey = '';
+	if (config.apiKeyEnc) {
+		try {
+			apiKey = decryptSecret(config.apiKeyEnc);
+		} catch {
+			throw new EmbeddingsKeyError();
+		}
+	}
+	return { ...settingsOf(assistantEnabled, config), apiKey };
 }
 
 export type SaveEmbeddingsInput = {
