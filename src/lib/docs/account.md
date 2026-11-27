@@ -397,6 +397,10 @@ universe you have stories in. Nothing is sent until you index a universe.
    you change is indexed again within a few minutes, and usually only the
    passages you changed are sent.
 
+Once a universe is up to date, you can search it by meaning: press Ctrl+K in
+that universe or one of its stories and select **Meaning** next to the search
+box. See [jumping around](/docs/getting-started#jumping-around).
+
 Once a universe is up to date, "Suggest details with the Assistant" on an
 entry there also reads passages that describe the entry without naming it.
 See Planning for how that works.

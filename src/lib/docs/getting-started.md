@@ -38,6 +38,8 @@ To bring in a story you posted on Archive of Our Own, open the work there, choos
 
 Press Ctrl+K, or use the Search button in the top bar. Type to find any universe, story, scene, character, place, or lore entry you own, and press Enter to open it. The search also looks inside your prose once you type three or more characters: matches in scene text show a snippet, and opening one selects the match in the editor. The same box lists commands for where you are, such as creating a scene, switching focus mode on, or reading the whole story as one document.
 
+If you have indexed a universe for search (see "Search index" on the Assistant page of your account), the box also searches by meaning while you are in that universe or one of its stories. Select **Meaning** next to the search box, describe what happens in the scene you want, such as "someone lies to protect a friend", and press Enter. The search finds scenes that are about that even when they use none of your words, and lists each with the passage that matched; press Enter again or select one to open the scene. Each search sends your description to your embeddings model once, so it counts toward your usage; nothing is sent while you type. Select **Words** to go back to the usual search.
+
 Opening a story without picking a scene resumes the scene you changed last, counting a new status, a move, or a restore from the trash as well as writing.
 
 ## Web addresses

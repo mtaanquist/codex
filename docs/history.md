@@ -10,6 +10,19 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Search by meaning (v4.1.0, 2026-11-27, `feat/embeddings-search`, #1787). There
+is no separate universe search page: search is the command palette, so the
+meaning search is a Words / Meaning switch there, shown only on a story or
+universe page whose universe has a finished index on the current model. The
+palette asks for that on open with a GET that sends nothing to a model, and
+the paid search runs on Enter alone (Enter on results already shown for the
+same text opens the highlighted scene instead). Results are one per scene, the
+best of the 40 nearest passages, since a long scene can hold several of the
+top passages and would crowd the list. No score cut-off: the nearest are shown
+even when weak, because distances differ too much between models for a fixed
+threshold. The link opens the scene without selecting the passage, which may
+have changed since it was indexed.
+
 Passage search tool (v4.1.0, 2026-11-27, `feat/embeddings-tool`, #1788).
 `search_passages` is one entry in the shared registry with a new
 `needsIndex` flag rather than a third surface exception: `toolSpecs` and
