@@ -1,0 +1,2 @@
+ALTER TABLE "chapters" ADD COLUMN "role" text;--> statement-breakpoint
+ALTER TABLE "chapters" ADD CONSTRAINT "chapters_role_check" CHECK (role in ('dedication', 'foreword', 'prologue', 'epilogue', 'afterword', 'acknowledgements', 'authors_note'));

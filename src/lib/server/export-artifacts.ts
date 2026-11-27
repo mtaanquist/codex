@@ -1,3 +1,4 @@
+import { chapterLabels, chapterRoleOf } from '../chapter-role.ts';
 import { existsSync } from 'node:fs';
 import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
@@ -36,7 +37,8 @@ export function editionStoryContent(content: EditionContent): StoryContent {
 	return {
 		chapters: content.chapters.map((chapter, index) => ({
 			id: `ch-${index + 1}`,
-			title: chapter.title
+			title: chapter.title,
+			role: chapterRoleOf(chapter.role)
 		})),
 		scenes: [
 			...content.chapters.flatMap((chapter, index) =>
@@ -86,10 +88,11 @@ export function buildEditionHtml(
 			.join('\n<hr class="scene-break"/>\n');
 
 	const sections: string[] = [];
+	const titles = chapterLabels(content.chapters);
 	content.chapters.forEach((chapter, index) => {
 		const inChapter = content.scenes.filter((scene) => scene.chapterId === chapter.id);
 		if (inChapter.length === 0) return;
-		const title = chapter.title ?? `Chapter ${index + 1}`;
+		const title = titles[index];
 		sections.push(
 			`<section class="chapter"><h2>${escapeHtml(title)}</h2>\n${renderScenes(inChapter)}</section>`
 		);

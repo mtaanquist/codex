@@ -144,6 +144,16 @@ describe('publishStory', () => {
 		expect(content.chapters[0].scenes[0].bodyMd).toBe('The gate opened.');
 	});
 
+	it('keeps chapter roles in the edition', async () => {
+		await db.update(chapters).set({ role: 'prologue' }).where(eq(chapters.storyId, storyId));
+		expect(await publishStory(db, authorId, storyId)).toMatchObject({ ok: true });
+		const edition = await publicEdition(db, 'inkwright', storyId);
+		expect((edition!.content as EditionContent).chapters[0]).toMatchObject({
+			title: 'The Caravan',
+			role: 'prologue'
+		});
+	});
+
 	it('keeps the edition frozen while the draft moves on, until republish', async () => {
 		await publishStory(db, authorId, storyId);
 		await db.update(scenes).set({ bodyMd: 'The gate stayed shut.' }).where(eq(scenes.id, sceneId));

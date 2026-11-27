@@ -1,3 +1,4 @@
+import { chapterRoleOf, type ChapterRole } from '../chapter-role.ts';
 import { slugify } from '../slug.ts';
 import { and, asc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { Database } from './auth.ts';
@@ -46,7 +47,11 @@ import {
 // keeps refreshing it instead of taking it as the writer's own.
 function chapterFront(chapter: StoryContent['chapters'][number]) {
 	const byAssistant = !!chapter.summaryGeneratedAt && !!chapter.summaryMd?.trim();
-	return { title: chapter.title, 'summary-by': byAssistant ? 'assistant' : null };
+	return {
+		title: chapter.title,
+		role: chapter.role ?? null,
+		'summary-by': byAssistant ? 'assistant' : null
+	};
 }
 
 function frontMatter(fields: Record<string, string | string[] | null | undefined>): string {
@@ -225,6 +230,7 @@ export type StoryContent = {
 	chapters: {
 		id: string;
 		title: string | null;
+		role?: ChapterRole | null;
 		summaryMd?: string | null;
 		summaryGeneratedAt?: Date | null;
 	}[];
@@ -304,6 +310,7 @@ export async function gatherStory(db: Database, story: ExportStory): Promise<Sto
 		.select({
 			id: chapters.id,
 			title: chapters.title,
+			role: chapters.role,
 			summaryMd: chapters.summaryMd,
 			summaryGeneratedAt: chapters.summaryGeneratedAt
 		})
@@ -1059,7 +1066,7 @@ function draftDocs(draft: ExportDraft, dir: string): Doc[] {
 		docs.push({
 			dir: chapterDir,
 			name: 'chapter.md',
-			front: { title: chapter.title },
+			front: { title: chapter.title, role: chapterRoleOf(chapter.role) },
 			body: chapter.summaryMd ?? ''
 		});
 		chapter.scenes.forEach((scene, si) => addScene(scene, si, chapterDir));

@@ -48,7 +48,7 @@ export const TOOLS: ToolDef[] = [
 		kind: 'read',
 		name: 'list_scenes',
 		description:
-			"List the chapters and scenes of every story in this universe, grouped by story, with each scene's id, title, status, and summary. Use the ids with get_scene to read a scene in full.",
+			"List the chapters and scenes of every story in this universe, grouped by story, with each scene's id, title, status, and summary. A chapter that is front or back matter carries its role (dedication, foreword, prologue, epilogue, afterword, acknowledgements or authors_note). Use the ids with get_scene to read a scene in full.",
 		parameters: obj({}, [])
 	},
 	{

@@ -1,5 +1,6 @@
 import type { EntityDetail } from './entity-snapshot.ts';
 import { isSceneStatus, SCENE_STATUS_LABELS } from './scene-status.ts';
+import { chapterLabels, type ChapterRole } from './chapter-role.ts';
 
 // The frozen content of a saved draft. Ids are the ids the rows had when the
 // draft was saved: they let a scene be compared with or restored onto the
@@ -12,6 +13,8 @@ export type DraftEntityType = 'character' | 'place' | 'lore_entry';
 export type DraftChapter = {
 	id: string;
 	title: string | null;
+	// Absent in drafts saved before chapters had roles.
+	role?: ChapterRole | null;
 	summaryMd: string | null;
 	// As on DraftScene. Absent in drafts saved before this was recorded.
 	summaryGeneratedAt?: string | null;
@@ -222,10 +225,14 @@ export function compareDrafts(
 	const beforeById = new Map(before.scenes.map((scene) => [scene.id, scene]));
 	const pairs = matchScenes(before.scenes, after.scenes);
 	const matched = new Set(pairs.values());
+	const labels = new Map<Side, string[]>([
+		[before, chapterLabels(before.chapters)],
+		[after, chapterLabels(after.chapters)]
+	]);
 	const chapterTitle = (side: Side, chapterId: string | null) => {
 		const index = side.chapters.findIndex((chapter) => chapter.id === chapterId);
 		if (index < 0) return null;
-		return side.chapters[index].title ?? `Chapter ${index + 1}`;
+		return labels.get(side)![index];
 	};
 	const slim = (scene: DraftScene): CompareScene => ({
 		id: scene.id,

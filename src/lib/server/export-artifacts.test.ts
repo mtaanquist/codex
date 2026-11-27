@@ -56,6 +56,22 @@ describe('buildEditionHtml', () => {
 		expect(html).toContain('<hr class="scene-break"/>');
 	});
 
+	it('heads a role chapter with its role and leaves it out of the numbering', () => {
+		const withRoles = editionStoryContent({
+			chapters: [
+				{ title: null, role: 'prologue', scenes: [{ title: null, bodyMd: 'Before.' }] },
+				{ title: null, role: null, scenes: [{ title: null, bodyMd: 'First.' }] },
+				// A role a newer app wrote reads as a regular chapter.
+				{ title: null, role: 'interlude' as never, scenes: [{ title: null, bodyMd: 'Next.' }] }
+			],
+			unfiled: []
+		});
+		const html = buildEditionHtml({ title: 'Book', author: null }, withRoles, new Map());
+		expect(html).toContain('<h2>Prologue</h2>');
+		expect(html).toContain('<h2>Chapter 1</h2>');
+		expect(html).toContain('<h2>Chapter 2</h2>');
+	});
+
 	it('escapes html in titles and omits a missing author', () => {
 		const html = buildEditionHtml({ title: '<b>Sly</b> & Co', author: null }, content, new Map());
 		expect(html).toContain('&lt;b&gt;Sly&lt;/b&gt; &amp; Co');

@@ -1,3 +1,4 @@
+import { chapterRoleOf, type ChapterRole } from './chapter-role';
 import { unzipSync, strFromU8 } from 'fflate';
 import { isSceneStatus, type SceneStatus } from './scene-status';
 import { UUID_BODY } from './slug';
@@ -18,6 +19,8 @@ import {
 export type ImportedScene = { title: string | null; status: SceneStatus | null; bodyMd: string };
 export type ImportedChapter = {
 	title: string | null;
+	// From chapter.md's role field; absent for a regular chapter.
+	role?: ChapterRole;
 	// From chapter.md's body, or a document import that carries summaries
 	// (AO3); absent from document plans without them.
 	summaryMd?: string | null;
@@ -394,7 +397,15 @@ export function parseStoryZip(bytes: Uint8Array): ImportPlan {
 				});
 			const summaryByAssistant =
 				!!summaryMd && !!meta && scalar(meta.fields, 'summary-by') === 'assistant';
-			return { title, summaryMd, ...(summaryByAssistant && { summaryByAssistant }), scenes };
+			// An unknown role (a newer app, a hand edit) imports as a regular chapter.
+			const role = meta ? chapterRoleOf(scalar(meta.fields, 'role')) : null;
+			return {
+				title,
+				...(role && { role }),
+				summaryMd,
+				...(summaryByAssistant && { summaryByAssistant }),
+				scenes
+			};
 		});
 
 	const unfiledScenes = unfiled

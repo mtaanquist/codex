@@ -1,3 +1,9 @@
+import {
+	CHAPTER_ROLES,
+	CHAPTER_ROLE_LABELS,
+	chapterLabel,
+	chapterLabels
+} from '../../chapter-role.ts';
 import { and, asc, eq, ilike, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { chapters, notes, scenes, stories, universes } from '../db/schema.ts';
@@ -25,13 +31,14 @@ function storyAllowed(userId: string): SQL {
 	return and(eq(stories.ownerId, userId), storyIsLive(), storyAssistantOn())!;
 }
 
-// A chapter's display name: its title, else its place in the story.
-const chapterOrdinal = sql<number>`(select count(*) from ${chapters} c2 where c2.story_id = ${chapters.storyId} and c2.position <= ${chapters.position})`;
-// chapterName in SQL, for searching and sorting by the name a chapter shows.
-const chapterShown = sql<string>`(case when btrim(coalesce(${chapters.title}, ''), E' \\t\\n\\r') = '' then 'Chapter ' || ${chapterOrdinal} else ${chapters.title} end)`;
-function chapterName(title: string | null, ordinal: number): string {
-	return title?.trim() || `Chapter ${ordinal}`;
-}
+// A chapter's place among the story's regular chapters (chapterNumbers in SQL).
+const chapterOrdinal = sql<number>`(select count(*) from ${chapters} c2 where c2.story_id = ${chapters.storyId} and c2.position <= ${chapters.position} and c2.role is null)`;
+// chapterLabel in SQL, for searching and sorting by the name a chapter shows.
+const roleShown = sql.join(
+	CHAPTER_ROLES.map((role) => sql`when ${role} then ${CHAPTER_ROLE_LABELS[role]}`),
+	sql` `
+);
+const chapterShown = sql<string>`(case when btrim(coalesce(${chapters.title}, ''), E' \\t\\n\\r') = '' then (case ${chapters.role} ${roleShown} else 'Chapter ' || ${chapterOrdinal} end) else ${chapters.title} end)`;
 
 function sceneName(title: string | null): string {
 	return title?.trim() || 'Untitled scene';
@@ -57,6 +64,7 @@ async function chapterText(db: Database, userId: string, id: string) {
 	const [chapter] = await db
 		.select({
 			title: chapters.title,
+			role: chapters.role,
 			ordinal: chapterOrdinal,
 			summaryMd: chapters.summaryMd,
 			summaryGeneratedAt: chapters.summaryGeneratedAt,
@@ -82,8 +90,8 @@ async function chapterText(db: Database, userId: string, id: string) {
 	const parts = summary ? [`Summary: ${summary}`] : [];
 	for (const scene of rows) parts.push(`## ${sceneName(scene.title)}\n\n${scene.body}`);
 	return {
-		label: chapterName(chapter.title, Number(chapter.ordinal)),
-		title: `${chapterName(chapter.title, Number(chapter.ordinal))} from ${chapter.story}`,
+		label: chapterLabel(chapter, Number(chapter.ordinal)),
+		title: `${chapterLabel(chapter, Number(chapter.ordinal))} from ${chapter.story}`,
 		text: parts.join('\n\n')
 	};
 }
@@ -138,13 +146,12 @@ async function storyText(db: Database, userId: string, id: string, book: boolean
 			.where(and(eq(scenes.storyId, id), isNull(scenes.deletedAt)))
 			.orderBy(asc(scenes.globalPosition));
 		const chapterRows = await db
-			.select({ id: chapters.id, title: chapters.title })
+			.select({ id: chapters.id, title: chapters.title, role: chapters.role })
 			.from(chapters)
 			.where(eq(chapters.storyId, id))
 			.orderBy(asc(chapters.position));
-		const chapterNames = new Map(
-			chapterRows.map((chapter, index) => [chapter.id, chapterName(chapter.title, index + 1)])
-		);
+		const labels = chapterLabels(chapterRows);
+		const chapterNames = new Map(chapterRows.map((chapter, index) => [chapter.id, labels[index]]));
 		// undefined until the first scene, so a book that opens outside a chapter
 		// gets its heading too.
 		let current: string | null | undefined = undefined;
@@ -162,8 +169,9 @@ async function storyText(db: Database, userId: string, id: string, book: boolean
 		return { label: story.title, title: `The whole of "${story.title}"`, text: parts.join('\n\n') };
 	}
 	const skeleton = await storySkeleton(db, id);
+	const labels = chapterLabels(skeleton.chapters);
 	skeleton.chapters.forEach((chapter, index) => {
-		const lines = [`# ${chapterName(chapter.title, index + 1)}`];
+		const lines = [`# ${labels[index]}`];
 		if (chapter.summaryMd) lines.push(chapter.summaryMd);
 		for (const scene of chapter.scenes) {
 			lines.push(`- ${sceneName(scene.title)}${scene.summaryMd ? `: ${scene.summaryMd}` : ''}`);
@@ -346,6 +354,7 @@ export async function searchContext(
 			.select({
 				id: chapters.id,
 				title: chapters.title,
+				role: chapters.role,
 				ordinal: chapterOrdinal,
 				story: stories.title
 			})
@@ -398,7 +407,7 @@ export async function searchContext(
 		...chapterRows.map((row) => ({
 			kind: 'chapter' as const,
 			id: row.id,
-			label: chapterName(row.title, Number(row.ordinal)),
+			label: chapterLabel(row, Number(row.ordinal)),
 			sublabel: row.story
 		})),
 		...sceneRows.map((row) => ({
@@ -453,10 +462,11 @@ export async function storyContents(
 			.from(scenes)
 			.where(and(eq(scenes.storyId, storyId), isNull(scenes.deletedAt)))
 	]);
+	const labels = chapterLabels(skeleton.chapters);
 	const chapterItems: ContextItem[] = skeleton.chapters.map((chapter, index) => ({
 		kind: 'chapter',
 		id: chapter.id,
-		label: chapterName(chapter.title, index + 1),
+		label: labels[index],
 		sublabel: `${chapter.scenes.length} ${chapter.scenes.length === 1 ? 'scene' : 'scenes'}`
 	}));
 	const sceneItems: ContextItem[] = [
@@ -465,7 +475,7 @@ export async function storyContents(
 				kind: 'scene' as const,
 				id: scene.id,
 				label: sceneName(scene.title),
-				sublabel: chapterName(chapter.title, index + 1)
+				sublabel: labels[index]
 			}))
 		),
 		...skeleton.orphans.map((scene) => ({

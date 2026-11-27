@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels } from '#lib/chapter-role';
 	import { resolve } from '$app/paths';
 	import { renderMarkdown } from '#lib/markdown';
 	import { fontFamilyCss, lineHeightCss, pageRuleCss } from '#lib/page-setup';
@@ -7,6 +8,7 @@
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+	const chapterNames = $derived(chapterLabels(data.chapters));
 
 	function chapterScenes(chapterId: string | null) {
 		return data.scenes.filter((scene) => scene.chapterId === chapterId);
@@ -87,7 +89,7 @@
 				{@const list = chapterScenes(chapter.id)}
 				{#if list.length > 0}
 					<section class="chapter">
-						<h2>{chapter.title ?? `Chapter ${index + 1}`}</h2>
+						<h2>{chapterNames[index]}</h2>
 						{#each list as scene, si (scene.id)}
 							{#if si > 0}<hr class="scene-break" />{/if}
 							<!-- Prose renders through the shared markdown renderer; raw HTML

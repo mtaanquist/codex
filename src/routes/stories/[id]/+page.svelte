@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels } from '#lib/chapter-role';
 	import PaneResizer from '#lib/components/PaneResizer.svelte';
 	import type { ResolvedPathname } from '$app/types';
 	import { withQuery } from '#lib/href';
@@ -60,6 +61,7 @@
 	} from '#lib/editor-view';
 
 	let { data }: { data: PageData } = $props();
+	const chapterNames = $derived(chapterLabels(data.chapters));
 
 	// The platform's modifier labels for shortcut hints; SSR says Ctrl/Alt.
 	let mod = $state<'Cmd' | 'Ctrl'>('Ctrl');
@@ -1077,7 +1079,7 @@
 								{@const docList = docScenes(chapter.id)}
 								{#if docList.length > 0}
 									<section class="doc-chapter" id="chapter-{chapter.id}">
-										<h2>{chapter.title ?? `Chapter ${index + 1}`}</h2>
+										<h2>{chapterNames[index]}</h2>
 										{#each docList as scene (`${scene.id}:${editorNonce}`)}
 											{@render docScene(scene)}
 										{/each}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels } from '#lib/chapter-role';
 	import { page } from '$app/state';
 	import { withQuery } from '#lib/href';
 	import { resolve } from '$app/paths';
@@ -55,13 +56,14 @@
 
 	// Every chapter of the edition in one list, unfiled scenes last, so the
 	// contents and the prose below it are built from the same thing.
+	const chapterNames = $derived(data.gate ? [] : chapterLabels(data.content.chapters));
 	const chapters = $derived(
 		data.gate
 			? []
 			: [
 					...data.content.chapters.map((chapter, index) => ({
 						id: `chapter-${index}`,
-						title: chapter.title ?? `Chapter ${index + 1}`,
+						title: chapterNames[index],
 						scenes: chapter.scenes
 					})),
 					...(data.content.unfiled.length > 0

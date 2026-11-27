@@ -1,7 +1,9 @@
 <script lang="ts" module>
 	// Right-click menu for sidebar rows: chapter tools or the scene actions.
+	import type { ChapterRole } from '#lib/chapter-role';
 	export type RowMenuTarget =
-		{ kind: 'chapter'; id: string; index: number } | { kind: 'scene'; id: string };
+		| { kind: 'chapter'; id: string; index: number; role: ChapterRole | null }
+		| { kind: 'scene'; id: string };
 	export type RowMenuState = { x: number; y: number; target: RowMenuTarget };
 </script>
 
@@ -12,6 +14,7 @@
 	import Icon from './Icon.svelte';
 	import { dismiss } from '#lib/dismiss';
 	import { menu as menuKeys } from '#lib/menu';
+	import { CHAPTER_ROLES, CHAPTER_ROLE_LABELS } from '#lib/chapter-role';
 
 	let {
 		menu,
@@ -62,8 +65,12 @@
 		onClose();
 	};
 
-	// The Assistant flyout inside the menu.
-	let subOpen = $state(false);
+	// The flyout open inside the menu, if any.
+	let subOpen = $state<'assistant' | 'role' | null>(null);
+	const roleChoices = [
+		{ value: '', label: 'Regular chapter' },
+		...CHAPTER_ROLES.map((role) => ({ value: role, label: CHAPTER_ROLE_LABELS[role] }))
+	];
 
 	function toggleMergeSelection(sceneId: string) {
 		if (mergeSelection.has(sceneId)) mergeSelection.delete(sceneId);
@@ -108,10 +115,10 @@
 			<div
 				class="row-sub"
 				role="presentation"
-				onmouseenter={() => (subOpen = true)}
+				onmouseenter={() => (subOpen = 'assistant')}
 				onmouseleave={(event) => {
 					// Keyboard focus inside the flyout keeps it open.
-					if (!event.currentTarget.contains(document.activeElement)) subOpen = false;
+					if (!event.currentTarget.contains(document.activeElement)) subOpen = null;
 				}}
 			>
 				<button
@@ -119,13 +126,13 @@
 					type="button"
 					role="menuitem"
 					aria-haspopup="menu"
-					aria-expanded={subOpen}
-					onclick={() => (subOpen = !subOpen)}
+					aria-expanded={subOpen === 'assistant'}
+					onclick={() => (subOpen = subOpen === 'assistant' ? null : 'assistant')}
 				>
 					<span class="row-sub-label"><Icon name="sparkles" size={13} /> Assistant</span>
 					<Icon name="chevron" size={12} />
 				</button>
-				{#if subOpen}
+				{#if subOpen === 'assistant'}
 					<div class="row-submenu popover" role="menu">
 						<button
 							class="menu-item"
@@ -149,6 +156,47 @@
 				{/if}
 			</div>
 		{/if}
+		<div
+			class="row-sub"
+			role="presentation"
+			onmouseenter={() => (subOpen = 'role')}
+			onmouseleave={(event) => {
+				if (!event.currentTarget.contains(document.activeElement)) subOpen = null;
+			}}
+		>
+			<button
+				class="menu-item row-sub-trigger"
+				type="button"
+				role="menuitem"
+				aria-haspopup="menu"
+				aria-expanded={subOpen === 'role'}
+				onclick={() => (subOpen = subOpen === 'role' ? null : 'role')}
+			>
+				<span class="row-sub-label"><Icon name="chapter" size={13} /> Chapter type</span>
+				<Icon name="chevron" size={12} />
+			</button>
+			{#if subOpen === 'role'}
+				<div class="row-submenu popover" role="menu" aria-label="Chapter type">
+					{#each roleChoices as choice (choice.value)}
+						{@const current = (target.role ?? '') === choice.value}
+						<form method="POST" action="?/setChapterRole" use:enhance={closeAfter}>
+							<input type="hidden" name="chapterId" value={target.id} />
+							<input type="hidden" name="role" value={choice.value} />
+							{@render openSceneField()}
+							<button
+								class="menu-item role-choice"
+								type="submit"
+								role="menuitemradio"
+								aria-checked={current}
+							>
+								<span>{choice.label}</span>
+								{#if current}<Icon name="check" size={13} />{/if}
+							</button>
+						</form>
+					{/each}
+				</div>
+			{/if}
+		</div>
 		<form method="POST" action="?/moveChapter" use:enhance={closeAfter}>
 			<input type="hidden" name="chapterId" value={target.id} />
 			<input type="hidden" name="direction" value="up" />
@@ -209,10 +257,10 @@
 			<div
 				class="row-sub"
 				role="presentation"
-				onmouseenter={() => (subOpen = true)}
+				onmouseenter={() => (subOpen = 'assistant')}
 				onmouseleave={(event) => {
 					// Keyboard focus inside the flyout keeps it open.
-					if (!event.currentTarget.contains(document.activeElement)) subOpen = false;
+					if (!event.currentTarget.contains(document.activeElement)) subOpen = null;
 				}}
 			>
 				<button
@@ -220,13 +268,13 @@
 					type="button"
 					role="menuitem"
 					aria-haspopup="menu"
-					aria-expanded={subOpen}
-					onclick={() => (subOpen = !subOpen)}
+					aria-expanded={subOpen === 'assistant'}
+					onclick={() => (subOpen = subOpen === 'assistant' ? null : 'assistant')}
 				>
 					<span class="row-sub-label"><Icon name="sparkles" size={13} /> Assistant</span>
 					<Icon name="chevron" size={12} />
 				</button>
-				{#if subOpen}
+				{#if subOpen === 'assistant'}
 					<div class="row-submenu popover" role="menu">
 						<button
 							class="menu-item"
@@ -314,6 +362,9 @@
 		top: -7px;
 		min-width: 180px;
 		z-index: 61;
+	}
+	.role-choice {
+		justify-content: space-between;
 	}
 	.turn-up :global(svg) {
 		transform: rotate(-90deg);

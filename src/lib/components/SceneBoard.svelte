@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels, type ChapterRole } from '#lib/chapter-role';
 	import type { ResolvedPathname } from '$app/types';
 	import Icon from './Icon.svelte';
 	import FormStatus from './FormStatus.svelte';
@@ -23,7 +24,7 @@
 			wordCount: number;
 			chapterId: string | null;
 		}[];
-		chapters: { id: string; title: string | null }[];
+		chapters: { id: string; title: string | null; role?: ChapterRole | null }[];
 		// Open TODO markers per scene id.
 		todoCounts: Record<string, number>;
 		sceneHref: (sceneId: string) => ResolvedPathname;
@@ -31,9 +32,10 @@
 		onMove: (sceneId: string, status: SceneStatus) => Promise<string | null>;
 	} = $props();
 
-	const chapterTitles = $derived(
-		new Map(chapters.map((chapter, index) => [chapter.id, chapter.title ?? `Chapter ${index + 1}`]))
-	);
+	const chapterTitles = $derived.by(() => {
+		const labels = chapterLabels(chapters);
+		return new Map(chapters.map((chapter, index) => [chapter.id, labels[index]]));
+	});
 
 	let draggingId = $state<string | null>(null);
 	let dropLane = $state<SceneStatus | null>(null);

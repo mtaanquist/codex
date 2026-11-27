@@ -25,6 +25,7 @@ import {
 	moveChapter,
 	renameChapter,
 	restoreScene,
+	setChapterRole,
 	trashScene
 } from '../../src/lib/server/scene-lifecycle';
 import { rebuildSceneMentions } from '../../src/lib/server/mentions';
@@ -285,6 +286,31 @@ describe('chapters', () => {
 		expect(await renameChapter(db, ownerId, chapterB, '')).toBe(true);
 		[row] = await db.select().from(chapters).where(eq(chapters.id, chapterB));
 		expect(row.title).toBe(null);
+	});
+
+	it('sets and clears a role in place, and guards ownership', async () => {
+		const order = async () =>
+			await db
+				.select({ id: chapters.id, role: chapters.role })
+				.from(chapters)
+				.where(eq(chapters.storyId, storyId))
+				.orderBy(asc(chapters.position));
+		const before = (await order()).map((row) => row.id);
+		expect(await setChapterRole(db, ownerId, chapterB, 'epilogue')).toBe(true);
+		expect(await order()).toEqual([
+			{ id: chapterA, role: null },
+			{ id: chapterB, role: 'epilogue' }
+		]);
+		expect((await order()).map((row) => row.id)).toEqual(before);
+		expect(await setChapterRole(db, strangerId, chapterB, 'prologue')).toBe(false);
+		expect(await setChapterRole(db, ownerId, chapterB, null)).toBe(true);
+		expect((await order())[1].role).toBeNull();
+	});
+
+	it('refuses a role the database does not know', async () => {
+		await expect(
+			pool.query(`update chapters set role = 'interlude' where id = $1`, [chapterB])
+		).rejects.toThrow(/chapters_role_check/);
 	});
 
 	it('moves chapters and treats the ends as no-ops', async () => {

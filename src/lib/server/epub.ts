@@ -4,6 +4,7 @@ import { cssEscape, DEFAULT_PAGE_SETUP, lineHeightCss, type PageSetup } from '..
 import type { AssetLoader, AssetRef, ExportStory, StoryContent } from './export.ts';
 import { assetEntry, textEntry, type ZipArchive, type ZipEntry } from './zip-stream.ts';
 import { extensionFor } from './media-types.ts';
+import { chapterLabels, chapterRoleOf, type ChapterRole } from '../chapter-role.ts';
 
 // A minimal EPUB 3 by hand: it is a zip whose first entry is the literal
 // string "application/epub+zip", stored uncompressed, plus a container
@@ -45,6 +46,44 @@ p.align-justify { text-align: justify; }
 .page-break { break-after: page; }`;
 }
 
+// The EPUB structural vocabulary term for each role. The vocabulary has no
+// term for an author's note, so it gets only its place in the book.
+const ROLE_TYPES: Record<ChapterRole, string | null> = {
+	dedication: 'dedication',
+	foreword: 'foreword',
+	prologue: 'prologue',
+	epilogue: 'epilogue',
+	afterword: 'afterword',
+	acknowledgements: 'acknowledgments',
+	authors_note: null
+};
+
+// Roles that count as front matter when they open the book. Front matter is
+// the run of these before anything else; a prologue already belongs to the
+// story, so the body starts there.
+const FRONT_ROLES = new Set<ChapterRole>([
+	'dedication',
+	'foreword',
+	'acknowledgements',
+	'authors_note'
+]);
+
+// The epub:type of each section and where the body of the book starts (the
+// first section that is not front matter, or -1 when there is none).
+// A null role is a regular chapter; the unfiled scenes count as one too.
+export function sectionTypes(roles: (ChapterRole | null)[]): {
+	types: string[];
+	bodyStart: number;
+} {
+	const bodyStart = roles.findIndex((role) => !role || !FRONT_ROLES.has(role));
+	const types = roles.map((role, index) => {
+		if (!role) return 'chapter';
+		const front = bodyStart === -1 || index < bodyStart;
+		return ROLE_TYPES[role] ?? (front ? 'frontmatter' : 'backmatter');
+	});
+	return { types, bodyStart };
+}
+
 function xhtmlDocument(title: string, body: string): string {
 	return `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
@@ -72,7 +111,7 @@ export async function buildEpub(
 
 	// Sections: each chapter is one XHTML file; chapterless scenes close
 	// the book as an unfiled section.
-	type Section = { id: string; title: string; html: string };
+	type Section = { id: string; title: string; role: ChapterRole | null; html: string };
 	const sections: Section[] = [];
 	const renderScenes = (list: typeof sceneList) =>
 		list
@@ -83,13 +122,15 @@ export async function buildEpub(
 				return renderEpubMarkdown(body);
 			})
 			.join('\n<hr class="scene-break"/>\n');
+	const titles = chapterLabels(chapterList);
 	chapterList.forEach((chapter, index) => {
 		const inChapter = sceneList.filter((scene) => scene.chapterId === chapter.id);
 		if (inChapter.length === 0) return;
-		const title = chapter.title ?? `Chapter ${index + 1}`;
+		const title = titles[index];
 		sections.push({
 			id: `ch${index + 1}`,
 			title,
+			role: chapterRoleOf(chapter.role),
 			html: `<h1>${escapeXml(title)}</h1>\n${renderScenes(inChapter)}`
 		});
 	});
@@ -98,6 +139,7 @@ export async function buildEpub(
 		sections.push({
 			id: 'unfiled',
 			title: 'Unfiled scenes',
+			role: null,
 			html: `<h1>Unfiled scenes</h1>\n${renderScenes(unfiled)}`
 		});
 	}
@@ -135,11 +177,23 @@ ${spineItems.join('\n')}
 </spine>
 </package>`;
 
+	const { types, bodyStart } = sectionTypes(sections.map((section) => section.role));
+	const landmarks = [
+		'<li><a epub:type="toc" href="nav.xhtml#toc">Contents</a></li>',
+		...(bodyStart >= 0
+			? [
+					`<li><a epub:type="bodymatter" href="${sections[bodyStart].id}.xhtml">${escapeXml(
+						sections[bodyStart].title
+					)}</a></li>`
+				]
+			: [])
+	];
 	const nav = xhtmlDocument(
 		story.title,
-		`<nav epub:type="toc"><h1>${escapeXml(story.title)}</h1><ol>${sections
+		`<nav epub:type="toc" id="toc"><h1>${escapeXml(story.title)}</h1><ol>${sections
 			.map((section) => `<li><a href="${section.id}.xhtml">${escapeXml(section.title)}</a></li>`)
-			.join('')}</ol></nav>`
+			.join('')}</ol></nav>
+<nav epub:type="landmarks" hidden=""><ol>${landmarks.join('')}</ol></nav>`
 	);
 
 	const entries: ZipEntry[] = [
@@ -156,11 +210,10 @@ ${spineItems.join('\n')}
 		textEntry('OEBPS/nav.xhtml', nav),
 		textEntry('OEBPS/style.css', epubStyle(setup))
 	];
-	for (const section of sections) {
-		entries.push(
-			textEntry(`OEBPS/${section.id}.xhtml`, xhtmlDocument(section.title, section.html))
-		);
-	}
+	sections.forEach((section, index) => {
+		const html = `<section epub:type="${types[index]}">\n${section.html}\n</section>`;
+		entries.push(textEntry(`OEBPS/${section.id}.xhtml`, xhtmlDocument(section.title, html)));
+	});
 	for (const asset of images.values()) {
 		entries.push(assetEntry(`OEBPS/${imageFile(asset.id)}`, asset));
 	}

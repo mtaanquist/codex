@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels } from '#lib/chapter-role';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import AppBar from '#lib/components/AppBar.svelte';
@@ -23,6 +24,7 @@
 
 	const content = $derived(data.draft.content);
 	const outline = $derived(draftOutline(content));
+	const chapterNames = $derived(chapterLabels(outline.chapters));
 	const draftHref = $derived(
 		resolve('/stories/[id]/drafts/[draft=uuid]', { id: data.story.slug, draft: data.draft.id })
 	);
@@ -307,7 +309,7 @@
 
 				{#each outline.chapters as chapter, index (chapter.id)}
 					<section class="draft-chapter">
-						<h2>{chapter.title ?? `Chapter ${index + 1}`}</h2>
+						<h2>{chapterNames[index]}</h2>
 						{#if chapter.summaryMd}<p class="field-hint">{chapter.summaryMd}</p>{/if}
 						{#each chapter.scenes as scene (scene.id)}
 							{@render sceneBlock(scene)}

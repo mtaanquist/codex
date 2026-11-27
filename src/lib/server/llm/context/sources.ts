@@ -1,3 +1,4 @@
+import type { ChapterRole } from '../../../chapter-role.ts';
 import { and, asc, desc, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
 import type { Database } from '../../auth.ts';
 import {
@@ -231,6 +232,7 @@ export type SceneSummary = {
 export type ChapterSkeleton = {
 	id: string;
 	title: string | null;
+	role: ChapterRole | null;
 	summaryMd: string | null;
 	scenes: SceneSummary[];
 };
@@ -245,6 +247,7 @@ export async function storySkeleton(
 		.select({
 			id: chapters.id,
 			title: chapters.title,
+			role: chapters.role,
 			summaryMd: chapters.summaryMd,
 			summaryGeneratedAt: chapters.summaryGeneratedAt,
 			summaryInput: chapters.summaryInput
@@ -292,6 +295,7 @@ export async function storySkeleton(
 			return {
 				id: chapter.id,
 				title: chapter.title,
+				role: chapter.role,
 				summaryMd: chapterSummaryToSend(chapter, rowsByChapter.get(chapter.id) ?? []),
 				scenes: chapterScenes
 			};
