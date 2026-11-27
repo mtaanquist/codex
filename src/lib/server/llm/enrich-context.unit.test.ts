@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	formatExcerpts,
 	partBudgetTokens,
+	pickRelated,
+	RELATED_HEADING,
+	RELATED_PASSAGES,
+	relatedQuery,
 	splitExcerptParts,
 	UNKNOWN_WINDOW_PART_TOKENS,
 	withNeighbours,
@@ -195,5 +199,53 @@ describe('buildEnrichTextMessage', () => {
 		expect(message).toContain('Known keywords: Al.');
 		expect(message).toContain('do not propose a summary');
 		expect(message).toContain('"summary": null');
+	});
+});
+
+describe('passages found by meaning', () => {
+	const chunk = (sceneId: string, content = `Passage of ${sceneId}.`) => ({
+		sceneId,
+		storyId: 's2',
+		storyTitle: 'The Salt Road',
+		sceneTitle: `Scene ${sceneId}`,
+		content
+	});
+
+	it('builds the query from the name, aliases, summary, and details', () => {
+		expect(
+			relatedQuery({
+				name: 'Bram',
+				aliases: ['The Old Man'],
+				summaryMd: 'A fisherman.',
+				details: [{ label: 'Eyes', value: 'grey' }]
+			})
+		).toBe('Bram\nAlso called: The Old Man.\nA fisherman.\nEyes: grey');
+		expect(relatedQuery({ name: 'Bram', aliases: [], summaryMd: null, details: [] })).toBe('Bram');
+	});
+
+	it('keeps the nearest order, drops scenes already read, and stops at the count and the budget', () => {
+		const picked = pickRelated(
+			[chunk('a'), chunk('read'), chunk('b'), chunk('c', '  ')],
+			new Set(['read']),
+			1000
+		);
+		expect(picked.map((p) => p.id)).toEqual(['a', 'b']);
+		expect(picked.every((p) => p.related)).toBe(true);
+
+		const many = Array.from({ length: 30 }, (_, i) => chunk(`x${i}`));
+		expect(pickRelated(many, new Set(), 100_000)).toHaveLength(RELATED_PASSAGES);
+		const long = 'word '.repeat(300);
+		expect(pickRelated([chunk('a', long), chunk('b', long)], new Set(), 500)).toHaveLength(1);
+		expect(pickRelated([chunk('a', long)], new Set(), 10)).toEqual([]);
+	});
+
+	it('are formatted last, under their own heading, without chapter headings', () => {
+		const passages = pickRelated([chunk('p')], new Set(), 1000);
+		const text = formatExcerpts([scene('a'), ...passages], true);
+		expect(text.indexOf('Body of a.')).toBeLessThan(text.indexOf(RELATED_HEADING));
+		expect(text).toContain(`${RELATED_HEADING}\n\n### The Salt Road / Scene p\nPassage of p.`);
+		expect(formatExcerpts(passages, false)).toBe(
+			`${RELATED_HEADING}\n\n### Scene p\nPassage of p.`
+		);
 	});
 });
