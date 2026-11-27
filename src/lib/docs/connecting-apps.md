@@ -27,7 +27,7 @@ The app is now connected. You are sent back to it, and it appears under "Apps wi
 
 You choose this on the page where you allow the app:
 
-- **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. The app also sees each story's language, its Assistant preferences, and your notes for the Assistant. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash.
+- **Read your writing.** Your universes, stories, scenes, characters, places and lore. This is always included. The app also sees each story's language, its Assistant preferences, and your notes for the Assistant. A story where you have turned the Assistant off stays hidden from apps too, and so does anything in the trash. If you built a search index for a universe (see "Search index" in [Your account](/docs/account)), the app can also look there for passages by what they are about. Each such search sends the app's question to your own embeddings model, so it shows in your Usage list and costs what your provider charges.
 - **Leave suggestions and comments.** The app can add suggested edits and comments, suggest a character, place or lore entry your universe does not have yet, propose splitting a scene in two, and hand you a draft it wrote for a scene. Each of these waits for you to accept or turn down. Untick this if you want the app to read only.
 - **Let you accept its suggestions in the app.** This is off unless you tick it, and you can tick it only while "Leave suggestions and comments" is ticked. The app can then show you a card where you work through the edits of one of its notes and accept them without opening Codex. See "Work through a note in the app" below.
 

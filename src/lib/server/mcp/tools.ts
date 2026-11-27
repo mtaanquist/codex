@@ -5,6 +5,7 @@ import { logEvent } from '../log.ts';
 import { refundSlidingRateLimit, slidingRateLimit } from '../rate-limit.ts';
 import { dispatchToolCall, ownsUniverse } from '../llm/tools/dispatch.ts';
 import { TOOLS, type ToolDef } from '../llm/tools/registry.ts';
+import type { EmbedDeps } from '../llm/embeddings/embed.ts';
 import {
 	MAX_NOTES_WAITING_PER_SCENE,
 	READ_CALLS_PER_MINUTE,
@@ -98,8 +99,16 @@ const EXTRA_ARGUMENTS: Record<string, ExtraArgument[]> = {
 };
 
 // The tools a connection is offered: every read tool, and the staging tools
-// when the writer allowed suggestions.
-function offered(tool: ToolDef, permissions: readonly McpPermission[]): boolean {
+// when the writer allowed suggestions. The tools that need the search index
+// come only when one of the writer's universes has one that can answer
+// (passageSearchReady); the tool still checks the universe it is called on.
+export type OfferOptions = { passageSearch?: boolean };
+function offered(
+	tool: ToolDef,
+	permissions: readonly McpPermission[],
+	opts: OfferOptions = {}
+): boolean {
+	if (tool.needsIndex && !opts.passageSearch) return false;
 	return permissions.includes(PERMISSION_FOR[tool.kind]);
 }
 
@@ -130,8 +139,11 @@ function cardAllowed(permissions: readonly McpPermission[]): boolean {
 	return permissions.includes('apply') && permissions.includes('suggest');
 }
 
-export function mcpTools(permissions: readonly McpPermission[]): McpTool[] {
-	const shared = TOOLS.filter((tool) => offered(tool, permissions)).map((tool) => ({
+export function mcpTools(
+	permissions: readonly McpPermission[],
+	opts: OfferOptions = {}
+): McpTool[] {
+	const shared = TOOLS.filter((tool) => offered(tool, permissions, opts)).map((tool) => ({
 		name: tool.name,
 		description: tool.description,
 		inputSchema: inputSchema(tool),
@@ -174,7 +186,9 @@ export async function callMcpTool(
 	name: string,
 	args: Record<string, unknown>,
 	// Where this Codex is reached, for links in results.
-	origin: string
+	origin: string,
+	// Test seam for the embeddings request search_passages sends.
+	deps: { embeddings?: EmbedDeps } = {}
 ): Promise<McpToolResult> {
 	const log = (outcome: string) =>
 		logEvent('info', 'mcp.tool', {
@@ -194,7 +208,9 @@ export async function callMcpTool(
 	const tool = shared ?? card;
 	if (
 		!tool ||
-		(shared && !offered(shared, identity.permissions)) ||
+		// Passage search answers for itself, per universe, when there is no
+		// index there (see searchPassages).
+		(shared && !offered(shared, identity.permissions, { passageSearch: true })) ||
 		(card && !cardAllowed(identity.permissions))
 	) {
 		return refuse('unknown_tool', `Unknown tool: ${name}.`);
@@ -306,6 +322,7 @@ export async function callMcpTool(
 				userId: identity.userId,
 				universeId,
 				allowedTools: [name],
+				embedDeps: deps.embeddings,
 				external: {
 					sceneBodyCap: SCENE_BODY_MAX_CHARS,
 					client: {

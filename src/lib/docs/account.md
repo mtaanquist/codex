@@ -414,6 +414,14 @@ after you turn embeddings off. Indexing never changes your writing, and the
 index is not part of an export: deleting a scene, story, universe or your
 account deletes its index too.
 
+While a universe reads "Up to date", the Assistant can look through it for
+passages by what they are about, not only by the words in them. Ask it, for
+example, "find the scenes where someone lies to protect a friend". Apps you
+connected can do the same (see [Connecting an app](/docs/connecting-apps)).
+Each search sends your question, not your writing, to your embeddings model,
+and shows in the Usage list with the role "embeddings". The Assistant only
+offers this in a universe that reads "Up to date".
+
 ## Display
 
 Choose a light, warm, or dark theme, or follow your system, and pick an accent

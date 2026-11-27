@@ -10,6 +10,22 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+Passage search tool (v4.1.0, 2026-11-27, `feat/embeddings-tool`, #1788).
+`search_passages` is one entry in the shared registry with a new
+`needsIndex` flag rather than a third surface exception: `toolSpecs` and
+`mcpTools` leave it out unless the caller says the index can answer, so the
+Assistant and an outside app see the same tool under the same rule. The
+gateway asks per turn for the turn's universe; the MCP endpoint cannot, since
+an app picks the universe per call, so it lists the tool when any of the
+writer's universes has a current index and the handler refuses per universe.
+A stale tool list or a model change mid-conversation therefore gets a plain
+answer, not an error. The query embedding takes the run's meter through the
+tool context, the only tool so far that sends a request of its own; a cap
+hold surfaces as the tool's answer and the gateway's own cap check ends the
+run at the next request. Not added: a hint in the assembled world context
+about the tool (the description carries it), and similarity thresholds (the
+model gets the score and judges).
+
 Unnamed passages in Suggest details (v4.1.0, 2026-11-27,
 `feat/embeddings-enrich`, #1786). The passages found by meaning are modelled
 as `ExcerptScene` rows flagged `related` and appended after the scenes, so the
