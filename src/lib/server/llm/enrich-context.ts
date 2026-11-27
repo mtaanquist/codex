@@ -9,6 +9,15 @@ import { modelContextWindow, pickModel, resolveLlmConfig, roleMaxTokens } from '
 import { adapterKind } from './providers/presets.ts';
 import { cacheWriteRate } from '../../assistant-cost.ts';
 import type { EntityKind } from '../entity-suggestions.ts';
+import { errorFields, logEvent } from '../log.ts';
+import { SpendCapError, type SpendMeter } from './spend.ts';
+import {
+	embed,
+	EmbeddingsDisabledError,
+	resolveEmbeddings,
+	type EmbedDeps
+} from './embeddings/index.ts';
+import { embeddingIndexFor, nearestChunks } from './embeddings/scene-index.ts';
 
 // What a "find more" read of an entity sends: the short snippets around each
 // indexed mention (the background pass), the full text of the scenes that
@@ -26,6 +35,9 @@ export type ExcerptScene = {
 	chapterTitle: string;
 	title: string | null;
 	bodyMd: string;
+	// A passage found by meaning (see relatedPassages) rather than a scene that
+	// names the entity: only part of its scene, and perhaps not about it.
+	related?: true;
 };
 
 // The share of the model's window one request's text may fill with the reply
@@ -93,13 +105,27 @@ function sceneBlock(scene: ExcerptScene): string {
 	return `### ${title}\n${scene.bodyMd.trim() || '(empty)'}`;
 }
 
+export const RELATED_HEADING =
+	'# Passages that may be about it\n' +
+	'These passages do not name it. They were found because they read like what is known about it, and some may be about someone or something else.';
+
 // The scenes as one text in reading order, with a heading where the story
-// (when more than one is read) or the chapter changes. Pure.
+// (when more than one is read) or the chapter changes. Passages found by
+// meaning come last, under a heading of their own. Pure.
 export function formatExcerpts(list: ExcerptScene[], withStory: boolean): string {
 	const out: string[] = [];
 	let story: string | undefined;
 	let chapter: string | undefined;
+	let related = false;
 	for (const scene of list) {
+		if (scene.related) {
+			if (!related) out.push(RELATED_HEADING);
+			related = true;
+			const title = (scene.title ?? '').trim() || 'Untitled scene';
+			const where = withStory ? `${scene.storyTitle.trim() || 'Untitled story'} / ${title}` : title;
+			out.push(`### ${where}\n${scene.bodyMd.trim()}`);
+			continue;
+		}
 		if (withStory && scene.storyId !== story) {
 			out.push(`# ${scene.storyTitle.trim() || 'Untitled story'}`);
 			chapter = undefined;
@@ -299,6 +325,131 @@ export async function enrichTextBudget(db: Database, userId: string, scope: Scop
 	};
 }
 
+// Passages found by meaning: at most this many, taking at most this share of
+// one request's text.
+export const RELATED_PASSAGES = 12;
+const RELATED_SHARE = 0.25;
+// Closest passages asked of the index, so there are enough left once those in
+// scenes already read are dropped.
+const RELATED_CANDIDATES = 40;
+// The longest query sent to the embeddings model.
+const RELATED_QUERY_CHARS = 2000;
+
+// The text the related passages one request may carry. Pure.
+export function relatedBudgetTokens(partTokens: number): number {
+	return Math.floor(partTokens * RELATED_SHARE);
+}
+
+// What is known about the entity, as the text its passages are compared with.
+// Pure.
+export function relatedQuery(fields: {
+	name: string;
+	aliases: string[];
+	summaryMd: string | null;
+	details: { label: string; value: string }[];
+}): string {
+	const lines = [
+		fields.name.trim(),
+		fields.aliases.length ? `Also called: ${fields.aliases.join(', ')}.` : '',
+		(fields.summaryMd ?? '').trim(),
+		...fields.details.map((d) => `${d.label}: ${d.value}`)
+	];
+	return lines.filter(Boolean).join('\n').slice(0, RELATED_QUERY_CHARS);
+}
+
+// The nearest passages, nearest first, without those from scenes already read,
+// up to RELATED_PASSAGES and the token budget. Pure.
+export function pickRelated(
+	chunks: {
+		sceneId: string;
+		storyId: string;
+		content: string;
+		sceneTitle: string | null;
+		storyTitle: string;
+	}[],
+	exclude: ReadonlySet<string>,
+	budgetTokens: number
+): ExcerptScene[] {
+	const picked: ExcerptScene[] = [];
+	let used = 0;
+	for (const chunk of chunks) {
+		if (picked.length >= RELATED_PASSAGES) break;
+		if (exclude.has(chunk.sceneId) || !chunk.content.trim()) continue;
+		const passage: ExcerptScene = {
+			id: chunk.sceneId,
+			storyId: chunk.storyId,
+			storyTitle: chunk.storyTitle,
+			chapterTitle: '',
+			title: chunk.sceneTitle,
+			bodyMd: chunk.content,
+			related: true
+		};
+		const tokens = estimateTokens(sceneBlock(passage)) + HEADING_TOKENS;
+		if (used + tokens > budgetTokens) break;
+		picked.push(passage);
+		used += tokens;
+	}
+	return picked;
+}
+
+// Whether the universe has a finished index on the writer's current
+// embeddings model. Without one a read sends what it always has.
+async function relatedIndexReady(db: Database, userId: string, universeId: string) {
+	const config = await resolveEmbeddings(db, userId);
+	if (!config.ready) return false;
+	const index = await embeddingIndexFor(db, userId, universeId);
+	return !!index?.completedAt && index.model === config.model;
+}
+
+// The passages in the scope closest in meaning to what is known about the
+// entity, from scenes not already read, when the universe has an index; none
+// otherwise. Embedding the query is a request of its own, recorded on the
+// meter. A failure here leaves the passages out rather than failing the read;
+// a request the cap held back leaves the meter at its cap, so the read stops
+// as capped.
+export async function relatedPassages(
+	db: Database,
+	opts: {
+		userId: string;
+		scope: Scope;
+		universeId: string;
+		query: string;
+		exclude: ReadonlySet<string>;
+		budgetTokens: number;
+		meter?: SpendMeter;
+		signal?: AbortSignal;
+	},
+	deps: EmbedDeps = {}
+): Promise<ExcerptScene[]> {
+	if (!opts.query.trim() || opts.budgetTokens <= 0) return [];
+	if (!(await relatedIndexReady(db, opts.userId, opts.universeId))) return [];
+	try {
+		const embedded = await embed(
+			db,
+			opts.userId,
+			[opts.query],
+			{ meter: opts.meter, signal: opts.signal },
+			deps
+		);
+		const chunks = await nearestChunks(
+			db,
+			opts.userId,
+			opts.scope,
+			{ model: embedded.model, vector: embedded.vectors[0] ?? [] },
+			RELATED_CANDIDATES
+		);
+		return pickRelated(chunks, opts.exclude, opts.budgetTokens);
+	} catch (err) {
+		if (!(err instanceof EmbeddingsDisabledError || err instanceof SpendCapError)) {
+			logEvent('warn', 'assistant.enrich_related_failed', {
+				userId: opts.userId,
+				...errorFields(err)
+			});
+		}
+		return [];
+	}
+}
+
 export type EnrichReadEstimate = {
 	scenes: number;
 	// A scene longer than one request is counted as if it could be cut
@@ -323,10 +474,18 @@ export type EnrichEstimate = {
 function readEstimate(
 	outline: ReadableScene[],
 	budget: Awaited<ReturnType<typeof enrichTextBudget>>,
-	taskTokens: number
+	taskTokens: number,
+	relatedTokens = 0
 ): EnrichReadEstimate {
 	// Lengths stand in for the text, so nothing is loaded to count it.
-	const sized = outline.map((row) => ({ ...toExcerpt(row), bodyMd: 'x'.repeat(row.bodyChars) }));
+	const sized: ExcerptScene[] = outline.map((row) => ({
+		...toExcerpt(row),
+		bodyMd: 'x'.repeat(row.bodyChars)
+	}));
+	// Passages found by meaning are counted at the most they may take.
+	if (relatedTokens > 0 && sized.length > 0) {
+		sized.push({ ...sized[0], bodyMd: 'x'.repeat(relatedTokens * 4), related: true });
+	}
 	const parts = splitExcerptParts(sized, budget.partTokens);
 	const withStory = new Set(outline.map((row) => row.storyId)).size > 1;
 	const estTokens = parts.reduce(
@@ -354,11 +513,22 @@ function readEstimate(
 // fields and the instructions.
 export async function estimateEnrich(
 	db: Database,
-	opts: { userId: string; scope: Scope; kind: EntityKind; entityId: string; taskTokens: number }
+	opts: {
+		userId: string;
+		scope: Scope;
+		kind: EntityKind;
+		entityId: string;
+		universeId: string;
+		taskTokens: number;
+	}
 ): Promise<EnrichEstimate> {
 	const budget = await enrichTextBudget(db, opts.userId, opts.scope);
-	const count = (outline: ReadableScene[]) => readEstimate(outline, budget, opts.taskTokens);
-	const scenesRead = count(await excerptOutline(db, { ...opts, mode: 'scenes' }));
+	const count = (outline: ReadableScene[], relatedTokens = 0) =>
+		readEstimate(outline, budget, opts.taskTokens, relatedTokens);
+	const related = (await relatedIndexReady(db, opts.userId, opts.universeId))
+		? relatedBudgetTokens(budget.partTokens)
+		: 0;
+	const scenesRead = count(await excerptOutline(db, { ...opts, mode: 'scenes' }), related);
 	let book: EnrichReadEstimate | undefined;
 	if ('storyId' in opts.scope && budget.contextWindow) {
 		const whole = count(await excerptOutline(db, { ...opts, mode: 'book' }));
