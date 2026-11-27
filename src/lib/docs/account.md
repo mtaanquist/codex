@@ -394,17 +394,20 @@ universe you have stories in. Nothing is sent until you index a universe.
 2. Indexing runs in the background. "Background jobs" in the top bar shows it,
    with Stop to end it early.
 3. When it finishes, the universe reads "Up to date". From then on, a scene
-   you change is indexed again about a minute after you stop typing, and only
-   the passages you changed are sent.
+   you change is indexed again within a few minutes, and usually only the
+   passages you changed are sent.
 
 The index covers your own stories in the universe. Scenes in the trash, and
 stories you turned the Assistant off for, are left out. If indexing stops
 early, at your spend cap for background work or because the endpoint failed,
 the list shows how many scenes are done; select Continue to carry on from
-there. If you change your embeddings model, select Index again: passages made
-with the old model cannot be searched with the new one. Stop indexing deletes
-what was indexed for that universe. Indexing never changes your writing, and
-the index is not part of an export: deleting a scene, story, universe or your
+there. The same happens when a change would send as much as a large first
+index, such as a long story pasted or imported into the universe, so you see
+the estimate first. If you change your embeddings model, select Index again:
+passages made with the old model cannot be searched with the new one. Stop
+indexing deletes what was indexed for that universe; it stays in the list
+after you turn embeddings off. Indexing never changes your writing, and the
+index is not part of an export: deleting a scene, story, universe or your
 account deletes its index too.
 
 ## Display

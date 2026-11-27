@@ -5,7 +5,7 @@ import { errorFields, logEvent } from '../../log.ts';
 import { tokensForChars } from '../context/budgets.ts';
 import { jobSpendMeter } from '../job-spend.ts';
 import { SpendCapError, spentFields } from '../spend.ts';
-import { chunkHash, chunkScene } from './chunks.ts';
+import { chunkHash, chunkScene, WHITE_SPACE_CLASS } from './chunks.ts';
 import { resolveEmbeddings } from './config.ts';
 import {
 	embed,
@@ -30,8 +30,9 @@ export const EMBED_CONFIRM_TOKENS = 50_000;
 const SCENE_PAGE = 50;
 
 // A scene is current when it has passages of the given model read at its
-// present updated_at, or has no text and no passages.
-const HAS_TEXT = sql.raw(`s.body_md ~ '[^[:space:]]'`);
+// present updated_at, or has no text and no passages. Text is told from
+// white space exactly as chunkScene does it.
+const HAS_TEXT = sql.raw(`s.body_md ~ '[^${WHITE_SPACE_CLASS}]'`);
 function sceneStale(model: SQL): SQL {
 	return sql`(
 		(${HAS_TEXT} and not exists (
@@ -63,14 +64,15 @@ function indexedStories(userId: string, scope: IndexScope): SQL {
 
 type StaleScene = { id: string; storyId: string; bodyMd: string; updatedAt: string };
 
-// The next page of live scenes that need indexing, in id order after `after`.
-// updatedAt is Postgres's own text, so writing it back loses no precision.
+// The next page of live scenes that need indexing, story by story, after
+// `after`. updatedAt is Postgres's own text, so writing it back loses no
+// precision.
 async function staleScenes(
 	db: Database,
 	userId: string,
 	scope: IndexScope,
 	model: string,
-	after: string | null
+	after: StaleScene | null
 ): Promise<StaleScene[]> {
 	const { rows } = await db.execute<{
 		id: string;
@@ -83,8 +85,8 @@ async function staleScenes(
 		where ${indexedStories(userId, scope)}
 			and s.deleted_at is null
 			and ${sceneStale(sql`${model}`)}
-			${after ? sql`and s.id > ${after}` : sql``}
-		order by s.id
+			${after ? sql`and (s.story_id, s.id) > (${after.storyId}::uuid, ${after.id}::uuid)` : sql``}
+		order by s.story_id, s.id
 		limit ${SCENE_PAGE}
 	`);
 	return rows.map((r) => ({
@@ -124,18 +126,22 @@ async function writeSceneChunks(
 		await tx.execute(
 			sql`select pg_advisory_xact_lock(hashtextextended(${`scene-chunks:${scene.id}`}, 0))`
 		);
-		const { rows } = await tx.execute<{ newer: boolean; live: boolean }>(sql`
-			select
-				exists (
-					select 1 from scene_chunks
-					where scene_id = ${scene.id} and scene_updated_at > ${scene.updatedAt}::timestamptz
-				) as newer,
-				exists (
-					select 1 from scenes s join stories st on st.id = s.story_id
-					where s.id = ${scene.id} and s.deleted_at is null and ${INDEX_ON}
-				) as live
+		// The index row is held while the rows go in, so turning the index off
+		// either waits for this and then deletes them, or wins and leaves none.
+		const live = await tx.execute(sql`
+			select 1 from embedding_indexes ei
+			join stories st on st.owner_id = ei.user_id and st.universe_id = ei.universe_id
+			join scenes s on s.story_id = st.id
+			where s.id = ${scene.id} and s.deleted_at is null
+			for share of ei
 		`);
-		if (rows[0]?.newer || !rows[0]?.live) return false;
+		if (live.rows.length === 0) return false;
+		const newer = await tx.execute(sql`
+			select 1 from scene_chunks
+			where scene_id = ${scene.id} and scene_updated_at > ${scene.updatedAt}::timestamptz
+			limit 1
+		`);
+		if (newer.rows.length > 0) return false;
 		await tx.delete(sceneChunks).where(eq(sceneChunks.sceneId, scene.id));
 		if (passages.length > 0) {
 			await tx.insert(sceneChunks).values(
@@ -178,7 +184,7 @@ type Work = { scene: StaleScene; passages: Passage[]; missing: string[] };
 
 // Brings the scope's scenes up to date: passages whose text is unchanged keep
 // their vector, the rest are embedded, a batch of about 64 at a time across
-// scenes. Vectors of another model or size are never kept. Stops at the spend
+// scenes. Vectors of another model are never kept. Stops at the spend
 // cap, a Stop, or an endpoint that keeps failing; what it finished stays.
 export async function indexScenes(
 	db: Database,
@@ -210,19 +216,12 @@ export async function indexScenes(
 			.select({
 				hash: sceneChunks.contentHash,
 				model: sceneChunks.model,
-				dimensions: sceneChunks.dimensions,
 				embedding: sceneChunks.embedding
 			})
 			.from(sceneChunks)
 			.where(eq(sceneChunks.sceneId, scene.id));
 		const kept = new Map(
-			stored
-				.filter(
-					(c) =>
-						c.model === config.model &&
-						(config.dimensions === undefined || c.dimensions === config.dimensions)
-				)
-				.map((c) => [c.hash, c.embedding])
+			stored.filter((c) => c.model === config.model).map((c) => [c.hash, c.embedding])
 		);
 		const passages = texts.map((content) => {
 			const hash = chunkHash(content);
@@ -235,22 +234,31 @@ export async function indexScenes(
 	const finish = async (work: Work, embedded?: EmbedResult, offset = 0) => {
 		const vectors = new Map<string, number[]>();
 		work.missing.forEach((text, i) => vectors.set(text, embedded!.vectors[offset + i]));
-		const passages = work.passages.map((p) => ({
+		let passages = work.passages.map((p) => ({
 			...p,
 			vector: p.vector ?? vectors.get(p.content)
 		}));
-		const dimensions = embedded?.dimensions ?? passages[0]?.vector?.length ?? 0;
-		// A kept vector of another size means the server changed under the same
-		// model name: embed the whole scene again on the next pass.
+		let dimensions = embedded?.dimensions ?? passages[0]?.vector?.length ?? 0;
+		let sent = work.missing.length;
+		// A kept vector of another size means the server changed its vectors
+		// under the same model name: embed the whole scene again.
 		if (passages.some((p) => p.vector!.length !== dimensions)) {
-			await db.delete(sceneChunks).where(eq(sceneChunks.sceneId, work.scene.id));
-			return;
+			const again = await embed(
+				db,
+				userId,
+				passages.map((p) => p.content),
+				{ meter, storyId: work.scene.storyId, signal: opts.signal },
+				opts.deps
+			);
+			passages = passages.map((p, i) => ({ ...p, vector: again.vectors[i] }));
+			dimensions = again.dimensions;
+			sent += passages.length;
 		}
 		if (await writeSceneChunks(db, work.scene, passages, config.model, dimensions)) {
 			if (passages.length === 0) result.removed += 1;
 			else result.scenes += 1;
-			result.embedded += work.missing.length;
-			result.reused += passages.length - work.missing.length;
+			result.embedded += sent;
+			result.reused += Math.max(0, passages.length - sent);
 		}
 	};
 
@@ -273,11 +281,11 @@ export async function indexScenes(
 	};
 
 	try {
-		let after: string | null = null;
+		let after: StaleScene | null = null;
 		for (;;) {
 			const page = await staleScenes(db, userId, scope, config.model, after);
 			if (page.length === 0) break;
-			after = page[page.length - 1].id;
+			after = page[page.length - 1];
 			// A group is one story's scenes (embed checks one story's mute) and
 			// at most a batch of texts, unless one scene alone is more.
 			let group: Work[] = [];
@@ -353,6 +361,29 @@ export async function completeEmbeddingIndex(
 		.update(embeddingIndexes)
 		.set({ model, completedAt: sql`now()` })
 		.where(and(eq(embeddingIndexes.userId, userId), eq(embeddingIndexes.universeId, universeId)));
+}
+
+// Hands the story's universe back to the writer: upkeep stops until they
+// index it again from the account page, with an estimate. For upkeep that
+// would send more than a first index may without asking (a long story pasted
+// or imported), or that reached the spend cap.
+export async function reopenEmbeddingIndex(
+	db: Database,
+	userId: string,
+	storyId: string
+): Promise<void> {
+	await db
+		.update(embeddingIndexes)
+		.set({ completedAt: null })
+		.where(
+			and(
+				eq(embeddingIndexes.userId, userId),
+				eq(
+					embeddingIndexes.universeId,
+					sql`(select ${stories.universeId} from ${stories} where ${stories.id} = ${storyId})`
+				)
+			)
+		);
 }
 
 // Turns the index off for a universe and drops its passages.
@@ -434,19 +465,19 @@ export type IndexEstimate = {
 	confirm: boolean;
 };
 
-// What indexing the writer's stories in a universe would send now, counted
-// without sending anything. Every passage of a scene that needs indexing is
-// counted, so it is an upper bound.
+// What indexing the writer's stories in a universe (or one story) would send
+// now, counted without sending anything. Every passage of a scene that needs
+// indexing is counted, so it is an upper bound.
 export async function estimateEmbeddingIndex(
 	db: Database,
 	userId: string,
-	universeId: string
+	scope: IndexScope
 ): Promise<IndexEstimate> {
 	const config = await resolveEmbeddings(db, userId);
 	const { rows } = await db.execute<{ scenes: number; chars: number }>(sql`
 		select count(*)::int as scenes, coalesce(sum(length(s.body_md)), 0)::bigint as chars
 		from scenes s join stories st on st.id = s.story_id
-		where ${ownStories(userId, { universeId })}
+		where ${ownStories(userId, scope)}
 			and s.deleted_at is null and ${HAS_TEXT}
 			and ${sceneStale(sql`${config.model}`)}
 	`);

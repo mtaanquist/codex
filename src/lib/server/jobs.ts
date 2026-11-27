@@ -1,4 +1,5 @@
 import { PgBoss } from 'pg-boss';
+import { sql } from 'drizzle-orm';
 import { DATABASE_URL } from '$app/env/private';
 import type { EmailJob } from './token-email';
 import type { PatternScope, ReviewCategory } from '../review-shape';
@@ -493,6 +494,38 @@ export async function queueEmbeddingsIndex(input: {
 			...errorFields(error)
 		});
 		return null;
+	}
+}
+
+// Cancels the writer's unsettled index jobs for a universe and its stories,
+// for Stop indexing, so a run does not keep paying for passages that are then
+// thrown away.
+export async function cancelEmbeddingsJobs(userId: string, universeId: string): Promise<void> {
+	try {
+		const { rows } = await db.execute<{ id: string }>(sql`
+			select id from pgboss.job
+			where name = ${EMBEDDINGS_INDEX_QUEUE}
+				and state in ('created', 'retry', 'active')
+				and data @> ${JSON.stringify({ userId })}::jsonb
+				and (
+					data ->> 'universeId' = ${universeId}
+					or data ->> 'storyId' in (
+						select id::text from stories where universe_id = ${universeId} and owner_id = ${userId}
+					)
+				)
+		`);
+		if (rows.length === 0) return;
+		const boss = await getBoss();
+		await boss.cancel(
+			EMBEDDINGS_INDEX_QUEUE,
+			rows.map((row) => row.id)
+		);
+	} catch (error) {
+		logEvent('error', 'job.stop_failed', {
+			queue: EMBEDDINGS_INDEX_QUEUE,
+			universeId,
+			...errorFields(error)
+		});
 	}
 }
 

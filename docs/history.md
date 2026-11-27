@@ -23,10 +23,14 @@ may have changed. Staleness compares each scene's `updated_at` (read as text,
 so no microseconds are lost) with the one stored on its rows. The first full
 index is the writer's to start, per universe, with an estimate; automatic
 upkeep starts only once one finishes on the current model, so neither a
-capped run nor a model change re-embeds a large universe unasked. Upkeep is
+capped run nor a model change re-embeds a large universe unasked; for the
+same reason a capped or very large upkeep run hands the universe back. Blank
+is decided by one white-space class shared by the chunker and the SQL, so a
+scene of no-break spaces is not stale for ever. Upkeep is
 not shown in Background jobs, which would otherwise flicker while the writer
-types. `vector` columns are left out of the unused-image sweep, since they
-cannot hold an id. Deferred: notifying the writer when an index finishes
+types. `vector` columns and the passage copies in `scene_chunks` are left out of
+the unused-image sweep: a vector cannot hold an id, and the scene is the
+reference for its own images. Deferred: notifying the writer when an index finishes
 (the activity card and the account list say so), and indexing on the other
 prose paths (split, merge, review accepts, replace) beyond the editor save,
 which the sweep covers within five minutes.

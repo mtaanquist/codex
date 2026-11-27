@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { chunkHash, chunkScene } from './chunks';
+import { chunkHash, chunkScene, hasText } from './chunks';
 
 describe('chunkScene', () => {
 	it('has no passages for blank text', () => {
@@ -52,5 +52,18 @@ describe('chunkHash', () => {
 		expect(chunkHash('a')).toBe(chunkHash('a'));
 		expect(chunkHash('a')).not.toBe(chunkHash('b'));
 		expect(chunkHash('a')).toMatch(/^[0-9a-f]{64}$/);
+	});
+});
+
+describe('hasText', () => {
+	it('agrees with chunkScene on what is blank', () => {
+		for (const blank of ['', ' \t\r\n', '\u00a0\ufeff\u2003\u3000']) {
+			expect(hasText(blank)).toBe(false);
+			expect(chunkScene(blank)).toEqual([]);
+		}
+		for (const text of ['a', '\u00a0*\u00a0', '\u200b']) {
+			expect(hasText(text)).toBe(true);
+			expect(chunkScene(text)).toHaveLength(1);
+		}
 	});
 });

@@ -253,6 +253,21 @@ describe('indexing a universe', () => {
 		expect(inputs).toEqual([['The sea.']]);
 	});
 
+	it('sends one request per story, and treats a scene of no-break spaces as blank', async () => {
+		const second = await makeStory(userId, universeId, 'Embers');
+		for (let i = 0; i < 3; i += 1) {
+			await makeScene(storyId, `Sea ${i}.`, i);
+			await makeScene(second, `Fire ${i}.`, i);
+		}
+		const blank = await makeScene(storyId, '\u00a0\u00a0\ufeff', 9);
+		await enableEmbeddingIndex(db, userId, universeId);
+		await run();
+		expect(inputs).toHaveLength(2);
+		expect(await chunksOf(blank)).toEqual([]);
+		await completeEmbeddingIndex(db, userId, universeId, 'fake-embed');
+		expect(await storiesBehindIndex(db)).toEqual([]);
+	});
+
 	it('skips a story muted for the Assistant', async () => {
 		await makeScene(storyId, 'The sea.');
 		const muted = await makeStory(userId, universeId, 'Quiet');
@@ -409,7 +424,7 @@ describe('keeping the index current', () => {
 		await makeScene(storyId, 'x'.repeat(4000));
 		await makeScene(storyId, 'y'.repeat(400), 1);
 		await makeScene(storyId, '', 2);
-		const estimate = await estimateEmbeddingIndex(db, userId, universeId);
+		const estimate = await estimateEmbeddingIndex(db, userId, { universeId });
 		expect(estimate).toEqual({
 			model: 'fake-embed',
 			scenes: 2,
@@ -429,7 +444,7 @@ describe('keeping the index current', () => {
 		});
 		await completeEmbeddingIndex(db, userId, universeId, 'fake-embed');
 		expect((await embeddingIndexStatus(db, userId))[0].state).toBe('current');
-		expect((await estimateEmbeddingIndex(db, userId, universeId)).scenes).toBe(0);
+		expect((await estimateEmbeddingIndex(db, userId, { universeId })).scenes).toBe(0);
 		await saveEmbeddingsConfig(db, userId, {
 			enabled: true,
 			endpoint: 'http://embeddings.test/v1',
@@ -543,6 +558,43 @@ describe('the worker job', () => {
 		const failing = job({ userId, universeId });
 		await handlers.embeddingsIndex([failing]);
 		expect(completed).toEqual([{ id: failing.id, data: { failed: true } }]);
+	});
+
+	it('hands a large or capped upkeep back to the writer', async () => {
+		const id = await makeScene(storyId, 'The sea.');
+		await enableEmbeddingIndex(db, userId, universeId);
+		const { handlers } = harness();
+		await handlers.embeddingsIndex([job({ userId, universeId })]);
+		expect(await storyIndexOwner(db, storyId)).toBe(userId);
+
+		// A long story pasted in: nothing is sent, and the universe waits for
+		// the writer to index it again.
+		inputs = [];
+		await db
+			.update(scenes)
+			.set({ bodyMd: 'The sea. '.repeat(30_000) })
+			.where(eq(scenes.id, id));
+		await handlers.embeddingsIndex([job({ userId, storyId })]);
+		expect(inputs).toEqual([]);
+		expect(await storyIndexOwner(db, storyId)).toBeNull();
+		expect((await embeddingIndexStatus(db, userId))[0].state).toBe('partial');
+
+		// Upkeep that reaches the cap does the same.
+		await handlers.embeddingsIndex([job({ userId, universeId })]);
+		expect(await storyIndexOwner(db, storyId)).toBe(userId);
+		await saveAccountLlmConfig(db, userId, {
+			enabled: true,
+			assistantName: '',
+			persona: 'balanced',
+			provider: 'anthropic',
+			endpoint: '',
+			apiKey: '',
+			models: {},
+			spendCapUsd: 0.000001
+		});
+		await db.update(scenes).set({ bodyMd: 'The fire.' }).where(eq(scenes.id, id));
+		await handlers.embeddingsIndex([job({ userId, storyId })]);
+		expect(await storyIndexOwner(db, storyId)).toBeNull();
 	});
 
 	it('runs no upkeep for a story whose universe index has not finished', async () => {

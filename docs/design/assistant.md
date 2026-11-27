@@ -277,7 +277,12 @@ the model in `embedding_indexes`. From then on a scene save queues the story's
 upkeep a minute later (`queueStoryEmbeddings`), and `reconcile-embeddings`
 every five minutes queues any story that has fallen behind. A model change
 stops the upkeep until the writer indexes the universe again, since a full
-re-embed is a cost they should see first. A run stops at the job's spend cap
+re-embed is a cost they should see first. Upkeep that would send more than
+`EMBED_CONFIRM_TOKENS` (a long story pasted or imported) or that reaches the
+spend cap clears `completed_at` instead, handing the universe back to the
+writer with an estimate, so the sweep cannot spend a cap's worth every five
+minutes. Stop indexing cancels the universe's jobs, and the index row is held
+`FOR SHARE` while a scene's rows go in, so no rows outlive it. A run stops at the job's spend cap
 (through `jobSpendMeter`), when embeddings or the Assistant go off, or on an
 endpoint that keeps failing; the job then settles as failed and the list says
 how far it got. Upkeep jobs show nowhere and notify nobody.

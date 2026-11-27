@@ -1200,7 +1200,7 @@
 		</div>
 	</div>
 
-	{#if data.embeddings.ready}
+	{#if data.embeddings.ready || data.embeddingIndexes.length > 0}
 		<div class="admin-block" id="assistant-embeddings-index">
 			<div class="settings-group">
 				<header class="settings-group-header">
@@ -1211,6 +1211,11 @@
 						Index a universe so Codex can find passages in your stories there by what they mean.
 						Each scene is sent to your embeddings model once, and again when you change it.
 					</p>
+					{#if !data.embeddings.ready}
+						<p class="field-hint">
+							Embeddings are off, so nothing is indexed. You can still delete what was indexed.
+						</p>
+					{/if}
 				</header>
 				{#if data.embeddingIndexes.length === 0}
 					<p class="field-hint">You have no stories to index yet.</p>
@@ -1249,7 +1254,7 @@
 										{/if}
 									</div>
 									{#if !running && indexAsk?.universeId !== index.universeId}
-										{#if index.state !== 'current'}
+										{#if index.state !== 'current' && data.embeddings.ready}
 											<button
 												type="button"
 												class="btn btn-ghost btn-sm"

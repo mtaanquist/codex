@@ -9,7 +9,7 @@ import {
 	estimateEmbeddingIndex,
 	removeEmbeddingIndex
 } from '#lib/server/llm/embeddings/scene-index';
-import { queueEmbeddingsIndex } from '#lib/server/jobs';
+import { cancelEmbeddingsJobs, queueEmbeddingsIndex } from '#lib/server/jobs';
 import { isUuid } from '#lib/slug';
 
 // The search index of one universe, from the account page: the writer's own
@@ -48,7 +48,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		error(403, 'Turn on embeddings on the Assistant page first.');
 	}
 	if (payload.estimate === true) {
-		return Response.json(await estimateEmbeddingIndex(db, userId, universeId));
+		return Response.json(await estimateEmbeddingIndex(db, userId, { universeId }));
 	}
 	await enableEmbeddingIndex(db, userId, universeId);
 	const jobId = await queueEmbeddingsIndex({ userId, universeId });
@@ -62,6 +62,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 export const DELETE: RequestHandler = async ({ request, locals }) => {
 	const { userId, payload } = await readAssistantPayload<{ universeId?: unknown }>(request, locals);
 	const universeId = await universeOf(userId, payload.universeId);
+	await cancelEmbeddingsJobs(userId, universeId);
 	await removeEmbeddingIndex(db, userId, universeId);
 	return Response.json({ ok: true });
 };

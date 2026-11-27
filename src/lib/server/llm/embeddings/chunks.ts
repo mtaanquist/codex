@@ -9,7 +9,20 @@ import { createHash } from 'node:crypto';
 // a longer paragraph is cut between sentences, and a longer sentence at a space.
 export const MAX_CHUNK_CHARS = 1500;
 
-const SENTENCE_END = /(?<=[.!?]["')\]”’]*)\s+/;
+const SENTENCE_END = /(?<=[.!?]["')\]\u201d\u2019]*)\s+/;
+
+// The characters JavaScript's trim() and \s treat as white space, as a regex
+// character class body. The SQL that decides whether a scene has text uses
+// the same class (see scene-index.ts), so a scene with no passages is never
+// taken for one that still needs indexing.
+export const WHITE_SPACE_CLASS =
+	'\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff';
+const HAS_TEXT = new RegExp(`[^${WHITE_SPACE_CLASS}]`);
+
+// Whether text has anything in it but white space.
+export function hasText(text: string): boolean {
+	return HAS_TEXT.test(text);
+}
 
 // Cuts text with no break in it into pieces of at most max characters, at the
 // last space before the limit where there is one.

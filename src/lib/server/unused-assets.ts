@@ -112,7 +112,9 @@ type Column = { table: string; column: string; uuid: boolean };
 // Every column that could hold an asset id, from pg_catalog rather than
 // information_schema (which leaves out columns the role has no privilege
 // on). Numbers, booleans, dates, network and bit types, bytes, search
-// vectors and embedding vectors cannot hold one; anything else is read as text.
+// vectors and embedding vectors cannot hold one; anything else is read as
+// text. The search index's passages are copies of scene text, so an image a
+// scene no longer shows is not kept by an old passage.
 export async function referenceColumns(db: Database): Promise<Column[]> {
 	const result = await db.execute(sql`
 		select c.relname as "table", a.attname as "column", t.typname = 'uuid' as uuid
@@ -124,6 +126,8 @@ export async function referenceColumns(db: Database): Promise<Column[]> {
 			and c.relkind in ('r', 'p')
 			and not c.relispartition
 			and c.relname <> 'assets'
+			-- Search passages copy scene text, so the scene is the reference.
+			and c.relname <> 'scene_chunks'
 			and a.attnum > 0
 			and not a.attisdropped
 			and t.typcategory not in ('N', 'B', 'D', 'T', 'G', 'I', 'V')
