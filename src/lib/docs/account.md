@@ -383,6 +383,33 @@ the role "embeddings". Changing the provider, or moving a custom endpoint to
 another server, clears the saved key. Changing the model or the server clears
 the price you typed unless you enter a new one in the same change.
 
+### Search index
+
+Once embeddings are on, the Search index list under Embeddings shows each
+universe you have stories in. Nothing is sent until you index a universe.
+
+1. Select Index next to a universe. For a large one you first see how many
+   scenes it covers, roughly how many tokens that sends, and the cost when you
+   entered a price. Select Index to go ahead or Cancel to stop.
+2. Indexing runs in the background. "Background jobs" in the top bar shows it,
+   with Stop to end it early.
+3. When it finishes, the universe reads "Up to date". From then on, a scene
+   you change is indexed again within a few minutes, and usually only the
+   passages you changed are sent.
+
+The index covers your own stories in the universe. Scenes in the trash, and
+stories you turned the Assistant off for, are left out. If indexing stops
+early, at your spend cap for background work or because the endpoint failed,
+the list shows how many scenes are done; select Continue to carry on from
+there. The same happens when a change would send as much as a large first
+index, such as a long story pasted or imported into the universe, so you see
+the estimate first. If you change your embeddings model, select Index again:
+passages made with the old model cannot be searched with the new one. Stop
+indexing deletes what was indexed for that universe; it stays in the list
+after you turn embeddings off. Indexing never changes your writing, and the
+index is not part of an export: deleting a scene, story, universe or your
+account deletes its index too.
+
 ## Display
 
 Choose a light, warm, or dark theme, or follow your system, and pick an accent

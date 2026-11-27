@@ -59,6 +59,7 @@ import {
 	testEmbeddings
 } from '#lib/server/llm/embeddings';
 import { normaliseEmbeddingProviderId } from '#lib/server/llm/embeddings/presets';
+import { embeddingIndexStatus } from '#lib/server/llm/embeddings/scene-index';
 import {
 	normaliseProviderId,
 	PROVIDER_PRESETS,
@@ -197,6 +198,7 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 		const pending = await pendingEnrollment(db, user.id, user.email);
 		if (pending) totpSetup = { ...pending, qr: await QRCode.toDataURL(pending.otpauthUri) };
 	}
+	const embeddings = await embeddingsView(db, user.id);
 
 	return {
 		displayName: user.displayName,
@@ -231,8 +233,13 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 			keyHint: p.keyHint,
 			docsUrl: p.docsUrl
 		})),
-		embeddings: await embeddingsView(db, user.id),
+		embeddings,
 		embeddingProviders: EMBEDDING_PRESETS,
+		// The search index of each universe. With embeddings off, only the
+		// indexed ones, so their passages can still be deleted.
+		embeddingIndexes: (await embeddingIndexStatus(db, user.id)).filter(
+			(index) => embeddings.ready || index.state !== 'off'
+		),
 		// Which model to suggest for each role, on every provider.
 		modelGuide: { tiers: ROLE_TIER, providers: MODEL_GUIDE },
 		personas: PERSONAS.map((p) => ({ id: p.id, label: p.label, description: p.description })),

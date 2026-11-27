@@ -89,7 +89,7 @@ export type JobProgress = {
 
 export type TrackedJob = JobScope & {
 	id: string;
-	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft';
+	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft' | 'embeddings';
 	progress?: JobProgress;
 	// What the job is doing, as its card says it ("Reviewing "Tides"").
 	label: string;
@@ -161,7 +161,7 @@ const following: Record<string, Promise<void>> = {};
 // follows is not tracked twice: the second call settles with the first.
 type TrackOptions = {
 	jobId: string | null;
-	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft';
+	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft' | 'embeddings';
 	scope?: JobScope;
 	runningLabel: string;
 	doneLabel: string;

@@ -4,6 +4,8 @@ import {
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_ENRICH_QUEUE,
 	DIGEST_DELAY_SECONDS,
+	EMBEDDINGS_INDEX_QUEUE,
+	embeddingsSendOptions,
 	NOTIFICATION_DIGEST_QUEUE
 } from '../lib/server/queues.ts';
 import * as schema from '../lib/server/db/schema.ts';
@@ -74,6 +76,16 @@ import {
 } from '../lib/server/llm/scene-draft.ts';
 import { chapterDraftHref, sceneDraftHref } from '../lib/scene-draft.ts';
 import { purgeJobSpend } from '../lib/server/llm/job-spend.ts';
+import {
+	completeEmbeddingIndex,
+	embeddingIndexFor,
+	estimateEmbeddingIndex,
+	indexScenes,
+	reopenEmbeddingIndex,
+	storiesBehindIndex,
+	storyIndexOwner,
+	type IndexResult
+} from '../lib/server/llm/embeddings/scene-index.ts';
 import { purgeReviewRuns, ReviewRunLoadError } from '../lib/server/review-runs.ts';
 import { purgeSessions } from '../lib/server/auth.ts';
 import { remapPendingMarkers } from '../lib/server/markers.ts';
@@ -98,6 +110,7 @@ const defaultServices = {
 	summariseCharacterArc,
 	runSceneDraft,
 	runChapterDraft,
+	indexScenes,
 	sendEmail,
 	s3AssetStore
 };
@@ -133,6 +146,10 @@ export type AssistantEnrichData = {
 	characterId?: string;
 	read?: { entityId: string; name: string; storyId?: string; mode: 'scenes' | 'book' };
 };
+
+// An index job: the full index of a universe the writer started (universeId),
+// or a story's upkeep after a save or the sweep (storyId).
+export type EmbeddingsIndexData = { userId: string; universeId?: string; storyId?: string };
 
 // One scene draft: the staged row (assistant_drafts) the job writes.
 export type AssistantDraftData = {
@@ -659,6 +676,66 @@ export function createHandlers(deps: WorkerDeps) {
 		async reconcileMentions() {
 			const reindexed = await reconcileMentions(db);
 			if (reindexed > 0) logEvent('info', 'mentions.reconcile', { scenes: reindexed });
+		},
+
+		// Embeds scenes for search by meaning. Re-checked at run time: a story's
+		// upkeep runs only while its universe's index is kept current, and a
+		// universe's full index only while the writer has it turned on. A full
+		// index that reaches the end is recorded, so upkeep starts. One that
+		// stops early (spend cap, embeddings off, a failing endpoint) settles as
+		// failed and the writer starts it again from the account page; a capped
+		// or very large upkeep run hands the universe back to the writer too.
+		async embeddingsIndex(jobs: JobWithMetadata<EmbeddingsIndexData>[]) {
+			for (const job of jobs) {
+				const { userId, universeId, storyId } = job.data;
+				let result: IndexResult;
+				if (storyId) {
+					if ((await storyIndexOwner(db, storyId)) !== userId) continue;
+					// Upkeep the writer would be asked about as a first index goes
+					// back to them instead, as does upkeep stopped at the cap, so
+					// the sweep cannot spend a cap's worth every five minutes.
+					if ((await estimateEmbeddingIndex(db, userId, { storyId })).confirm) {
+						await reopenEmbeddingIndex(db, userId, storyId);
+						logEvent('info', 'embeddings.upkeep_handed_back', { userId, storyId });
+						continue;
+					}
+					result = await withJobRunSignal(boss, job, (signal) =>
+						services.indexScenes(db, { userId, scope: { storyId }, jobId: job.id, signal })
+					);
+					if (result.capped) await reopenEmbeddingIndex(db, userId, storyId);
+				} else if (universeId && (await embeddingIndexFor(db, userId, universeId))) {
+					result = await withJobRunSignal(boss, job, (signal) =>
+						services.indexScenes(db, { userId, scope: { universeId }, jobId: job.id, signal })
+					);
+					if (result.complete) {
+						await completeEmbeddingIndex(db, userId, universeId, result.model);
+					}
+				} else continue;
+				const { complete, ...counts } = result;
+				logEvent(complete ? 'info' : 'warn', 'embeddings.index', {
+					userId,
+					...(storyId ? { storyId } : { universeId }),
+					...counts
+				});
+				if (!complete && !result.aborted) {
+					await boss.complete(job.name, job.id, { failed: true });
+				}
+			}
+		},
+
+		// Backstop for upkeep that was dropped (a save during a run, a failed
+		// enqueue, a restored scene): queues each story whose kept-current index
+		// has fallen behind.
+		async reconcileEmbeddings() {
+			const behind = await storiesBehindIndex(db);
+			for (const { userId, storyId } of behind) {
+				await boss.send(
+					EMBEDDINGS_INDEX_QUEUE,
+					{ userId, storyId },
+					{ singletonKey: `story:${storyId}`, ...embeddingsSendOptions(userId) }
+				);
+			}
+			if (behind.length > 0) logEvent('info', 'embeddings.reconcile', { stories: behind.length });
 		},
 
 		// Generates the stored export files (markdown zip, EPUB, PDF) for a freshly

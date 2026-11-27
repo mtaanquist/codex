@@ -12,7 +12,7 @@ export const GET: RequestHandler = async ({ url, locals }) => {
 	if (!locals.user) error(401, 'Sign in to check a job.');
 	const kind = url.searchParams.get('kind');
 	const id = url.searchParams.get('id');
-	const known = ['review', 'summaries', 'enrich', 'arc', 'details', 'draft'] as const;
+	const known = ['review', 'summaries', 'enrich', 'arc', 'details', 'draft', 'embeddings'] as const;
 	const isKind = (value: string | null): value is (typeof known)[number] =>
 		known.includes(value as (typeof known)[number]);
 	if (!isKind(kind) || !id) {

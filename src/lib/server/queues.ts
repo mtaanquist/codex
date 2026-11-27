@@ -49,6 +49,15 @@ export const ASSISTANT_SUMMARIES_QUEUE = 'assistant-summaries-v2';
 export const ASSISTANT_ENRICH_QUEUE = 'assistant-enrich';
 // A scene the Assistant drafts from the writer's brief (see llm/scene-draft.ts).
 export const ASSISTANT_DRAFT_QUEUE = 'assistant-draft';
+// Embeds a story's or a universe's scenes for search by meaning (see
+// llm/embeddings/scene-index.ts). Exclusive like the Assistant queues: one
+// queued or running job per singletonKey. The sweep queues a story whose
+// index has fallen behind.
+export const EMBEDDINGS_INDEX_QUEUE = 'embeddings-index';
+export const RECONCILE_EMBEDDINGS_QUEUE = 'reconcile-embeddings';
+// A save queues its story's upkeep this long after, so a burst of autosaves
+// is one run.
+export const EMBEDDINGS_SAVE_DELAY_SECONDS = 60;
 // Sweeps the recorded progress of long-finished Assistant runs (see
 // review-runs.ts); the rows are disposable, so nothing is lost with them.
 export const PURGE_REVIEW_RUNS_QUEUE = 'purge-review-runs';
@@ -76,3 +85,15 @@ export const ASSISTANT_JOB_CONCURRENCY = 4;
 // lands as one email instead of one per comment. Lives here (not jobs.ts,
 // which reads $env) so the worker can import it too.
 export const DIGEST_DELAY_SECONDS = 600;
+
+// The send options of an indexing job, from the app or the worker's sweep:
+// long like an Assistant run, and grouped by writer so the worker runs one of
+// a writer's index jobs at a time.
+export function embeddingsSendOptions(userId: string) {
+	return {
+		expireInSeconds: ASSISTANT_JOB_EXPIRY_SECONDS,
+		heartbeatSeconds: JOB_HEARTBEAT_SECONDS,
+		retryLimit: 2,
+		group: { id: userId }
+	};
+}

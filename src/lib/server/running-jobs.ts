@@ -7,7 +7,8 @@ import {
 	ASSISTANT_DRAFT_QUEUE,
 	ASSISTANT_ENRICH_QUEUE,
 	ASSISTANT_REVIEW_QUEUE,
-	ASSISTANT_SUMMARIES_QUEUE
+	ASSISTANT_SUMMARIES_QUEUE,
+	EMBEDDINGS_INDEX_QUEUE
 } from './queues.ts';
 
 // The writer's Assistant jobs that have not settled yet, so a page that loads
@@ -17,7 +18,7 @@ import {
 
 export type RunningAssistantJob = {
 	id: string;
-	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft';
+	kind: 'review' | 'summaries' | 'enrich' | 'arc' | 'details' | 'draft' | 'embeddings';
 	mode: 'full' | 'continuity';
 	storyId: string | null;
 	chapterId: string | null;
@@ -64,10 +65,12 @@ export async function findRunningAssistantJobs(
 		select id, name, data, created_on from pgboss.job
 		where name in (
 			${ASSISTANT_REVIEW_QUEUE}, ${ASSISTANT_SUMMARIES_QUEUE}, ${ASSISTANT_ENRICH_QUEUE},
-			${ASSISTANT_DRAFT_QUEUE}
+			${ASSISTANT_DRAFT_QUEUE}, ${EMBEDDINGS_INDEX_QUEUE}
 		)
 			and state in ('created', 'retry', 'active')
 			and data @> ${JSON.stringify({ userId })}::jsonb
+			-- A story's index upkeep runs unseen; the index the writer starts shows.
+			and not (name = ${EMBEDDINGS_INDEX_QUEUE} and data ? 'storyId')
 		order by created_on
 		limit 100
 	`);
@@ -84,7 +87,9 @@ export async function findRunningAssistantJobs(
 							: ('enrich' as const)
 					: row.name === ASSISTANT_DRAFT_QUEUE
 						? ('draft' as const)
-						: ('review' as const),
+						: row.name === EMBEDDINGS_INDEX_QUEUE
+							? ('embeddings' as const)
+							: ('review' as const),
 		data: row.data,
 		startedAt: new Date(row.created_on).toISOString()
 	}));
@@ -232,7 +237,7 @@ export async function stopAssistantJob(
 		where id = ${jobId}::uuid
 			and name in (
 				${ASSISTANT_REVIEW_QUEUE}, ${ASSISTANT_SUMMARIES_QUEUE}, ${ASSISTANT_ENRICH_QUEUE},
-				${ASSISTANT_DRAFT_QUEUE}
+				${ASSISTANT_DRAFT_QUEUE}, ${EMBEDDINGS_INDEX_QUEUE}
 			)
 			and state in ('created', 'retry', 'active')
 			and data @> ${JSON.stringify({ userId })}::jsonb

@@ -13,7 +13,16 @@
 		type UsageCostRow
 	} from '#lib/assistant-cost';
 	import { askConfirm } from '#lib/confirm.svelte';
-	import { formatDateTime, formatNumber, pluralSuffix, spentPhrase } from '#lib/format';
+	import {
+		apiErrorMessage,
+		formatDateTime,
+		formatNumber,
+		pluralSuffix,
+		spentPhrase
+	} from '#lib/format';
+	import { invalidateAll } from '$app/navigation';
+	import { trackedJobs } from '#lib/activity.svelte';
+	import { startEmbeddingsIndex } from '#lib/assistant-actions';
 	import { resolveRoleModel, type AssistantRole } from '#lib/assistant-tuning';
 	import FormStatus from '#lib/components/FormStatus.svelte';
 	import HelpLink from '#lib/components/HelpLink.svelte';
@@ -330,6 +339,106 @@
 		if (!e.endpoint) return 'Enter a base URL to start using embeddings.';
 		return 'Enter a model name to start using embeddings.';
 	});
+
+	// The search index of each universe. Indexing runs in the background and
+	// shows in Background jobs; the list reloads when it ends.
+	type IndexStatus = (typeof data.embeddingIndexes)[number];
+	type IndexEstimate = { scenes: number; estTokens: number; estCostUsd?: number; confirm: boolean };
+	let indexAsk = $state<{ universeId: string; name: string; estimate: IndexEstimate } | null>(null);
+	let indexBusy = $state<string | null>(null);
+	let indexNote = $state<{ universeId: string; text: string } | null>(null);
+	const indexing = (universeId: string) =>
+		trackedJobs.list.some((job) => job.kind === 'embeddings' && job.universeId === universeId);
+
+	function indexStatusText(index: IndexStatus): string {
+		const of = `${formatNumber(index.indexed)} of ${formatNumber(index.scenes)} scene${pluralSuffix(index.scenes)} indexed`;
+		if (indexing(index.universeId)) return `Indexing: ${of}.`;
+		if (index.state === 'off') return 'Not indexed.';
+		if (index.state === 'model-changed') {
+			return 'Indexed with another embeddings model. Index it again to search it.';
+		}
+		if (index.state === 'partial') return `Indexing stopped: ${of}.`;
+		return index.indexed === index.scenes
+			? `Up to date: ${of}. Changes are indexed as you write.`
+			: `Catching up: ${of}. Changes are indexed as you write.`;
+	}
+
+	function estimatePhrase(estimate: IndexEstimate): string {
+		const size = `${formatNumber(estimate.scenes)} scene${pluralSuffix(estimate.scenes)}, about ${formatNumber(estimate.estTokens)} tokens`;
+		if (estimate.estCostUsd === undefined) return size;
+		return estimate.estCostUsd < 0.01
+			? `${size} (less than $0.01)`
+			: `${size} (about $${estimate.estCostUsd.toFixed(2)})`;
+	}
+
+	async function postIndex(method: 'POST' | 'DELETE', body: Record<string, unknown>) {
+		return await fetch('/api/assistant/embeddings-index', {
+			method,
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		});
+	}
+
+	// Count first, then index at once when it is small, or ask.
+	async function askIndex(index: IndexStatus) {
+		indexAsk = null;
+		indexNote = null;
+		indexBusy = index.universeId;
+		let estimate: IndexEstimate | null = null;
+		try {
+			const response = await postIndex('POST', { universeId: index.universeId, estimate: true });
+			if (response.ok) estimate = (await response.json()) as IndexEstimate;
+			else {
+				indexNote = {
+					universeId: index.universeId,
+					text: await apiErrorMessage(response, 'Could not count what to index.')
+				};
+			}
+		} catch {
+			indexNote = { universeId: index.universeId, text: 'Check your connection and try again.' };
+		}
+		indexBusy = null;
+		if (!estimate) return;
+		if (estimate.confirm) {
+			indexAsk = { universeId: index.universeId, name: index.name, estimate };
+			return;
+		}
+		await runIndex(index.universeId, index.name);
+	}
+
+	async function runIndex(universeId: string, name: string) {
+		indexAsk = null;
+		indexBusy = universeId;
+		try {
+			await startEmbeddingsIndex({ universeId, name: `"${name}"` });
+		} finally {
+			indexBusy = null;
+		}
+		await invalidateAll();
+	}
+
+	async function removeIndex(index: IndexStatus) {
+		const go = await askConfirm({
+			title: `Stop indexing "${index.name}"?`,
+			body: 'What has been indexed is deleted. You can index it again later.',
+			confirmLabel: 'Stop indexing'
+		});
+		if (!go) return;
+		indexBusy = index.universeId;
+		try {
+			const response = await postIndex('DELETE', { universeId: index.universeId });
+			if (!response.ok) {
+				indexNote = {
+					universeId: index.universeId,
+					text: await apiErrorMessage(response, 'Could not stop indexing.')
+				};
+			}
+		} catch {
+			indexNote = { universeId: index.universeId, text: 'Check your connection and try again.' };
+		}
+		indexBusy = null;
+		await invalidateAll();
+	}
 </script>
 
 <div class="admin-head">
@@ -1090,6 +1199,94 @@
 			</form>
 		</div>
 	</div>
+
+	{#if data.embeddings.ready || data.embeddingIndexes.length > 0}
+		<div class="admin-block" id="assistant-embeddings-index">
+			<div class="settings-group">
+				<header class="settings-group-header">
+					<h2 class="settings-group-title">
+						Search index <HelpLink topic="account" label="the search index" />
+					</h2>
+					<p class="settings-group-subtitle">
+						Index a universe so Codex can find passages in your stories there by what they mean.
+						Each scene is sent to your embeddings model once, and again when you change it.
+					</p>
+					{#if !data.embeddings.ready}
+						<p class="field-hint">
+							Embeddings are off, so nothing is indexed. You can still delete what was indexed.
+						</p>
+					{/if}
+				</header>
+				{#if data.embeddingIndexes.length === 0}
+					<p class="field-hint">You have no stories to index yet.</p>
+				{:else}
+					<div class="admin-card tight">
+						<div class="attn-list">
+							{#each data.embeddingIndexes as index (index.universeId)}
+								{@const running = indexing(index.universeId)}
+								<div class="list-row">
+									<div class="list-main">
+										<div class="list-title">{index.name}</div>
+										<div class="list-sub">{indexStatusText(index)}</div>
+										{#if indexAsk?.universeId === index.universeId}
+											<p class="field-hint">
+												Indexing sends {estimatePhrase(indexAsk.estimate)} to your embeddings model.
+											</p>
+											<div class="settings-actions">
+												<button
+													type="button"
+													class="btn btn-primary btn-sm"
+													onclick={() => runIndex(index.universeId, index.name)}
+												>
+													Index
+												</button>
+												<button
+													type="button"
+													class="btn btn-secondary btn-sm"
+													onclick={() => (indexAsk = null)}
+												>
+													Cancel
+												</button>
+											</div>
+										{/if}
+										{#if indexNote?.universeId === index.universeId}
+											<FormStatus error={indexNote.text} />
+										{/if}
+									</div>
+									{#if !running && indexAsk?.universeId !== index.universeId}
+										{#if index.state !== 'current' && data.embeddings.ready}
+											<button
+												type="button"
+												class="btn btn-ghost btn-sm"
+												disabled={indexBusy === index.universeId}
+												onclick={() => askIndex(index)}
+											>
+												{index.state === 'off'
+													? 'Index'
+													: index.state === 'partial'
+														? 'Continue'
+														: 'Index again'}
+											</button>
+										{/if}
+										{#if index.state !== 'off'}
+											<button
+												type="button"
+												class="btn btn-ghost btn-sm danger"
+												disabled={indexBusy === index.universeId}
+												onclick={() => removeIndex(index)}
+											>
+												Stop indexing
+											</button>
+										{/if}
+									{/if}
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 
 	<div class="admin-block" id="assistant-usage">
 		<div class="settings-group">
