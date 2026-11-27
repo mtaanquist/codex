@@ -7,6 +7,8 @@
 	import AppBar from '#lib/components/AppBar.svelte';
 	import ReaderFooter from '#lib/components/ReaderFooter.svelte';
 	import StoryLabels from '#lib/components/StoryLabels.svelte';
+	import ShelfGrid from '#lib/components/ShelfGrid.svelte';
+	import { browseAdult } from '#lib/browse-adult.svelte';
 	import { pageCrumb } from '#lib/chrome';
 	import { formatLongDate, formatNumber } from '#lib/format';
 	import type { PageData } from './$types';
@@ -21,6 +23,36 @@
 	const canonical = $derived(
 		page.url.origin + resolve('/@[handle]/[story=ref]', { handle: data.handle, story: data.story })
 	);
+
+	type Book = NonNullable<Extract<PageData, { gate: false }>['similar']>[number];
+	// A reader who chose to include adult work in Browse gets it among the
+	// similar stories too. The server cannot read that choice, so the list is
+	// fetched again with it, and shown for the page it was fetched for.
+	let withAdult = $state<{ path: string; books: Book[] } | null>(null);
+	const similar = $derived(
+		data.gate ? null : withAdult?.path === page.url.pathname ? withAdult.books : data.similar
+	);
+	$effect(() => {
+		if (data.gate || data.similar === null || data.similarAdult || !browseAdult.remembered) return;
+		const path = page.url.pathname;
+		const controller = new AbortController();
+		const url = withQuery(
+			resolve('/@[handle]/[story=ref]/similar', { handle: data.handle, story: data.story }),
+			{ adult: 'show' }
+		);
+		fetch(url, { signal: controller.signal })
+			.then((response) => (response.ok ? response.json() : null))
+			.then((body: { books: (Omit<Book, 'publishedAt'> & { publishedAt: string })[] } | null) => {
+				if (!body) return;
+				withAdult = {
+					path,
+					books: body.books.map((book) => ({ ...book, publishedAt: new Date(book.publishedAt) }))
+				};
+			})
+			// The list without adult work stays.
+			.catch(() => {});
+		return () => controller.abort();
+	});
 
 	// Every chapter of the edition in one list, unfiled scenes last, so the
 	// contents and the prose below it are built from the same thing.
@@ -144,6 +176,12 @@
 					</div>
 				{/each}
 			</div>
+			{#if similar && similar.length > 0}
+				<section class="reader-col wide" aria-labelledby="similar-stories">
+					<h2 class="shelf-label" id="similar-stories">Similar stories</h2>
+					<ShelfGrid books={similar} />
+				</section>
+			{/if}
 		{/if}
 	</main>
 
