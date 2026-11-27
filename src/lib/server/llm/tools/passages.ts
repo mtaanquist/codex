@@ -1,7 +1,7 @@
 import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import type { Database } from '../../auth.ts';
 import { embeddingIndexes, universes } from '../../db/schema.ts';
-import { resolveEmbeddings } from '../embeddings/config.ts';
+import { embeddingsView } from '../embeddings/config.ts';
 import { embed, EmbeddingsDisabledError, type EmbedDeps } from '../embeddings/embed.ts';
 import { nearestChunks, type IndexScope } from '../embeddings/scene-index.ts';
 import { SpendCapError, type SpendMeter } from '../spend.ts';
@@ -35,7 +35,9 @@ export async function passageSearchReady(
 	userId: string,
 	universeId?: string
 ): Promise<boolean> {
-	const config = await resolveEmbeddings(db, userId);
+	// The key-free view: a key that no longer decrypts must not break every
+	// turn and every MCP request; embed() reports it when a search is run.
+	const config = await embeddingsView(db, userId);
 	if (!config.ready) return false;
 	const [row] = await db
 		.select({ universeId: embeddingIndexes.universeId })
