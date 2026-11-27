@@ -21,6 +21,15 @@ export type SearchResult = {
 	href: string;
 };
 
+// A search-by-meaning hit (search-meaning.ts): a scene and its nearest passage.
+export type MeaningResult = {
+	sceneId: string;
+	sceneTitle: string | null;
+	storyTitle: string;
+	passage: string;
+	href: string;
+};
+
 // The editor's read-only entity quick card (plan-data.ts).
 export type EntityCardData = {
 	id: string;

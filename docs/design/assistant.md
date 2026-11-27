@@ -295,6 +295,24 @@ passage text with its scene, story, titles and distance. The query vector
 comes from `embed(db, userId, [text])` with no `storyId`, since a query is
 not story text.
 
+### Search by meaning (#1787)
+
+The command palette searches by meaning inside a universe the writer has
+indexed. Opened on a story or universe page, it asks `GET
+/api/search/meaning?story=` (or `?universe=`) whether that universe is ready:
+embeddings ready and a finished index on the current model (a partial index
+or one on another model does not count). Only then does it show a Words /
+Meaning `.seg` beside the search box, and it opens on Words every time. In
+Meaning mode typing sends nothing; Enter posts `{ universeId, query }` (at
+most 500 characters) to the same path, under the Assistant's rate limit. The
+endpoint embeds the query once (`embed` with no `storyId`, so the usage row
+has no story), reads the 40 nearest passages with `nearestChunks`, keeps the
+best one per scene, and returns up to 10 scenes with the passage
+(`searchByMeaning` in `#lib/server/search-meaning.ts`), each linking to the
+scene. Embeddings switched off, a spend cap and a failed endpoint each come
+back as a plain message in the palette. Only the writer's own live, unmuted
+stories are searched, as `nearestChunks` guarantees.
+
 ### Admin egress policy (the SSRF question)
 
 Because the key is held server-side, the browser cannot call the writer's
