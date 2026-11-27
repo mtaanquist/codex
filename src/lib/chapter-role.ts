@@ -24,6 +24,9 @@ export const CHAPTER_ROLE_LABELS: Record<ChapterRole, string> = {
 	authors_note: "Author's note"
 };
 
+// The type a chapter with no role has, as the chapter menu names it.
+export const REGULAR_CHAPTER_LABEL = 'Regular chapter';
+
 export function isChapterRole(value: unknown): value is ChapterRole {
 	return typeof value === 'string' && (CHAPTER_ROLES as readonly string[]).includes(value);
 }
@@ -32,6 +35,12 @@ export function isChapterRole(value: unknown): value is ChapterRole {
 // edition saved before roles, a hand-edited chapter.md) is a regular chapter.
 export function chapterRoleOf(value: unknown): ChapterRole | null {
 	return isChapterRole(value) ? value : null;
+}
+
+// The name of a chapter's type: its role, or a regular chapter.
+export function chapterTypeLabel(value: unknown): string {
+	const role = chapterRoleOf(value);
+	return role ? CHAPTER_ROLE_LABELS[role] : REGULAR_CHAPTER_LABEL;
 }
 
 type LabelledChapter = { title: string | null; role?: string | null };

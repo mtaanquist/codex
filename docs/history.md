@@ -10,6 +10,20 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.1.0 staging review, round 1, publishing (2026-11-27,
+`fix/v4.1-review-1-publishing`, #1889, #1879, #1894). The reading page and
+the moderator's edition view dropped their own "1. " prefix, so a chapter
+shows only its label, as in print and exports. The Assistant's pattern pass,
+Suggest details reads and the chapter draft notice now name an untitled
+chapter by its type or number; the SQL form of `chapterLabel` moved from the
+attachments to `chapter-sql.ts` for that. Similar stories now need a shared
+free-form tag, since a story can keep more genres than it may pick after an
+unmerge. EPUBCheck 5.4 reported RSC-011 for the toc landmark, so the nav
+document is in the spine with `linear="no"`; the EPUB importer now skips the
+nav document, or importing a Codex EPUB would bring the contents page in as a
+chapter. Left open: editions number chapters after dropping empty ones, while
+the outline and live exports count them, which needs a product decision.
+
 Search by meaning (v4.1.0, 2026-11-27, `feat/embeddings-search`, #1787). There
 is no separate universe search page: search is the command palette, so the
 meaning search is a Words / Meaning switch there, shown only on a story or
@@ -130,9 +144,9 @@ genres alone stay under it). The remembered adult choice lives in localStorage,
 so the server renders without adult work and the page refetches from a small
 endpoint with `adult=show`; a confirmed adult story's page includes adult work
 from the server. Browse's only cache is the on/off setting, so nothing here
-needed invalidating. No per-edition cache: besides one count of listed stories, the query
-reads only the stories that share a label, through the `story_tags_tag`
-index.
+needed invalidating. No per-edition cache: the query gathers every listed story
+once per page load (for the count and to keep matches listed), and reads the
+labels of only the stories that share one, through the `story_tags_tag` index.
 
 v4.0.0 staging review, round 14 (2026-11-26, `staging/v4.0.0`, #1871).
 The loop's last round: every area found only lows, after content limits had

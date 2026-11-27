@@ -14,7 +14,7 @@
 	import Icon from './Icon.svelte';
 	import { dismiss } from '#lib/dismiss';
 	import { menu as menuKeys } from '#lib/menu';
-	import { CHAPTER_ROLES, CHAPTER_ROLE_LABELS } from '#lib/chapter-role';
+	import { CHAPTER_ROLES, CHAPTER_ROLE_LABELS, REGULAR_CHAPTER_LABEL } from '#lib/chapter-role';
 
 	let {
 		menu,
@@ -68,7 +68,7 @@
 	// The flyout open inside the menu, if any.
 	let subOpen = $state<'assistant' | 'role' | null>(null);
 	const roleChoices = [
-		{ value: '', label: 'Regular chapter' },
+		{ value: '', label: REGULAR_CHAPTER_LABEL },
 		...CHAPTER_ROLES.map((role) => ({ value: role, label: CHAPTER_ROLE_LABELS[role] }))
 	];
 

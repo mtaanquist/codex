@@ -158,7 +158,12 @@ export async function buildEpub(
 				}/>`
 		)
 	];
-	const spineItems = sections.map((section) => `<itemref idref="${section.id}"/>`);
+	// The contents page is in the spine because the toc landmark links to it,
+	// and out of the reading order so the book still opens on its first section.
+	const spineItems = [
+		'<itemref idref="nav" linear="no"/>',
+		...sections.map((section) => `<itemref idref="${section.id}"/>`)
+	];
 
 	const opf = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">

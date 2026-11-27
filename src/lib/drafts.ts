@@ -1,6 +1,11 @@
 import type { EntityDetail } from './entity-snapshot.ts';
 import { isSceneStatus, SCENE_STATUS_LABELS } from './scene-status.ts';
-import { chapterLabels, type ChapterRole } from './chapter-role.ts';
+import {
+	chapterLabels,
+	chapterRoleOf,
+	chapterTypeLabel,
+	type ChapterRole
+} from './chapter-role.ts';
 
 // The frozen content of a saved draft. Ids are the ids the rows had when the
 // draft was saved: they let a scene be compared with or restored onto the
@@ -167,6 +172,9 @@ export type ChapterRename = { id: string; before: string; after: string };
 
 export type ChapterMove = { id: string; title: string };
 
+// A chapter kept in both whose type changed, named as it was before.
+export type ChapterRetype = { id: string; title: string; before: string; after: string };
+
 type Side = Pick<DraftContent, 'chapters' | 'scenes'>;
 
 function readingOrder(side: Side): DraftScene[] {
@@ -211,7 +219,7 @@ function statusLabel(status: string): string {
 // pair up through matchScenes. A scene is changed when its text, title,
 // summary or status differs, or when it moved to another chapter or place;
 // unchanged scenes are only counted. Chapters kept in both under a new title
-// are listed as renames.
+// are listed as renames, and those given a new type as retypes.
 export function compareDrafts(
 	before: Side,
 	after: Side
@@ -221,6 +229,7 @@ export function compareDrafts(
 	words: { before: number; after: number };
 	chapterRenames: ChapterRename[];
 	chapterMoves: ChapterMove[];
+	chapterRetypes: ChapterRetype[];
 } {
 	const beforeById = new Map(before.scenes.map((scene) => [scene.id, scene]));
 	const pairs = matchScenes(before.scenes, after.scenes);
@@ -325,6 +334,17 @@ export function compareDrafts(
 		const to = chapterTitle(after, chapter.id)!;
 		if (from !== to) chapterRenames.push({ id: chapter.id, before: from, after: to });
 	}
+	const chapterRetypes: ChapterRetype[] = [];
+	for (const chapter of after.chapters) {
+		const older = before.chapters.find((candidate) => candidate.id === chapter.id);
+		if (!older || chapterRoleOf(older.role) === chapterRoleOf(chapter.role)) continue;
+		chapterRetypes.push({
+			id: chapter.id,
+			title: chapterTitle(before, older.id)!,
+			before: chapterTypeLabel(older.role),
+			after: chapterTypeLabel(chapter.role)
+		});
+	}
 	const olderChapterIndex = new Map(before.chapters.map((chapter, index) => [chapter.id, index]));
 	const movedChapters = movedIds(
 		after.chapters.map((chapter) => chapter.id),
@@ -339,7 +359,8 @@ export function compareDrafts(
 		counts,
 		words: { before: sum(before), after: sum(after) },
 		chapterRenames,
-		chapterMoves
+		chapterMoves,
+		chapterRetypes
 	};
 }
 

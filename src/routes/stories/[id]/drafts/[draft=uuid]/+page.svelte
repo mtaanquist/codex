@@ -414,13 +414,18 @@
 						compare.words.after - compare.words.before
 					)}).
 				</p>
-				{#if compare.chapterRenames.length + compare.chapterMoves.length > 0}
+				{#if compare.chapterRenames.length + compare.chapterMoves.length + compare.chapterRetypes.length > 0}
 					<ul class="compare-renames">
 						{#each compare.chapterRenames as rename (rename.id)}
 							<li>Chapter "{rename.before}" is now "{rename.after}".</li>
 						{/each}
 						{#each compare.chapterMoves as move (move.id)}
 							<li>Chapter "{move.title}" moved to another place in the story.</li>
+						{/each}
+						{#each compare.chapterRetypes as retype (retype.id)}
+							<li>
+								Chapter "{retype.title}" changed type from "{retype.before}" to "{retype.after}".
+							</li>
 						{/each}
 					</ul>
 				{/if}

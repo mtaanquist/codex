@@ -33,6 +33,7 @@ import {
 import { completeDetailed, type GatewayDeps } from './gateway.ts';
 import { BOOK_PATTERN_CAP, CHAPTER_PATTERN_CAP } from './prompts/review.ts';
 import { logEvent } from '../log.ts';
+import { chapterLabels } from '../../chapter-role.ts';
 import { SpendCapError, type SpendMeter } from './spend.ts';
 import type { ChatMessage } from './providers/types.ts';
 import type { ReviewSettings } from '../review-runs.ts';
@@ -92,16 +93,14 @@ export function wholeBookFit(
 // request and goes chapter by chapter only if that request fails.
 export function bookPatternUnit(
 	scenes: { id: string; title: string | null; bodyMd: string; chapterId: string | null }[],
-	chapterTitles: Map<string, string | null>,
+	chapterNames: Map<string, string>,
 	fits: boolean
 ): PatternUnit {
 	const listed = scenes.map((s) => ({
 		id: s.id,
 		title: s.title,
 		bodyMd: s.bodyMd,
-		chapterTitle: s.chapterId
-			? chapterTitles.get(s.chapterId)?.trim() || 'Untitled chapter'
-			: 'Unfiled scenes'
+		chapterTitle: s.chapterId ? (chapterNames.get(s.chapterId) ?? 'Chapter') : 'Unfiled scenes'
 	}));
 	const chapters: PatternScene[][] = [];
 	scenes.forEach((scene, i) => {
@@ -189,12 +188,15 @@ export function reviewerReplyTokens(config: ResolvedConfig, contextWindow?: numb
 	return roleMaxTokens(config, 'reviewer') ?? defaultMaxTokens('reviewer', true, contextWindow);
 }
 
-async function chapterTitles(db: Database, storyId: string) {
+// Each chapter's shown name, by id: its title, its type, or "Chapter N".
+async function chapterNames(db: Database, storyId: string) {
 	const rows = await db
-		.select({ id: chapters.id, title: chapters.title })
+		.select({ id: chapters.id, title: chapters.title, role: chapters.role })
 		.from(chapters)
-		.where(eq(chapters.storyId, storyId));
-	return new Map(rows.map((row) => [row.id, row.title]));
+		.where(eq(chapters.storyId, storyId))
+		.orderBy(asc(chapters.position));
+	const labels = chapterLabels(rows);
+	return new Map(rows.map((row, index) => [row.id, labels[index]]));
 }
 
 type BookScene = { id: string; title: string | null; bodyMd: string; chapterId: string | null };
@@ -214,7 +216,7 @@ export async function planBookPass(
 		settings?: ReviewSettings;
 	}
 ): Promise<{ unit: PatternUnit; fit: WholeBookFit; tokens: number }> {
-	const titles = await chapterTitles(db, opts.storyId);
+	const titles = await chapterNames(db, opts.storyId);
 	const overhead = await patternSurveyOverhead(
 		db,
 		opts.userId,
@@ -255,7 +257,7 @@ export async function checkBookFit(
 	}
 ): Promise<WholeBookFit> {
 	if (!opts.contextWindow) return 'unavailable';
-	const titles = await chapterTitles(db, opts.storyId);
+	const titles = await chapterNames(db, opts.storyId);
 	const overhead = await patternSurveyOverhead(db, opts.userId, opts.storyId);
 	const skeleton = bookPatternUnit(
 		opts.scenes.map((s) => ({ ...s, bodyMd: '' })),

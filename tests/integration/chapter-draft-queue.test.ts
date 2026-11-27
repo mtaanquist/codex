@@ -215,6 +215,28 @@ describe('a chapter draft on the real queue', () => {
 		]);
 	});
 
+	it('names an untitled role chapter by its type', async () => {
+		await db
+			.update(chapters)
+			.set({ title: null, role: 'prologue' })
+			.where(eq(chapters.id, chapterId));
+		const started = await askForChapter();
+		expect(await settled(started.jobId)).toBe('completed');
+		expect(await notices()).toEqual([
+			'The Assistant drafted 3 scenes in the chapter "Prologue". Open each scene to keep or discard its draft.'
+		]);
+	});
+
+	it('names an untitled regular chapter by its number', async () => {
+		await db.insert(chapters).values({ storyId, position: 0, title: 'Before' });
+		await db.update(chapters).set({ title: null }).where(eq(chapters.id, chapterId));
+		const started = await askForChapter();
+		expect(await settled(started.jobId)).toBe('completed');
+		expect(await notices()).toEqual([
+			'The Assistant drafted 3 scenes in Chapter 2. Open each scene to keep or discard its draft.'
+		]);
+	});
+
 	it('calls off the scene the writer discards while it is written, and finishes the rest', async () => {
 		const started = await askForChapter();
 		whileWriting = async (call, signal) => {

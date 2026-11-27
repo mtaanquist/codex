@@ -1,9 +1,4 @@
-import {
-	CHAPTER_ROLES,
-	CHAPTER_ROLE_LABELS,
-	chapterLabel,
-	chapterLabels
-} from '../../chapter-role.ts';
+import { chapterLabel, chapterLabels } from '../../chapter-role.ts';
 import { and, asc, eq, ilike, isNull, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../auth.ts';
 import { chapters, notes, scenes, stories, universes } from '../db/schema.ts';
@@ -13,6 +8,7 @@ import { noteIsLive, storyAssistantOn, storyIsLive } from '../universe-scope.ts'
 import { storySkeleton } from './context/sources.ts';
 import { chapterSummaryToSend } from './chapter-summary-request.ts';
 import { tokensForChars } from './context/budgets.ts';
+import { chapterOrdinal, chapterShown } from '../chapter-sql.ts';
 import {
 	MAX_ATTACHMENT_LABEL,
 	type AttachmentEntityType,
@@ -30,15 +26,6 @@ import {
 function storyAllowed(userId: string): SQL {
 	return and(eq(stories.ownerId, userId), storyIsLive(), storyAssistantOn())!;
 }
-
-// A chapter's place among the story's regular chapters (chapterNumbers in SQL).
-const chapterOrdinal = sql<number>`(select count(*) from ${chapters} c2 where c2.story_id = ${chapters.storyId} and c2.position <= ${chapters.position} and c2.role is null)`;
-// chapterLabel in SQL, for searching and sorting by the name a chapter shows.
-const roleShown = sql.join(
-	CHAPTER_ROLES.map((role) => sql`when ${role} then ${CHAPTER_ROLE_LABELS[role]}`),
-	sql` `
-);
-const chapterShown = sql<string>`(case when btrim(coalesce(${chapters.title}, ''), E' \\t\\n\\r') = '' then (case ${chapters.role} ${roleShown} else 'Chapter ' || ${chapterOrdinal} end) else ${chapters.title} end)`;
 
 function sceneName(title: string | null): string {
 	return title?.trim() || 'Untitled scene';

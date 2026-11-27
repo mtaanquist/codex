@@ -172,6 +172,33 @@ describe('compareDrafts', () => {
 		expect(result.chapterRenames).toEqual([{ id: 'c1', before: 'One', after: 'The Toll' }]);
 	});
 
+	it('lists chapters whose type changed, by the name they had', () => {
+		const result = compareDrafts(
+			{
+				chapters: [
+					{ id: 'c1', title: null, summaryMd: null },
+					{ id: 'c2', title: 'Last', summaryMd: null, role: 'epilogue' },
+					{ id: 'c3', title: 'Same', summaryMd: null }
+				],
+				scenes: []
+			},
+			{
+				chapters: [
+					{ id: 'c1', title: null, summaryMd: null, role: 'prologue' },
+					{ id: 'c2', title: 'Last', summaryMd: null, role: null },
+					{ id: 'c3', title: 'Same', summaryMd: null }
+				],
+				scenes: []
+			}
+		);
+		expect(result.chapterRetypes).toEqual([
+			{ id: 'c1', title: 'Chapter 1', before: 'Regular chapter', after: 'Prologue' },
+			{ id: 'c2', title: 'Last', before: 'Epilogue', after: 'Regular chapter' }
+		]);
+		// A new name that comes only from the type is not a rename.
+		expect(result.chapterRenames).toEqual([]);
+	});
+
 	it('does not list an untitled chapter given its own fallback name', () => {
 		const result = compareDrafts(
 			{ chapters: [{ id: 'c1', title: null, summaryMd: null }], scenes: [] },

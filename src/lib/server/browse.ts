@@ -287,8 +287,9 @@ export async function browseStories(
 export const SIMILAR_LIMIT = 6;
 // A shared free-form tag weighs ln(listed stories / listed stories with the
 // tag), so a rare tag counts for more. A shared genre adds a small fixed
-// weight; a story has at most MAX_GENRES of them, and those alone stay under
-// the minimum, so a match needs at least one tag that is not on most stories.
+// weight. A match needs at least one shared tag, and a score that a tag on
+// most stories does not reach. Genres alone never qualify, even on a story
+// left with more than MAX_GENRES of them by an unmerge.
 // Fandoms and content warnings do not count.
 const GENRE_WEIGHT = 0.15;
 const MIN_SIMILAR_SCORE = 0.5;
@@ -334,6 +335,7 @@ export async function similarStories(
 			from hits h join weights w on w.id = h.id
 			where h.story_id <> ${storyId}::uuid
 			group by h.story_id
+			having bool_or(h.kind = 'tag')
 		)
 		select ${BOOK_COLUMNS}
 		${BOOK_FROM}

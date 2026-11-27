@@ -11,6 +11,8 @@ import {
 	DocumentImportError
 } from './import-document';
 import { overlappingStoredZip } from '../../../tests/zip-fixtures';
+import { buildEpub as buildCodexEpub } from './epub';
+import { zipBytes } from './zip-stream';
 
 // A real 1x1 PNG so the bytes survive the importer's magic-number sniff too.
 const PNG = Buffer.from(
@@ -327,6 +329,32 @@ describe('parseDocument (epub)', () => {
 		expect(plan.story.author).toBe('E. Author');
 		expect(plan.chapters.map((c) => c.title)).toEqual(['The Beginning', 'The Middle']);
 		expect(plan.chapters[0].scenes[0].bodyMd).toBe('Once upon a time.');
+	});
+
+	it('leaves out the contents page of an EPUB that Codex wrote', async () => {
+		const { entries } = await buildCodexEpub(
+			{
+				id: '00000000-0000-4000-8000-000000000001',
+				title: 'Book',
+				author: null,
+				brief: null,
+				descriptionMd: null
+			},
+			{
+				chapters: [
+					{ id: 'a', title: 'First', role: null },
+					{ id: 'b', title: 'Second', role: null }
+				],
+				scenes: [
+					{ chapterId: 'a', title: null, bodyMd: 'One.' },
+					{ chapterId: 'b', title: null, bodyMd: 'Two.' }
+				]
+			},
+			async () => [],
+			null
+		);
+		const plan = await parseDocument(await zipBytes(entries), 'book.epub');
+		expect(plan.chapters.map((c) => c.title)).toEqual(['First', 'Second']);
 	});
 
 	it('reads a character reference to an impossible code point as a replacement character', async () => {

@@ -30,6 +30,7 @@ const { saveAccountLlmConfig, saveModelPricing, saveStoryLlmOverride } =
 const { reviewStoryScenes } = await import('../../src/lib/server/llm/scene-review');
 const { loadReviewRun } = await import('../../src/lib/server/review-runs');
 const { estimateStoryReview, wholeBookCheck } = await import('../../src/lib/server/llm/estimate');
+const { planBookPass } = await import('../../src/lib/server/llm/pattern-pass');
 
 let pool: pg.Pool;
 let db: Database;
@@ -609,6 +610,32 @@ describe('the chapter pattern pass', () => {
 		expect(await db.select().from(reviewSuggestions)).toHaveLength(0);
 		const reviews = second.seen.filter((m) => !isSurvey(m) && !isApply(m));
 		for (const messages of reviews) expect(asked(messages)).not.toContain('Pattern note (Sighing)');
+	});
+});
+
+describe('the chapter names a whole-book pass sends', () => {
+	it('names untitled chapters as the story shows them', async () => {
+		await db
+			.update(chapters)
+			.set({ title: null, role: 'prologue' })
+			.where(eq(chapters.storyId, storyId));
+		const [regular] = await db
+			.insert(chapters)
+			.values({ storyId, title: '  ', position: 2 })
+			.returning({ id: chapters.id });
+		const [one] = await db.select().from(chapters).where(eq(chapters.position, 1));
+		const { unit } = await planBookPass(db, {
+			userId,
+			storyId,
+			scenes: [
+				{ id: sceneIds[0], title: 'A', bodyMd: 'a', chapterId: one.id },
+				{ id: sceneIds[1], title: 'B', bodyMd: 'b', chapterId: regular.id }
+			],
+			contextWindow: 100_000,
+			budgetTokens: 10_000,
+			replyTokens: 1000
+		});
+		expect(unit.scenes.map((scene) => scene.chapterTitle)).toEqual(['Prologue', 'Chapter 1']);
 	});
 });
 

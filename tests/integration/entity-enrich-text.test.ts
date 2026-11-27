@@ -368,6 +368,26 @@ describe('reading the whole book', () => {
 		expect(result.scenes).toBe(2);
 	});
 
+	it('heads an untitled chapter with the name the story shows', async () => {
+		await writeScenes(storyId, ['FIRST the old man watched.']);
+		await db.update(chapters).set({ title: null, role: 'prologue' });
+		const [regular] = await db
+			.insert(chapters)
+			.values({ storyId, position: 2, title: null })
+			.returning({ id: chapters.id });
+		await db.insert(scenes).values({
+			storyId,
+			chapterId: regular.id,
+			globalPosition: 2,
+			title: 'Scene 2',
+			bodyMd: 'SECOND the storm came.'
+		});
+		await read('book');
+		expect(prompts[0]).toContain('## Prologue');
+		expect(prompts[0]).toContain('## Chapter 1');
+		expect(prompts[0]).not.toContain('Untitled chapter');
+	});
+
 	it('reads nothing of a story the Assistant is muted on, or one in the trash', async () => {
 		await writeScenes(storyId, ['FIRST the old man watched.', 'Bram counted the boats.']);
 		await saveStoryLlmOverride(db, storyId, { enabled: false });

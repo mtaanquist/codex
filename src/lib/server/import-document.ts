@@ -440,7 +440,10 @@ async function parseEpub(bytes: Uint8Array, filename: string): Promise<ImportPla
 	for (const tag of opf.match(/<item\b[^>]*\/?>/g) ?? []) {
 		const id = attr(tag, 'id');
 		const href = attr(tag, 'href');
-		if (id && href) manifest.set(id, href);
+		// The navigation document is the contents page, not prose, even when the
+		// spine lists it.
+		const nav = (attr(tag, 'properties') ?? '').split(/\s+/).includes('nav');
+		if (id && href && !nav) manifest.set(id, href);
 	}
 	const spine: string[] = [];
 	for (const tag of opf.match(/<itemref\b[^>]*\/?>/g) ?? []) {
