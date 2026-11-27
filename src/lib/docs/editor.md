@@ -20,6 +20,8 @@ A scene holds one stretch of prose. Chapters group scenes in order. When you pic
 
 Right-click a chapter in the sidebar to rename it, move it up or down, or delete it. Deleting a chapter keeps its scenes; they move to the unfiled list.
 
+A chapter can also be front or back matter: a dedication, foreword, prologue, epilogue, afterword, acknowledgements, or author's note. Right-click the chapter, choose "Chapter type", and pick one; pick "Regular chapter" to undo it. The chapter stays where you put it in the list, so move it up or down yourself. Only regular chapters are numbered: an untitled chapter after a prologue is "Chapter 1". A front or back matter chapter without a title is shown under its type, such as "Prologue", in the sidebar, the story view, print, exports and your published edition, and never gets a number. In an EPUB, e-readers can tell these sections apart and open the book where the story begins, after the dedication and foreword.
+
 ## Splitting and merging scenes
 
 To split a scene in two, put the cursor where the break should go and press the split button in the toolbar (the page with the dashed line). Everything after the cursor moves into a new untitled scene directly after the current one. Marks move along with their text. If the scene was changed somewhere else (in another tab, for example) just before the split, nothing is split and a message says so; check the text and try again.

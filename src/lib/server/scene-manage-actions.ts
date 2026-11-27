@@ -11,9 +11,11 @@ import {
 	moveChapter,
 	renameChapter,
 	restoreScene,
+	setChapterRole,
 	trashScene
 } from './scene-lifecycle';
 import { formText } from './validation';
+import { isChapterRole } from '#lib/chapter-role';
 
 // The sidebar outline's chapter and scene management, as form actions shared by
 // the Write and Review routes. StoryOutline and StoryRowMenu post to relative
@@ -52,6 +54,20 @@ export function sceneManageActions(base: (slug: string) => string): Actions {
 			const chapterId = formText(data, 'chapterId');
 			if (!isUuid(chapterId)) return fail(404, { message: 'That chapter does not exist.' });
 			const ok = await renameChapter(db, locals.user!.id, chapterId, formText(data, 'title'));
+			if (!ok) return fail(404, { message: 'That chapter does not exist.' });
+			redirect(303, sceneReturn(story.slug, data));
+		},
+		setChapterRole: async ({ request, params, locals }) => {
+			const { story } = await ownedStory(params.id!, locals.user!.id);
+			const data = await request.formData();
+			const chapterId = formText(data, 'chapterId');
+			if (!isUuid(chapterId)) return fail(404, { message: 'That chapter does not exist.' });
+			// An empty role makes the chapter a regular one again.
+			const role = formText(data, 'role');
+			if (role !== '' && !isChapterRole(role)) {
+				return fail(400, { message: 'That is not a chapter type.' });
+			}
+			const ok = await setChapterRole(db, locals.user!.id, chapterId, role || null);
 			if (!ok) return fail(404, { message: 'That chapter does not exist.' });
 			redirect(303, sceneReturn(story.slug, data));
 		},

@@ -414,6 +414,7 @@ export async function runImport(
 						.values({
 							storyId: story.id,
 							title: chapter.title,
+							role: chapter.role ?? null,
 							summaryMd: chapter.summaryMd ? rewrite(chapter.summaryMd) : null,
 							// The Assistant's summary, stamped with no fingerprint so it
 							// counts as out of date and the next summary pass rewrites it.

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels, type ChapterRole } from '#lib/chapter-role';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { modal } from '#lib/modal';
@@ -21,7 +22,7 @@
 		onClosed
 	}: {
 		storyId: string;
-		chapters: { id: string; title: string | null }[];
+		chapters: { id: string; title: string | null; role?: ChapterRole | null }[];
 		scenes: { id: string; title: string | null }[];
 		// Lands the open editors' pending saves; an error message when it could not.
 		prepare: () => Promise<string | null>;
@@ -83,7 +84,7 @@
 	function chapterLabel(id: string | null): string {
 		const index = chapters.findIndex((c) => c.id === id);
 		if (index === -1) return 'No chapter';
-		return chapters[index].title?.trim() || `Chapter ${index + 1}`;
+		return chapterLabels(chapters)[index];
 	}
 	const sceneTitle = (id: string, fallback: string | null) =>
 		scenes.find((s) => s.id === id)?.title?.trim() || fallback?.trim() || 'Untitled scene';

@@ -10,6 +10,23 @@ version, date, branch or PR where it had one.
 
 ## Notes from the Open list
 
+v4.1.0, front and back matter (2026-11-27, `feat/chapter-roles`, #849). The
+role is a nullable `chapters.role` column with a check on the allowed values
+(migration 0134), rather than a scene kind: front and back matter are whole
+sections of the book, and every export already works chapter by chapter. One
+helper (`chapter-role.ts`) now makes every chapter label, replacing about
+fifteen copies of the "Chapter N" fallback, and the Assistant's attachment
+search does the same in SQL (the ordinal counts only chapters with no role).
+Numbering is still by place in the list being shown: the live outline counts
+empty chapters, a published edition (which drops them) does not, as before.
+In EPUB the vocabulary has no term for an author's note, so it is marked
+`frontmatter` or `backmatter` by where it sits; front matter is the opening
+run of dedication, foreword, acknowledgements and author's note, and the body
+landmark points at the first section after it (a prologue is body). An
+edition only stores `role` on a role chapter, so editions and their tests keep
+their old shape. The AO3 import's "Chapter N: title" note names were left
+alone: they number AO3's chapters, and import never guesses roles.
+
 v4.0.0 staging review, round 14 (2026-11-26, `staging/v4.0.0`, #1871).
 The loop's last round: every area found only lows, after content limits had
 turned up a medium in each of rounds 4 to 12. The lows were fixed before the

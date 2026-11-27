@@ -15,6 +15,7 @@ import {
 import { keepTimestamps, keepUpdatedAt, ownedScene } from './scene-access.ts';
 import { lockStoryChapters, lockStoryScenes } from './row-locks.ts';
 import { storyIsLive } from './universe-scope.ts';
+import type { ChapterRole } from '../chapter-role.ts';
 
 // Scene trash and chapter management. A deleted scene keeps its row (and its
 // revisions, markers, and review threads) so restore is instant; only its
@@ -244,6 +245,20 @@ export async function renameChapter(
 		.update(chapters)
 		.set({ title: title.trim() || null })
 		.where(eq(chapters.id, chapter.id));
+	return true;
+}
+
+/** Owner-guarded role change: a role name sets it, null makes the chapter a
+ * regular one again. The chapter keeps its place. */
+export async function setChapterRole(
+	db: Database,
+	userId: string,
+	chapterId: string,
+	role: ChapterRole | null
+): Promise<boolean> {
+	const chapter = await ownedChapter(db, userId, chapterId);
+	if (!chapter) return false;
+	await db.update(chapters).set({ role }).where(eq(chapters.id, chapter.id));
 	return true;
 }
 

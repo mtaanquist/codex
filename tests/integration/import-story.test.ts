@@ -310,6 +310,47 @@ describe('runImport', () => {
 		]);
 	});
 
+	it('round-trips chapter roles and reads an unknown role as a regular chapter', async () => {
+		const original = await seedStory();
+		await db
+			.update(chapters)
+			.set({ role: 'prologue', title: null })
+			.where(eq(chapters.title, 'The Caravan'));
+		const bytes = await zipBytes(
+			(await buildStoryZip(original, await gatherStory(db, original), noAssets)).entries
+		);
+		const files = unzipSync(bytes);
+		const chapterMd = Object.entries(files).find(
+			([name]) => name.endsWith('/chapter.md') && strFromU8(files[name]).includes('role:')
+		);
+		expect(chapterMd && strFromU8(chapterMd[1])).toContain('role: "prologue"');
+		const plan = parseStoryZip(bytes);
+		expect(plan.chapters.map((chapter) => chapter.role ?? null)).toEqual(['prologue', null]);
+
+		const result = await runImport(db, universe, plan);
+		const roles = await db
+			.select({ title: chapters.title, role: chapters.role })
+			.from(chapters)
+			.where(eq(chapters.storyId, result.storyId))
+			.orderBy(asc(chapters.position));
+		expect(roles).toEqual([
+			{ title: null, role: 'prologue' },
+			{ title: 'The Toll', role: null }
+		]);
+
+		// A hand-edited or newer chapter.md with a role this app does not know.
+		const edited = Object.fromEntries(
+			Object.entries(files).map(([name, data]) => [
+				name,
+				name === chapterMd![0]
+					? new TextEncoder().encode(strFromU8(data).replace('"prologue"', '"interlude"'))
+					: data
+			])
+		);
+		const replan = parseStoryZip(zipSync(edited));
+		expect(replan.chapters.map((chapter) => chapter.role ?? null)).toEqual([null, null]);
+	});
+
 	it('round-trips chapter summaries', async () => {
 		const original = await seedStory();
 		await db

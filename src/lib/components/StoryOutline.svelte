@@ -12,6 +12,7 @@
 	import { put } from '#lib/api';
 	import { dismiss } from '#lib/dismiss';
 	import { filterChapter, filterOrphanScenes } from '#lib/outline-filter';
+	import { chapterLabel, chapterNumbers, type ChapterRole } from '#lib/chapter-role';
 	import { compactCount, pluralSuffix } from '#lib/format';
 	import type { RowMenuTarget } from './StoryRowMenu.svelte';
 
@@ -56,7 +57,7 @@
 			chapters: number;
 			words: number;
 		}[];
-		chapters: { id: string; title: string | null }[];
+		chapters: { id: string; title: string | null; role?: ChapterRole | null }[];
 		scenes: OutlineScene[];
 		trashedScenes?: { id: string; title: string | null; wordCount: number }[];
 		// Sidebar actions reload the page; carrying the open scene keeps it open.
@@ -78,6 +79,15 @@
 		onSelectScene?: ((sceneId: string) => void) | null;
 		sceneMeta?: Snippet<[OutlineScene]> | null;
 	} = $props();
+
+	// "Chapter N" counts regular chapters only. The fallback is the name an
+	// untitled chapter shows, which search also matches.
+	const numbers = $derived(chapterNumbers(chapters));
+	const chapterFallbacks = $derived(
+		chapters.map((chapter, index) =>
+			chapterLabel({ title: null, role: chapter.role }, numbers[index])
+		)
+	);
 
 	const orphanScenes = $derived(scenes.filter((scene) => scene.chapterId === null));
 
@@ -314,12 +324,8 @@
 	{/if}
 	<div class="chapters">
 		{#each chapters as chapter, index (chapter.id)}
-			{@const filtered = filterChapter(
-				query,
-				chapter.title,
-				`Chapter ${index + 1}`,
-				chapterScenes(chapter.id)
-			)}
+			{@const fallback = chapterFallbacks[index]}
+			{@const filtered = filterChapter(query, chapter.title, fallback, chapterScenes(chapter.id))}
 			{@const list = filtered.scenes}
 			{@const open = query !== '' || !collapsed.has(chapter.id)}
 			{#if filtered.visible}
@@ -342,7 +348,7 @@
 								class="chapter-rename-input"
 								name="title"
 								value={chapter.title ?? ''}
-								placeholder={`Chapter ${index + 1}`}
+								placeholder={fallback}
 								autofocus
 								onkeydown={(e) => {
 									if (e.key === 'Escape') renamingChapterId = null;
@@ -364,13 +370,19 @@
 									? collapsed.delete(chapter.id)
 									: collapsed.add(chapter.id)}
 							oncontextmenu={canManage
-								? (e) => onOpenRowMenu(e, { kind: 'chapter', id: chapter.id, index })
+								? (e) =>
+										onOpenRowMenu(e, {
+											kind: 'chapter',
+											id: chapter.id,
+											index,
+											role: chapter.role ?? null
+										})
 								: undefined}
 							ondragover={(e) => overChapterHeader(e, chapter.id)}
 							ondrop={commitDrop}
 						>
 							<span class="tw" class:open><Icon name="chevron" size={12} /></span>
-							<span class="chapter-name">{chapter.title ?? `Chapter ${index + 1}`}</span>
+							<span class="chapter-name">{chapterLabel(chapter, numbers[index])}</span>
 							<span class="chapter-meta">{list.length}</span>
 						</button>
 					{/if}
@@ -417,7 +429,7 @@
 				</div>
 			</div>
 		{/if}
-		{#if query !== '' && visibleOrphans.length === 0 && !chapters.some((chapter, index) => filterChapter(query, chapter.title, `Chapter ${index + 1}`, chapterScenes(chapter.id)).visible)}
+		{#if query !== '' && visibleOrphans.length === 0 && !chapters.some((chapter, index) => filterChapter(query, chapter.title, chapterFallbacks[index], chapterScenes(chapter.id)).visible)}
 			<div class="empty-state tight">
 				<p class="empty-state-text">No chapters or scenes match.</p>
 			</div>

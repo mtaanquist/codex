@@ -1,3 +1,4 @@
+import { chapterRoleOf, type ChapterRole } from '../chapter-role.ts';
 import {
 	and,
 	asc,
@@ -56,9 +57,21 @@ export const authorNotSuspended = (owner: AnyColumn) =>
 	sql`not exists (select 1 from users su where su.id = ${owner} and su.suspended_at is not null)`;
 
 export type EditionContent = {
-	chapters: { title: string | null; scenes: { title: string | null; bodyMd: string }[] }[];
+	chapters: {
+		title: string | null;
+		// Absent in editions published before chapters had roles.
+		role?: ChapterRole | null;
+		scenes: { title: string | null; bodyMd: string }[];
+	}[];
 	unfiled: { title: string | null; bodyMd: string }[];
 };
+
+// Only a role chapter carries the field, so a regular chapter keeps the
+// shape editions had before roles.
+function withRole(value: unknown): { role?: ChapterRole } {
+	const role = chapterRoleOf(value);
+	return role ? { role } : {};
+}
 
 export async function publishStory(
 	db: Database,
@@ -85,7 +98,10 @@ export async function publishStory(
 
 	// The title, pen name and description go out as they were in the draft,
 	// alongside its prose; the adult flag is the author's current choice.
-	let source: { chapters: { id: string; title: string | null }[]; scenes: ExportScene[] };
+	let source: {
+		chapters: { id: string; title: string | null; role?: ChapterRole | null }[];
+		scenes: ExportScene[];
+	};
 	let frontMatter = {
 		title: story.title,
 		author: story.author,
@@ -108,6 +124,7 @@ export async function publishStory(
 		chapters: source.chapters
 			.map((chapter) => ({
 				title: chapter.title,
+				...withRole(chapter.role),
 				scenes: source.scenes
 					.filter((scene) => scene.chapterId === chapter.id)
 					.map((scene) => ({ title: scene.title, bodyMd: scene.bodyMd }))

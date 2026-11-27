@@ -1,3 +1,4 @@
+import { CHAPTER_ROLE_LABELS, type ChapterRole } from '../../../chapter-role.ts';
 import type { Database } from '../../auth.ts';
 import type { ChatMessage } from '../providers/types.ts';
 import { DEFAULT_BUDGET_TOKENS, estimateTokens } from './budgets.ts';
@@ -698,7 +699,7 @@ function renderStoryOutlineBlock(story: StorySkeleton): string {
 	const lines = [`### Story: ${story.storyTitle}`];
 	if (story.storyBrief) lines.push(story.storyBrief);
 	for (const chapter of story.chapters) {
-		lines.push(`#### Chapter${title(chapter.title)}`);
+		lines.push(`#### ${chapterKind(chapter.role)}${title(chapter.title)}`);
 		if (chapter.summaryMd) lines.push(chapter.summaryMd);
 		for (const scene of chapter.scenes) lines.push(renderSceneSummaryLine(scene));
 	}
@@ -758,7 +759,7 @@ function renderSkeleton(skeleton: {
 }): string {
 	const blocks: string[] = [];
 	for (const chapter of skeleton.chapters) {
-		const lines = [`### Chapter${title(chapter.title)}`];
+		const lines = [`### ${chapterKind(chapter.role)}${title(chapter.title)}`];
 		if (chapter.summaryMd) lines.push(chapter.summaryMd);
 		for (const scene of chapter.scenes) lines.push(renderSceneSummaryLine(scene));
 		blocks.push(lines.join('\n'));
@@ -841,6 +842,11 @@ function renderNotes(notes: ScopeNote[]): string {
 		lines.push(note.bodyMd.trim());
 	}
 	return lines.length > 1 ? lines.join('\n') : '';
+}
+
+// What the heading calls a chapter: "Chapter", or its role ("Prologue").
+function chapterKind(role: ChapterRole | null): string {
+	return role ? CHAPTER_ROLE_LABELS[role] : 'Chapter';
 }
 
 function title(value: string | null): string {

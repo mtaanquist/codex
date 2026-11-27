@@ -624,6 +624,7 @@ async function listScenes(ctx: ToolContext): Promise<string> {
 			storyTitle: story.storyTitle,
 			chapters: story.chapters.map((c) => ({
 				title: c.title,
+				...(c.role && { role: c.role }),
 				summary: c.summaryMd,
 				scenes: c.scenes.map(scene)
 			})),

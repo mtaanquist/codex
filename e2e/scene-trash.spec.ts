@@ -32,6 +32,32 @@ test('scene trash and chapter tools', async ({ page }) => {
 	await page.getByTitle('Save chapter name').click();
 	await expect(page.locator('.chapter-name')).toHaveText('Act One');
 
+	// A second chapter, made a prologue from the menu: untitled, it shows its
+	// role, and survives a reload.
+	await page.getByRole('button', { name: 'New chapter' }).click();
+	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Chapter 2');
+	const roleMenu = await openRowMenu(page, page.locator('.chapter-row').nth(1));
+	await roleMenu.getByRole('menuitem', { name: 'Chapter type' }).click();
+	await roleMenu.getByRole('menuitemradio', { name: 'Prologue' }).click();
+	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Prologue');
+	await page.reload();
+	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Prologue');
+	const clearMenu = await openRowMenu(page, page.locator('.chapter-row').nth(1));
+	await clearMenu.getByRole('menuitem', { name: 'Chapter type' }).click();
+	await expect(clearMenu.getByRole('menuitemradio', { name: 'Prologue' })).toHaveAttribute(
+		'aria-checked',
+		'true'
+	);
+	await clearMenu.getByRole('menuitemradio', { name: 'Regular chapter' }).click();
+	await expect(page.locator('.chapter-name').nth(1)).toHaveText('Chapter 2');
+	await (
+		await openRowMenu(page, page.locator('.chapter-row').nth(1))
+	)
+		.getByRole('menuitem', { name: 'Delete chapter' })
+		.click();
+	await confirmPrompt(page, 'Delete chapter');
+	await expect(page.locator('.chapter-row')).toHaveCount(1);
+
 	// A scene, deleted into the trash. Deleting the open scene closes it.
 	await page.getByRole('button', { name: 'New scene' }).click();
 	await expect(page.locator('.scene-row')).toHaveCount(1);

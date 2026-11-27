@@ -26,6 +26,7 @@ import type { TokenPrice } from '../../assistant-cost.ts';
 import { randomCoverColor } from '../../entity-color.ts';
 import { NOTIFICATION_KINDS, type NotificationPayload } from '../../notifications.ts';
 import { SCENE_STATUSES } from '../../scene-status.ts';
+import { CHAPTER_ROLES } from '../../chapter-role.ts';
 
 // Case-insensitive text, used for the public handle. The citext extension is
 // created in the first migration.
@@ -422,6 +423,9 @@ export const chapters = pgTable(
 			.notNull(),
 		position: integer('position').notNull(),
 		title: text('title'),
+		// Front or back matter (a prologue, a dedication); null for a regular
+		// chapter. See chapter-role.ts.
+		role: text('role', { enum: CHAPTER_ROLES }),
 		summaryMd: text('summary_md'),
 		// When the Assistant last generated this summary. Null means it was never
 		// auto-generated (so a non-null summary here is the writer's own and is never
@@ -439,7 +443,13 @@ export const chapters = pgTable(
 			.defaultNow()
 			.$onUpdate(() => sql`clock_timestamp()`)
 	},
-	(table) => [index('chapters_story_idx').on(table.storyId)]
+	(table) => [
+		index('chapters_story_idx').on(table.storyId),
+		check(
+			'chapters_role_check',
+			sql.raw(`role in (${CHAPTER_ROLES.map((role) => `'${role}'`).join(', ')})`)
+		)
+	]
 );
 
 export const scenes = pgTable(
