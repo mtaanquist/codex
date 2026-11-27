@@ -380,6 +380,29 @@ describe('searchContext', () => {
 		]);
 	});
 
+	it('names an untitled role chapter by its role and counts only regular chapters', async () => {
+		// Arrival is chapter 1; the prologue before it takes no number.
+		await db.update(chapters).set({ position: 2 }).where(eq(chapters.storyId, storyId));
+		const [prologue] = await db
+			.insert(chapters)
+			.values({ storyId, position: 1, title: null, role: 'prologue' })
+			.returning({ id: chapters.id });
+		await db.insert(chapters).values({ storyId, position: 3, title: '' });
+		const shown = async (query: string) =>
+			(await searchContext(db, userId, query))
+				.filter((item) => item.kind === 'chapter')
+				.map((item) => item.label);
+		expect(await shown('prologue')).toEqual(['Prologue']);
+		expect(await shown('chapter 2')).toEqual(['Chapter 2']);
+		const [chapter] = await resolveAttachments(
+			db,
+			userId,
+			[{ kind: 'chapter', id: prologue.id, label: '' }],
+			BIG
+		);
+		expect(chapter.title).toBe('Prologue from Book of Ash');
+	});
+
 	it('matches % and _ literally', async () => {
 		expect(await searchContext(db, userId, '%')).toEqual([]);
 		expect(await searchContext(db, userId, '_')).toEqual([]);

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels, type ChapterRole } from '#lib/chapter-role';
 	import {
 		NO_PRICE_NOTE,
 		capNotAppliedNote,
@@ -41,7 +42,7 @@
 	}: {
 		storyId: string;
 		storySlug: string;
-		chapters: { id: string; title: string | null }[];
+		chapters: { id: string; title: string | null; role?: ChapterRole | null }[];
 		scenes: { id: string; chapterId: string | null; title: string | null }[];
 		// The scene open in the editor, used when the request names no scene.
 		defaultSceneId?: string | null;
@@ -55,10 +56,8 @@
 	const chapterId = $derived(reviewModal.request.chapterId ?? scene?.chapterId ?? null);
 	const chapter = $derived(chapters.find((c) => c.id === chapterId) ?? null);
 
-	function chapterLabel(c: { id: string; title: string | null }): string {
-		if (c.title && c.title.trim()) return c.title;
-		const i = chapters.findIndex((x) => x.id === c.id);
-		return `Chapter ${i + 1}`;
+	function chapterLabel(c: { id: string }): string {
+		return chapterLabels(chapters)[chapters.findIndex((x) => x.id === c.id)];
 	}
 
 	// Which levels are offered, narrowed to what the context allows.

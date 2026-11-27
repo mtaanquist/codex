@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels, type ChapterRole } from '#lib/chapter-role';
 	import PaneResizer from '#lib/components/PaneResizer.svelte';
 	import { withQuery } from '#lib/href';
 	import { focusShownPane } from '#lib/pane-focus';
@@ -79,7 +80,7 @@
 		assistantChat = null,
 		onSaveStatus = () => {}
 	}: {
-		chapters: { id: string; title: string | null }[];
+		chapters: { id: string; title: string | null; role?: ChapterRole | null }[];
 		scenes: {
 			id: string;
 			chapterId: string | null;
@@ -137,8 +138,9 @@
 			bodyMd: string;
 			chapterTitle: string;
 		}[] = [];
+		const labels = chapterLabels(chapters);
 		chapters.forEach((chapter, i) => {
-			const label = chapter.title ?? `Chapter ${i + 1}`;
+			const label = labels[i];
 			for (const scene of scenes.filter((s) => s.chapterId === chapter.id)) {
 				out.push({ ...scene, chapterTitle: label });
 			}

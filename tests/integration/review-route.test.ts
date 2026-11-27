@@ -119,7 +119,7 @@ describe('load', () => {
 			locals: { user: null, session: null },
 			cookies: { get: vi.fn(() => cookie), set: vi.fn() }
 		} as unknown as Parameters<typeof page.load>[0])) as { chapters?: unknown[] };
-		expect(data.chapters).toEqual([{ id: chapter.id, title: 'One' }]);
+		expect(data.chapters).toEqual([{ id: chapter.id, title: 'One', role: null }]);
 		expect(JSON.stringify(data)).not.toContain('The secret ending.');
 	});
 });

@@ -193,6 +193,7 @@ describe('saveDraft', () => {
 			{
 				id: chapterId,
 				title: 'Departure',
+				role: null,
 				summaryMd: null,
 				summaryGeneratedAt: null,
 				summaryInput: null

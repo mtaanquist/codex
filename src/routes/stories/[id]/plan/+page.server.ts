@@ -165,7 +165,7 @@ export const load: PageServerLoad = async ({ params, locals, url }) => {
 	}
 
 	const chapterList = await db
-		.select({ id: chapters.id, title: chapters.title })
+		.select({ id: chapters.id, title: chapters.title, role: chapters.role })
 		.from(chapters)
 		.where(eq(chapters.storyId, story.id))
 		.orderBy(asc(chapters.position));

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels } from '#lib/chapter-role';
 	import type { ResolvedPathname } from '$app/types';
 	import Icon from './Icon.svelte';
 	import { renderMarkdown } from '#lib/markdown';
@@ -14,12 +15,14 @@
 		toggleHref
 	}: {
 		storyTitle: string;
-		chapters: { id: string; title: string | null }[];
+		chapters: { id: string; title: string | null; role?: string | null }[];
 		storyDoc: { id: string; chapterId: string | null; bodyMd: string }[];
 		pageSetup: PageSetup | null;
 		editStoryHref: ResolvedPathname;
 		toggleHref: ResolvedPathname;
 	} = $props();
+
+	const chapterNames = $derived(chapterLabels(chapters));
 
 	function docScenes(chapterId: string | null) {
 		return storyDoc.filter((scene) => scene.chapterId === chapterId);
@@ -92,7 +95,7 @@
 				{@const list = docScenes(chapter.id)}
 				{#if list.length > 0}
 					<section class="prev-chapter">
-						<h2>{chapter.title ?? `Chapter ${index + 1}`}</h2>
+						<h2>{chapterNames[index]}</h2>
 						{#each list as scene, si (scene.id)}
 							{#if si > 0}<hr class="scene-break" />{/if}
 							<!-- eslint-disable-next-line svelte/no-at-html-tags (shared renderer escapes raw HTML) -->

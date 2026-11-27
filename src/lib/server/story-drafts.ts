@@ -1,3 +1,4 @@
+import { chapterRoleOf } from '../chapter-role.ts';
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from './auth.ts';
 import { dbNow } from './db-clock.ts';
@@ -130,6 +131,7 @@ export async function workingOutline(
 		.select({
 			id: chapters.id,
 			title: chapters.title,
+			role: chapters.role,
 			summaryMd: chapters.summaryMd,
 			summaryGeneratedAt: chapters.summaryGeneratedAt,
 			summaryInput: chapters.summaryInput
@@ -679,6 +681,7 @@ export async function newStoryFromDraft(
 					.values({
 						storyId: created.id,
 						title: chapter.title,
+						role: chapterRoleOf(chapter.role),
 						summaryMd: chapter.summaryMd,
 						// With its fingerprint, so it is current exactly when the scenes
 						// below carry the summaries it was written from.

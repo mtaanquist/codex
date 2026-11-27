@@ -11,7 +11,7 @@ version, date, branch or PR where it had one.
 ## Notes from the Open list
 
 Search index for embeddings (v4.1.0, 2026-11-27, `feat/embeddings-index`,
-#1785). Two tables, migration 0134: `embedding_indexes` (the writer's choice
+#1785). Two tables, migration 0135: `embedding_indexes` (the writer's choice
 to index a universe, and the model its last full index finished with) and
 `scene_chunks` (the passages, hashed, with an unsized `vector` column through
 a Drizzle `customType`). No vector index: HNSW and IVFFlat need a fixed size,
@@ -30,6 +30,23 @@ cannot hold an id. Deferred: notifying the writer when an index finishes
 (the activity card and the account list say so), and indexing on the other
 prose paths (split, merge, review accepts, replace) beyond the editor save,
 which the sweep covers within five minutes.
+
+v4.1.0, front and back matter (2026-11-27, `feat/chapter-roles`, #849). The
+role is a nullable `chapters.role` column with a check on the allowed values
+(migration 0134), rather than a scene kind: front and back matter are whole
+sections of the book, and every export already works chapter by chapter. One
+helper (`chapter-role.ts`) now makes every chapter label, replacing about
+fifteen copies of the "Chapter N" fallback, and the Assistant's attachment
+search does the same in SQL (the ordinal counts only chapters with no role).
+Numbering is still by place in the list being shown: the live outline counts
+empty chapters, a published edition (which drops them) does not, as before.
+In EPUB the vocabulary has no term for an author's note, so it is marked
+`frontmatter` or `backmatter` by where it sits; front matter is the opening
+run of dedication, foreword, acknowledgements and author's note, and the body
+landmark points at the first section after it (a prologue is body). An
+edition only stores `role` on a role chapter, so editions and their tests keep
+their old shape. The AO3 import's "Chapter N: title" note names were left
+alone: they number AO3's chapters, and import never guesses roles.
 
 Embeddings model setting and adapter (v4.1.0, 2026-11-27,
 `feat/embeddings-setting`, #1784). The embeddings model lives under an

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chapterLabels } from '#lib/chapter-role';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { PageData } from './$types';
@@ -10,9 +11,10 @@
 	const edition = $derived(data.edition);
 	const timeZone = $derived(page.data.timeZone);
 
+	const chapterNames = $derived(chapterLabels(edition.content.chapters));
 	const chapters = $derived([
 		...edition.content.chapters.map((chapter, index) => ({
-			title: chapter.title ?? `Chapter ${index + 1}`,
+			title: chapterNames[index],
 			scenes: chapter.scenes
 		})),
 		...(edition.content.unfiled.length > 0

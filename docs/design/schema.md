@@ -25,7 +25,7 @@ universe
 - **Database**: Postgres
 - **Content format**: Markdown in `text` columns (rendered on display/export)
 - **Search**: `tsvector` for full-text, `pg_trgm` for fuzzy name matching
-- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; the search index (`scene_chunks`, migration 0134) stores its vectors in it. It was required at v4.0.0 so the database image change, and the index rebuild that comes with it, happen once at a major version rather than in the release that first stores vectors
+- **Vectors**: the `vector` extension (pgvector), required from v4.0.0 and created by migration 0131; the search index (`scene_chunks`, migration 0135) stores its vectors in it. It was required at v4.0.0 so the database image change, and the index rebuild that comes with it, happen once at a major version rather than in the release that first stores vectors
 - **Case-insensitive handles**: `citext` for the public profile handle (requires the `citext` extension)
 - **Squishy fields**: `jsonb` with GIN indexes where queried
 
@@ -251,6 +251,7 @@ chapters (
   story_id      uuid references stories(id) not null,
   position      int not null,
   title         text,
+  role          text,                              -- front or back matter: 'dedication' | 'foreword' | 'prologue' | 'epilogue' | 'afterword' | 'acknowledgements' | 'authors_note'; null for a regular chapter
   summary_md    text,
   summary_generated_at timestamptz,                -- set when the Assistant wrote summary_md; null for the writer's own
   summary_input text,                               -- fingerprint of the request the Assistant wrote it from
@@ -281,6 +282,7 @@ scenes (
 Key points:
 
 - `body_md` lives on scenes, not chapters. Chapters are organisational only.
+- `role` marks a chapter as front or back matter (#849). Only chapters with no role are numbered ("Chapter 3" is the third regular chapter); an untitled role chapter shows its role name (`chapter-role.ts`). A role never moves a chapter: the writer's order stands. It rides `chapter.md` (`role:`), saved drafts and published editions, where an edition from before roles simply has none.
 - `chapter_id` is nullable to support drafting scenes before they have a chapter home.
 - `global_position` enables chronological views, continuous-scroll (Scrivenings-style) rendering, and reordering across chapter boundaries.
 - `characters_present` is a UUID array rather than a join table. Cheap, GIN-indexed, easy to query.
