@@ -87,7 +87,7 @@
 			<div class="reader-brief">{@html renderPublicMarkdown(edition.descriptionMd)}</div>
 		{/if}
 		{#each chapters as chapter, index (index)}
-			<h2 class="reader-chapter">{index + 1}. {chapter.title}</h2>
+			<h2 class="reader-chapter">{chapter.title}</h2>
 			<div class="reader-prose">
 				{#each chapter.scenes as scene, si (si)}
 					{#if si > 0}<p class="break">* * *</p>{/if}

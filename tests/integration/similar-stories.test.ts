@@ -161,6 +161,16 @@ describe('scoring', () => {
 		expect(await similar(source.id)).toEqual(['Tag and genre', 'Tag only']);
 	});
 
+	it('needs a shared tag even when a story keeps more genres than it may pick', async () => {
+		await filler(10);
+		// An unmerge can leave a story with more genres than the limit.
+		await addListEntries(db, 'genre', 'Romance');
+		const genres = ['fantasy', 'horror', 'mystery', 'romance'];
+		const source = await story('Source', { tags: ['dragons'], genres });
+		await story('Genres only', { genres });
+		expect(await similar(source.id)).toEqual([]);
+	});
+
 	it('leaves out a match on a tag most listed stories carry', async () => {
 		const source = await story('Source', { tags: ['fiction'] });
 		await story('Also fiction', { tags: ['fiction'] });
@@ -239,6 +249,30 @@ describe('who is left out', () => {
 		expect(await similar(source.id)).toEqual(['Listed']);
 	});
 
+	it('leaves out trashed stories, trashed universes and authors leaving', async () => {
+		await filler(20);
+		const tags = ['dragons'];
+		const source = await story('Source', { tags });
+		await story('Listed', { tags });
+		const trashed = await story('Trashed', { tags });
+		await db.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, trashed.id));
+		const [doomed] = await db
+			.insert(universes)
+			.values({ ownerId: author.id, name: 'Doomed' })
+			.returning();
+		await story('In a trashed universe', { tags, universe: doomed.id });
+		await db.update(universes).set({ deletedAt: new Date() }).where(eq(universes.id, doomed.id));
+		const leaving = await user('leaving@example.com', { handle: 'leaving' });
+		const [leavingUniverse] = await db
+			.insert(universes)
+			.values({ ownerId: leaving.id, name: 'L' })
+			.returning();
+		await story('Author leaving', { tags, owner: leaving.id, universe: leavingUniverse.id });
+		await db.update(users).set({ deletionScheduledAt: new Date() }).where(eq(users.id, leaving.id));
+
+		expect(await similar(source.id)).toEqual(['Listed']);
+	});
+
 	it('finds matches for a story that is not listed itself', async () => {
 		await filler(10);
 		const source = await story('Source', { tags: ['dragons'], listed: false });
@@ -298,6 +332,46 @@ describe('the reading page', () => {
 		await story('Match', { tags: ['dragons'] });
 		expect(titlesOf((await load(source.slug)).similar)).toEqual(['Match']);
 		expect((await load(lonely.slug)).similar).toEqual([]);
+	});
+
+	it('answers 404 from the endpoint for a story with no public edition', async () => {
+		await saveBrowseEnabled(db, true);
+		await filler(10);
+		const hidden = await story('Gone private', { tags: ['dragons'] });
+		await db.update(stories).set({ visibility: 'private' }).where(eq(stories.id, hidden.id));
+		const down = await story('Taken down', { tags: ['dragons'] });
+		await takedownPublication(db, down.publicationId, null, 'other');
+		for (const slug of [hidden.slug, down.slug, 'no-such-story']) {
+			try {
+				await fetchSimilar(slug);
+				expect.unreachable();
+			} catch (err) {
+				expect(isHttpError(err) && err.status).toBe(404);
+			}
+		}
+	});
+
+	it('limits how often one address asks, and says when to try again', async () => {
+		await saveBrowseEnabled(db, true);
+		const headers: Record<string, string> = {};
+		const ask = () =>
+			similarRoute.GET({
+				params: { handle: 'teller', story: 'no-such-story' },
+				url: new URL('http://localhost/@teller/no-such-story/similar'),
+				getClientAddress: () => '203.0.113.10',
+				setHeaders: (set: Record<string, string>) => Object.assign(headers, set)
+			} as never);
+		const statusOf = async () => {
+			try {
+				await ask();
+				return 200;
+			} catch (err) {
+				return isHttpError(err) ? err.status : 0;
+			}
+		};
+		for (let i = 0; i < 120; i++) expect(await statusOf()).toBe(404);
+		expect(await statusOf()).toBe(429);
+		expect(Number(headers['retry-after'])).toBeGreaterThan(0);
 	});
 
 	it('includes adult work on a confirmed adult story, and from the endpoint when asked', async () => {

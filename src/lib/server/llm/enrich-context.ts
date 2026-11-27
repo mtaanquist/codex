@@ -4,6 +4,7 @@ import { chapters, entityMentions, scenes, stories } from '../db/schema.ts';
 import { defaultMaxTokens } from '../../assistant-tuning.ts';
 import { entityAppearances } from '../plan-data.ts';
 import { storyAssistantOn, storyIsLive } from '../universe-scope.ts';
+import { chapterShown } from '../chapter-sql.ts';
 import { estimateTokens, PERSONA_TOKENS, tokensForChars } from './context/budgets.ts';
 import { modelContextWindow, pickModel, resolveLlmConfig, roleMaxTokens } from './config.ts';
 import { adapterKind } from './providers/presets.ts';
@@ -187,7 +188,7 @@ async function readableScenes(db: Database, userId: string, scope: Scope, ids?: 
 			storyId: stories.id,
 			storyTitle: stories.title,
 			chapterId: scenes.chapterId,
-			chapterTitle: chapters.title,
+			chapterTitle: chapterShown,
 			title: scenes.title,
 			bodyMd: ids ? scenes.bodyMd : sql<string>`''`,
 			bodyChars: sql<number>`length(${scenes.bodyMd})`.mapWith(Number)
@@ -217,7 +218,7 @@ function toExcerpt(row: ReadableScene): ExcerptScene {
 		id: row.id,
 		storyId: row.storyId,
 		storyTitle: row.storyTitle,
-		chapterTitle: row.chapterId ? row.chapterTitle?.trim() || 'Untitled chapter' : 'Unfiled scenes',
+		chapterTitle: row.chapterId ? row.chapterTitle.trim() : 'Unfiled scenes',
 		title: row.title,
 		bodyMd: row.bodyMd
 	};

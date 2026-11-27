@@ -278,7 +278,7 @@ describe('upgrading from the previous release', () => {
 		expect(result.ok).toBe(true);
 	});
 
-	it('counts the images stored before the upgrade, on a default plan with no limits', async () => {
+	it('keeps the storage use counted before the upgrade, on a default plan with no limits', async () => {
 		const { rows } = await pool.query(
 			'select storage_used_bytes::int as used, plan_id from users where id = $1',
 			[USER]

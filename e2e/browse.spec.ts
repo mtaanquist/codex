@@ -246,6 +246,12 @@ test('a reading page shows similar stories, with adult work once the reader chos
 	await gotoReady(reader, plainPath);
 	await expect(similar.locator('.shelf-item-title')).toHaveText([`Grown ${stamp}`]);
 	expect(await violations(reader)).toEqual([]);
+
+	// Turning the choice off in another tab takes the adult match away here too.
+	const other = await anonymous.newPage();
+	await gotoReady(other, '/');
+	await other.evaluate(() => localStorage.removeItem('codex:browse-adult'));
+	await expect(similar).toHaveCount(0);
 	await anonymous.close();
 });
 

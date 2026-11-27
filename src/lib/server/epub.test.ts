@@ -77,6 +77,13 @@ describe('buildEpub with chapter roles', () => {
 		expect(nav).toContain('<a epub:type="bodymatter" href="ch2.xhtml">Prologue</a>');
 	});
 
+	it('puts the contents page in the spine, out of the reading order', async () => {
+		// The toc landmark links to nav.xhtml, and a link must point at a spine
+		// item (EPUBCheck RSC-011).
+		const opf = (await epubFiles(content))('content.opf');
+		expect(opf).toMatch(/<spine>\s*<itemref idref="nav" linear="no"\/>/);
+	});
+
 	it('keeps the old numbering for a book without roles', async () => {
 		const file = await epubFiles({
 			chapters: [

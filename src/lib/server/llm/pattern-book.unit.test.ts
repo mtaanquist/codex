@@ -37,12 +37,12 @@ describe('bookPatternUnit', () => {
 		{ id: 'c', title: 'C', bodyMd: 'c', chapterId: null },
 		{ id: 'd', title: 'D', bodyMd: 'd', chapterId: 'c2' }
 	];
-	const titles = new Map<string, string | null>([
+	const titles = new Map([
 		['c1', 'The Road'],
-		['c2', null]
+		['c2', 'Prologue']
 	]);
 
-	it('lists every scene under its chapter title, as one request when it fits', () => {
+	it('lists every scene under its chapter name, as one request when it fits', () => {
 		const unit = bookPatternUnit(scenes, titles, true);
 		expect(unit).toMatchObject({ key: 'book', scope: 'book', whole: true });
 		// The chapters stay at hand for a fallback.
@@ -51,7 +51,7 @@ describe('bookPatternUnit', () => {
 			'The Road',
 			'The Road',
 			'Unfiled scenes',
-			'Untitled chapter'
+			'Prologue'
 		]);
 	});
 

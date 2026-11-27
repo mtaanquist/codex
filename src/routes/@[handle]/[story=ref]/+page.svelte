@@ -33,7 +33,11 @@
 		data.gate ? null : withAdult?.path === page.url.pathname ? withAdult.books : data.similar
 	);
 	$effect(() => {
-		if (data.gate || data.similar === null || data.similarAdult || !browseAdult.remembered) return;
+		if (data.gate || data.similar === null || data.similarAdult || !browseAdult.remembered) {
+			// The choice may have been turned off in another tab.
+			withAdult = null;
+			return;
+		}
 		const path = page.url.pathname;
 		const controller = new AbortController();
 		const url = withQuery(
@@ -157,14 +161,14 @@
 				{#if chapters.length > 1}
 					<nav class="reader-toc" aria-label="Chapters">
 						<div class="reader-toc-label">Contents</div>
-						{#each chapters as chapter, index (chapter.id)}
-							<a href="#{chapter.id}">{index + 1}. {chapter.title}</a>
+						{#each chapters as chapter (chapter.id)}
+							<a href="#{chapter.id}">{chapter.title}</a>
 						{/each}
 					</nav>
 				{/if}
 
-				{#each chapters as chapter, index (chapter.id)}
-					<h2 class="reader-chapter" id={chapter.id}>{index + 1}. {chapter.title}</h2>
+				{#each chapters as chapter (chapter.id)}
+					<h2 class="reader-chapter" id={chapter.id}>{chapter.title}</h2>
 					<div class="reader-prose">
 						{#each chapter.scenes as scene, si (si)}
 							{#if si > 0}<p class="break">* * *</p>{/if}

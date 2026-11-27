@@ -92,6 +92,8 @@ import { remapPendingMarkers } from '../lib/server/markers.ts';
 import { purgeExternalAccess } from '../lib/server/mcp/oauth.ts';
 import { insertNotifications } from '../lib/server/notify-core.ts';
 import { storyIsLive } from '../lib/server/universe-scope.ts';
+import { chapterOrdinal } from '../lib/server/chapter-sql.ts';
+import { chapterLabel, chapterRoleOf } from '../lib/chapter-role.ts';
 import { shouldNotifyWriter, withJobRunSignal } from './job-guard.ts';
 import { capContinueAdvice, capStopPhrase } from '../lib/format.ts';
 
@@ -535,11 +537,20 @@ export function createHandlers(deps: WorkerDeps) {
 	async function chapterDraft(job: JobWithMetadata<AssistantChapterDraftData>) {
 		const { userId, storyId, chapterId, draftIds, brief } = job.data;
 		const [chapter] = await db
-			.select({ title: schema.chapters.title })
+			.select({
+				title: schema.chapters.title,
+				role: schema.chapters.role,
+				ordinal: chapterOrdinal
+			})
 			.from(schema.chapters)
 			.innerJoin(schema.stories, eq(schema.chapters.storyId, schema.stories.id))
 			.where(and(eq(schema.chapters.id, chapterId), eq(schema.stories.ownerId, userId)));
-		const name = chapter?.title ? `the chapter "${chapter.title}"` : 'your chapter';
+		// "Chapter 3" reads as a name already; a title or a type is quoted.
+		const name = !chapter
+			? 'your chapter'
+			: chapter.title?.trim() || chapterRoleOf(chapter.role)
+				? `the chapter "${chapterLabel(chapter, null)}"`
+				: chapterLabel(chapter, Number(chapter.ordinal));
 		// A chapter deleted meanwhile leaves its scenes, and their drafts, in the
 		// story.
 		const href = chapter ? chapterDraftHref(storyId, chapterId) : `/stories/${storyId}`;
