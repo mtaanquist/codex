@@ -295,6 +295,25 @@ passage text with its scene, story, titles and distance. The query vector
 comes from `embed(db, userId, [text])` with no `storyId`, since a query is
 not story text.
 
+### Unnamed passages in Suggest details (#1786)
+
+When the entity's universe has a finished index on the writer's current
+embeddings model, the scenes read of Suggest details (`enrichEntityFromText`
+with mode `scenes`) also sends the passages closest in meaning to what is
+known about the entity: its name, aliases, summary and quick details
+(`relatedQuery`), embedded once on the job's spend meter. `relatedPassages`
+in `enrich-context.ts` asks `nearestChunks` in the read's scope (so mutes and
+other writers' stories are left out as everywhere else), drops passages from
+scenes the read already sends, and keeps up to 12, nearest first, within a
+quarter of one request's text budget. They go after the scenes under a
+heading that says they do not name the entity and may be about something
+else, so they fill the last part or take one more. A passage is part of a
+scene, so it never counts towards the scenes the /enrich pass would read,
+and the pass's stored fingerprint is unchanged. The estimate counts the
+quarter as an allowance when the index is ready. Without an index, with
+embeddings off, or when the query fails, the read sends exactly what it did
+before. The whole-book read does not search, since it has every scene.
+
 ### Admin egress policy (the SSRF question)
 
 Because the key is held server-side, the browser cannot call the writer's

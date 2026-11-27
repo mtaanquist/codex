@@ -398,6 +398,7 @@ export function createHandlers(deps: WorkerDeps) {
 				entityId,
 				scenes: result.scenes,
 				requests: result.requests,
+				...(result.related ? { related: result.related } : {}),
 				staged,
 				...(result.skipped ? { skipped: result.skipped } : {}),
 				...(result.partial ? { partial: true } : {}),
