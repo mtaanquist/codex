@@ -153,3 +153,38 @@ test('a character arc written from older scenes says it is out of date', async (
 	);
 	await expect(page.getByRole('button', { name: 'Refresh arc' })).toBeVisible();
 });
+
+test('the embeddings form saves on its own and leaves the Assistant endpoint alone', async ({
+	page
+}) => {
+	await seed();
+	await gotoReady(page, '/account/assistant');
+	const section = page.locator('#assistant-embeddings');
+	// Each change autosaves; wait for that save itself, since a "Saved." left
+	// by the one before would satisfy a status check at once.
+	const saving = () => page.waitForResponse((r) => r.url().includes('saveEmbeddings') && r.ok());
+	const url = section.getByLabel('Embeddings base URL', { exact: true });
+	const model = section.getByLabel('Embeddings model', { exact: true });
+	const price = section.getByLabel('Embeddings price per million tokens (USD)', { exact: true });
+	const enabled = section.getByLabel('Use embeddings');
+	for (const [field, value] of [
+		[url, 'http://localhost:11434/v1'],
+		[model, 'nomic-embed-text'],
+		[price, '0']
+	] as const) {
+		const saved = saving();
+		await field.fill(value);
+		await field.blur();
+		await saved;
+	}
+	const saved = saving();
+	await enabled.check();
+	await saved;
+
+	await page.reload();
+	await expect(enabled).toBeChecked();
+	await expect(url).toHaveValue('http://localhost:11434/v1');
+	await expect(model).toHaveValue('nomic-embed-text');
+	await expect(price).toHaveValue('0');
+	await expect(page.getByLabel('Base URL', { exact: true })).toHaveValue(ENDPOINT);
+});

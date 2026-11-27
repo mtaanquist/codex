@@ -17,16 +17,12 @@ import { loadStoryScope, loadUniverseScope } from './context/sources.ts';
 import { adapterKind, type ProviderId } from './providers/presets.ts';
 import { estimateTokens } from './context/assemble.ts';
 import { ceilingTokens } from './context/budgets.ts';
-import {
-	EgressDeniedError,
-	EgressTimeoutError,
-	egressHttpRequest,
-	egressPolicy
-} from './egress.ts';
+import { egressHttpRequest, egressPolicy } from './egress.ts';
 import { providerFor } from './providers/index.ts';
 import { WEB_SEARCH_MAX_USES } from './providers/anthropic.ts';
 import { buildPersonaPrompt } from './prompts/persona.ts';
 import { recordAssistantUsage } from './usage.ts';
+import { isTransientFailure, RETRY_DELAYS_MS } from './retry.ts';
 import {
 	dispatchToolCall,
 	ownedStoryUniverse,
@@ -37,7 +33,6 @@ import {
 } from './tools/dispatch.ts';
 import { MINIMAL_TOOL_NAMES, toolSpecs } from './tools/registry.ts';
 import {
-	EndpointReplyError,
 	type ChatMessage,
 	type CompletionRequest,
 	type Connection,
@@ -284,34 +279,8 @@ export type GatewayDeps = {
 	sleep?: (ms: number) => Promise<void>;
 };
 
-// A local endpoint reloading a model, or a blip on the way to a hosted one,
-// fails one request and is fine on the next. Two short retries cover that
-// without keeping a caller waiting when the endpoint is really down.
-const RETRY_DELAYS_MS = [250, 1000];
-
-// Transient means "the same request might work in a moment": a thrown
-// transport error (socket reset, DNS, connection refused), or a 429/5xx the
-// adapters report as `Endpoint returned <status>: ...`. A 4xx other than 429 is
-// the request's own fault, an egress denial is policy, and an abort was asked
-// for; none of those improve on a second try. Nor does an endpoint that already
-// sat silent for the whole idle timeout, or one that answered with something
-// other than a reply (see EndpointReplyError).
-export function isTransientFailure(err: unknown): boolean {
-	if (err instanceof EgressDeniedError) return false;
-	if (err instanceof EgressTimeoutError) return false;
-	if (err instanceof EndpointReplyError) return false;
-	if (!(err instanceof Error)) return false;
-	if (err.name === 'AbortError') return false;
-	// A 200 whose body is not JSON fails the same way every time; retrying it
-	// only bills the endpoint twice for the same broken reply.
-	if (err instanceof SyntaxError) return false;
-	const reported = /^Endpoint returned (\d{3})/.exec(err.message);
-	if (reported) {
-		const status = Number(reported[1]);
-		return status === 429 || (status >= 500 && status < 600);
-	}
-	return true;
-}
+// The retry rule is shared with the embeddings requests (see ./retry).
+export { isTransientFailure };
 
 // One provider request, retried on a transient failure. This wraps the REQUEST
 // only: tool dispatch happens after a response is in hand, so a retry can never
